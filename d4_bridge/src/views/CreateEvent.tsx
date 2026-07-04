@@ -13,6 +13,9 @@ import {
   zonedWallClockToUtc,
 } from '../lib/datetime';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
+import { normalizeArtistLinks } from '../lib/artistLinks';
+import ArtistLinksEditor from '../components/ArtistLinksEditor';
+import type { ArtistLink } from '../types';
 
 // Image is now uploaded to Firebase Storage and only the download URL ends
 // up in the Firestore event doc. We still cap at 5 MB on the client to give
@@ -125,6 +128,7 @@ export default function CreateEvent() {
     genres: [] as string[],
     subgenres: [] as string[],
     performers: [] as string[],
+    artistLinks: [] as ArtistLink[],
     timing: {
       doorsOpen: '',
       startTime: '',
@@ -290,6 +294,7 @@ export default function CreateEvent() {
           genres: Array.isArray(src.genres) ? src.genres : [],
           subgenres: Array.isArray(src.subgenres) ? src.subgenres : [],
           performers: Array.isArray(src.performers) ? src.performers : [],
+          artistLinks: Array.isArray(src.artistLinks) ? src.artistLinks : [],
           totalTickets: String(src.totalTickets ?? ''),
           price: String(src.price ?? ''),
           image: src.image || '',
@@ -818,6 +823,7 @@ export default function CreateEvent() {
           venueAddress: addr,
           primaryPerformerName: formData.performers[0],
           performerNames: formData.performers.length > 0 ? formData.performers : undefined,
+          artistLinks: normalizeArtistLinks(formData.artistLinks),
           category: formData.category,
           genres: formData.genres,
           subgenres: formData.subgenres,
@@ -1059,6 +1065,19 @@ export default function CreateEvent() {
               <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest leading-relaxed">
                 Order matters — first name is treated as the headliner in emails and the event page.
               </p>
+            </div>
+
+            {/* Artist links — optional Spotify / Apple Music / Bandsintown /
+                social destinations per performer. Rows are derived from the
+                performers above so each link is tied to a named artist and
+                rendered next to them on the event page. */}
+            <div className="md:col-span-2 space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Artist links (optional)</label>
+              <ArtistLinksEditor
+                performers={formData.performers}
+                value={formData.artistLinks}
+                onChange={(artistLinks) => setFormData({ ...formData, artistLinks })}
+              />
             </div>
 
             <div className="space-y-2">

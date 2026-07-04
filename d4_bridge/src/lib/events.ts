@@ -73,6 +73,7 @@ export function mapEvent(row: any, tiers?: any[], discounts?: any[]): Event {
     genres: row.genres ?? undefined,
     subgenres: row.subgenres ?? undefined,
     performers: row.performer_names ?? undefined,
+    artistLinks: Array.isArray(row.artist_links) && row.artist_links.length ? row.artist_links : undefined,
     timing: row.starts_at
       ? {
           doorsOpen: row.doors_at ? toTs(row.doors_at) : undefined,
@@ -202,6 +203,9 @@ export interface EventInput {
   venueAddress?: Record<string, unknown>;
   primaryPerformerName?: string;
   performerNames?: string[];
+  // Per-artist link rows (mig 20260703130000). Kept as-is (jsonb) — the editor
+  // shape (src/types ArtistLink) is exactly what the column stores.
+  artistLinks?: import('../types').ArtistLink[];
   eventType?: string;
   category?: string;
   genres?: string[];
@@ -220,6 +224,7 @@ const EVENT_COL: Array<[keyof EventInput, string]> = [
   ['startsAt', 'starts_at'], ['doorsAt', 'doors_at'], ['endsAt', 'ends_at'], ['occursAtLocal', 'occurs_at_local'],
   ['timezone', 'timezone'], ['currency', 'currency'], ['venueName', 'venue_name'], ['venueLocation', 'venue_location'],
   ['venueAddress', 'venue_address'], ['primaryPerformerName', 'primary_performer_name'], ['performerNames', 'performer_names'],
+  ['artistLinks', 'artist_links'],
   ['eventType', 'event_type'], ['category', 'category'], ['genres', 'genres'], ['subgenres', 'subgenres'],
   ['imageUrl', 'image_url'], ['totalTickets', 'total_tickets'], ['branding', 'branding'], ['exclusivity', 'exclusivity'],
   ['purchaseLimits', 'purchase_limits'], ['distributionNetworks', 'distribution_networks'],

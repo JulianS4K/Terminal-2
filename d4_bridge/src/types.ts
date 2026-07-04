@@ -141,6 +141,26 @@ export interface OrgInvite {
   claimedAt?: Timestamp;
 }
 
+/**
+ * Per-artist link row. `name` should match a `performers[]` entry so the
+ * event page can render the links beside that performer; entries whose name
+ * matches no performer are still stored but simply aren't surfaced. Every
+ * link value is a public handle or URL (no secrets) — normalized to a real
+ * destination by `artistLinkHref()` in lib/artistLinks.ts. All platforms
+ * optional; a row with a name but no links renders nothing.
+ */
+export interface ArtistLink {
+  name: string;
+  spotify?: string;
+  appleMusic?: string;
+  bandsintown?: string;
+  instagram?: string;
+  x?: string;
+  tiktok?: string;
+  youtube?: string;
+  website?: string;
+}
+
 export interface Event {
   id: string;
   title: string;
@@ -195,6 +215,13 @@ export interface Event {
   // the firestore rule and by the Create/Edit form. Optional because
   // legacy events created before this field shipped don't have it.
   performers?: string[];
+  // Optional per-artist link metadata, keyed by performer name. Additive to
+  // `performers` (the canonical name list) — an organizer can attach an
+  // artist's streaming + social destinations so the event page links out to
+  // each one. Public handles/URLs only. Persisted as the `artist_links` jsonb
+  // column (mig 20260703130000); rendered via components/ArtistLinks.tsx and
+  // normalized by lib/artistLinks.ts. Legacy events predate it → optional.
+  artistLinks?: ArtistLink[];
   timing?: {
     doorsOpen?: Timestamp;
     startTime: Timestamp;

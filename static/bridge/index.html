@@ -16,6 +16,33 @@
     <meta name="description" content="Bridge — independent venue ticketing with multi-channel distribution." />
 
     <!--
+      Social share / link-unfurl defaults (Open Graph + Twitter Card).
+      These are PLACEHOLDERS that src/lib/meta.ts overwrites per-page at
+      runtime (event title, poster image, canonical URL). They MUST exist
+      in the initial HTML because:
+        1. meta.ts can update an existing tag but can't add one in time
+           for a crawler — see the contract in that file's header.
+        2. Most link unfurlers (Slack, iMessage, Discord, Facebook, X)
+           scrape the raw HTML WITHOUT executing JS, so these static
+           defaults are the only preview they ever see. A shared root or
+           org link therefore gets a branded card instead of a bare URL.
+      Selectors here mirror meta.ts exactly (property=og:*, name=twitter:*)
+      so its setOrCreateMeta() finds and mutates these rather than append
+      duplicates. og:image uses the /bridge/-prefixed path because Vite
+      does not rewrite meta content attributes the way it does href/src.
+    -->
+    <meta property="og:site_name" content="Exos" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Exos | Live the Moment" />
+    <meta property="og:description" content="Bridge — independent venue ticketing with multi-channel distribution." />
+    <meta property="og:image" content="/bridge/icon-512.png" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Exos | Live the Moment" />
+    <meta name="twitter:description" content="Bridge — independent venue ticketing with multi-channel distribution." />
+    <meta name="twitter:image" content="/bridge/icon-512.png" />
+
+    <!--
       iOS PWA support. Safari ignores most of the manifest, so we
       duplicate the relevant bits as <meta>. apple-touch-icon must
       be same-origin or iOS silently falls back to a screenshot.
@@ -26,25 +53,83 @@
     <meta name="format-detection" content="telephone=no" />
     <link rel="apple-touch-icon" href="/bridge/icon.svg" />
 
+    <!--
+      Warm up the Google Fonts connection. The actual @font-face rules
+      are pulled in by the CSS @import in src/index.css, but that import
+      isn't discovered until the stylesheet downloads and parses. These
+      hints open the TLS connections to both hosts in parallel with the
+      HTML/CSS fetch so the fonts arrive sooner. gstatic (the font-file
+      host) needs crossorigin because fonts are fetched anonymously.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
     <!-- Manifest + favicon. icon.svg renders crisp at every size. -->
     <link rel="manifest" href="/bridge/manifest.json" />
     <link rel="icon" href="/bridge/icon.svg" type="image/svg+xml" />
     <link rel="mask-icon" href="/bridge/icon.svg" color="#FFE714" />
 
     <title>Exos | Live the Moment</title>
-    <script type="module" crossorigin src="/bridge/assets/index-Dg1EwBeL.js"></script>
+
+    <!--
+      First-paint splash. React clears #root's contents on mount, so this
+      markup is visible only during the JS download/parse window and then
+      vanishes automatically — no cleanup code needed. Colors match the
+      manifest background_color (#0A0A0A) + brand yellow (#FFE714) so it's
+      continuous with the Android PWA splash instead of a blank flash.
+      Animation is suppressed under prefers-reduced-motion.
+    -->
+    <style>
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0a0a0a;
+      }
+      #boot .ring {
+        width: 44px;
+        height: 44px;
+        border: 3px solid rgba(255, 231, 20, 0.2);
+        border-top-color: #ffe714;
+        border-radius: 50%;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot .ring {
+          animation: none;
+          border-top-color: rgba(255, 231, 20, 0.6);
+        }
+      }
+    </style>
+    <script type="module" crossorigin src="/bridge/assets/index-DNiRKZjs.js"></script>
     <link rel="modulepreload" crossorigin href="/bridge/assets/rolldown-runtime-Cyuzqnbw.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/qr-6Jh8xKZF.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/jsx-runtime-C8pkgk4b.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/auth-wl0ijZNl.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/auth-U__EMPuY.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/motion-gVt-Xe65.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/proxy-CY7Iqcm8.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/createLucideIcon-yZIjZNTn.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/timestamp-BGXidqJ_.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/utils-BF0DKh0-.js">
-    <link rel="stylesheet" crossorigin href="/bridge/assets/index-DADr4sDG.css">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/utils-DXIw2TUt.js">
+    <link rel="stylesheet" crossorigin href="/bridge/assets/index-oFoSjjQ8.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot" aria-hidden="true">
+        <div class="ring"></div>
+      </div>
+    </div>
+    <noscript>
+      <div style="padding: 2rem; text-align: center; color: #fff; background: #0a0a0a; font-family: system-ui, sans-serif;">
+        Exos needs JavaScript enabled to load. Please turn it on and reload this page.
+      </div>
+    </noscript>
   </body>
 </html>
