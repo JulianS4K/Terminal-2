@@ -200,11 +200,11 @@
       return;
     }
     T.setStatus('Loading SeatGeek event…');
-    // Every tab is TEvo-source-specific — hide the nav and non-overview panes.
-    // NB: `.event-tabs { display:flex }` overrides the `hidden` attribute, so set
-    // display directly too (the SG page shows its own WC tab bar instead).
-    const tabs = document.getElementById('eventTabs');
-    if (tabs) { tabs.hidden = true; tabs.style.display = 'none'; }
+    // SG/World-Cup now renders the STANDARD event layout (shared #eventTabs + the
+    // static panes), just fed from the get_wc_* data and with the SG views merged
+    // into the matching evo tabs — see renderSgEvent(). Non-overview panes start
+    // hidden; activateTab() reveals the active one. (The old bespoke #wcTabs page
+    // was retired here 2026-07-04 per operator: "evo view should be standard.")
     document.querySelectorAll('.tab-pane').forEach(p => { if (p.id !== 'paneOverview') p.hidden = true; });
 
     const res = (Auth && Auth.client)
@@ -220,6 +220,14 @@
     wireSgTrackButton(sgId).catch(e => console.error('[sg track]', e));
   }
 
+  // SG / World-Cup event page. Renders the STANDARD event layout (the same
+  // #eventTabs bar + static panes the ?event= path uses) and merges the SG views
+  // into the matching evo tabs — operator directive 2026-07-04: "evo view should
+  // be standard, just switch the data point; keep the SG views and merge them in."
+  // Only the tabs World-Cup data supports are shown; each mounts an existing WC
+  // loader (keyed on sg_event_id) into the standard pane, so the loaders are
+  // reused unchanged. The ?event= (TEvo) path is entirely untouched.
+  const WC_TABS = ['overview', 'sg-listings', 'sg-sales', 'seatdata-sales', 'seatmap'];
   function renderSgEvent(sgId, rows) {
     const latest = rows.length ? rows[rows.length - 1] : null;
     const name  = (latest && latest.sg_event_name) || ('SeatGeek event ' + sgId);
@@ -237,15 +245,32 @@
     const fr = document.getElementById('freshness'); if (fr) fr.hidden = true;
     const hw = document.getElementById('hero-weather'); if (hw) hw.hidden = true;
 
+    // Standard tab bar: show only the WC-supported tabs, drop the "| watchlist"
+    // separator, and relabel the SG-native tabs.
+    const nav = document.getElementById('eventTabs');
+    if (nav) {
+      nav.hidden = false; nav.style.display = '';
+      nav.querySelectorAll('.event-tab').forEach(b => {
+        b.style.display = WC_TABS.includes(b.dataset.tab) ? '' : 'none';
+      });
+      nav.querySelectorAll('.event-tabs-sep').forEach(s => { s.style.display = 'none'; });
+      const relabel = { 'sg-listings': 'SG Listings', 'sg-sales': 'SG Sales', 'seatdata-sales': 'SeatData Comps' };
+      nav.querySelectorAll('.event-tab').forEach(b => {
+        const l = relabel[b.dataset.tab];
+        if (l) { const c = b.querySelector('.tab-count'); b.textContent = l + ' '; if (c) b.appendChild(c); }
+      });
+    }
+
     const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
     const num   = v => (v == null ? '—' : T.fmtNum(v));
     const pane = document.getElementById('paneOverview');
     if (!pane) return;
 
-    // Price-history section (only when the daily rollup has data).
-    let priceSection;
+    // ---- Overview pane: KPI grid + price chart (standard .chart-section frame) +
+    //      Markets + ESPN, all in the standard section chrome. ----
+    let overviewHtml = '';
     if (!rows.length) {
-      priceSection = '<section class="panel"><div class="empty">No SeatGeek daily price history yet for this match.' +
+      overviewHtml = '<section class="panel"><div class="empty">No SeatGeek daily price history yet for this match.' +
         '<div class="muted small">Populates as the World Cup price logger runs (wc_price_daily).</div></div></section>';
     } else {
       const kpis = [
@@ -267,94 +292,78 @@
         `<td class="num">${num(r.listings_count)}</td>` +
         `<td class="num">${num(r.tickets_count)}</td>` +
         '</tr>').join('');
-      priceSection =
+      overviewHtml =
         `<section id="kpi-grid">${kpiHtml}</section>` +
+        // Price chart in the standard chart-section frame so it reads like the evo chart.
+        '<section class="chart-section">' +
+          '<div class="chart-title"><span>SEATGEEK PRICE HISTORY · ALL-IN · GET-IN / MEDIAN / P90</span>' +
+          `<span class="muted small">${rows.length} days · sg_event_id ${escapeHtml(String(sgId))}</span></div>` +
+          '<div id="wcChartHost" class="chart-pane" style="min-height:260px"></div>' +
+        '</section>' +
         '<section id="sg-price-history">' +
-          '<div class="panel-title row"><span>SEATGEEK PRICE HISTORY — daily all-in (wc_price_daily)</span>' +
-          `<span class="muted small">${rows.length} days · sg_event_id ${sgId}</span></div>` +
-          '<div id="wcChartHost" class="wc-chart"></div>' +
+          '<div class="panel-title row"><span>DAILY ALL-IN — wc_price_daily</span></div>' +
           '<table class="wc-daily"><thead><tr><th>Date</th><th class="num">Get-in</th><th class="num">Median</th>' +
           '<th class="num">P90</th><th class="num">Listings</th><th class="num">Tickets</th></tr></thead>' +
           `<tbody>${tableRows}</tbody></table>` +
         '</section>';
     }
+    // Markets + ESPN live in the overview (no dedicated evo tab for them).
+    overviewHtml +=
+      '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
+      '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
+      '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
+      'GameTime needs discovery; EVO isn\'t available for SeatGeek-native events.</div></section>' +
+      '<section id="wc-espn"><div class="panel-title row"><span>ESPN — match score &amp; status</span>' +
+      '<span class="muted small" id="wcEspnMeta">loading…</span></div><div id="wcEspnBody"><div class="empty">loading…</div></div>' +
+      '<div class="muted small" style="margin-top:6px">Linked to the ESPN FIFA World Cup feed by schedule (best-effort; firms up as the bracket sets).</div></section>';
+    pane.innerHTML = overviewHtml;
 
-    // WC tabbed layout — each source gets its own tab, lazy-loaded on first open
-    // (uPlot/Tevomaps need a visible host to size correctly, so we defer until the
-    // tab is shown). The shared TEvo tab bar (#eventTabs) stays hidden in SG mode.
-    const wcTabs = [
-      ['overview',    'Overview'],
-      ['markets',     'Markets'],
-      ['sg-listings', 'SG Listings'],
-      ['sg-sales',    'SG Sales'],
-      ['seatdata',    'SeatData Comps'],
-      ['espn',        'ESPN'],
-      ['seatmap',     'Seat Map'],
-    ];
-    const wcTabBar = '<div id="wcTabs" class="event-tabs" role="tablist">' +
-      wcTabs.map(([id, lbl], i) =>
-        `<button class="event-tab${i === 0 ? ' active' : ''}" data-wctab="${id}" role="tab" aria-selected="${i === 0}">${lbl}</button>`).join('') +
-      '</div>';
-    const wcPane = (id, active, inner) =>
-      `<div class="tab-pane${active ? ' active' : ''}" data-wcpane="${id}"${active ? '' : ' hidden'}>${inner}</div>`;
+    // Mount the SG views into the matching STANDARD panes so they read as evo tabs.
+    // Each uses the same host ids the existing WC loaders target (reused unchanged).
+    const mount = (paneId, html) => { const p = document.getElementById(paneId); if (p) p.innerHTML = html; };
+    mount('paneSgListings',
+      '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
+      '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>');
+    mount('paneSgSales',
+      '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
+      '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>');
+    mount('paneSeatdataSales',
+      '<section id="sg-seatdata-comps"><div class="panel-title row"><span>SEATDATA COMPS — realized sold-ticket curve (full history)</span>' +
+      '<span class="muted small" id="sgSdMeta">loading…</span></div>' +
+      '<div id="sgSdNote" class="muted small" style="margin-bottom:6px"></div>' +
+      '<div id="sgSdHost" class="wc-chart"></div><div id="sgSdBody"><div class="empty">loading…</div></div></section>');
+    mount('paneSeatmap',
+      '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
+      '<span class="muted small" id="sgMapMeta">open to load</span></div>' +
+      '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">Open this tab to load the seat map.</div></div>' +
+      '<div class="muted small" id="sgMapNote" style="margin-top:6px"></div></section>');
 
-    pane.innerHTML = wcTabBar +
-      wcPane('overview', true, priceSection) +
-      wcPane('markets', false,
-        '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
-        '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
-        '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
-        'GameTime needs discovery; EVO isn\'t available for SeatGeek-native events.</div></section>') +
-      wcPane('sg-listings', false,
-        '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
-        '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>') +
-      wcPane('sg-sales', false,
-        '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
-        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>') +
-      wcPane('seatdata', false,
-        '<section id="sg-seatdata-comps"><div class="panel-title row"><span>SEATDATA COMPS — realized sold-ticket curve (full history)</span>' +
-        '<span class="muted small" id="sgSdMeta">loading…</span></div>' +
-        '<div id="sgSdNote" class="muted small" style="margin-bottom:6px"></div>' +
-        '<div id="sgSdHost" class="wc-chart"></div><div id="sgSdBody"><div class="empty">loading…</div></div></section>') +
-      wcPane('espn', false,
-        '<section id="wc-espn"><div class="panel-title row"><span>ESPN — match score &amp; status</span>' +
-        '<span class="muted small" id="wcEspnMeta">open to load</span></div><div id="wcEspnBody"><div class="empty">Open this tab to load ESPN data.</div></div>' +
-        '<div class="muted small" style="margin-top:6px">Linked to the ESPN FIFA World Cup feed by schedule (best-effort; firms up as the bracket sets).</div></section>') +
-      wcPane('seatmap', false,
-        '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
-        '<span class="muted small" id="sgMapMeta">open to load</span></div>' +
-        '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">Open this tab to load the seat map.</div></div>' +
-        '<div class="muted small" id="sgMapNote" style="margin-top:6px"></div></section>');
-
-    // Overview is active immediately; Markets pre-loads (cheap, high-value); the
-    // rest lazy-load on first tab open.
+    // Overview renders immediately; Markets + ESPN pre-load (cheap, high-value);
+    // the tab views lazy-load on first activation, wired to the STANDARD tab bar.
     if (rows.length) renderWcChart('wcChartHost', rows);
     loadWcMarkets(sgId).catch(e => console.error('[wc markets]', e));
+    loadWcEspn(sgId).catch(e => console.error('[wc espn]', e));
     const wcLoaders = {
-      'markets':     () => loadWcMarkets(sgId),
-      'sg-listings': () => loadSgListingsInline(sgId),
-      'sg-sales':    () => loadSgSalesInline(sgId),
-      'seatdata':    () => loadWcSeatdataComps(sgId),
-      'espn':        () => loadWcEspn(sgId),
-      'seatmap':     () => loadWcSeatmapDonor(sgId),
+      'sg-listings':    () => loadSgListingsInline(sgId),
+      'sg-sales':       () => loadSgSalesInline(sgId),
+      'seatdata-sales': () => loadWcSeatdataComps(sgId),
+      'seatmap':        () => loadWcSeatmapDonor(sgId),
     };
-    const wcLoaded = { 'markets': true };
-    const wcBar = document.getElementById('wcTabs');
-    if (wcBar) wcBar.addEventListener('click', (e) => {
-      const btn = e.target.closest('.event-tab');
-      if (!btn) return;
-      const id = btn.dataset.wctab;
-      pane.querySelectorAll('#wcTabs .event-tab').forEach(b => {
-        const on = b.dataset.wctab === id;
-        b.classList.toggle('active', on);
-        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    const wcLoaded = {};
+    if (nav && !nav.__wcWired) {
+      nav.__wcWired = true;
+      nav.addEventListener('click', (e) => {
+        const btn = e.target.closest('.event-tab');
+        if (!btn) return;
+        const id = btn.dataset.tab;
+        activateTab(id);
+        if (!wcLoaded[id] && wcLoaders[id]) {
+          wcLoaded[id] = true;
+          wcLoaders[id]().catch(err => console.error('[wc tab ' + id + ']', err));
+        }
       });
-      pane.querySelectorAll('[data-wcpane]').forEach(p => { p.hidden = p.dataset.wcpane !== id; });
-      if (!wcLoaded[id] && wcLoaders[id]) {
-        wcLoaded[id] = true;
-        wcLoaders[id]().catch(err => console.error('[wc tab ' + id + ']', err));
-      }
-    });
+    }
+    activateTab('overview');
   }
 
   // ESPN match score/status for a WC match (get_wc_espn — schedule-bridged to the
@@ -450,8 +459,8 @@
     const width = () => Math.max(160, host.clientWidth || 800);
     const opts = {
       width: width(), height: 240, scales: { x: { time: true } },
-      series: [{}, { label: 'Get-in', stroke: '#5ab0ff', width: 2 },
-        { label: 'Median', stroke: '#46d39a', width: 2 }, { label: 'P90', stroke: '#e0a23c', width: 1 }],
+      series: [{}, { label: 'Get-in', stroke: SRC.sg, width: 2 },
+        { label: 'Median', stroke: SRC.gt, width: 2 }, { label: 'P90', stroke: SRC.tevo, width: 1 }],
     };
     host.innerHTML = '';
     const u = new uPlot(opts, data, host);
@@ -513,10 +522,26 @@
     }
   }
 
+  // Compact $ axis formatter — keeps normal prices exact ($50…$9,999) and only
+  // abbreviates larger magnitudes ($12k, $1.5M) so a 7-digit tick can't blow out
+  // the axis gutter. Shared by the WC chart + the composite price pane.
+  function fmtMoneyAxis(x) {
+    if (x == null) return '';
+    var a = Math.abs(x);
+    if (a >= 1e6) return '$' + String((x / 1e6).toFixed(1)).replace(/\.0$/, '') + 'M';
+    if (a >= 1e4) return '$' + Math.round(x / 1e3) + 'k';
+    return '$' + Math.round(x);
+  }
+
   // Real uPlot price chart for the WC page (get-in / median / p90 daily series).
   function renderWcChart(hostId, rows) {
     const host = document.getElementById(hostId);
-    if (!host || typeof uPlot === 'undefined' || !rows || rows.length < 2) return;
+    if (!host || typeof uPlot === 'undefined') return;
+    // A single day can't draw a line — show a message instead of a blank pane.
+    if (!rows || rows.length < 2) {
+      host.innerHTML = '<div class="empty">Not enough price history yet — needs at least 2 days.</div>';
+      return;
+    }
     const asc = rows.slice().sort((a, b) => (a.snapshot_date < b.snapshot_date ? -1 : 1));
     const xs = asc.map(r => Math.floor(new Date(r.snapshot_date + 'T00:00:00Z').getTime() / 1000));
     const col = k => asc.map(r => (r[k] != null ? +r[k] : null));
@@ -524,14 +549,20 @@
     // Floor stays below the narrowest phone pane so the canvas never exceeds its
     // container (see paneSize note) — a 320 floor overflowed a ~284px SE pane.
     const width = () => Math.max(160, host.clientWidth || 800);
+    const axisBase = { stroke: '#a3a3a3', font: '11px ui-monospace, Menlo, monospace',
+      grid: { stroke: '#262626', width: 1 }, ticks: { stroke: '#404040', size: 6 } };
     const opts = {
       width: width(), height: 240,
       scales: { x: { time: true } },
+      axes: [
+        Object.assign({}, axisBase),
+        Object.assign({}, axisBase, { values: (u, v) => v.map(fmtMoneyAxis), size: 56 }),
+      ],
       series: [
         {},
-        { label: 'Get-in', stroke: '#5ab0ff', width: 2 },
-        { label: 'Median', stroke: '#46d39a', width: 2 },
-        { label: 'P90', stroke: '#e0a23c', width: 1 },
+        { label: 'Get-in', stroke: SRC.sg, width: 2 },
+        { label: 'Median', stroke: SRC.gt, width: 2 },
+        { label: 'P90', stroke: SRC.tevo, width: 1 },
       ],
     };
     host.innerHTML = '';
@@ -615,21 +646,6 @@
       '</tr>').join('');
     body.innerHTML = '<table><thead><tr><th>Sold</th><th>Section</th><th>Row</th>' +
       '<th class="num">Qty</th><th class="num">Price</th></tr></thead><tbody>' + trs + '</tbody></table>';
-  }
-
-  // Minimal inline-SVG sparkline of the median-price series (no chart lib needed).
-  function sgSparkline(vals) {
-    if (!vals || vals.length < 2) return '';
-    const w = 600, h = 72, pad = 4;
-    const min = Math.min(...vals), max = Math.max(...vals);
-    const span = (max - min) || 1;
-    const pts = vals.map((v, i) => {
-      const x = pad + (i / (vals.length - 1)) * (w - 2 * pad);
-      const y = h - pad - ((v - min) / span) * (h - 2 * pad);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
-    return `<svg class="sg-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="median price trend">` +
-      `<polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${pts}" /></svg>`;
   }
 
   async function wireSgTrackButton(sgId) {
@@ -1282,6 +1298,27 @@
   const AXIS_STROKE = '#a3a3a3';     // lighter than --muted so it's readable on #0a0a0a
   const AXIS_GRID = '#262626';
   const AXIS_TICKS = '#404040';
+
+  // Per-source chart hues — the SINGLE source of truth for line colors. Mirrors
+  // the --src-* tokens in _shared/design-tokens.css (canvas strokes need string
+  // literals, so we read each token once with the token's own value as fallback).
+  // One source = one hue everywhere: the price line, the inventory line, the
+  // legend swatch, and the master-toggle chip all share it. Owned/market/sales
+  // are told apart by dash + width (see the specs below), never by hue.
+  const _rootStyle = getComputedStyle(document.documentElement);
+  const _tok = (name, fallback) => (_rootStyle.getPropertyValue(name).trim() || fallback);
+  const SRC = {
+    sg:   _tok('--src-sg',       '#3987e5'),
+    gt:   _tok('--src-gt',       '#199e70'),
+    tevo: _tok('--src-tevo',     '#c98500'),
+    sd:   _tok('--src-seatdata', '#008300'),
+    vd:   _tok('--src-vd',       '#9085e9'),
+    sh:   _tok('--src-sh',       '#e66767'),
+    tm:   _tok('--src-tm',       '#d55181'),
+    axs:  _tok('--src-axs',      '#d95926'),
+    tp:   _tok('--src-tp',       '#8a8a8a'),
+    hero: _tok('--series-hero',  '#f5f5f5'),
+  };
   const X_AXIS = {
     stroke: AXIS_STROKE, font: AXIS_FONT,
     grid: { stroke: AXIS_GRID, width: 1 },
@@ -1384,20 +1421,22 @@
     // Each median line splices its durable daily history (long horizon, indefinite)
     // under its fine-grained recent points so the line is continuous past the
     // firehose/event_metrics sweep windows. TD lines ARE the daily series already.
-    // Visual rebuild: one hue per source (owned = solid bold, market = thin solid,
-    // secondary = dotted), no more competing dash patterns.
+    // Visual rebuild (2026-07-03): one validated hue per source (SRC map above),
+    // and WITHIN a source the role is carried by dash/width, never hue — owned =
+    // solid bold, market = dashed, non-owned = fine-dotted, sales = long-dash. So a
+    // line's colour always names its source and the master-toggle chip matches it.
     const specs = [
-      { key: 'prices_owned',    label: 'TEvo owned',  color: '#fbbf24', width: 2,   dash: null,    data: mergeDurable(chart.prices_owned,    durMed('evo_owned')) },
-      { key: 'prices_market',   label: 'TEvo market', color: '#a8a29e', width: 1.25, dash: null,   data: mergeDurable(chart.prices_market,   durMed('evo_mkt')) },
-      { key: 'prices_nonowned', label: 'TEvo non-own',color: '#a78bfa', width: 1,   dash: [2, 3],  data: chart.prices_nonowned },
-      { key: 'sg_list_med',     label: 'SG market',   color: '#22d3ee', width: 1.5, dash: null,    data: mergeDurable(extSeries.sg_listings_median       || [], durMed('sg_list')) },
-      { key: 'sg_own_med',      label: 'SG owned',    color: '#fb7185', width: 1,   dash: [2, 3],  data: mergeDurable(extSeries.sg_listings_owned_median || [], durMed('sg_own')) },
-      { key: 'sg_sale_med',     label: 'SG sales',    color: '#84cc16', width: 1.5, dash: [6, 3],  data: extSeries.sg_sales_median          || [] },
-      { key: 'sd_sale_med',     label: 'SeatData sales', color: '#f59e0b', width: 1.5, dash: [6, 3], data: extSeries.sd_sales_median        || [] },
-      { key: 'td_sh_med',       label: 'StubHub',     color: '#f97316', width: 1.25, dash: null,   data: tdS.sh || durMed('sh') },
-      { key: 'td_gt_med',       label: 'GameTime',    color: '#34d399', width: 1.25, dash: null,   data: tdS.gt || durMed('gt') },
-      { key: 'td_vd_med',       label: 'VividSeats',  color: '#c084fc', width: 1.25, dash: null,   data: tdS.vd || durMed('vd') },
-      { key: 'prices_axs',      label: 'AXS box office', color: '#38bdf8', width: 1.75, dash: null, data: chart.prices_axs || [] },
+      { key: 'prices_owned',    label: 'TEvo owned',  color: SRC.tevo, width: 2,   dash: null,    data: mergeDurable(chart.prices_owned,    durMed('evo_owned')) },
+      { key: 'prices_market',   label: 'TEvo market', color: SRC.tevo, width: 1.25, dash: [5, 3], data: mergeDurable(chart.prices_market,   durMed('evo_mkt')) },
+      { key: 'prices_nonowned', label: 'TEvo non-own',color: SRC.tevo, width: 1,   dash: [1, 3],  data: chart.prices_nonowned },
+      { key: 'sg_list_med',     label: 'SG market',   color: SRC.sg,   width: 2,   dash: null,    data: mergeDurable(extSeries.sg_listings_median       || [], durMed('sg_list')) },
+      { key: 'sg_own_med',      label: 'SG owned',    color: SRC.sg,   width: 1.25, dash: [5, 3], data: mergeDurable(extSeries.sg_listings_owned_median || [], durMed('sg_own')) },
+      { key: 'sg_sale_med',     label: 'SG sales',    color: SRC.sg,   width: 1.5, dash: [6, 3],  data: extSeries.sg_sales_median          || [] },
+      { key: 'sd_sale_med',     label: 'SeatData sales', color: SRC.sd, width: 1.5, dash: [6, 3], data: extSeries.sd_sales_median        || [] },
+      { key: 'td_sh_med',       label: 'StubHub',     color: SRC.sh,   width: 1.5, dash: null,    data: tdS.sh || durMed('sh') },
+      { key: 'td_gt_med',       label: 'GameTime',    color: SRC.gt,   width: 1.5, dash: null,    data: tdS.gt || durMed('gt') },
+      { key: 'td_vd_med',       label: 'VividSeats',  color: SRC.vd,   width: 1.5, dash: null,    data: tdS.vd || durMed('vd') },
+      { key: 'prices_axs',      label: 'AXS box office', color: SRC.axs, width: 1.75, dash: null, data: chart.prices_axs || [] },
     ];
     // TP / TM / TM-resale price medians — the medians live in _tdFamily[*].med
     // (the same family that already feeds the Overall-median consensus below) but
@@ -1406,9 +1445,9 @@
     // adds nothing (so this is a no-op until A1's snapshot rollup populates them).
     if (_tdFamily) {
       const famMed = (k) => (_tdFamily[k] && _tdFamily[k].med) || [];
-      if (famMed('tp').length)  specs.push({ key: 'td_tp_med',  label: 'TickPick',     color: '#eab308', width: 1.25, dash: null, data: famMed('tp') });
-      if (famMed('tm').length)  specs.push({ key: 'td_tm_med',  label: 'Ticketmaster', color: '#818cf8', width: 1.25, dash: null, data: famMed('tm') });
-      if (famMed('tmr').length) specs.push({ key: 'td_tmr_med', label: 'TM resale',    color: '#e879f9', width: 1.25, dash: null, data: famMed('tmr') });
+      if (famMed('tp').length)  specs.push({ key: 'td_tp_med',  label: 'TickPick',     color: SRC.tp, width: 1.25, dash: null,   data: famMed('tp') });
+      if (famMed('tm').length)  specs.push({ key: 'td_tm_med',  label: 'Ticketmaster', color: SRC.tm, width: 1.5,  dash: null,   data: famMed('tm') });
+      if (famMed('tmr').length) specs.push({ key: 'td_tmr_med', label: 'TM resale',    color: SRC.tm, width: 1.25, dash: [5, 3], data: famMed('tmr') });
     }
     const { xs } = buildSeriesData(specs);
 
@@ -1429,10 +1468,17 @@
       { cad: 'TM',  ...tdSrc('tm') },
       { cad: 'TMr', ...tdSrc('tmr') },
     ]);
-    specs.push({ key: 'overall_med', label: 'Overall median', color: '#ffffff',
+    specs.push({ key: 'overall_med', label: 'Overall median', color: SRC.hero,
                  width: 3, dash: null, data: [], projected: overallProjected });
 
     _chartLastBuildPrice = { specs, xs };
+
+    // No points in view → show a message instead of a phantom $0/$1 axis.
+    if (!xs.length) {
+      host.innerHTML = '<div class="empty">No price data in this window yet.</div>';
+      _chartInstances.price = null;
+      return;
+    }
 
     const xRange = clipRangeForHours(_chartPriceHours, xs);
     const data = [xs, ...specs.map(s => s.projected)];
@@ -1454,7 +1500,7 @@
         { scale: 'y', stroke: AXIS_STROKE, font: AXIS_FONT,
           grid: { stroke: AXIS_GRID, width: 1 },
           ticks: { stroke: AXIS_TICKS, size: 6 },
-          values: (u, v) => v.map(x => x == null ? '' : '$' + Math.round(x)),
+          values: (u, v) => v.map(fmtMoneyAxis),
           size: 56 },
       ],
       series: [
@@ -1494,15 +1540,29 @@
     }
   }
 
-  // Y-axis range — always 10% above the maximum value currently in view.
+  // Y-axis range — FIT the data in view (padded), not anchored at $0.
   //
-  // `initMax` is supplied by uPlot already scoped to (a) only the series on THIS
-  // scale and (b) only the points inside the current x-window, so the top tracks
-  // the on-screen data as the time range changes or prices climb toward the
-  // event — no line is ever clipped, and a single spike just lifts the top.
+  // `initMin`/`initMax` are supplied by uPlot already scoped to (a) only the
+  // series on THIS scale and (b) only the points inside the current x-window, so
+  // the band tracks the on-screen data as the time range or price level shifts.
+  //
+  // Prior behaviour returned [0, max*1.1] — a zero baseline. For a price line that
+  // lives at, say, $250±6 that flattened the whole series against the top and made
+  // its real movement invisible (a broker chart wants the swing, not the distance
+  // to $0). Now we pad 8% around the in-view span, keep a floor on the span so a
+  // near-flat series doesn't zoom into noise, and never dip below 0 for all-positive
+  // (price) data — while still allowing a genuine negative range through.
   function robustYRange(u, initMin, initMax) {
-    var mx = (initMax != null && isFinite(initMax)) ? initMax : 1;
-    return [0, mx > 0 ? mx * 1.1 : 1];
+    if (initMax == null || !isFinite(initMax) || initMin == null || !isFinite(initMin)) {
+      return [0, 1];  // no data in view — neutral finite range
+    }
+    var span = initMax - initMin;
+    if (span <= 0) span = Math.abs(initMax) || 1;   // flat series → synthesise a span so it centres
+    var pad = span * 0.08;
+    var lo = initMin - pad;
+    var hi = initMax + pad;
+    if (initMin >= 0 && lo < 0) lo = 0;              // all-positive (price) data never crosses below 0
+    return [lo, hi];
   }
 
   // Count-axis range — for the inventory pane's integer count scales (left 'y'
@@ -1637,28 +1697,29 @@
     const extSeries = (ext && ext.series) || {};
 
     const specs = [
-      { key: 'counts_owned',  label: 'TEvo owned qty', color: '#60a5fa', width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(96,165,250,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
-      { key: 'counts_market', label: 'TEvo mkt qty',   color: '#94a3b8', width: 1,   dash: [2,2],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
-      { key: 'sg_list_ct',    label: 'SG mkt qty',     color: '#22d3ee', width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
-      { key: 'counts_axs',    label: 'AXS listings',   color: '#38bdf8', width: 1.75, dash: null,  scale: 'y',  data: chart.counts_axs || [] },
+      { key: 'counts_owned',  label: 'TEvo owned qty', color: SRC.tevo, width: 1.5, dash: null,   scale: 'y',  fill: 'rgba(201,133,0,0.08)', data: mergeDurable(chart.counts_owned,  durCnt('evo_own')) },
+      { key: 'counts_market', label: 'TEvo mkt qty',   color: SRC.tevo, width: 1,   dash: [5,3],  scale: 'y',  data: mergeDurable(chart.counts_market, durCnt('evo_tix')) },
+      { key: 'sg_list_ct',    label: 'SG mkt qty',     color: SRC.sg,   width: 1.5, dash: null,   scale: 'y',  data: mergeDurable(extSeries.sg_listings_count || [], durCnt('sg_tix')) },
+      { key: 'counts_axs',    label: 'AXS listings',   color: SRC.axs,  width: 1.75, dash: null,  scale: 'y',  data: chart.counts_axs || [] },
       // Market sales (right axis) — STACKED: SG (bottom) + SeatData (top) per
       // bucket. SeatData is listed first so it draws BEHIND at the cumulative
       // height (SG+SeatData); SG draws after with an opaque fill, overdrawing the
       // lower segment → a 2-colour stacked bar. Cumulative value is computed
       // post-build (see below); the tooltip still shows each source's own count.
-      { key: 'sd_sale_ct',    label: 'SeatData sale ct', color: '#f59e0b', width: 1, dash: null, scale: 'yr', bars: true, stack: 'mktSales', data: extSeries.sd_sales_count || [] },
-      { key: 'sg_sale_ct',    label: 'SG sale ct',     color: '#84cc16', width: 1,   dash: null,   scale: 'yr', bars: true, stack: 'mktSales', data: extSeries.sg_sales_count || [] },
-      // OUR sell-through — combined EVO+TickPick+Vivid tickets sold per bucket (not stacked).
-      { key: 'our_sale_ct',   label: 'Our sales ct',   color: '#ec4899', width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.orders_count || [] },
+      { key: 'sd_sale_ct',    label: 'SeatData sale ct', color: SRC.sd, width: 1, dash: null, scale: 'yr', bars: true, stack: 'mktSales', data: extSeries.sd_sales_count || [] },
+      { key: 'sg_sale_ct',    label: 'SG sale ct',     color: SRC.sg,   width: 1,   dash: null,   scale: 'yr', bars: true, stack: 'mktSales', data: extSeries.sg_sales_count || [] },
+      // OUR sell-through — combined EVO+TickPick+Vivid tickets sold per bucket (not
+      // stacked). Drawn in the hero mark so "us" reads the same on both panes.
+      { key: 'our_sale_ct',   label: 'Our sales ct',   color: SRC.hero, width: 1,   dash: null,   scale: 'yr', bars: true, data: extSeries.orders_count || [] },
     ];
     // Overlay TD listing-count series (dashed, hidden by default — user-togglable)
     if (_tdInvCountSeries) {
       if (_tdInvCountSeries.sh.length) specs.push(
-        { key: 'td-sh-cnt', label: 'SH listings', color: '#f97316', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.sh });
+        { key: 'td-sh-cnt', label: 'SH listings', color: SRC.sh, width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.sh });
       if (_tdInvCountSeries.gt.length) specs.push(
-        { key: 'td-gt-cnt', label: 'GT listings', color: '#2dd4bf', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.gt });
+        { key: 'td-gt-cnt', label: 'GT listings', color: SRC.gt, width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.gt });
       if (_tdInvCountSeries.vd.length) specs.push(
-        { key: 'td-vd-cnt', label: 'VD listings', color: '#a855f7', width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.vd });
+        { key: 'td-vd-cnt', label: 'VD listings', color: SRC.vd, width: 1, dash: [4, 3], scale: 'y', data: _tdInvCountSeries.vd });
     }
     // TP / TM / TM-resale listing-count overlays (from the full TD family, hidden
     // by default — user-togglable). Counts live in _tdFamily[*].cnt, not the
@@ -1666,11 +1727,11 @@
     if (_tdFamily) {
       const famCnt = (k) => (_tdFamily[k] && _tdFamily[k].cnt) || [];
       if (famCnt('tp').length) specs.push(
-        { key: 'td-tp-cnt',  label: 'TP listings',  color: '#eab308', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tp') });
+        { key: 'td-tp-cnt',  label: 'TP listings',  color: SRC.tp, width: 1, dash: [4, 3], scale: 'y', data: famCnt('tp') });
       if (famCnt('tm').length) specs.push(
-        { key: 'td-tm-cnt',  label: 'TM listings',  color: '#818cf8', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tm') });
+        { key: 'td-tm-cnt',  label: 'TM listings',  color: SRC.tm, width: 1, dash: [4, 3], scale: 'y', data: famCnt('tm') });
       if (famCnt('tmr').length) specs.push(
-        { key: 'td-tmr-cnt', label: 'TMr listings', color: '#e879f9', width: 1, dash: [4, 3], scale: 'y', data: famCnt('tmr') });
+        { key: 'td-tmr-cnt', label: 'TMr listings', color: SRC.tm, width: 1, dash: [2, 3], scale: 'y', data: famCnt('tmr') });
     }
     const { xs } = buildSeriesData(specs);
     // Stack the two market-sales bar series (SeatData on top of SG): SeatData's
@@ -1692,6 +1753,13 @@
       }
     }
     _chartLastBuildInv = { specs, xs };
+
+    // No points in view → show a message instead of a phantom axis.
+    if (!xs.length) {
+      host.innerHTML = '<div class="empty">No inventory data in this window yet.</div>';
+      _chartInstances.inv = null;
+      return;
+    }
 
     const xRange = clipRangeForHours(_chartInvHours, xs);
     const data = [xs, ...specs.map(s => s.projected)];
@@ -1789,8 +1857,12 @@
       const v = (s.tipProjected || s.projected)[idx];
       if (v == null) return;
       const fmt = chartKey === 'price' ? '$' + Math.round(v) : Math.round(v).toString();
+      // Swatch mirrors the line's dash so it matches the legend + names the source.
+      const sw = s.dash
+        ? `background:repeating-linear-gradient(90deg,${s.color} 0 3px,transparent 3px 5px)`
+        : `background:${s.color}`;
       rows.push(
-        `<div class="tt-row"><i style="background:${s.color}"></i>` +
+        `<div class="tt-row"><i style="${sw}"></i>` +
         `<span class="tt-label">${escapeHtml(s.label)}</span>` +
         `<span class="tt-val">${fmt}</span></div>`
       );
@@ -1844,9 +1916,11 @@
   }
 
   function severityColor(sev) {
-    if (sev === 'critical' || sev === 'high') return '#ef4444';
-    if (sev === 'medium' || sev === 'warn')   return '#f59e0b';
-    return '#60a5fa';
+    // Alert-marker colors ARE the status tokens — resolve them so a retheme carries
+    // (the axis grays above have no token equivalent and stay tuned for the canvas).
+    if (sev === 'critical' || sev === 'high') return _tok('--neg', '#ef4444');
+    if (sev === 'medium' || sev === 'warn')   return _tok('--warn', '#f59e0b');
+    return _tok('--info', '#60a5fa');
   }
 
   // ESPN annotation markers — pink "+" (injury status change) + teal "◆" (game
@@ -1933,14 +2007,19 @@
       html = visibleSpecs.map(s => {
         const isOn = _chartVisible.get(s.key) !== false;
         const opa = isOn ? '1' : '0.35';
+        // Dashed series share a source hue with a solid one, so the swatch mirrors
+        // the line's dash — identity survives when the colour alone can't carry it.
+        const sw = s.dash
+          ? `background:repeating-linear-gradient(90deg,${escapeHtml(s.color)} 0 4px,transparent 4px 7px)`
+          : `background:${escapeHtml(s.color)}`;
         return `<span class="legend-item" data-key="${escapeHtml(s.key)}" style="opacity:${opa};cursor:pointer" title="Click to toggle">` +
-               `<i style="background:${escapeHtml(s.color)}"></i> ${escapeHtml(s.label)}</span>`;
+               `<i style="${sw}"></i> ${escapeHtml(s.label)}</span>`;
       }).join('');
     } else {
       // Fallback static legend pre-first-render
       const items = chartKey === 'price'
-        ? [['#fbbf24', 'TEvo Owned'], ['#737373', 'TEvo Mkt'], ['#a78bfa', 'TEvo Non-own']]
-        : [['#60a5fa', 'TEvo Own qty'], ['#94a3b8', 'TEvo Mkt qty']];
+        ? [[SRC.tevo, 'TEvo Owned'], [SRC.tevo, 'TEvo Mkt'], [SRC.tevo, 'TEvo Non-own']]
+        : [[SRC.tevo, 'TEvo Own qty'], [SRC.tevo, 'TEvo Mkt qty']];
       html = items.map(([c, l]) =>
         `<span><i style="background:${c}"></i> ${escapeHtml(l)}</span>`).join('');
     }
@@ -1980,15 +2059,15 @@
   // Clicking a source chip hides/shows ALL of that source's series across BOTH
   // panes at once — a coarse control above the existing per-series legends.
   const CHART_SOURCE_GROUPS = [
-    { src: 'TEvo', color: '#fbbf24', keys: ['prices_owned', 'prices_market', 'prices_nonowned', 'counts_owned', 'counts_market'] },
-    { src: 'SG',   color: '#22d3ee', keys: ['sg_list_med', 'sg_own_med', 'sg_sale_med', 'sg_list_ct', 'sg_sale_ct'] },
-    { src: 'SH',   color: '#f97316', keys: ['td_sh_med', 'td-sh-cnt'] },
-    { src: 'GT',   color: '#34d399', keys: ['td_gt_med', 'td-gt-cnt'] },
-    { src: 'VD',   color: '#c084fc', keys: ['td_vd_med', 'td-vd-cnt'] },
-    { src: 'AXS',  color: '#38bdf8', keys: ['prices_axs', 'counts_axs'] },
-    { src: 'TP',   color: '#eab308', keys: ['td_tp_med', 'td-tp-cnt'] },
-    { src: 'TM',   color: '#818cf8', keys: ['td_tm_med', 'td-tm-cnt'] },
-    { src: 'TMr',  color: '#e879f9', keys: ['td_tmr_med', 'td-tmr-cnt'] },
+    { src: 'TEvo', color: SRC.tevo, keys: ['prices_owned', 'prices_market', 'prices_nonowned', 'counts_owned', 'counts_market'] },
+    { src: 'SG',   color: SRC.sg,   keys: ['sg_list_med', 'sg_own_med', 'sg_sale_med', 'sg_list_ct', 'sg_sale_ct'] },
+    { src: 'SH',   color: SRC.sh,   keys: ['td_sh_med', 'td-sh-cnt'] },
+    { src: 'GT',   color: SRC.gt,   keys: ['td_gt_med', 'td-gt-cnt'] },
+    { src: 'VD',   color: SRC.vd,   keys: ['td_vd_med', 'td-vd-cnt'] },
+    { src: 'AXS',  color: SRC.axs,  keys: ['prices_axs', 'counts_axs'] },
+    { src: 'TP',   color: SRC.tp,   keys: ['td_tp_med', 'td-tp-cnt'] },
+    { src: 'TM',   color: SRC.tm,   keys: ['td_tm_med', 'td-tm-cnt'] },
+    { src: 'TMr',  color: SRC.tm,   keys: ['td_tmr_med', 'td-tmr-cnt'] },
   ];
 
   // Which series keys currently carry real data (scanning both build caches).

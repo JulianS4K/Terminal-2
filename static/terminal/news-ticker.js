@@ -15,6 +15,11 @@
 //   * Reddit    — v_reddit_news_ticker (LIVE: flair:"News" pipeline, mig
 //                 20260626120000 — title-only, 48h, deduped first-post-shows).
 //                 Each Reddit row carries `team` = 'r/<sub>' for attribution.
+//   * Broadway  — broadway_cast_run + v_broadway_performer_getin (current
+//                 headliner per tracked show, always shown + get-in metric) and
+//                 broadway_cast_pull_log flags (daily cast-poll change detection,
+//                 mig 20260704160000). item_type='cast'; CAST tag; `team` = show
+//                 title. Broadway analogue of the injury report.
 //
 // Server params: window hours (re-query). Client-side (instant): source toggle,
 // league chips (faceted with live counts), free-text search. Auto-refreshes
@@ -39,7 +44,7 @@
 
   const state = {
     items:       [],
-    source:      'all',            // 'all' | 'ESPN' | 'Injuries' | 'Scores' | 'Standings' | 'Reddit'
+    source:      'all',            // 'all' | 'ESPN' | 'Injuries' | 'Scores' | 'Standings' | 'Reddit' | 'Broadway'
     windowHours: WINDOW_DEFAULT,   // 24 | 48 | 168
     league:      'ALL',
     search:      '',
@@ -88,12 +93,13 @@
     if (!it) return '';
     if (it.source === 'Reddit' && it.team) return it.team;
     if (it.source === 'Injuries') return it.team || 'Injuries';
+    if (it.source === 'Broadway') return it.team || 'Broadway';   // show title
     return it.source || '';
   };
 
-  // A story carried under a team byline (Reddit sub or injured player's team)
-  // gets a secondary source line in the reel.
-  const hasSub = it => !!(it && it.team && (it.source === 'Reddit' || it.source === 'Injuries'));
+  // A story carried under a team byline (Reddit sub, injured player's team, or
+  // Broadway show title) gets a secondary source line in the reel.
+  const hasSub = it => !!(it && it.team && (it.source === 'Reddit' || it.source === 'Injuries' || it.source === 'Broadway'));
 
   function el(id) { return document.getElementById(id); }
 
@@ -196,10 +202,11 @@
   // Per-item-type tag so a score / injury / standing is distinguishable at a
   // glance when sources are mixed under "All".
   const TYPE_TAG = {
-    injury:      ['INJ', 'news-badge-inj'],
-    score:       ['SCORE', 'news-badge-score'],
-    standing:    ['W-L', 'news-badge-standing'],
+    injury:   ['INJ', 'news-badge-inj'],
+    score:    ['SCORE', 'news-badge-score'],
+    standing: ['W-L', 'news-badge-standing'],
     transaction: ['TXN', 'news-badge-txn'],
+    cast:     ['CAST', 'news-badge-cast'],
   };
   function badge(it) {
     const lg = leagueOf(it);

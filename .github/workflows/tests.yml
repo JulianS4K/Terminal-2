@@ -146,6 +146,11 @@ jobs:
       - name: Type check (tsc --noEmit)
         run: npm run lint
 
+      - name: Unit tests (vitest)
+        # Pure-logic lib coverage (pricing, artistLinks, calendar, …). Runs in
+        # the same job so it shares the npm ci install; node env, no browser.
+        run: npm test
+
       - name: Build (Vite)
         # Validates no missing imports / dead references. Uses placeholder
         # Supabase keys — the build succeeds without a live connection.

@@ -16,38 +16,38 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Health</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260702f" />
+  <link rel="stylesheet" href="style.css?v=20260704c" />
   <style>
     /* Health-page-specific bits (style.css carries the shared chrome). */
     .hz-overall { display:flex; flex-wrap:wrap; align-items:center; gap:18px;
-      padding:18px 20px; border-radius:10px; margin:14px 0; border:1px solid #1e1e1e; }
+      padding:18px 20px; border-radius:10px; margin:14px 0; border:1px solid var(--line); }
     .hz-overall.ok   { background:#0c1c10; border-color:#1f6f3a; }
     .hz-overall.warn { background:#221b08; border-color:#8a6d1a; }
     .hz-overall.fail { background:#240d0d; border-color:#8a2222; }
     .hz-dot { width:14px; height:14px; border-radius:50%; flex:none; }
-    .hz-dot.ok{background:#35c46a;} .hz-dot.warn{background:#e0b13a;} .hz-dot.fail,.hz-dot.down{background:#e05151;}
-    .hz-dot.up{background:#35c46a;} .hz-dot.off{background:#555;} .hz-dot.idle{background:#3a6ea5;}
+    .hz-dot.ok{background:var(--pos);} .hz-dot.warn{background:var(--warn);} .hz-dot.fail,.hz-dot.down{background:var(--neg);}
+    .hz-dot.up{background:var(--pos);} .hz-dot.off{background:#555;} .hz-dot.idle{background:#3a6ea5;}
     .hz-big { font-size:20px; font-weight:700; letter-spacing:.04em; }
     .hz-metrics { display:flex; gap:26px; margin-left:auto; flex-wrap:wrap; }
     .hz-metric .v { font-size:22px; font-weight:700; }
-    .hz-metric .l { font-size:11px; color:#888; text-transform:uppercase; letter-spacing:.06em; }
+    .hz-metric .l { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
     .hz-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin:10px 0 22px; }
-    .hz-card { border:1px solid #1e1e1e; border-radius:9px; padding:12px 14px; background:#0d0d0d; }
+    .hz-card { border:1px solid var(--line); border-radius:9px; padding:12px 14px; background:var(--panel); }
     .hz-card .row1 { display:flex; align-items:center; gap:8px; }
     .hz-card .nm { font-weight:600; }
-    .hz-card .detail { color:#9a9a9a; font-size:12px; margin-top:6px; word-break:break-word; }
-    .hz-card .up { color:#888; font-size:11px; margin-top:6px; }
+    .hz-card .detail { color:var(--muted); font-size:12px; margin-top:6px; word-break:break-word; }
+    .hz-card .up { color:var(--muted); font-size:11px; margin-top:6px; }
     .hz-pill { margin-left:auto; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; text-transform:uppercase; }
-    .hz-pill.ok{background:#10331c;color:#5fdc8d;} .hz-pill.up{background:#10331c;color:#5fdc8d;}
-    .hz-pill.warn{background:#332a0c;color:#e8c55a;}
-    .hz-pill.fail,.hz-pill.down{background:#331212;color:#f08080;}
-    .hz-pill.off{background:#1c1c1c;color:#888;} .hz-pill.idle{background:#10233a;color:#6fb0e8;}
-    .hz-cron-sum { color:#9a9a9a; font-size:12px; font-weight:400; text-transform:none; letter-spacing:0; }
-    .hz-class { font-size:11px; color:#777; text-transform:uppercase; letter-spacing:.08em; margin:18px 0 6px; }
+    .hz-pill.ok{background:#10331c;color:var(--pos);} .hz-pill.up{background:#10331c;color:var(--pos);}
+    .hz-pill.warn{background:#332a0c;color:var(--warn);}
+    .hz-pill.fail,.hz-pill.down{background:#331212;color:var(--neg);}
+    .hz-pill.off{background:#1c1c1c;color:var(--muted);} .hz-pill.idle{background:#10233a;color:var(--info);}
+    .hz-cron-sum { color:var(--muted); font-size:12px; font-weight:400; text-transform:none; letter-spacing:0; }
+    .hz-class { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin:18px 0 6px; }
     .hz-timeline { display:flex; gap:2px; align-items:flex-end; height:34px; margin:6px 0 24px; }
     .hz-tick { flex:1 1 0; min-width:2px; height:100%; border-radius:1px; background:#1a1a1a; }
-    .hz-tick.ok{background:#2f9d57;} .hz-tick.warn{background:#caa233;} .hz-tick.fail{background:#cc4444;}
-    .hz-foot { color:#777; font-size:12px; margin:10px 0 30px; }
+    .hz-tick.ok{background:var(--pos);} .hz-tick.warn{background:var(--warn);} .hz-tick.fail{background:var(--neg);}
+    .hz-foot { color:var(--muted); font-size:12px; margin:10px 0 30px; }
   </style>
 </head>
 <body data-page="health">

@@ -1,11 +1,12 @@
-"""Broker terminal routes (D0 surface) — the SIMPLE, helper-free subset.
+"""Broker terminal routes (D0 surface) — the full /api/broker/* + /api/portfolio surface.
 
-Slice 11 of the app.py decomposition (BR-CODE-1). Only the trivially-decoupled
-broker routes move here for now: /leagues (static), /performer/{id}/assets (one
-table read), /event/{id}/espn (server-side edge-fn proxy). The helper-heavy
-broker routes (overview / movers / chart-data / zones / …) stay in app.py until
-their shared helpers (_bulk_event_context / _compute_movers / _delta / …) are
-extracted to core/.
+Began as slice 11 of the app.py→routers/ decomposition (BR-CODE-1) with only the
+trivially-decoupled routes (/leagues, /performer/{id}/assets, /event/{id}/espn).
+The helper-heavy routes (overview / movers / chart-data / section-zones / zones /
+substitutions / …) have since been folded in, once their shared helpers were
+extracted to core/ (core/movers, core/broker_helpers, core/substitutions,
+core/helpers). app.py itself was renamed server.py (2026-06-26); this module is
+now the complete broker route surface, not a helper-free subset.
 
 Factory takes getters for the live require_sb + the SUPABASE url/key (so the
 espn route's monkeypatch tests keep working) + require_auth + the static

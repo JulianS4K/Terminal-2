@@ -1,0 +1,45 @@
+Terminal-2 — Proprietary Software License
+Copyright (c) 2026 S4Kent. All rights reserved.
+
+This repository contains proprietary and confidential software owned by
+S4Kent (the "Owner"). It is NOT open-source software.
+
+1. GRANT
+   No license or right to use, copy, modify, merge, publish, distribute,
+   sublicense, or sell any part of this software is granted, except as
+   expressly stated in writing by the Owner, or as provided by the separate
+   open-source license covering the specific subdirectories listed in the
+   CARVE-OUTS section below.
+
+2. RESTRICTIONS
+   Except as expressly permitted in writing by the Owner, you may not:
+     (a) use the software for any purpose;
+     (b) copy, reproduce, or redistribute the software in whole or in part;
+     (c) modify, adapt, translate, or create derivative works;
+     (d) reverse engineer, decompile, or disassemble the software;
+     (e) remove or alter any proprietary notices or labels; or
+     (f) disclose the software or its contents to any third party.
+
+3. CONFIDENTIALITY
+   The software, including its source code, architecture, data-source
+   integrations, and business logic, is the confidential and trade-secret
+   property of the Owner. Access does not transfer any ownership interest.
+
+4. CARVE-OUTS (open-source subdirectories)
+   The following paths are NOT covered by this proprietary license and are
+   instead licensed under the MIT License found in each path's own LICENSE
+   file. In case of conflict, the subdirectory LICENSE controls for files
+   within that subdirectory:
+     - static/lib/    (MIT — see static/lib/LICENSE)
+
+5. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+6. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL THE OWNER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE
+   USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For licensing inquiries, contact the Owner.

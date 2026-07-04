@@ -16,15 +16,18 @@ from . import config, prompts, providers, repository as repo
 _VOICE_POOL = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 
 
-def build_podcast_content(db, notebook_id: str, *, char_budget: int = 16000) -> str:
-    """Flatten a notebook's sources/insights/notes into source material."""
+def build_podcast_content(db, notebook_id: str, *, char_budget: int = 40000,
+                          per_source: int = 12000) -> str:
+    """Flatten a notebook's sources/insights/notes into source material. Budgets
+    are generous so a rich performer digest (many enrichment sections) reaches
+    the outline/transcript stages instead of being truncated to a snapshot."""
     parts: list[str] = []
     used = 0
     for s in repo.list_sources(db, notebook_id=notebook_id):
         body = (s.get("full_text") or "").strip()
         if not body:
             continue
-        block = f"# {s.get('title') or 'Source'}\n{body[:4000]}"
+        block = f"# {s.get('title') or 'Source'}\n{body[:per_source]}"
         parts.append(block)
         used += len(block)
         if used >= char_budget:

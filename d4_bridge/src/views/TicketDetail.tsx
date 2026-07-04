@@ -9,7 +9,7 @@ import { ArrowLeft, Share2, ShieldCheck, RefreshCw, Ticket as TicketIcon, Calend
 import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
 import { signBarcode, currentBucket } from '../lib/barcode';
 import { motion, AnimatePresence } from 'motion/react';
-import { downloadIcsFile } from '../lib/calendarUtils';
+import AddToCalendar from '../components/AddToCalendar';
 import { shareEventToStory } from '../lib/poster';
 import { useToast } from '../context/ToastContext';
 import ShareModal from '../components/ShareModal';
@@ -340,12 +340,7 @@ export default function TicketDetail() {
                        </button>
                     </div>
                     <div className="flex gap-4">
-                       <button
-                         onClick={() => downloadIcsFile(event)}
-                         className="flex-1 bg-white text-black py-4 font-black uppercase tracking-tighter italic text-xs hover:bg-brand-primary transition-all"
-                       >
-                          CALENDAR
-                       </button>
+                       <AddToCalendar event={event} variant="button" className="flex-1" />
                     </div>
                     {/* OPEN PASS — fullscreen browser pass with rotating
                         QR + screen wake-lock. Use case: holder hands their

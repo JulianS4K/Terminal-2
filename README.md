@@ -1,8 +1,8 @@
 # Terminal-2
 
-Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by six peer lanes — substrate **A1** (data + framework) · **B1** (build + guards + governance) + products **D0**·**D1**·**D3**·**D4** (frontend surfaces) — which are ownership-map labels, **not a hierarchy** (the actor hierarchy was dissolved 2026-07-02); they coordinate laterally through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
+Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by six peer bot lanes — a platform substrate (**A1** data plane · **B1** build/guards/docs governance) plus products (**D0** terminal · **D1** store · **D3** broadway · **D4** Exos/Bridge) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.8.0 (2026-07-04; retired the last stale hierarchy/centralization language in the intro + lane blurb — "four peer domains / C1 / prod-DB apply stays A1-centralized" → **six lanes, no hierarchy, per-task apply with no A1 gate** (matches `PROJECT_BIBLE §2`, dissolved 2026-07-02); lane priority pointer → `KANBAN.md`). · v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.10.0 (2026-07-03; retired the last "prod-DB apply stays A1-centralized" gatekeeper phrase in the reading-order intro — missed in the #785 sweep; now aligns with CLAUDE.md / PROJECT_BIBLE §2.1). · v2.9.0 (2026-07-03; merged #778 drift fixes — intro + reading-order reflect the six-lane model; repo-layout: `server.py` route list corrected, `*_client.py` count 9→10 (+`bandsintown`)) · v2.8.0 (2026-07-03; documented the repo license split — root proprietary `LICENSE` + MIT carve-out for `static/lib/`). · v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ---
 
@@ -15,7 +15,7 @@ A cold-started bot reads **two** docs at session start (you don't pre-know your 
 
 On-demand references (read only when relevant, not at session start): **`RESOURCES_BIBLE.md`** (what exists) · **`docs/d0_terminal_build.md`** (build the D0 terminal frontend).
 
-**Six lanes, no hierarchy** (2026-07-02 consolidation): substrate **A1** (data + framework) · **B1** (build + guards + governance) + products **D0** (terminal + orders-dashboard) · **D1** (store) · **D3** (broadway) · **D4** (Exos/Bridge). **The codes are lane identifiers — regions of the ownership map (which surface), not ranks or a chain of command; the actor hierarchy was dissolved 2026-07-02.** Push to `main` **and** prod-DB apply are both **per-task by any session under operator direction — no sole-pusher lane, no A1 gate** (permission is per-action via three principals). C1→B1 · D2→D0 · E1→A1. Full ownership + permission model → `PROJECT_BIBLE.md §2`; current lane priority → `KANBAN.md`.
+**Six peer lanes** (2026-07-02 consolidation): platform substrate **A1** (data plane) · **B1** (build/guards/docs governance); products **D0** (terminal) · **D1** (store) · **D3** (broadway) · **D4** (Exos/Bridge). C1 folded into B1, D2 into D0, E1 into A1 — flat lane identifiers, no hierarchy. Push to `main` is **per-task** (no sole-pusher lane; prod-DB apply is per-task by any session under operator direction — no A1 gate). D0 is the priority active lane; D1/D3/D4 paused until D0 ships. Full ownership detail → `PROJECT_BIBLE.md §2`.
 
 Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't claim a row marked `[IN PROGRESS by <lane>]`).
 
@@ -80,7 +80,8 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 │                           (renamed from app.py 2026-06-26; entrypoint uvicorn server:app)
 ├── routers/                APIRouter modules include_router'd on server.py
 │                           (BR-CODE-1 decomposition — route surface now 100% in
-│                           routers/; server.py holds only /healthz + /webhooks/render):
+│                           routers/; server.py keeps only /healthz, /webhooks/render,
+│                           /api/admin/scheduler-watchdog/status):
 │                           site_essentials · catalog · lists · broker · seatdata ·
 │                           axs · seatgeek · misc (+ /api/public/config) · shares ·
 │                           seatmap · retail_chat · store (/api/store/*) · pages
@@ -99,10 +100,11 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 │                           layer, BR-CODE-2) · discovery · trip_payloads · ingest ·
 │                           storefront_html · canonical_refresh (BR-CODE-1 core/
 │                           helper pass — bodies injected back via thin server wrappers)
-├── *_client.py             9 read-only listing-source clients: evo · seatgeek ·
-│                           tickpick · vivid · seatdata · ticketsdata · gotickets ·
-│                           axs · broadway (GET-only by construction, CLAUDE.md §2;
-│                           share core/readonly_guard · http_retry · vault)
+├── *_client.py             10 read-only clients, GET-only by construction (CLAUDE.md
+│                           §2): 9 listing-source (evo · seatgeek · tickpick · vivid ·
+│                           seatdata · ticketsdata · gotickets · axs · broadway) +
+│                           bandsintown (artist tour-dates); share core/readonly_guard ·
+│                           http_retry · vault
 ├── d2_dashboard/           D2 orders dashboard + APIRouter (mounted on server.py)
 ├── d4_bridge/              D4 — Exos/Bridge SPA source + Express server (Vite → static/bridge/)
 ├── trip_planner/           shared tour-itinerary optimizer (D0 + D1 trip-plan routes; see its README)
@@ -181,4 +183,7 @@ The gate is a **ratchet** — it only moves up. Product code (`server.py`, `core
 
 ---
 
-**License**: proprietary, internal use. Code authored by Anthropic Claude under operator direction.
+**License**: proprietary, internal use — All Rights Reserved (see [`LICENSE`](LICENSE)). Code authored by Anthropic Claude under operator direction.
+
+- The repository as a whole is **proprietary / All Rights Reserved** ([`LICENSE`](LICENSE)). Broker clients, ingest pipeline, `server.py`, business logic, and data-source integrations are confidential and may not be used, copied, or redistributed.
+- **Carve-out:** [`static/lib/`](static/lib/) (the framework-agnostic **S4K** frontend utilities) is released under the **MIT License** ([`static/lib/LICENSE`](static/lib/LICENSE)). This is the only open-source portion; do not extend MIT coverage to any other path.
