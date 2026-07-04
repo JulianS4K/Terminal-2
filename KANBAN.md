@@ -499,7 +499,7 @@ Recommend at decision time: collapse `vibepass-terminal-test` + `d2-orders-dashb
 
 ### NEXT (P1 → C1 / S1) — Notify: storefront ready for live-TEvo prod testing; flag if cross-lane interactions need coordination
 
-**Routing note**: C1 is the data-side supervisor per `docs/bot-hierarchy.mermaid`; S1 owns the canonical schemas P1 reads from (`audit-datasets-schemas-auoc3` worktree). Filing to both — C1 for awareness, S1 for the actual go/no-go on view stability.
+**Routing note**: there is no supervisor — the actor hierarchy was dissolved 2026-07-02 (lane codes are ownership labels, not ranks; `PROJECT_BIBLE §2`). Docs/coordination (ex-C1) folded into **B1**; canonical-schema stability is an **Auditor** review by whichever session owns that surface. Coordinate laterally via `bot_chat`, not up a chain.
 
 **What**: Heads-up that storefront is requesting permission from A1 to flip `STOREFRONT_SQL_ONLY=false` on the Render test env (see the row above). When that lands, P1's `/api/store/events/{id}` will call `/v9/events/:id` + `/v9/ticket_groups?owned=true` directly, and `/api/store/search` will hit `/v9/searches/suggestions`. Each detail hit also fires-and-forgets the audit-lane `collect-listings` edge function to refresh canonical SQL.
 

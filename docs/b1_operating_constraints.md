@@ -291,7 +291,7 @@ Added 2026-05-16 per operator directive: "communication channel, Librarians and 
 > connected workspace), then set repo variable `SLACK_ENABLED=true`. Treat everything below as
 > dormant reference, not an instruction to post.
 
-**Current state (2026-05-16, canonical per bot_chat 207 standing rule)**: Slack MCP is installed at workspace `s4kent-bots`. Three channels mirror the lane hierarchy:
+**Current state (2026-05-16, canonical per bot_chat 207 standing rule)**: Slack MCP is installed at workspace `s4kent-bots`. Three channels map to the lanes (labels, not a hierarchy — dissolved 2026-07-02, `PROJECT_BIBLE §2`):
 
 | Channel | ID | Audience | B1 posting authority |
 |---|---|---|---|

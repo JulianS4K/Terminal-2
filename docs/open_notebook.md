@@ -87,8 +87,8 @@ pre-deduped so the raw sales firehose is never read.
 
 ## Deploy notes
 - Deps: `openai`, `pypdf` (both lazily imported).
-- The migration must be applied (preview branch for dev; prod apply stays
-  centralized on A1). pgvector embedding dim is fixed at DDL time — changing the
+- The migration must be applied (preview branch for dev; prod apply is per-task
+  by any session under operator direction — no A1 gate). pgvector embedding dim is fixed at DDL time — changing the
   embedding model's dimension requires a follow-up migration.
 - Podcast audio needs a **public** Storage bucket named per `ONB_AUDIO_BUCKET`.
 

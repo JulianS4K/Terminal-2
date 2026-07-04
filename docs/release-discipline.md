@@ -184,7 +184,7 @@ Operator directive: "plan to decrease code drift and push all to main".
 ### Per-session discipline (always)
 
 - **Branch must merge to main within 24h** of last commit OR explicit deferral note in `bot_chat`.
-- **Push to `main` is per-task** — the delegated bot pushes its own work after green CI; A1 + B1 are joint `main` maintainers. **Prod-DB apply stays centralized on A1** (git push ≠ DB apply). (Supersedes the prior "A1 sole pusher" rule — operator directive 2026-06-17; see `PROJECT_BIBLE §2.3`.)
+- **Push to `main` is per-task** — the session that did the work pushes it after green CI; `main` is jointly maintained, no sole-pusher lane. **Prod-DB apply is also per-task** — an **Applier** (any session, operator-directed) applies its own reviewed, CI-green migration; **no A1 gate** (git push ≠ DB apply, but neither is centralized on a lane — the codes are ownership labels, not a chain of command; hierarchy dissolved 2026-07-02). (Supersedes the prior "A1 sole pusher" / "A1-centralized apply" rules — operator directives 2026-06-17 / 2026-07-02; see `PROJECT_BIBLE §2.1`.)
 - **No "ghost" migrations.** Every `apply_migration` MCP call must have a corresponding `.sql` file with matching content within the same turn.
 
 ### Drift detection (runtime)
