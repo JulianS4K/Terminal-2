@@ -200,11 +200,11 @@
       return;
     }
     T.setStatus('Loading SeatGeek event…');
-    // Every tab is TEvo-source-specific — hide the nav and non-overview panes.
-    // NB: `.event-tabs { display:flex }` overrides the `hidden` attribute, so set
-    // display directly too (the SG page shows its own WC tab bar instead).
-    const tabs = document.getElementById('eventTabs');
-    if (tabs) { tabs.hidden = true; tabs.style.display = 'none'; }
+    // SG/World-Cup now renders the STANDARD event layout (shared #eventTabs + the
+    // static panes), just fed from the get_wc_* data and with the SG views merged
+    // into the matching evo tabs — see renderSgEvent(). Non-overview panes start
+    // hidden; activateTab() reveals the active one. (The old bespoke #wcTabs page
+    // was retired here 2026-07-04 per operator: "evo view should be standard.")
     document.querySelectorAll('.tab-pane').forEach(p => { if (p.id !== 'paneOverview') p.hidden = true; });
 
     const res = (Auth && Auth.client)
@@ -220,6 +220,14 @@
     wireSgTrackButton(sgId).catch(e => console.error('[sg track]', e));
   }
 
+  // SG / World-Cup event page. Renders the STANDARD event layout (the same
+  // #eventTabs bar + static panes the ?event= path uses) and merges the SG views
+  // into the matching evo tabs — operator directive 2026-07-04: "evo view should
+  // be standard, just switch the data point; keep the SG views and merge them in."
+  // Only the tabs World-Cup data supports are shown; each mounts an existing WC
+  // loader (keyed on sg_event_id) into the standard pane, so the loaders are
+  // reused unchanged. The ?event= (TEvo) path is entirely untouched.
+  const WC_TABS = ['overview', 'sg-listings', 'sg-sales', 'seatdata-sales', 'seatmap'];
   function renderSgEvent(sgId, rows) {
     const latest = rows.length ? rows[rows.length - 1] : null;
     const name  = (latest && latest.sg_event_name) || ('SeatGeek event ' + sgId);
@@ -237,15 +245,32 @@
     const fr = document.getElementById('freshness'); if (fr) fr.hidden = true;
     const hw = document.getElementById('hero-weather'); if (hw) hw.hidden = true;
 
+    // Standard tab bar: show only the WC-supported tabs, drop the "| watchlist"
+    // separator, and relabel the SG-native tabs.
+    const nav = document.getElementById('eventTabs');
+    if (nav) {
+      nav.hidden = false; nav.style.display = '';
+      nav.querySelectorAll('.event-tab').forEach(b => {
+        b.style.display = WC_TABS.includes(b.dataset.tab) ? '' : 'none';
+      });
+      nav.querySelectorAll('.event-tabs-sep').forEach(s => { s.style.display = 'none'; });
+      const relabel = { 'sg-listings': 'SG Listings', 'sg-sales': 'SG Sales', 'seatdata-sales': 'SeatData Comps' };
+      nav.querySelectorAll('.event-tab').forEach(b => {
+        const l = relabel[b.dataset.tab];
+        if (l) { const c = b.querySelector('.tab-count'); b.textContent = l + ' '; if (c) b.appendChild(c); }
+      });
+    }
+
     const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
     const num   = v => (v == null ? '—' : T.fmtNum(v));
     const pane = document.getElementById('paneOverview');
     if (!pane) return;
 
-    // Price-history section (only when the daily rollup has data).
-    let priceSection;
+    // ---- Overview pane: KPI grid + price chart (standard .chart-section frame) +
+    //      Markets + ESPN, all in the standard section chrome. ----
+    let overviewHtml = '';
     if (!rows.length) {
-      priceSection = '<section class="panel"><div class="empty">No SeatGeek daily price history yet for this match.' +
+      overviewHtml = '<section class="panel"><div class="empty">No SeatGeek daily price history yet for this match.' +
         '<div class="muted small">Populates as the World Cup price logger runs (wc_price_daily).</div></div></section>';
     } else {
       const kpis = [
@@ -267,94 +292,78 @@
         `<td class="num">${num(r.listings_count)}</td>` +
         `<td class="num">${num(r.tickets_count)}</td>` +
         '</tr>').join('');
-      priceSection =
+      overviewHtml =
         `<section id="kpi-grid">${kpiHtml}</section>` +
+        // Price chart in the standard chart-section frame so it reads like the evo chart.
+        '<section class="chart-section">' +
+          '<div class="chart-title"><span>SEATGEEK PRICE HISTORY · ALL-IN · GET-IN / MEDIAN / P90</span>' +
+          `<span class="muted small">${rows.length} days · sg_event_id ${escapeHtml(String(sgId))}</span></div>` +
+          '<div id="wcChartHost" class="chart-pane" style="min-height:260px"></div>' +
+        '</section>' +
         '<section id="sg-price-history">' +
-          '<div class="panel-title row"><span>SEATGEEK PRICE HISTORY — daily all-in (wc_price_daily)</span>' +
-          `<span class="muted small">${rows.length} days · sg_event_id ${sgId}</span></div>` +
-          '<div id="wcChartHost" class="wc-chart"></div>' +
+          '<div class="panel-title row"><span>DAILY ALL-IN — wc_price_daily</span></div>' +
           '<table class="wc-daily"><thead><tr><th>Date</th><th class="num">Get-in</th><th class="num">Median</th>' +
           '<th class="num">P90</th><th class="num">Listings</th><th class="num">Tickets</th></tr></thead>' +
           `<tbody>${tableRows}</tbody></table>` +
         '</section>';
     }
+    // Markets + ESPN live in the overview (no dedicated evo tab for them).
+    overviewHtml +=
+      '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
+      '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
+      '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
+      'GameTime needs discovery; EVO isn\'t available for SeatGeek-native events.</div></section>' +
+      '<section id="wc-espn"><div class="panel-title row"><span>ESPN — match score &amp; status</span>' +
+      '<span class="muted small" id="wcEspnMeta">loading…</span></div><div id="wcEspnBody"><div class="empty">loading…</div></div>' +
+      '<div class="muted small" style="margin-top:6px">Linked to the ESPN FIFA World Cup feed by schedule (best-effort; firms up as the bracket sets).</div></section>';
+    pane.innerHTML = overviewHtml;
 
-    // WC tabbed layout — each source gets its own tab, lazy-loaded on first open
-    // (uPlot/Tevomaps need a visible host to size correctly, so we defer until the
-    // tab is shown). The shared TEvo tab bar (#eventTabs) stays hidden in SG mode.
-    const wcTabs = [
-      ['overview',    'Overview'],
-      ['markets',     'Markets'],
-      ['sg-listings', 'SG Listings'],
-      ['sg-sales',    'SG Sales'],
-      ['seatdata',    'SeatData Comps'],
-      ['espn',        'ESPN'],
-      ['seatmap',     'Seat Map'],
-    ];
-    const wcTabBar = '<div id="wcTabs" class="event-tabs" role="tablist">' +
-      wcTabs.map(([id, lbl], i) =>
-        `<button class="event-tab${i === 0 ? ' active' : ''}" data-wctab="${id}" role="tab" aria-selected="${i === 0}">${lbl}</button>`).join('') +
-      '</div>';
-    const wcPane = (id, active, inner) =>
-      `<div class="tab-pane${active ? ' active' : ''}" data-wcpane="${id}"${active ? '' : ' hidden'}>${inner}</div>`;
+    // Mount the SG views into the matching STANDARD panes so they read as evo tabs.
+    // Each uses the same host ids the existing WC loaders target (reused unchanged).
+    const mount = (paneId, html) => { const p = document.getElementById(paneId); if (p) p.innerHTML = html; };
+    mount('paneSgListings',
+      '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
+      '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>');
+    mount('paneSgSales',
+      '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
+      '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>');
+    mount('paneSeatdataSales',
+      '<section id="sg-seatdata-comps"><div class="panel-title row"><span>SEATDATA COMPS — realized sold-ticket curve (full history)</span>' +
+      '<span class="muted small" id="sgSdMeta">loading…</span></div>' +
+      '<div id="sgSdNote" class="muted small" style="margin-bottom:6px"></div>' +
+      '<div id="sgSdHost" class="wc-chart"></div><div id="sgSdBody"><div class="empty">loading…</div></div></section>');
+    mount('paneSeatmap',
+      '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
+      '<span class="muted small" id="sgMapMeta">open to load</span></div>' +
+      '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">Open this tab to load the seat map.</div></div>' +
+      '<div class="muted small" id="sgMapNote" style="margin-top:6px"></div></section>');
 
-    pane.innerHTML = wcTabBar +
-      wcPane('overview', true, priceSection) +
-      wcPane('markets', false,
-        '<section id="wc-markets"><div class="panel-title row"><span>MARKETS — cross-source (via AQ hub)</span>' +
-        '<span class="muted small" id="wcMktMeta">loading…</span></div><div id="wcMktBody"><div class="empty">loading…</div></div>' +
-        '<div class="muted small" style="margin-top:6px">SeatGeek is live; StubHub / VividSeats / Ticketmaster fill in as their pulls land. ' +
-        'GameTime needs discovery; EVO isn\'t available for SeatGeek-native events.</div></section>') +
-      wcPane('sg-listings', false,
-        '<section id="sg-listings-inline"><div class="panel-title row"><span>CURRENT SG LISTINGS — cheapest all-in (deduped, last 7d)</span>' +
-        '<span class="muted small" id="sgLstMeta">loading…</span></div><div id="sgLstBody"><div class="empty">loading…</div></div></section>') +
-      wcPane('sg-sales', false,
-        '<section id="sg-sales-inline"><div class="panel-title row"><span>RECENT SG SALES — last 90d (deduped)</span>' +
-        '<span class="muted small" id="sgSlsMeta">loading…</span></div><div id="sgSlsBody"><div class="empty">loading…</div></div></section>') +
-      wcPane('seatdata', false,
-        '<section id="sg-seatdata-comps"><div class="panel-title row"><span>SEATDATA COMPS — realized sold-ticket curve (full history)</span>' +
-        '<span class="muted small" id="sgSdMeta">loading…</span></div>' +
-        '<div id="sgSdNote" class="muted small" style="margin-bottom:6px"></div>' +
-        '<div id="sgSdHost" class="wc-chart"></div><div id="sgSdBody"><div class="empty">loading…</div></div></section>') +
-      wcPane('espn', false,
-        '<section id="wc-espn"><div class="panel-title row"><span>ESPN — match score &amp; status</span>' +
-        '<span class="muted small" id="wcEspnMeta">open to load</span></div><div id="wcEspnBody"><div class="empty">Open this tab to load ESPN data.</div></div>' +
-        '<div class="muted small" style="margin-top:6px">Linked to the ESPN FIFA World Cup feed by schedule (best-effort; firms up as the bracket sets).</div></section>') +
-      wcPane('seatmap', false,
-        '<section id="sg-seatmap"><div class="panel-title row"><span>SEAT MAP — venue reference (borrowed config)</span>' +
-        '<span class="muted small" id="sgMapMeta">open to load</span></div>' +
-        '<div id="sgSeatmapHost" class="seatmap-host" style="min-height:320px"><div class="empty">Open this tab to load the seat map.</div></div>' +
-        '<div class="muted small" id="sgMapNote" style="margin-top:6px"></div></section>');
-
-    // Overview is active immediately; Markets pre-loads (cheap, high-value); the
-    // rest lazy-load on first tab open.
+    // Overview renders immediately; Markets + ESPN pre-load (cheap, high-value);
+    // the tab views lazy-load on first activation, wired to the STANDARD tab bar.
     if (rows.length) renderWcChart('wcChartHost', rows);
     loadWcMarkets(sgId).catch(e => console.error('[wc markets]', e));
+    loadWcEspn(sgId).catch(e => console.error('[wc espn]', e));
     const wcLoaders = {
-      'markets':     () => loadWcMarkets(sgId),
-      'sg-listings': () => loadSgListingsInline(sgId),
-      'sg-sales':    () => loadSgSalesInline(sgId),
-      'seatdata':    () => loadWcSeatdataComps(sgId),
-      'espn':        () => loadWcEspn(sgId),
-      'seatmap':     () => loadWcSeatmapDonor(sgId),
+      'sg-listings':    () => loadSgListingsInline(sgId),
+      'sg-sales':       () => loadSgSalesInline(sgId),
+      'seatdata-sales': () => loadWcSeatdataComps(sgId),
+      'seatmap':        () => loadWcSeatmapDonor(sgId),
     };
-    const wcLoaded = { 'markets': true };
-    const wcBar = document.getElementById('wcTabs');
-    if (wcBar) wcBar.addEventListener('click', (e) => {
-      const btn = e.target.closest('.event-tab');
-      if (!btn) return;
-      const id = btn.dataset.wctab;
-      pane.querySelectorAll('#wcTabs .event-tab').forEach(b => {
-        const on = b.dataset.wctab === id;
-        b.classList.toggle('active', on);
-        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    const wcLoaded = {};
+    if (nav && !nav.__wcWired) {
+      nav.__wcWired = true;
+      nav.addEventListener('click', (e) => {
+        const btn = e.target.closest('.event-tab');
+        if (!btn) return;
+        const id = btn.dataset.tab;
+        activateTab(id);
+        if (!wcLoaded[id] && wcLoaders[id]) {
+          wcLoaded[id] = true;
+          wcLoaders[id]().catch(err => console.error('[wc tab ' + id + ']', err));
+        }
       });
-      pane.querySelectorAll('[data-wcpane]').forEach(p => { p.hidden = p.dataset.wcpane !== id; });
-      if (!wcLoaded[id] && wcLoaders[id]) {
-        wcLoaded[id] = true;
-        wcLoaders[id]().catch(err => console.error('[wc tab ' + id + ']', err));
-      }
-    });
+    }
+    activateTab('overview');
   }
 
   // ESPN match score/status for a WC match (get_wc_espn — schedule-bridged to the
