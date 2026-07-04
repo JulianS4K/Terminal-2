@@ -98,22 +98,43 @@
       const teamCell = r.tevo_performer_id != null
         ? `<a class="txn-team" href="performer.html?performer=${encodeURIComponent(r.tevo_performer_id)}">${escapeHtml(r.team || '—')}</a>`
         : `<span class="txn-team">${escapeHtml(r.team || '—')}</span>`;
-      const type = r.move_type
-        ? `<span class="txn-mtype txn-mtype-${escapeHtml(r.move_type)}">${escapeHtml(r.move_type)}</span>` : '';
-      const players = (r.players || []).map(p => {
-        const href = `player.html?player=${encodeURIComponent(p.espn_athlete_id)}&league=${encodeURIComponent(r.espn_league)}`;
-        return `<a class="txn-player" href="${href}">${escapeHtml(p.name)}${p.position ? ` <span class="muted small">${escapeHtml(p.position)}</span>` : ''}</a>`;
-      }).join('');
+      const moves = r.moves || [];
+      const multi = moves.length > 1;
+      const headType = multi
+        ? `<span class="txn-mtype">${moves.length} moves</span>`
+        : (r.move_type ? typeBadge(r.move_type) : '');
+      let bodyHtml;
+      if (multi) {
+        // one line per move, each with its own type tag + matched players
+        bodyHtml = `<div class="txn-moves">` + moves.map(m =>
+          `<div class="txn-move">${typeBadge(m.type)}
+            <span class="txn-move-text">${escapeHtml(m.text || '')}</span>
+            ${playerChips(m.players, r.espn_league)}
+          </div>`).join('') + `</div>`;
+      } else {
+        const players = playerChips(r.players, r.espn_league);
+        bodyHtml = `<div class="txn-desc">${escapeHtml(r.description || '')}</div>${players ? `<div class="txn-players">${players}</div>` : ''}`;
+      }
       return `<div class="txn-row">
         <div class="txn-row-head">
           <span class="txn-date muted">${r.txn_date ? T.fmtDate(r.txn_date) : '—'}</span>
           <span class="news-badge">${escapeHtml(r.espn_league || '')}</span>
-          ${type}
+          ${headType}
           ${teamCell}
         </div>
-        <div class="txn-desc">${escapeHtml(r.description || '')}</div>
-        ${players ? `<div class="txn-players">${players}</div>` : ''}
+        ${bodyHtml}
       </div>`;
+    }).join('');
+  }
+
+  function typeBadge(t) {
+    return t ? `<span class="txn-mtype txn-mtype-${escapeHtml(t)}">${escapeHtml(t)}</span>` : '';
+  }
+
+  function playerChips(players, league) {
+    return (players || []).map(p => {
+      const href = `player.html?player=${encodeURIComponent(p.espn_athlete_id)}&league=${encodeURIComponent(league)}`;
+      return `<a class="txn-player" href="${href}">${escapeHtml(p.name)}${p.position ? ` <span class="muted small">${escapeHtml(p.position)}</span>` : ''}</a>`;
     }).join('');
   }
 

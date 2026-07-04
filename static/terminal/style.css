@@ -2623,6 +2623,13 @@ body[data-page="login"] {
 a.txn-team:hover { color: var(--accent); text-decoration: underline; }
 .txn-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .txn-players { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.txn-moves { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+.txn-move {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px;
+  padding: 2px 0 2px 6px; border-left: 2px solid var(--line-2);
+}
+.txn-move-text { font-size: 12px; color: var(--muted); }
+.txn-move .txn-player { margin-left: 2px; }
 .txn-player {
   display: inline-flex; align-items: center; gap: 4px; text-decoration: none;
   font-family: var(--mono); font-size: 10px; padding: 2px 6px;
