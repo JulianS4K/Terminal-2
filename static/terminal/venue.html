@@ -62,6 +62,7 @@
       <button class="event-tab" data-tab="owned"      role="tab" aria-selected="false">Owned Inventory</button>
       <button class="event-tab" data-tab="sg"         role="tab" aria-selected="false">SG Activity</button>
       <button class="event-tab" data-tab="competing"  role="tab" aria-selected="false">Competing Events</button>
+      <button class="event-tab" data-tab="sections"   role="tab" aria-selected="false">Sections</button>
       <button class="event-tab active" data-tab="market" role="tab" aria-selected="true">Market Carpet <span class="tab-count" id="tabCountVenueMarket"></span></button>
       <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">🔔 Alerts</button>
     </nav>
@@ -166,6 +167,27 @@
       </section>
     </div>
 
+    <!-- Sections pane — venue-anchored section medians (get_venue_section_medians).
+         Sections belong to the VENUE; medians aggregate across events. Venues with
+         sports teams show team blocks (sliceable by away team) SEPARATE from
+         concert/other performers. Populated by venue_section_rollup_hourly. -->
+    <div class="tab-pane" id="vPaneSections" role="tabpanel" hidden>
+      <section id="venue-sections">
+        <div class="panel-title row">
+          <span>SECTION MEDIANS — VENUE-ANCHORED HISTORY</span>
+          <span class="muted small" id="vSectionsMeta"></span>
+        </div>
+        <div class="muted small" style="margin-bottom:8px">
+          Exact medians per venue section across events (each event contributes its latest daily
+          capture). Teams slice by <b>away team</b>; concert/other performers are listed separately.
+          Source: <code>venue_section_price_daily</code> → <code>venue_section_*_agg</code>
+          via <code>get_venue_section_medians</code>.
+        </div>
+        <div class="ctrl-row" id="vSectionsControls"></div>
+        <div id="vSectionsBody"><div class="empty">select a tab to load</div></div>
+      </section>
+    </div>
+
     <!-- Market Carpet pane — default view. Treats venue as a stock ticker.
          Aggregated portfolio view + per-event cross-source medians.
          Auto-loaded on page open. -->
@@ -200,6 +222,6 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260704txn"></script>
   <script src="alerts.js?v=20260608"></script>
-  <script src="venue.js?v=20260620"></script>
+  <script src="venue.js?v=20260705"></script>
 </body>
 </html>
