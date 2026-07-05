@@ -58,6 +58,13 @@
   // Latest event_listing_snapshot_daily row — set by loadTdFreshness(),
   // used by renderLastSnapshot() to append a TD MARKETS section.
   let _lastTdSnap = null;
+  // Trailing 15-day moving average of each source's daily median price —
+  // computed FE-side by computeMa15() from the same event_listing_snapshot_daily
+  // history loadTdFreshness() already fetches (no extra round-trip). Feeds the
+  // "Median 15d avg" row of the CROSS-SOURCE Listings/Price table (both render
+  // paths). Shape: { anchor:'YYYY-MM-DD', val:{tevo,sg,sh,gt,vd,tp,tm,tmr},
+  // days:{…} } — val[k] is null when a source has < MA15_MIN_DAYS days in-window.
+  let _ma15 = null;
   // TD listing-count time series for the inventory chart overlay.
   // Shape: { sh: [{t,v}], gt: [{t,v}], vd: [{t,v}] } — counts not medians.
   let _tdInvCountSeries = null;
@@ -3301,6 +3308,69 @@
       `title="Open on ${escapeHtml(lbl)}">↗ ${escapeHtml(lbl)}</a>`).join('');
   }
 
+  // ---------- 15-day moving average of per-source daily medians ----------
+  // One value per listing source for the CROSS-SOURCE panel: the mean of the
+  // daily median price over the 15 calendar days ending at the newest
+  // snapshot_date in the fetched history (a past event reads "as of its last
+  // data", not as of today). A day's value = the mean of that day's non-null
+  // slots (3/day), so a partial morning slot doesn't drag the average. A
+  // source with fewer than MA15_MIN_DAYS distinct days in-window stays null —
+  // a 2-day "15-day average" would mislead more than a dash (WP-2: omit,
+  // never fake).
+  const MA15_WINDOW_DAYS = 15;
+  const MA15_MIN_DAYS = 3;
+  // Source key (matches get_event_all_source_listing_metrics keys + TD_SUBS.ma)
+  // → its event_listing_snapshot_daily median column. TEvo/SG use the same
+  // durable series the price chart splices (evo_retail_median / sg_all_median).
+  const MA15_COLS = {
+    tevo: 'evo_retail_median',
+    sg:   'sg_all_median',
+    sh:   'td_sh_median',
+    gt:   'td_gt_median',
+    vd:   'td_vd_median',
+    tp:   'td_tp_median',
+    tm:   'td_tm_median',
+    tmr:  'td_tm_resale_median',
+  };
+
+  function computeMa15(rows) {
+    if (!rows || !rows.length) return null;
+    const dayTs = (r) => Date.parse(r.snapshot_date + 'T00:00:00Z');
+    let anchorTs = -Infinity;
+    let anchor = null;
+    for (const r of rows) {
+      const ts = dayTs(r);
+      if (Number.isFinite(ts) && ts > anchorTs) { anchorTs = ts; anchor = r.snapshot_date; }
+    }
+    if (anchor == null) return null;
+    const minTs = anchorTs - (MA15_WINDOW_DAYS - 1) * 86400000;
+    // Per source: snapshot_date → {sum,n} over that day's non-null slot medians.
+    const buckets = {};
+    for (const k of Object.keys(MA15_COLS)) buckets[k] = new Map();
+    for (const r of rows) {
+      const ts = dayTs(r);
+      if (!Number.isFinite(ts) || ts < minTs || ts > anchorTs) continue;
+      for (const [k, col] of Object.entries(MA15_COLS)) {
+        const v = r[col];
+        if (v == null || !Number.isFinite(+v)) continue;
+        const b = buckets[k].get(r.snapshot_date) || { sum: 0, n: 0 };
+        b.sum += +v;
+        b.n += 1;
+        buckets[k].set(r.snapshot_date, b);
+      }
+    }
+    const val = {};
+    const days = {};
+    for (const k of Object.keys(MA15_COLS)) {
+      const dayMeans = [...buckets[k].values()].map(b => b.sum / b.n);
+      days[k] = dayMeans.length;
+      val[k] = dayMeans.length >= MA15_MIN_DAYS
+        ? dayMeans.reduce((a, v) => a + v, 0) / dayMeans.length
+        : null;
+    }
+    return { anchor, val, days };
+  }
+
   // ---------- TD per-source freshness (event_listing_snapshot_daily) ----------
 
   async function loadTdFreshness(eventId) {
@@ -3372,6 +3442,10 @@
     renderDataFreshness(snap, snapTs);
     // Store latest snapshot row for renderLastSnapshot() TD section
     _lastTdSnap = snap;
+    // 15d moving-average state for the CROSS-SOURCE panel — same fetched rows,
+    // no extra round-trip. The rerenderCrossSource() at the end of this fn
+    // repaints the panel with the new values.
+    _ma15 = computeMa15(rows);
 
     // Build chart series from full history (both price medians and listing counts)
     if (rows && rows.length > 1) {
@@ -5923,8 +5997,10 @@
   // Uniform multi-source distribution table (mig 20260603120000): one consistent
   // methodology for every source (TEvo · SG · SH · GT · VD · TP · TM) — listings,
   // tickets, min, median, p90, owned median — computed live from each firehose's
-  // latest batch. Metric rows × source columns; null cells render "—".
+  // latest batch, plus one FE-derived row ("Median 15d avg" ← _ma15, from the
+  // durable daily table). Metric rows × source columns; null cells render "—".
   function renderAllSourceMetrics(d, ms) {
+    _lastAllSource = { d, ms };
     const body = document.getElementById('crossSourceBody');
     const meta = document.getElementById('crossSourceMeta');
     if (!body) return;
@@ -5938,6 +6014,7 @@
       { label: 'Tickets available', key: 'tickets',      money: false },
       { label: 'Min price',         key: 'min',          money: true },
       { label: 'Median price',      key: 'median',       money: true },
+      { label: 'Median 15d avg',    key: 'ma15',         money: true },
       { label: 'P90 price',         key: 'p90',          money: true },
       { label: 'Owned median',      key: 'owned_median', money: true },
     ];
@@ -5948,8 +6025,25 @@
     const tb = tbl.querySelector('tbody');
     METRICS.forEach(m => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${escapeHtml(m.label)}</td>`
-        + sources.map(s => `<td class="num">${fmt(s[m.key], m.money)}</td>`).join('');
+      let lblAttr = '';
+      let cells;
+      if (m.key === 'ma15') {
+        // FE-derived row — trailing 15-day MA of each source's daily median
+        // (event_listing_snapshot_daily via loadTdFreshness, NOT this RPC).
+        // Dashes until _ma15 lands; rerenderCrossSource() repaints then.
+        lblAttr = ` title="Trailing ${MA15_WINDOW_DAYS}-day average of each source's daily median price `
+          + `(event_listing_snapshot_daily; a day = mean of its snapshots; needs ≥${MA15_MIN_DAYS} days of data)"`;
+        cells = sources.map(s => {
+          const v = _ma15 && _ma15.val ? _ma15.val[s.key] : null;
+          const n = _ma15 && _ma15.days ? (_ma15.days[s.key] || 0) : 0;
+          const cellTitle = v != null
+            ? ` title="${n}/${MA15_WINDOW_DAYS} days of data · through ${escapeHtml(_ma15.anchor)}"` : '';
+          return `<td class="num"${cellTitle}>${fmt(v, m.money)}</td>`;
+        }).join('');
+      } else {
+        cells = sources.map(s => `<td class="num">${fmt(s[m.key], m.money)}</td>`).join('');
+      }
+      tr.innerHTML = `<td${lblAttr}>${escapeHtml(m.label)}</td>` + cells;
       tb.appendChild(tr);
     });
     body.innerHTML = '';
@@ -5962,6 +6056,10 @@
   // (paint the TD per-source columns). Both re-renders go through the same fn.
   let _lastCrossSource = null;
   let _lastCrossSourceOverrides = null;
+  // Last successful all-source payload (+ its RPC latency) so the preferred
+  // table can also repaint when _ma15 lands after the RPC returned.
+  // null = the legacy path is the active renderer.
+  let _lastAllSource = null;
 
   function renderCrossSourceMetrics(d, ms, overrides) {
     _lastCrossSource = d;
@@ -5969,7 +6067,16 @@
     const body = document.getElementById('crossSourceBody');
     const meta = document.getElementById('crossSourceMeta');
     if (!body) return;
-    const rows = (d && d.rows) || [];
+    // Copy the RPC rows (d is cached in _lastCrossSource — never mutate it) and
+    // splice in the FE-derived "Median 15d avg" row after "Median price" once
+    // _ma15 has landed (rerenderCrossSource repaints when it does). TEvo/SG
+    // cells come from _ma15 directly; TD sub-source cells via tdCellVal below.
+    const rows = ((d && d.rows) || []).slice();
+    if (_ma15 && _ma15.val && rows.length) {
+      const maRow = { label: 'Median 15d avg', tevo: _ma15.val.tevo, sg: _ma15.val.sg, is_money: true };
+      const i = rows.findIndex(r => r.label === 'Median price');
+      rows.splice(i >= 0 ? i + 1 : rows.length, 0, maRow);
+    }
     const hasSg  = d && d.sg_event_id != null;
 
     // TD per-source columns (SH/GT/VD — individual sub-sources only) are fed FE-only
@@ -5983,12 +6090,12 @@
     // TM = box-office FACE VALUE (primary, NOT a resale floor); TMr = verified resale —
     // labeled distinctly per PROJECT_BIBLE §3 landmine.
     const TD_SUBS = [
-      { label: 'SH',  med: 'td_sh_median',        cnt: 'td_sh_listings' },
-      { label: 'GT',  med: 'td_gt_median',        cnt: 'td_gt_listings' },
-      { label: 'VD',  med: 'td_vd_median',        cnt: 'td_vd_listings' },
-      { label: 'TP',  med: 'td_tp_median',        cnt: 'td_tp_listings' },
-      { label: 'TM',  med: 'td_tm_median',        cnt: 'td_tm_listings' },
-      { label: 'TMr', med: 'td_tm_resale_median', cnt: 'td_tm_resale_listings' },
+      { label: 'SH',  med: 'td_sh_median',        cnt: 'td_sh_listings',        ma: 'sh' },
+      { label: 'GT',  med: 'td_gt_median',        cnt: 'td_gt_listings',        ma: 'gt' },
+      { label: 'VD',  med: 'td_vd_median',        cnt: 'td_vd_listings',        ma: 'vd' },
+      { label: 'TP',  med: 'td_tp_median',        cnt: 'td_tp_listings',        ma: 'tp' },
+      { label: 'TM',  med: 'td_tm_median',        cnt: 'td_tm_listings',        ma: 'tm' },
+      { label: 'TMr', med: 'td_tm_resale_median', cnt: 'td_tm_resale_listings', ma: 'tmr' },
     ];
     const tdCols = td ? TD_SUBS.filter(s => td[s.med] != null || td[s.cnt] != null) : [];
     const hasTd = tdCols.length > 0;
@@ -5996,6 +6103,7 @@
     // Per-row TD value for a sub-source column; only median + listing-count have
     // per-source backing in the daily table (get-in/spread/etc → — for TD).
     function tdCellVal(sub, label) {
+      if (label === 'Median 15d avg') return _ma15 && _ma15.val ? _ma15.val[sub.ma] : null;
       if (!td) return null;
       if (label === 'Median price')   return td[sub.med];
       if (label === 'Listings count') return td[sub.cnt];
@@ -6071,8 +6179,13 @@
   }
 
   // Re-render the cross-source table from cached state — used after _lastTdSnap
-  // arrives (paint TD per-source columns) while re-applying any v3 override.
+  // + _ma15 arrive (paint TD per-source columns / the 15d-MA row) while
+  // re-applying any v3 override. Handles whichever render path is active.
   function rerenderCrossSource() {
+    if (_lastAllSource) {
+      renderAllSourceMetrics(_lastAllSource.d, _lastAllSource.ms);
+      return;
+    }
     if (!_lastCrossSource) return;
     renderCrossSourceMetrics(_lastCrossSource, null, _lastCrossSourceOverrides || undefined);
   }
