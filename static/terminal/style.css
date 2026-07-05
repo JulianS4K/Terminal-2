@@ -1084,35 +1084,33 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
   gap: 12px;
 }
 /* Apply panel chrome + grid placement via descendant selectors so the
-   sections inside .tab-pane (display:contents) still participate. */
+   sections inside .tab-pane (display:contents) still participate.
+
+   Full-width is the DEFAULT for every event section. .tab-pane is
+   display:contents, so each tab's <section> sits directly in this 12-col
+   grid; without a grid-column it auto-places into a single 1/12 track and
+   collapses to a ~110px sliver (crushing tables + the seat map — the exact
+   symptom this default kills). Previously each full-width section needed its
+   own explicit `grid-column: 1 / -1`, so any tab section that forgot one
+   (td-listings-*, seatdata/axs, TD-markets, cast, alerts, seller listings)
+   silently collapsed. Defaulting to full width and overriding only the
+   intentional half-width panels (below) removes that whole class of bug. */
 .wrap.event section {
   background: var(--panel);
   border: 1px solid var(--line);
   padding: 12px 16px;
+  grid-column: 1 / -1;
 }
-.wrap.event #hero               { grid-column: 1 / -1; }
-.wrap.event #kpi-grid           { grid-column: 1 / -1; padding: 12px 16px; }
-.wrap.event #last-snapshot      { grid-column: 1 / -1; }
-.wrap.event #cross-source       { grid-column: 1 / -1; }
-.wrap.event #composite-chart    { grid-column: 1 / -1; padding: 12px 8px; }
-.wrap.event #sg-broker-sales    { grid-column: 1 / -1; }
-.wrap.event #splits             { grid-column: 1 / -1; }
-.wrap.event #zones              { grid-column: 1 / -1; }
-.wrap.event #sales-tape         { grid-column: 1 / -1; }
-.wrap.event #espn               { grid-column: 1 / -1; }
-.wrap.event #prediction-markets { grid-column: 1 / -1; }
-.wrap.event #weather            { grid-column: 1 / -1; }
-.wrap.event #all-orders         { grid-column: 1 / -1; }
+/* Intentional two-column Overview pairs (left | right) — the only sections
+   that are NOT full width; ID specificity overrides the default above. */
 .wrap.event #alerts             { grid-column: 1 / 7; }
 .wrap.event #competing-events   { grid-column: 7 / 13; }
 .wrap.event #recent-listings    { grid-column: 1 / 7; }
 .wrap.event #performer-espn     { grid-column: 7 / 13; }
-.wrap.event #sg-listings-full   { grid-column: 1 / -1; }
-.wrap.event #evo-listings-full  { grid-column: 1 / -1; }
-.wrap.event #sg-sales-full      { grid-column: 1 / -1; }
-.wrap.event #evo-orders-full        { grid-column: 1 / -1; }
-.wrap.event #sg-seller-orders-full  { grid-column: 1 / -1; }
-.wrap.event #cross-broker-full      { grid-column: 1 / -1; }
+/* Bespoke padding (placement inherited from the full-width default). */
+.wrap.event #composite-chart    { padding: 12px 8px; }
+/* The tab bar is a <nav>, not a <section>, so the section default can't
+   reach it — place it explicitly. */
 .wrap.event nav.event-tabs      { grid-column: 1 / -1; }
 
 /* Hero band — main info left, status side panel right */
@@ -2229,10 +2227,9 @@ body[data-page="login"] {
 .td-tm-section { border-left-color: #6366f1; }   /* TM — indigo */
 
 /* ---------- Seat Map tab (Tevomaps interactive venue map + section filter) ---------- */
-/* main.wrap.event is a 12-col grid and .tab-pane is display:contents, so this section
-   sits directly in that grid — it must span all 12 cols or it collapses to ~1/12 width
-   (crushing the map into a sliver). Mirrors the other full-width event sections. */
-.wrap.event #seatmap-section { grid-column: 1 / -1; }
+/* Full-width placement comes from the `.wrap.event section` default (grid-column:
+   1 / -1); without it this section would collapse to ~1/12 width and crush the map
+   into a sliver. This rule only overrides the chrome (rounded border + 16px pad). */
 #seatmap-section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; }
 #seatmap-section .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
 
