@@ -10,7 +10,7 @@
   'use strict';
 
   const T = window.Terminal;
-  const DEFAULT_HOURS = 168;
+  const DEFAULT_HOURS = 24;
   // V3 page-load p_chart_hours: bumped to 720 (30d) so both charts have full
   // TEvo history available even when their range selector is set to 30d.
   // Re-render cost is negligible; only the chart_data series array grows.
@@ -24,7 +24,7 @@
   let _chartInstances = { price: null, inv: null };
   let _lastPayload = null;
   let _axsSeries = null;   // {prices_axs:[{t,v}], counts_axs:[{t,v}]} — AXS box office, fetched out-of-band
-  // Per-chart window (hours). Default 168h (7d) on first load.
+  // Per-chart window (hours). Default 24h on first load.
   let _chartPriceHours = DEFAULT_HOURS;
   let _chartInvHours   = DEFAULT_HOURS;
   // Per-chart extended-RPC payload caches (mig 20260519150000).
