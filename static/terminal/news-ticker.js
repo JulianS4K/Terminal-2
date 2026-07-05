@@ -20,6 +20,11 @@
 //                 broadway_cast_pull_log flags (daily cast-poll change detection,
 //                 mig 20260704160000). item_type='cast'; CAST tag; `team` = show
 //                 title. Broadway analogue of the injury report.
+//   * Fed       — macro_indicators (FRED macro releases: FEDFUNDS Fed policy
+//                 rate, UMCSENT sentiment, mig 20260705120000). item_type='macro';
+//                 FED tag. Window-gated on WHEN the reading first landed in our
+//                 store — a new print flashes at the top, then ages out, so the
+//                 wire surfaces the Fed only when it actually updates.
 //
 // Server params: window hours (re-query). Client-side (instant): source toggle,
 // league chips (faceted with live counts), free-text search. Auto-refreshes
@@ -44,7 +49,7 @@
 
   const state = {
     items:       [],
-    source:      'all',            // 'all' | 'ESPN' | 'Injuries' | 'Scores' | 'Standings' | 'Reddit' | 'Broadway'
+    source:      'all',            // 'all' | 'ESPN' | 'Transactions' | 'Injuries' | 'Scores' | 'Standings' | 'Reddit' | 'Broadway' | 'Fed'
     windowHours: WINDOW_DEFAULT,   // 24 | 48 | 168
     league:      'ALL',
     search:      '',
@@ -207,6 +212,7 @@
     standing: ['W-L', 'news-badge-standing'],
     transaction: ['TXN', 'news-badge-txn'],
     cast:     ['CAST', 'news-badge-cast'],
+    macro:    ['FED', 'news-badge-fed'],
   };
   function badge(it) {
     const lg = leagueOf(it);

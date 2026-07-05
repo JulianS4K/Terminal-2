@@ -2154,11 +2154,18 @@ body[data-page="login"] {
   color: #fbbf24;
   border-color: rgba(251, 191, 36, .45);
   background: rgba(251, 191, 36, .10);
+}
 /* Broadway cast — marquee magenta, distinct from the sports type tags. */
 .news-badge-cast {
   color: #e879f9;
   border-color: rgba(232, 121, 249, .45);
   background: rgba(232, 121, 249, .10);
+}
+/* Fed / FRED macro — rates cyan, distinct from the amber txn tag. */
+.news-badge-fed {
+  color: #22d3ee;
+  border-color: rgba(34, 211, 238, .45);
+  background: rgba(34, 211, 238, .10);
 }
 
 /* ---------- TD listings table (TD Markets tab) ---------- */
