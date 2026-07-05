@@ -1,9 +1,11 @@
 -- ============================================================================
 -- Migration 20260705153500 — venue-anchored daily section medians (+performer/away-team dims)
 --
--- Lane:     A1 (data plane)
+-- Lane:     A1 (data plane) + D0 read surface (RPC)
 -- Touches:  venue_section_price_daily (NEW, W), venue_section_rollup_state (NEW, W),
---           rollup_venue_section_price_daily() (NEW fn), venue_section_rollup_catchup() (NEW fn),
+--           venue_section_performer_agg / venue_section_opponent_agg (NEW, W — read-layer aggs),
+--           rollup_venue_section_price_daily() / venue_section_rollup_catchup() /
+--           refresh_venue_section_aggs() / get_venue_section_medians() (NEW fns),
 --           v_venue_section_medians_by_performer / v_venue_section_medians_by_opponent (NEW views),
 --           cron.job (schedule venue_section_rollup_hourly), cron_policy (W),
 --           section_metrics (R), events (R), venue_section_map (R), performer_metadata (R)
@@ -295,6 +297,11 @@ BEGIN
     v_done := v_done + 1;
   END LOOP;
 
+  -- Refresh the read-layer aggregates whenever the substrate moved.
+  IF v_done > 0 THEN
+    PERFORM public.refresh_venue_section_aggs();
+  END IF;
+
   RETURN v_done;
 END $function$;
 
@@ -306,44 +313,306 @@ COMMENT ON FUNCTION public.venue_section_rollup_catchup(integer, integer) IS
   'Backlog self-drains over ~1-2 days of hourly fires, then it''s today+yesterday only. '
   'Mig 20260705153500.';
 
--- ── 5. Analysis views (median-of-daily-medians across events) ────────────────
+-- ── 5. Aggregate rollups — the READ layer (per away team / per performer) ────
+-- The daily table stays the source of truth (exact medians, re-slicing,
+-- corrections); these small aggregates are what dashboards/RPCs read.
+-- performer_kind splits venues with sports teams: 'team' (home team; opponent
+-- slices live in the opponent agg) vs 'other' (concert/show headliners).
+
+CREATE TABLE IF NOT EXISTS public.venue_section_performer_agg (
+  venue_id          bigint  NOT NULL,
+  performer_id      bigint  NOT NULL,
+  section_key       text    NOT NULL,
+  performer_kind    text    NOT NULL DEFAULT 'other' CHECK (performer_kind IN ('team','other')),
+  performer_name    text,
+  seatmap_key       text,
+  events_seen       integer NOT NULL DEFAULT 0,
+  day_samples       integer NOT NULL DEFAULT 0,
+  median_price      numeric,   -- percentile_cont(.5) over each event's LATEST daily median
+  median_price_365d numeric,   -- same, events last seen within 365d
+  min_getin         numeric,
+  first_seen        date,
+  last_seen         date,
+  refreshed_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (venue_id, performer_id, section_key)
+);
+CREATE INDEX IF NOT EXISTS idx_vspa_venue_kind
+  ON public.venue_section_performer_agg (venue_id, performer_kind, performer_id);
+
+CREATE TABLE IF NOT EXISTS public.venue_section_opponent_agg (
+  venue_id              bigint  NOT NULL,
+  performer_id          bigint  NOT NULL,   -- home team the opponent visited
+  opponent_performer_id bigint  NOT NULL,
+  section_key           text    NOT NULL,
+  performer_name        text,
+  opponent_name         text,
+  seatmap_key           text,
+  events_seen           integer NOT NULL DEFAULT 0,
+  day_samples           integer NOT NULL DEFAULT 0,
+  median_price          numeric,
+  median_price_365d     numeric,
+  min_getin             numeric,
+  first_seen            date,
+  last_seen             date,
+  refreshed_at          timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (venue_id, performer_id, opponent_performer_id, section_key)
+);
+CREATE INDEX IF NOT EXISTS idx_vsoa_venue_section
+  ON public.venue_section_opponent_agg (venue_id, section_key, median_price DESC);
+
+REVOKE ALL ON TABLE public.venue_section_performer_agg FROM anon, authenticated;
+REVOKE ALL ON TABLE public.venue_section_opponent_agg  FROM anon, authenticated;
+ALTER TABLE public.venue_section_performer_agg ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.venue_section_opponent_agg  ENABLE ROW LEVEL SECURITY;
+DO $p$ BEGIN
+  CREATE POLICY "service_role_all" ON public.venue_section_performer_agg
+    TO service_role USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $p$;
+DO $p$ BEGIN
+  CREATE POLICY "service_role_all" ON public.venue_section_opponent_agg
+    TO service_role USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $p$;
+
+COMMENT ON TABLE public.venue_section_performer_agg IS
+  'Per (venue, performer, section) price aggregate — kind=team (home team) vs other '
+  '(concerts/shows). Rebuilt by refresh_venue_section_aggs() after each daily rollup; '
+  'medians computed EXACTLY from venue_section_price_daily (each event''s latest daily row). '
+  'Read layer only — never a source of truth. Mig 20260705153500.';
+COMMENT ON TABLE public.venue_section_opponent_agg IS
+  'Per (venue, home team, AWAY TEAM, section) price aggregate for games. Same refresh/'
+  'semantics as venue_section_performer_agg. Mig 20260705153500.';
+
+CREATE OR REPLACE FUNCTION public.refresh_venue_section_aggs()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_perf integer := 0;
+  v_opp  integer := 0;
+BEGIN
+  IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN
+    RAISE EXCEPTION 'forbidden: refresh_venue_section_aggs is service-only' USING ERRCODE='42501';
+  END IF;
+
+  -- Full rebuild: the daily table is the truth, the aggs are disposable.
+  -- (Scope to touched venues if this ever outgrows its budget.)
+  -- Explicit DELETE before INSERT — a wipe inside a data-modifying CTE has
+  -- unspecified execution order vs the main statement and can PK-collide.
+  DELETE FROM public.venue_section_performer_agg;
+
+  WITH reps AS (
+    -- one representative row per (event, section) = the event's LATEST daily capture
+    SELECT DISTINCT ON (event_id, section_key) *
+    FROM public.venue_section_price_daily
+    WHERE performer_id IS NOT NULL AND retail_median IS NOT NULL
+    ORDER BY event_id, section_key, snapshot_date DESC
+  ),
+  days AS (
+    SELECT venue_id, performer_id, section_key, count(*) AS day_samples
+    FROM public.venue_section_price_daily
+    WHERE performer_id IS NOT NULL AND retail_median IS NOT NULL
+    GROUP BY 1,2,3
+  ),
+  agg AS (
+    SELECT r.venue_id, r.performer_id, r.section_key,
+           CASE WHEN bool_or(r.event_type = 'game') THEN 'team' ELSE 'other' END AS performer_kind,
+           max(r.performer_name)  AS performer_name,
+           max(r.seatmap_key)     AS seatmap_key,
+           count(*)               AS events_seen,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY r.retail_median) AS median_price,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY r.retail_median)
+             FILTER (WHERE r.snapshot_date >= current_date - 365)       AS median_price_365d,
+           min(r.getin_price)     AS min_getin,
+           min(r.snapshot_date)   AS first_seen,
+           max(r.snapshot_date)   AS last_seen
+    FROM reps r
+    GROUP BY r.venue_id, r.performer_id, r.section_key
+  )
+  INSERT INTO public.venue_section_performer_agg
+    (venue_id, performer_id, section_key, performer_kind, performer_name, seatmap_key,
+     events_seen, day_samples, median_price, median_price_365d, min_getin,
+     first_seen, last_seen, refreshed_at)
+  SELECT a.venue_id, a.performer_id, a.section_key, a.performer_kind, a.performer_name, a.seatmap_key,
+         a.events_seen, COALESCE(d.day_samples, 0), a.median_price, a.median_price_365d, a.min_getin,
+         a.first_seen, a.last_seen, now()
+  FROM agg a LEFT JOIN days d USING (venue_id, performer_id, section_key);
+  GET DIAGNOSTICS v_perf = ROW_COUNT;
+
+  DELETE FROM public.venue_section_opponent_agg;
+
+  WITH reps AS (
+    SELECT DISTINCT ON (event_id, section_key) *
+    FROM public.venue_section_price_daily
+    WHERE performer_id IS NOT NULL AND opponent_performer_id IS NOT NULL
+      AND retail_median IS NOT NULL
+    ORDER BY event_id, section_key, snapshot_date DESC
+  ),
+  days AS (
+    SELECT venue_id, performer_id, opponent_performer_id, section_key, count(*) AS day_samples
+    FROM public.venue_section_price_daily
+    WHERE performer_id IS NOT NULL AND opponent_performer_id IS NOT NULL
+      AND retail_median IS NOT NULL
+    GROUP BY 1,2,3,4
+  ),
+  agg AS (
+    SELECT r.venue_id, r.performer_id, r.opponent_performer_id, r.section_key,
+           max(r.performer_name) AS performer_name,
+           max(r.opponent_name)  AS opponent_name,
+           max(r.seatmap_key)    AS seatmap_key,
+           count(*)              AS events_seen,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY r.retail_median) AS median_price,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY r.retail_median)
+             FILTER (WHERE r.snapshot_date >= current_date - 365)       AS median_price_365d,
+           min(r.getin_price)    AS min_getin,
+           min(r.snapshot_date)  AS first_seen,
+           max(r.snapshot_date)  AS last_seen
+    FROM reps r
+    GROUP BY r.venue_id, r.performer_id, r.opponent_performer_id, r.section_key
+  )
+  INSERT INTO public.venue_section_opponent_agg
+    (venue_id, performer_id, opponent_performer_id, section_key, performer_name, opponent_name,
+     seatmap_key, events_seen, day_samples, median_price, median_price_365d, min_getin,
+     first_seen, last_seen, refreshed_at)
+  SELECT a.venue_id, a.performer_id, a.opponent_performer_id, a.section_key, a.performer_name,
+         a.opponent_name, a.seatmap_key, a.events_seen, COALESCE(d.day_samples, 0),
+         a.median_price, a.median_price_365d, a.min_getin, a.first_seen, a.last_seen, now()
+  FROM agg a LEFT JOIN days d USING (venue_id, performer_id, opponent_performer_id, section_key);
+  GET DIAGNOSTICS v_opp = ROW_COUNT;
+
+  RETURN v_perf + v_opp;
+END $function$;
+
+REVOKE ALL ON FUNCTION public.refresh_venue_section_aggs() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_venue_section_aggs() TO service_role;
+COMMENT ON FUNCTION public.refresh_venue_section_aggs() IS
+  'Full rebuild of venue_section_{performer,opponent}_agg from venue_section_price_daily. '
+  'Called by venue_section_rollup_catchup() after each rollup pass. Mig 20260705153500.';
+
+-- ── 5b. Views (thin reads over the aggs — same names as the design docs) ─────
 
 CREATE OR REPLACE VIEW public.v_venue_section_medians_by_performer
 WITH (security_invoker = true) AS
-SELECT performer_id, performer_name, venue_id, section_key,
-       count(DISTINCT event_id)                                   AS events_seen,
-       count(*)                                                   AS day_samples,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY retail_median) AS median_retail_median,
-       round(avg(retail_median), 2)                               AS avg_retail_median,
-       min(getin_price)                                           AS min_getin,
-       max(snapshot_date)                                         AS latest_snapshot_date
-FROM public.venue_section_price_daily
-WHERE performer_id IS NOT NULL AND retail_median IS NOT NULL
-GROUP BY performer_id, performer_name, venue_id, section_key;
+SELECT venue_id, performer_id, performer_name, performer_kind, section_key, seatmap_key,
+       events_seen, day_samples, median_price, median_price_365d, min_getin, first_seen, last_seen
+FROM public.venue_section_performer_agg;
 
 CREATE OR REPLACE VIEW public.v_venue_section_medians_by_opponent
 WITH (security_invoker = true) AS
-SELECT opponent_performer_id, opponent_name, venue_id, performer_id AS home_performer_id, section_key,
-       count(DISTINCT event_id)                                   AS events_seen,
-       count(*)                                                   AS day_samples,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY retail_median) AS median_retail_median,
-       round(avg(retail_median), 2)                               AS avg_retail_median,
-       min(getin_price)                                           AS min_getin,
-       max(snapshot_date)                                         AS latest_snapshot_date
-FROM public.venue_section_price_daily
-WHERE opponent_performer_id IS NOT NULL AND retail_median IS NOT NULL
-GROUP BY opponent_performer_id, opponent_name, venue_id, performer_id, section_key;
+SELECT venue_id, performer_id AS home_performer_id, performer_name AS home_performer_name,
+       opponent_performer_id, opponent_name, section_key, seatmap_key,
+       events_seen, day_samples, median_price, median_price_365d, min_getin, first_seen, last_seen
+FROM public.venue_section_opponent_agg;
 
 REVOKE ALL ON public.v_venue_section_medians_by_performer  FROM anon, authenticated;
 REVOKE ALL ON public.v_venue_section_medians_by_opponent   FROM anon, authenticated;
 GRANT SELECT ON public.v_venue_section_medians_by_performer TO service_role;
 GRANT SELECT ON public.v_venue_section_medians_by_opponent  TO service_role;
 COMMENT ON VIEW public.v_venue_section_medians_by_performer IS
-  'How each venue section prices across a performer''s (home team''s / headliner''s) events — '
-  'median-of-daily-medians over venue_section_price_daily.';
+  'How each venue section prices across a performer''s events (kind=team vs other). '
+  'Reads venue_section_performer_agg (exact medians, refreshed after each rollup).';
 COMMENT ON VIEW public.v_venue_section_medians_by_opponent IS
-  'How each venue section prices BY AWAY TEAM at a home venue — median-of-daily-medians '
-  'over venue_section_price_daily (games only).';
+  'How each venue section prices BY AWAY TEAM at a home venue. '
+  'Reads venue_section_opponent_agg.';
+
+-- ── 5c. Terminal RPC — venue page Sections panel ─────────────────────────────
+-- Venues with sports teams get team blocks (with per-opponent slices) SEPARATE
+-- from concert/other performers, per operator direction 2026-07-05.
+
+CREATE OR REPLACE FUNCTION public.get_venue_section_medians(p_venue_id bigint)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_email text;
+  v_teams jsonb;
+  v_others jsonb;
+  v_refreshed timestamptz;
+BEGIN
+  v_email := coalesce(auth.jwt()->>'email', '');
+  IF v_email NOT LIKE '%@s4kent.com'
+     AND current_user NOT IN ('service_role','postgres','supabase_admin') THEN
+    RAISE EXCEPTION 'forbidden: % is not @s4kent.com', v_email USING ERRCODE='42501';
+  END IF;
+
+  SELECT max(refreshed_at) INTO v_refreshed
+  FROM public.venue_section_performer_agg WHERE venue_id = p_venue_id;
+
+  -- Team blocks: sections ordered by median, each with its away-team slice.
+  SELECT jsonb_agg(t ORDER BY t->>'performer_name')
+  INTO v_teams
+  FROM (
+    SELECT jsonb_build_object(
+      'performer_id', pa.performer_id,
+      'performer_name', max(pa.performer_name),
+      'sections', jsonb_agg(jsonb_build_object(
+          'section_key', pa.section_key,
+          'seatmap_key', pa.seatmap_key,
+          'median_price', round(pa.median_price::numeric, 2),
+          'median_price_365d', round(pa.median_price_365d::numeric, 2),
+          'events_seen', pa.events_seen,
+          'min_getin', pa.min_getin,
+          'last_seen', pa.last_seen,
+          'opponents', (
+            SELECT jsonb_agg(jsonb_build_object(
+                     'opponent_performer_id', oa.opponent_performer_id,
+                     'opponent_name', oa.opponent_name,
+                     'median_price', round(oa.median_price::numeric, 2),
+                     'events_seen', oa.events_seen
+                   ) ORDER BY oa.median_price DESC)
+            FROM public.venue_section_opponent_agg oa
+            WHERE oa.venue_id = pa.venue_id
+              AND oa.performer_id = pa.performer_id
+              AND oa.section_key = pa.section_key
+          )
+        ) ORDER BY pa.median_price DESC NULLS LAST)
+    ) AS t
+    FROM public.venue_section_performer_agg pa
+    WHERE pa.venue_id = p_venue_id AND pa.performer_kind = 'team'
+    GROUP BY pa.performer_id
+  ) teams;
+
+  -- Concert / other performers: separate list (operator note: never mixed with teams).
+  SELECT jsonb_agg(o ORDER BY (o->>'events_total')::int DESC)
+  INTO v_others
+  FROM (
+    SELECT jsonb_build_object(
+      'performer_id', pa.performer_id,
+      'performer_name', max(pa.performer_name),
+      'events_total', max(pa.events_seen),
+      'sections', jsonb_agg(jsonb_build_object(
+          'section_key', pa.section_key,
+          'seatmap_key', pa.seatmap_key,
+          'median_price', round(pa.median_price::numeric, 2),
+          'median_price_365d', round(pa.median_price_365d::numeric, 2),
+          'events_seen', pa.events_seen,
+          'min_getin', pa.min_getin,
+          'last_seen', pa.last_seen
+        ) ORDER BY pa.median_price DESC NULLS LAST)
+    ) AS o
+    FROM public.venue_section_performer_agg pa
+    WHERE pa.venue_id = p_venue_id AND pa.performer_kind = 'other'
+    GROUP BY pa.performer_id
+  ) others;
+
+  RETURN jsonb_build_object(
+    'venue_id', p_venue_id,
+    'teams',  COALESCE(v_teams,  '[]'::jsonb),
+    'others', COALESCE(v_others, '[]'::jsonb),
+    'refreshed_at', v_refreshed
+  );
+END $function$;
+
+REVOKE ALL ON FUNCTION public.get_venue_section_medians(bigint) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_venue_section_medians(bigint) TO authenticated, service_role;
+COMMENT ON FUNCTION public.get_venue_section_medians(bigint) IS
+  'D0 venue page SECTIONS panel. Email-gated @s4kent.com. Returns teams[] (home teams w/ '
+  'per-section medians + away-team slices) SEPARATE from others[] (concert/show performers), '
+  'reading venue_section_{performer,opponent}_agg. Mig 20260705153500.';
 
 -- ── 6. Cron (hourly; today refresh + backlog drain in one path) ──────────────
 
