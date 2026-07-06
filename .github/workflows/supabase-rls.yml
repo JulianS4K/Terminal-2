@@ -87,7 +87,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v2
         with:
           version: latest
 
