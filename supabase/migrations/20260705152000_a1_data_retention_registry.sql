@@ -1,5 +1,12 @@
 -- ============================================================================
--- Migration 20260705153000 — data-retention registry + per-minute tick runner
+-- Migration 20260705152000 — data-retention registry + per-minute tick runner
+--
+-- ⚠ SUPERSEDED same-day by 20260705153000_a1_retention_policy_engine (PR #805,
+--   a parallel operator-directed session) — consolidated by
+--   20260705170000_a1_retention_consolidation, which retired every object this
+--   file creates. Kept as the historical record of what ran 15:24–23:59Z
+--   (drained ~14.38M rows). Renamed from 20260705153000 to resolve the
+--   filename collision with PR #805's migration.
 --
 -- Lane:     A1 (data plane)
 -- Touches:  data_retention_policy (W, new), run_data_retention_tick (new fn),
