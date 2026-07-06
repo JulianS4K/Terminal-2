@@ -17,6 +17,8 @@
     marketLoaded:     false,
     competingLoaded:  false,
     alertsLoaded:     false,
+    sectionsLoaded:   false,
+    sectionsData:     null,
     venueEvents:      null,
     venueAggregate:   {},
     compRadius:       50,
@@ -145,6 +147,7 @@
     owned:      'vPaneOwned',
     sg:         'vPaneSg',
     competing:  'vPaneCompeting',
+    sections:   'vPaneSections',
     market:     'vPaneMarket',
     alerts:     'vPaneAlerts',
   };
@@ -165,6 +168,9 @@
       }
       if (tabId === 'competing' && !_vTabState.competingLoaded) {
         initCompetingPanel();
+      }
+      if (tabId === 'sections' && !_vTabState.sectionsLoaded) {
+        await loadVenueSections();
       }
       if (tabId === 'alerts' && !_vTabState.alertsLoaded) {
         _vTabState.alertsLoaded = true;
@@ -764,6 +770,134 @@
       body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
       if (countEl) countEl.textContent = '';
     }
+  }
+
+  // ---------- Sections tab (venue-anchored section medians) ----------
+  // One call to get_venue_section_medians → { teams:[…], others:[…] }.
+  // Teams (home clubs) slice by AWAY TEAM; concert/other performers are a
+  // separate group by design — never blended with team pricing.
+  async function loadVenueSections() {
+    _vTabState.sectionsLoaded = true;
+    const body = document.getElementById('vSectionsBody');
+    if (!body) return;
+    body.innerHTML = '<div class="empty">loading…</div>';
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) { body.innerHTML = '<div class="empty">auth required</div>'; return; }
+    const res = await Auth.client.rpc('get_venue_section_medians', { p_venue_id: getVenueId() });
+    if (res.error) {
+      _vTabState.sectionsLoaded = false;   // allow retry on next tab click
+      body.innerHTML = '<div class="empty">' + escapeHtml(res.error.message) +
+        ' — panel populates once the venue-section rollup has run</div>';
+      return;
+    }
+    const d = res.data || {};
+    _vTabState.sectionsData = d;
+    setText('vSectionsMeta', d.refreshed_at
+      ? 'refreshed ' + String(d.refreshed_at).slice(0, 16).replace('T', ' ') + ' UTC' : '');
+    renderSectionsControls(d);
+  }
+
+  function renderSectionsControls(d) {
+    const ctrl = document.getElementById('vSectionsControls');
+    const body = document.getElementById('vSectionsBody');
+    const teams = d.teams || [], others = d.others || [];
+    if (!teams.length && !others.length) {
+      ctrl.innerHTML = '';
+      body.innerHTML = '<div class="empty">no section history for this venue yet — ' +
+        'rows appear after the hourly venue-section rollup seals a day of data</div>';
+      return;
+    }
+    const btns = teams.map((t, i) =>
+      `<button class="ctrl-btn${(i === 0) ? ' is-active' : ''}" data-vs-group="team:${t.performer_id}">
+         ${escapeHtml(t.performer_name || ('Performer ' + t.performer_id))}</button>`);
+    if (others.length) {
+      btns.push(`<button class="ctrl-btn${teams.length ? '' : ' is-active'}" data-vs-group="others">
+        CONCERTS / OTHER <span class="muted small">(${others.length})</span></button>`);
+    }
+    ctrl.innerHTML = `<div class="ctrl-group"><span class="ctrl-lbl">GROUP</span>${btns.join('')}</div>` +
+      `<div class="ctrl-group" id="vsPerformerPick" hidden><span class="ctrl-lbl">PERFORMER</span>
+         <select id="vsPerformerSel" class="range-select" aria-label="Performer"></select></div>`;
+    ctrl.onclick = (e) => {
+      const b = e.target.closest('[data-vs-group]');
+      if (!b) return;
+      ctrl.querySelectorAll('[data-vs-group]').forEach(x => x.classList.toggle('is-active', x === b));
+      renderSectionsGroup(b.dataset.vsGroup);
+    };
+    renderSectionsGroup(teams.length ? ('team:' + teams[0].performer_id) : 'others');
+  }
+
+  function renderSectionsGroup(groupKey) {
+    const d = _vTabState.sectionsData || {};
+    const body = document.getElementById('vSectionsBody');
+    const pick = document.getElementById('vsPerformerPick');
+
+    if (groupKey.startsWith('team:')) {
+      if (pick) pick.setAttribute('hidden', '');
+      const pid = +groupKey.slice(5);
+      const t = (d.teams || []).find(x => +x.performer_id === pid);
+      if (!t) { body.innerHTML = '<div class="empty">no data</div>'; return; }
+      body.innerHTML = '';
+      body.appendChild(sectionsTable(t.sections || [], true));
+      return;
+    }
+
+    // CONCERTS / OTHER: second-level performer picker (kept separate from teams).
+    const others = d.others || [];
+    if (pick) {
+      pick.removeAttribute('hidden');
+      const sel = document.getElementById('vsPerformerSel');
+      sel.innerHTML = others.map(o =>
+        `<option value="${o.performer_id}">${escapeHtml(o.performer_name || ('Performer ' + o.performer_id))}</option>`).join('');
+      sel.onchange = () => {
+        const o = others.find(x => String(x.performer_id) === sel.value);
+        body.innerHTML = '';
+        body.appendChild(sectionsTable((o && o.sections) || [], false));
+      };
+    }
+    body.innerHTML = '';
+    body.appendChild(sectionsTable((others[0] && others[0].sections) || [], false));
+  }
+
+  function sectionsTable(sections, withOpponents) {
+    const $m = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    if (!sections.length) {
+      const div = document.createElement('div');
+      div.className = 'empty'; div.textContent = 'no sections tracked yet';
+      return div;
+    }
+    const tbl = document.createElement('table');
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th>
+        <th class="num" title="exact median across events — each event contributes its latest daily capture">Median</th>
+        <th class="num" title="same, events seen in the last 365d">365d</th>
+        <th class="num">Events</th>
+        <th class="num" title="lowest get-in observed">Floor</th>
+        <th class="num">Last seen</th>
+        ${withOpponents ? '<th title="same section, by away team — top opponents by median">By away team</th>' : ''}
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    sections.forEach(s => {
+      const label = s.seatmap_key ? s.seatmap_key.toUpperCase() : ('§ ' + s.section_key);
+      let oppHtml = '';
+      if (withOpponents) {
+        const chips = (s.opponents || []).slice(0, 4).map(o =>
+          `<span class="badge" title="${escapeHtml(o.opponent_name || '')} · ${o.events_seen} event(s)">
+             ${escapeHtml(o.opponent_name || '?')} ${$m(o.median_price)}</span>`).join(' ');
+        oppHtml = `<td>${chips || '<span class="muted small">—</span>'}</td>`;
+      }
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(label)} <span class="muted small">${s.seatmap_key ? escapeHtml(s.section_key) : ''}</span></td>
+        <td class="num">${$m(s.median_price)}</td>
+        <td class="num">${$m(s.median_price_365d)}</td>
+        <td class="num">${s.events_seen ?? '—'}</td>
+        <td class="num">${$m(s.min_getin)}</td>
+        <td class="num muted small">${s.last_seen ? String(s.last_seen).slice(5) : '—'}</td>
+        ${oppHtml}`;
+      tb.appendChild(tr);
+    });
+    return tbl;
   }
 
   // ---------- Util ----------
