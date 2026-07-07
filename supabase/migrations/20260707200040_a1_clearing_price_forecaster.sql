@@ -21,11 +21,14 @@
 --           20260703210000 (cast_price_ref), 20260705153500 (venue_section_*_agg).
 --
 -- MODEL (validated read-only against prod 2026-07-07):
---   expected_clearing(event, section, dte) =
---     Tier1  realized section median (SG + SeatData sales, deduped, recency-windowed)
---     Tier2  base_ask × sold_to_ask_ratio(category, dte_bucket)   -- asks clear at a discount
---     Tier3  venue×performer / road-draw prior (cast_price_ref away/overall)
---     Tier4  event ask × global ratio
+--   expected_clearing = WEIGHTED BLEND of section-grain signals, each contributing by
+--   its own weight (feature_weights) × a confidence factor, then × demand_mult:
+--     s_realized  realized section median (SG + SeatData, deduped, 45d)   w=realized_sale × n/(n+4)
+--     s_ask       section ask × sold_to_ask_ratio(category, dte)          w=amalgam_ask × 0.8
+--     s_opp       away-team-specific section median (opponent agg)        w=venue_section_prior × events/(events+6)
+--     s_awayadj   home section prior × road-draw mult (away/overall)      w=venue_performer × events/(events+8) × 0.5
+--   clearing = Σ(signal×w)/Σ(w over present signals); fall back to bare ask if none.
+--   "Each thing has a different weight on price" — weights live in feature_weights (tunable).
 --   band = point × (ratio_p25 / ratio_mid, ratio_p75 / ratio_mid)  -- fan-out near event
 --
 --   Measured ratios (realized / EVO ask), n up to 532/bucket:
@@ -382,47 +385,98 @@ BEGIN
         WHERE cr.tevo_performer_id = ev.primary_performer_id LIMIT 1) AS home_performer_median
     FROM ev
   ),
-  pick AS (
-    -- ev is the 1-row anchor; sec_ask/ev_ask may be empty (LEFT JOIN keeps the row);
-    -- realized/coeff_f/attribution are each single-row (aggregates / FROM ev).
+  perf_prior AS (  -- home team's cross-event median for THIS section (venue×performer×section)
+    SELECT pa.median_price, pa.events_seen
+    FROM public.venue_section_performer_agg pa, ev
+    WHERE pa.venue_id = ev.venue_id AND pa.performer_id = ev.primary_performer_id
+      AND pa.section_key = lower(btrim(p_section)) LIMIT 1
+  ),
+  opp_prior AS (  -- away-team-specific section median (visiting draw), when the venue has it
+    SELECT oa.median_price, oa.events_seen
+    FROM public.venue_section_opponent_agg oa, ev
+    WHERE oa.venue_id = ev.venue_id AND oa.performer_id = ev.primary_performer_id
+      AND lower(oa.opponent_name) = ev.away_name
+      AND oa.section_key = lower(btrim(p_section)) LIMIT 1
+  ),
+  road AS (  -- away team's road-draw multiplier (how much it travels above its own baseline)
+    SELECT cr.away_median_price, cr.overall_median_price,
+           greatest(1.0, least(5.0, cr.away_median_price / NULLIF(cr.overall_median_price,0))) AS mult
+    FROM public.cast_price_ref cr, ev
+    WHERE lower(cr.entity_name) = ev.away_name
+    ORDER BY cr.away_events DESC NULLS LAST LIMIT 1
+  ),
+  w AS (  -- per-data-type weights (tunable via feature_weights; event_category='ALL' in v1)
+    SELECT
+      coalesce(max(weight) FILTER (WHERE feature_group='realized_sale'),1.0)      AS w_real,
+      coalesce(max(weight) FILTER (WHERE feature_group='amalgam_ask'),0.7)        AS w_ask,
+      coalesce(max(weight) FILTER (WHERE feature_group='venue_performer'),0.6)    AS w_vp,
+      coalesce(max(weight) FILTER (WHERE feature_group='venue_section_prior'),0.4) AS w_opp
+    FROM public.feature_weights WHERE event_category = 'ALL'
+  ),
+  base AS (
+    -- ev is the 1-row anchor; sec_ask/ev_ask/priors may be empty (LEFT JOIN keeps the row).
     SELECT ev.dte, ev.category, public.price_dte_bucket(ev.dte::int) AS dte_bucket,
       sa.retail_median AS section_ask, ea.retail_median AS event_ask,
       sa.getin_price AS section_getin, sa.tickets_count AS section_tix,
       r.med AS realized_med, r.n AS realized_n,
       cf.ratio, cf.ratio_p25, cf.ratio_p75, cf.spike_up_rate, cf.n AS coeff_n,
       at.venue_performer_median, at.road_draw_away_median, at.home_performer_median,
-      coalesce(sa.retail_median, ea.retail_median) AS base_ask
+      coalesce(sa.retail_median, ea.retail_median) AS base_ask,
+      pp.median_price AS perf_prior_med, pp.events_seen AS perf_events,
+      op.median_price AS opp_prior_med,  op.events_seen AS opp_events,
+      rd.mult AS road_mult,
+      w.w_real, w.w_ask, w.w_vp, w.w_opp
     FROM ev
     LEFT JOIN sec_ask sa ON true
     LEFT JOIN ev_ask  ea ON true
     CROSS JOIN realized r
     CROSS JOIN coeff_f  cf
     CROSS JOIN attribution at
+    LEFT JOIN perf_prior pp ON true
+    LEFT JOIN opp_prior  op ON true
+    LEFT JOIN road       rd ON true
+    CROSS JOIN w
+  ),
+  sig AS (
+    -- Section-grain price signals + EFFECTIVE weight (per-data-type weight × confidence):
+    --   s_realized  realized SG+SeatData median          conf = n/(n+4)
+    --   s_ask       section ask × category×dte ratio      conf = 0.8 (structural)
+    --   s_opp       away-team-specific section median      conf = events/(events+6)
+    --   s_awayadj   home section prior × road-draw mult    conf = events/(events+8) × 0.5
+    -- s_awayadj lifts the cheap regular-game home price to the visiting draw so a
+    -- marquee opponent (e.g. Inter Miami road mult ~2.75) isn't dragged down.
+    SELECT base.*,
+      realized_med AS s_realized,
+      CASE WHEN base_ask IS NOT NULL AND ratio IS NOT NULL THEN base_ask * ratio END AS s_ask,
+      opp_prior_med AS s_opp,
+      CASE WHEN perf_prior_med IS NOT NULL THEN perf_prior_med * coalesce(road_mult,1.0) END AS s_awayadj,
+      w_real * (realized_n::numeric / (realized_n + 4))                                    AS ew_realized,
+      CASE WHEN base_ask IS NOT NULL AND ratio IS NOT NULL THEN w_ask * 0.8 ELSE 0 END     AS ew_ask,
+      CASE WHEN opp_prior_med IS NOT NULL THEN w_opp * (opp_events::numeric/(opp_events+6)) ELSE 0 END       AS ew_opp,
+      CASE WHEN perf_prior_med IS NOT NULL THEN w_vp * (perf_events::numeric/(perf_events+8)) * 0.5 ELSE 0 END AS ew_awayadj
+    FROM base
   ),
   est AS (
-    -- Empirical-Bayes shrinkage: blend the realized anchor toward the category×dte
-    -- ask-ratio prior, weighted by realized sample size (prior strength k=4). Thin
-    -- sections (n=1-2) lean on the prior; well-sampled sections trust realized.
-    SELECT pick.*,
-      CASE
-        WHEN realized_n >= 1 AND base_ask IS NOT NULL AND ratio IS NOT NULL
-          THEN (realized_med * realized_n + (base_ask * ratio) * 4) / (realized_n + 4)
-        WHEN realized_n >= 1 THEN realized_med
-        WHEN base_ask IS NOT NULL AND ratio IS NOT NULL THEN base_ask * ratio
-        WHEN venue_performer_median IS NOT NULL THEN venue_performer_median
-        ELSE base_ask
-      END AS clearing_raw,
+    -- WEIGHTED BLEND: Σ(signal × effective_weight) / Σ(effective_weight over present signals).
+    SELECT sig.*,
+      ( coalesce(s_realized,0)*ew_realized + coalesce(s_ask,0)*ew_ask
+        + coalesce(s_opp,0)*ew_opp + coalesce(s_awayadj,0)*ew_awayadj )
+      / NULLIF( (CASE WHEN s_realized IS NOT NULL THEN ew_realized ELSE 0 END)
+              + (CASE WHEN s_ask      IS NOT NULL THEN ew_ask      ELSE 0 END)
+              + (CASE WHEN s_opp      IS NOT NULL THEN ew_opp      ELSE 0 END)
+              + (CASE WHEN s_awayadj  IS NOT NULL THEN ew_awayadj  ELSE 0 END), 0) AS clearing_blend,
       public.get_event_demand_context(p_event_id) AS demand_ctx
-    FROM pick
+    FROM sig
   ),
   fin AS (
-    -- Apply the forward-only demand_mult, scaled by how much we lean on priors
-    -- (prior_reliance = 4/(n+4)); fresh realized sales already embed demand.
+    -- Fall back to bare ask if no weighted signals; apply the forward-only demand_mult
+    -- scaled by prior-reliance (fresh realized sales already embed demand).
     SELECT est.*,
-      (est.demand_ctx->>'demand_mult')::numeric AS demand_mult,
-      4.0/(coalesce(est.realized_n,0)+4)        AS prior_reliance,
-      est.clearing_raw * (1 + ((est.demand_ctx->>'demand_mult')::numeric - 1)
-                              * (4.0/(coalesce(est.realized_n,0)+4))) AS clearing
+      coalesce(est.clearing_blend, est.base_ask) AS clearing_raw,
+      (est.demand_ctx->>'demand_mult')::numeric  AS demand_mult,
+      4.0/(coalesce(est.realized_n,0)+4)          AS prior_reliance,
+      coalesce(est.clearing_blend, est.base_ask)
+        * (1 + ((est.demand_ctx->>'demand_mult')::numeric - 1) * (4.0/(coalesce(est.realized_n,0)+4))) AS clearing
     FROM est
   )
   SELECT jsonb_build_object(
@@ -441,6 +495,14 @@ BEGIN
     'lo', round((clearing * coalesce(ratio_p25 / NULLIF(ratio,0), 0.85))::numeric, 2),
     'hi', round((clearing * coalesce(ratio_p75 / NULLIF(ratio,0), 1.15))::numeric, 2),
     'over_ask_spike_prob_pct', round(coalesce(spike_up_rate,0) * 100, 1),
+    -- per-signal weighting (operator-directed: each data type has its own weight on price)
+    'signals', jsonb_build_object(
+      'realized_sale',    jsonb_build_object('value', round(s_realized::numeric,2), 'eff_weight', round(ew_realized::numeric,3)),
+      'ask_x_ratio',      jsonb_build_object('value', round(s_ask::numeric,2),      'eff_weight', round(ew_ask::numeric,3)),
+      'opponent_section', jsonb_build_object('value', round(s_opp::numeric,2),      'eff_weight', round(ew_opp::numeric,3)),
+      'away_adj_prior',   jsonb_build_object('value', round(s_awayadj::numeric,2),  'eff_weight', round(ew_awayadj::numeric,3))
+    ),
+    'road_draw_mult', round(road_mult::numeric, 3),
     -- attribution (operator-directed: weight to performer / roster / venue×performer)
     'venue_performer_median', round(venue_performer_median::numeric, 2),
     'road_draw_away_median',  round(road_draw_away_median::numeric, 2),
@@ -451,14 +513,10 @@ BEGIN
     'demand_context', demand_ctx,
     'coeff_sample_n', coeff_n,
     'basis', CASE
-      WHEN base_ask IS NULL AND coalesce(realized_n,0) < 1 THEN 'no_market_data'
+      WHEN clearing IS NULL THEN 'no_market_data'
       WHEN dte IS NULL OR dte < 0 THEN 'past_or_no_event_date'
-      WHEN realized_n >= 1 AND base_ask IS NOT NULL AND ratio IS NOT NULL
-        THEN 'tier1_realized_shrunk_to_prior(sg+seatdata,n='||realized_n||')'
-      WHEN realized_n >= 1 THEN 'tier1_realized_sales(sg+seatdata)'
-      WHEN ratio IS NOT NULL AND base_ask IS NOT NULL THEN 'tier2_ask_x_category_dte_ratio'
-      WHEN venue_performer_median IS NOT NULL THEN 'tier3_venue_performer_prior'
-      ELSE 'tier4_bare_ask' END
+      WHEN clearing_blend IS NOT NULL THEN 'weighted_blend(realized+ask+section_priors)×demand'
+      ELSE 'fallback_bare_ask' END
   ) INTO v_res
   FROM fin;
 
@@ -467,8 +525,10 @@ END; $function$;
 REVOKE ALL ON FUNCTION public.predict_event_clearing_price(bigint, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.predict_event_clearing_price(bigint, text) TO authenticated, service_role;
 COMMENT ON FUNCTION public.predict_event_clearing_price(bigint, text) IS
-  'Section-grain realized CLEARING price (not ask) + band + performer/roster/venue '
-  'attribution + basis tier. Read-only, @s4kent.com-gated. A1 mig 20260707200040.';
+  'Section-grain CLEARING price (not ask) as a WEIGHTED BLEND of section-grain signals '
+  '(realized SG+SeatData, ask×ratio, away-team section prior, road-draw-adjusted home '
+  'prior), each × its feature_weights weight × a confidence factor, then × demand_mult. '
+  'Returns band + per-signal weights + attribution. Read-only, @s4kent.com-gated. A1 mig 20260707200040.';
 
 -- ── 5. Weekly coefficient rebuild (Sun 08:20 UTC, off-peak; slow-moving) ──────
 SELECT cron.schedule('price_clearing_coeffs_weekly', '20 8 * * 0', $cron$
