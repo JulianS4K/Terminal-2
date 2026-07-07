@@ -46,9 +46,11 @@
   const WINDOW_DEFAULT = 48;       // hours
   // Pull the RPC max. Sources refresh at very different cadences — Standings
   // update once daily (~05:00) so they sit well below the freshest news; a small
-  // fetch would drop them entirely and leave the Standings toggle empty. 300
-  // keeps every source represented for the client-side source filter.
-  const FETCH_LIMIT    = 300;      // rows pulled per query (newest-first; RPC cap)
+  // fetch would drop them entirely and leave their toggles empty. Raised
+  // 300 → 500 with the X feeds live (10 sources now share the newest-first
+  // window; mig 20260707210000 raised the RPC clamp to match) so every source
+  // stays represented under the All view + client-side filters.
+  const FETCH_LIMIT    = 500;      // rows pulled per query (newest-first; RPC cap)
   const REEL_MAX       = 30;       // headlines in the scrolling marquee
   const LIST_MAX       = 25;       // rows in the readable list
   const REFRESH_MS     = 180000;   // 3 min auto-refresh
