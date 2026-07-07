@@ -312,6 +312,63 @@ def test_zones_curated_wins_dedupes_hides_parking_sorts(client, monkeypatch):
     assert body["include_parking"] is False
 
 
+def test_zones_live_curated_preferred_and_enriched(client, monkeypatch):
+    # get_event_zones_rollup returns the LIVE curated split (computed off
+    # performer_zones + latest listings). It wins over the cron zone_metrics
+    # snapshot: the live set drives the zone LIST + qty/retail bounds, and each
+    # zone is enriched with its latest zone_metrics row when present. Parking
+    # hidden; non-curated rollup rows ignored; sorted by tickets desc.
+    zm = [
+        {"zone": "Field", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z",
+         "tickets_count": 10, "retail_median": 250, "getin_price": 90},
+        {"zone": "Field", "zone_source": "curated", "captured_at": "2026-05-09T12:00:00Z",
+         "tickets_count": 9, "retail_median": 999},  # older dup -> ignored
+    ]
+    rollup = [
+        {"zone": "Upper", "source": "curated", "tickets": 300, "min_retail": 40, "max_retail": 120},
+        {"zone": "Field", "source": "curated", "tickets": 120, "min_retail": 80, "max_retail": 500},
+        {"zone": "Parking Lot A", "source": "curated", "tickets": 4, "min_retail": 25, "max_retail": 25},
+        {"zone": "SG Sections", "source": "fallback", "tickets": 1, "min_retail": 1, "max_retail": 1},
+    ]
+    _use_db(monkeypatch, FakeSupabase(
+        table_data={"zone_metrics": zm},
+        rpc_data={"get_event_zones_rollup": rollup},
+    ))
+    body = client.get("/api/broker/event/1/zones").json()
+    assert body["source"] == "curated"
+    assert body["live"] is True
+    assert [z["zone"] for z in body["zones"]] == ["Upper", "Field"]  # tickets desc; parking + fallback gone
+    assert body["count"] == 2
+    assert body["parking_hidden"] == 1
+    upper, field = body["zones"]
+    assert upper["tickets_count"] == 300 and upper["retail_min"] == 40 and upper["retail_max"] == 120
+    assert upper.get("retail_median") is None      # no zone_metrics detail to enrich with
+    assert upper["getin_price"] == 40              # defaults to live min when no detail
+    assert field["tickets_count"] == 120           # live qty wins over the snapshot's 10
+    assert field["retail_min"] == 80               # live bounds
+    assert field["retail_median"] == 250           # enriched from the latest zone_metrics (not the older 999)
+    assert field["getin_price"] == 90              # kept from the zone_metrics detail
+
+
+def test_zones_live_rollup_failure_degrades_to_zone_metrics(client, monkeypatch):
+    # If the live rollup RPC errors, the panel degrades to the cron zone_metrics
+    # snapshot instead of 500ing.
+    class _RaisingRollup(FakeSupabase):
+        def rpc(self, name, params=None):
+            if name == "get_event_zones_rollup":
+                raise RuntimeError("rollup boom")
+            return super().rpc(name, params)
+
+    rows = [
+        {"zone": "Upper", "zone_source": "curated", "captured_at": "2026-05-10T12:00:00Z", "tickets_count": 50},
+    ]
+    _use_db(monkeypatch, _RaisingRollup(table_data={"zone_metrics": rows}))
+    body = client.get("/api/broker/event/1/zones").json()
+    assert body["source"] == "curated"
+    assert body.get("live") is None                # took the non-live zone_metrics path
+    assert [z["zone"] for z in body["zones"]] == ["Upper"]
+
+
 # ---------- /api/broker/watchlist-movers ----------
 
 def test_watchlist_movers_empty_watchlist(client, monkeypatch):
