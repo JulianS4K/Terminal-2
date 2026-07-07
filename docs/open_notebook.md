@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.4.0 (2026-07-04)
+**Doc version:** v1.5.0 (2026-07-04)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -79,8 +79,11 @@ Sources folded in (all already ingested by the platform — no external API call
 - **Per-event context** — game-day weather w/ climatology fallback
   (`v_event_weather_with_fallback`), demand velocity (`event_sentiment`).
 - **Buzz / markets / macro** — Reddit pulse + notable posts (`v_performer_reddit_pulse`,
-  `v_reddit_important_recent`), prediction-market futures / Kalshi
+  `v_reddit_important_recent`), **X / Twitter** from the performer's mapped team + beat
+  accounts (`v_x_accounts_unified` → `x_news`), prediction-market futures / Kalshi
   (`get_performer_prediction_markets`), and a macro backdrop (`v_macro_indicators_latest`, FRED).
+  So the digest (and therefore Ask / Chat / Podcast, which build on it) points at every
+  performer-tied source — ESPN, Reddit, and X included.
 
 Podcast content budgets (`build_podcast_content`) are generous (40k total / 12k per
 source) so the full digest reaches the outline/transcript stages instead of being
