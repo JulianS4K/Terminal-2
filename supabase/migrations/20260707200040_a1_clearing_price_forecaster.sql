@@ -1,4 +1,4 @@
--- Migration 20260707200000 · level:2 · lane:A1 · operator-directed (2026-07-07)
+-- Migration 20260707200040 · level:2 · lane:A1 · operator-directed (2026-07-07)
 -- ============================================================================
 -- CLEARING-PRICE FORECASTER (v1, section-grain) — read-only, display-only.
 --
@@ -66,7 +66,7 @@ GRANT SELECT ON public.feature_weights TO authenticated, service_role;
 COMMENT ON TABLE public.feature_weights IS
   'Per-data-type blend weights for the clearing/sale-date forecaster. Seeded with '
   'priors; overwritten by the backtest fitter (fitted=true). Applied × a freshness '
-  'discount (confidence_half_life_days vs source_freshness). A1 mig 20260707200000.';
+  'discount (confidence_half_life_days vs source_freshness). A1 mig 20260707200040.';
 
 -- Seed priors (ordering validated: realized > our orders > amalgam ask > venue×perf
 -- > performer median > venue section prior > buzz). Roster is a swing, not a level.
@@ -102,7 +102,7 @@ GRANT SELECT ON public.v_venue_performer_value TO authenticated, service_role;
 COMMENT ON VIEW public.v_venue_performer_value IS
   'One row per (venue, performer): how a performer prices at a specific venue '
   '(home). Rolls up venue_section_performer_agg. Feature for the clearing model. '
-  'A1 mig 20260707200000.';
+  'A1 mig 20260707200040.';
 
 -- ── 3. Clearing-price coefficients (category × dte sold-to-ask ratio + band) ──
 CREATE TABLE IF NOT EXISTS public.price_clearing_coeffs (
@@ -121,7 +121,7 @@ GRANT SELECT ON public.price_clearing_coeffs TO authenticated, service_role;
 COMMENT ON TABLE public.price_clearing_coeffs IS
   'Empirical realized-to-ask ratio by category × days-to-event bucket (+p25/p75 band '
   '+ over-ask spike rate). The dte SHAPE of clearing-vs-ask; the per-event realized '
-  'anchor sets the level. Rebuilt weekly. A1 mig 20260707200000.';
+  'anchor sets the level. Rebuilt weekly. A1 mig 20260707200040.';
 
 -- Builder — realized (SG sale median) / ask (EVO retail median) per event, from the
 -- pre-built cross-source arbitrage view (already dedupes SG on sg_sale_id).
@@ -294,7 +294,7 @@ GRANT EXECUTE ON FUNCTION public.get_event_demand_context(bigint) TO authenticat
 COMMENT ON FUNCTION public.get_event_demand_context(bigint) IS
   'Demand context for both clubs (ESPN records/form/injuries + Reddit/X buzz + SG '
   'demand rank) + a conservative forward-only demand_mult (injuries + rank momentum; '
-  'form/road-draw display-only to avoid double-count). A1 mig 20260707200000.';
+  'form/road-draw display-only to avoid double-count). A1 mig 20260707200040.';
 
 -- ── 4. Predictor — section-grain clearing price + band + attribution + basis ──
 -- Email-gated @s4kent.com read RPC (template: get_venue_section_medians).
@@ -468,7 +468,7 @@ REVOKE ALL ON FUNCTION public.predict_event_clearing_price(bigint, text) FROM PU
 GRANT EXECUTE ON FUNCTION public.predict_event_clearing_price(bigint, text) TO authenticated, service_role;
 COMMENT ON FUNCTION public.predict_event_clearing_price(bigint, text) IS
   'Section-grain realized CLEARING price (not ask) + band + performer/roster/venue '
-  'attribution + basis tier. Read-only, @s4kent.com-gated. A1 mig 20260707200000.';
+  'attribution + basis tier. Read-only, @s4kent.com-gated. A1 mig 20260707200040.';
 
 -- ── 5. Weekly coefficient rebuild (Sun 08:20 UTC, off-peak; slow-moving) ──────
 SELECT cron.schedule('price_clearing_coeffs_weekly', '20 8 * * 0', $cron$
@@ -479,5 +479,5 @@ END $body$;
 $cron$);
 INSERT INTO public.cron_policy (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min, daily_max_fires, enabled, notes)
 VALUES ('price_clearing_coeffs_weekly', ARRAY[]::int[], 10080, 10080, 1, true,
-        'Clearing-price realized-to-ask coefficient rebuild. Weekly Sun 08:20 UTC, off-peak. A1 mig 20260707200000.')
+        'Clearing-price realized-to-ask coefficient rebuild. Weekly Sun 08:20 UTC, off-peak. A1 mig 20260707200040.')
 ON CONFLICT (jobname) DO NOTHING;
