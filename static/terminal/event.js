@@ -714,8 +714,10 @@
       // module-level cache populated by loadSgZonesSplits (parallel fetch);
       // each panel re-renders whenever either side updates.
       safe('splits',     () => setSplitsTevo(data.splits));
-      // Zones panel removed (2026-06-08) — splits remain; SG zone/split data still
-      // loads via loadSgZonesSplits (renderZones no-ops without its DOM node).
+      // ZONE METRICS: feed the TEvo/curated side from the /zones payload; the SG
+      // side merges in via loadSgZonesSplits. Re-added 2026-07-07 as the "Zone
+      // Metrics" panel (per-zone event-shaped metrics off zone_metrics).
+      safe('zoneMetrics', () => setZonesTevo(zones));
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
       // MMA/UFC events have no team-snapshot ESPN data, so renderEspn() hides the
@@ -2192,6 +2194,7 @@
 
   function setSplitsTevo(splits)   { _splitsState.tevo = splits; renderSplits(); }
   function setSplitsSg(sgSplits)   { _splitsState.sg   = sgSplits; renderSplits(); }
+  function setZonesTevo(zones)     { _zonesState.tevo = zones; renderZones(); }
   function setZonesSg(sgZones)     { _zonesState.sg   = sgZones; renderZones(); }
 
   // Renders TEvo splits + SG splits + TD splits side-by-side from the module state cache.
@@ -2351,19 +2354,30 @@
     if (!rows.length) { wrap.innerHTML = '<div class="empty">no zone data</div>'; return wrap; }
     const deltaByZone = {};
     if (Array.isArray(deltas)) deltas.forEach(d => { if (d && d.zone) deltaByZone[d.zone] = d; });
+    // Per-zone metrics mirror the event-level KPI set (zone_metrics has the same
+    // shape as event_metrics): inventory (qty/sections), get-in, the retail
+    // distribution (min → median → p75 → max), wholesale median, and our owned
+    // position. Δ columns render only when a zone_deltas feed is present.
+    const usd = v => (v === null || v === undefined) ? '—' : '$' + T.fmtNum(v, { max: 0 });
     const tbl = document.createElement('table');
     tbl.innerHTML = `
       <thead><tr>
         <th>Zone</th>
         <th class="num">Qty</th>
+        <th class="num">Secs</th>
         <th class="num">Δ qty 24h</th>
+        <th class="num">Get-in</th>
+        <th class="num">Ret min</th>
         <th class="num">Median</th>
         <th class="num">Δ% 24h</th>
+        <th class="num">P75</th>
+        <th class="num">Ret max</th>
+        <th class="num">WS med</th>
         <th class="num">Ours qty</th>
         <th class="num">Ours %</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
-    rows.slice(0, 30).forEach(r => {
+    rows.slice(0, 40).forEach(r => {
       const tr = document.createElement('tr');
       const ourPct = (r.owned_share !== null && r.owned_share !== undefined)
         ? T.fmtPct(r.owned_share * 100, 0) : '—';
@@ -2377,9 +2391,15 @@
       tr.innerHTML = `
         <td class="zone-name">${escapeHtml(r.zone || '—')}</td>
         <td class="num">${T.fmtNum(r.tickets_count)}</td>
+        <td class="num">${T.fmtNum(r.sections_count)}</td>
         <td class="num">${dQtyCell}</td>
-        <td class="num">$${T.fmtNum(r.retail_median, { max: 0 })}</td>
+        <td class="num">${usd(r.getin_price)}</td>
+        <td class="num">${usd(r.retail_min)}</td>
+        <td class="num">${usd(r.retail_median)}</td>
         <td class="num">${dMedCell}</td>
+        <td class="num">${usd(r.retail_p75)}</td>
+        <td class="num">${usd(r.retail_max)}</td>
+        <td class="num">${usd(r.wholesale_median)}</td>
         <td class="num ours">${T.fmtNum(r.owned_tickets_count)}</td>
         <td class="num ours">${ourPct}</td>`;
       tb.appendChild(tr);
