@@ -1,5 +1,7 @@
 -- ============================================================================
--- Migration 20260707200000 — X news wire: credit-usage accounting + cost fixes
+-- Migration 20260707200050 — X news wire: credit-usage accounting + cost fixes
+-- (prefix bumped +50 from 20260707200000 — slot taken by the parallel #818
+--  a1_x_news_map_team_performer_league migration, per the collision rule)
 --
 -- Lane:     xref+macro (A1 data plane)
 -- Touches:  x_news_pending (W: +status_code/+tweets_returned),
