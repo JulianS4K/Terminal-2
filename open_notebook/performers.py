@@ -299,6 +299,26 @@ def _sec_reddit(db, performer_id: int, n: int = 8) -> list[str]:
     return out
 
 
+def _sec_x(db, performer_id: int, n: int = 8) -> list[str]:
+    """Recent X / Twitter posts from the performer's mapped accounts (team + beat
+    writers). Handles come from `v_x_accounts_unified`; posts from `x_news`."""
+    handles = _safe(lambda: _rows(db.table("v_x_accounts_unified").select("handle")
+                                  .eq("tevo_performer_id", performer_id).execute()), [])
+    hset = [h.get("handle") for h in handles if h.get("handle")]
+    if not hset:
+        return []
+    tweets = _safe(lambda: _rows(db.table("x_news").select("author_handle,title,created_utc")
+                                 .in_("author_handle", hset)
+                                 .order("created_utc", desc=True).limit(n).execute()), [])
+    if not tweets:
+        return []
+    out = ["## X / Twitter"]
+    for t in tweets:
+        out.append(f"- @{t.get('author_handle', '')}: {t.get('title', '')}")
+    out.append("")
+    return out
+
+
 def _sec_weather(db, events: list[dict], n: int = 5) -> list[str]:
     out: list[str] = []
     for e in events[:n]:
@@ -516,6 +536,7 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
     lines += _sec_injuries(db, team_id)
     lines += _sec_schedule(db, performer_id)
     lines += _sec_reddit(db, performer_id)
+    lines += _sec_x(db, performer_id)
     lines += _sec_news(db, team_id)
     lines += _sec_wikipedia(db, performer_id)
     lines += _sec_roster(db, performer_id)

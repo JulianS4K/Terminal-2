@@ -1313,6 +1313,8 @@ def _rich_perf_db():
         "score_24h": 3400, "comments_24h": 900}]
     db.store["v_reddit_important_recent"] = [{"tevo_performer_id": 100, "title": "Game thread",
         "subreddit": "TeamX", "created_utc": 100}]
+    db.store["v_x_accounts_unified"] = [{"tevo_performer_id": 100, "handle": "TeamX"}]
+    db.store["x_news"] = [{"author_handle": "TeamX", "title": "Lineup is out", "created_utc": 200}]
     db.store["v_event_weather_with_fallback"] = [{"tevo_event_id": 1, "is_indoor": False,
         "temp_f": 72.4, "precip_pct": 10, "wind_mph": 8, "weather_summary": "Clear"}]
     db.store["event_sentiment"] = [{"event_id": 1, "sentiment_index": 0.42, "tix_per_hour": 5.1,
@@ -1341,6 +1343,7 @@ def test_performer_digest_enrichment():
     assert "72°F" in text and "Clear" in text and "10% precip" in text and "8mph wind" in text
     assert "idx +0.42" in text and "5.1 tix/hr" in text
     assert "posts/24h" in text and "r/TeamX" in text
+    assert "X / Twitter" in text and "@TeamX: Lineup is out" in text
     assert "vol 1000" in text and "Make playoffs" in text  # futures with + without volume
     assert "UMCSENT" in text
     assert "Lens: secondary-market pricing" in text  # broker-price framing leads the digest
@@ -1393,6 +1396,12 @@ def test_digest_helper_branches():
     dbr = FakeSB(); dbr.store["v_reddit_important_recent"] = [
         {"tevo_performer_id": 5, "title": "T", "subreddit": "s", "created_utc": 1}]
     assert "r/s: T" in "\n".join(P._sec_reddit(dbr, 5))
+
+    # X: handle resolves (None handles filtered) but no tweets → []; no handles → []
+    dbx3 = FakeSB(); dbx3.store["v_x_accounts_unified"] = [
+        {"tevo_performer_id": 5, "handle": None}, {"tevo_performer_id": 5, "handle": "H"}]
+    assert P._sec_x(dbx3, 5) == []
+    assert P._sec_x(FakeSB(), 5) == []
 
     # schedule: non-rivalry
     dbs = FakeSB(); dbs.store["v_team_schedule_30d"] = [
