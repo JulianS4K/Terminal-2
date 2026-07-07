@@ -81,4 +81,13 @@ def build_store_test_router(
         (/api/store/performers/{id}/tour-package). Dual-mode priced multi-city package."""
         return FileResponse(os.path.join(test_dir, "tour.html"))
 
+    @router.get("/store/test/groupchat")
+    def store_test_groupchat_page(_=Depends(_require_non_prod)):
+        """Sandbox for the group-chat concierge (D1-GC-1): a fake group text
+        where you type as different members; messages that @-mention the
+        concierge run the real webhook pipeline Twilio-free via
+        /api/store/group-chat/simulate (same transcript build + chat edge fn,
+        scope 'owned')."""
+        return FileResponse(os.path.join(test_dir, "groupchat.html"))
+
     return router

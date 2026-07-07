@@ -41,14 +41,16 @@ from typing import Callable
 from urllib.parse import parse_qsl
 
 import requests
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from core.config import STOREFRONT_BASE_URL
 from routers.retail_chat import (
     _CONCIERGE_OFFLINE_REPLY,
     _RETAIL_CHAT_MAX_CHARS,
     _RETAIL_CHAT_MAX_TURNS,
     _chat_edge_post,
+    _client_ip,
     _retail_chat_budget_check,
 )
 
@@ -76,6 +78,35 @@ _CONVERSATIONS_BASE = "https://conversations.twilio.com/v1/Conversations"
 # Group MMS carrier ceiling is 1600 chars/message — keep headroom.
 _REPLY_MAX_CHARS = 1500
 _THREAD_FETCH_PAGE = 40
+
+# ---------- Direct store links in replies ----------
+#
+# The chat edge fn's sanitizeReply STRIPS every URL from the model's text
+# (deliberate for the web widget), so we can't ask the model for links
+# directly. Instead the transcript we build carries a standing instruction to
+# tag each recommended event with [event:<event_id>] — plain tokens survive
+# sanitization, and the v26 strict-whitelist means the model can only use ids
+# actually resolved in the conversation. We then rewrite each tag into a
+# direct D1 event-page link (STOREFRONT_BASE_URL + /store/event/{id}) before
+# the reply reaches the group.
+_STORE_BASE = (STOREFRONT_BASE_URL or "").rstrip("/")
+_GROUP_CONTEXT_NOTE = (
+    "(group-chat context: you are inside a friends' group text; each line of "
+    "mine is prefixed with the sender's name — address the whole group. When "
+    "you recommend or reference a specific event, append its tag "
+    "[event:<event_id>] at the end of that line, using only event ids from "
+    "your resolved context. No other formatting changes.)"
+)
+_EVENT_TAG_RE = re.compile(r"\s*\[event:(\d{7,10})\]")
+_EVENT_TAG_JUNK_RE = re.compile(r"\s*\[event:[^\]]*\]?")
+
+
+def _linkify_events(reply: str) -> str:
+    """[event:3091462] → ' <base>/store/event/3091462'; any malformed or
+    leftover tag is stripped so raw tokens never reach the group."""
+    if _STORE_BASE:
+        reply = _EVENT_TAG_RE.sub(lambda m: f" {_STORE_BASE}/store/event/{m.group(1)}", reply)
+    return _EVENT_TAG_JUNK_RE.sub("", reply).strip()
 
 
 def _mentioned(body: str) -> bool:
@@ -106,25 +137,13 @@ def _webhook_url(request: Request) -> str:
     return url
 
 
-def _thread_history(conversation_sid: str, trigger_author: str, trigger_body: str) -> list[dict]:
-    """Rebuild the group transcript from Twilio (newest page, chronological).
-    Group members become speaker-labelled user turns ("Sam: pick a night");
-    our own messages become assistant turns. Consecutive same-role turns merge
-    (the edge fn's LLM requires alternating roles). Falls back to the single
-    triggering message if the fetch fails — one degraded turn beats silence."""
+def _build_history(messages: list[dict], trigger_author: str, trigger_body: str) -> list[dict]:
+    """CHRONOLOGICAL [{author, body}] → the transcript the chat edge fn
+    expects. Group members become speaker-labelled user turns ("Sam: pick a
+    night"); our own messages become assistant turns. Consecutive same-role
+    turns merge (the edge fn's LLM requires alternating roles). Shared by the
+    Twilio webhook path and the /simulate test harness."""
     trigger_turn = {"role": "user", "content": f"{trigger_author}: {trigger_body}"[:_RETAIL_CHAT_MAX_CHARS]}
-    try:
-        r = requests.get(
-            f"{_CONVERSATIONS_BASE}/{conversation_sid}/Messages",
-            params={"Order": "desc", "PageSize": _THREAD_FETCH_PAGE},
-            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-            timeout=15,
-        )
-        messages = list(reversed((r.json() or {}).get("messages") or []))
-    except Exception as e:
-        log.warning("group-chat thread fetch failed (%s) — single-turn fallback", e)
-        return [trigger_turn]
-
     history: list[dict] = []
     for m in messages:
         author = (m.get("author") or "").strip()
@@ -146,7 +165,29 @@ def _thread_history(conversation_sid: str, trigger_author: str, trigger_body: st
         history = history[1:] if history else []
     if not history or history[-1]["role"] != "user":
         history.append(trigger_turn)
-    return history or [trigger_turn]
+    # Standing group-context + [event:<id>] tagging instruction rides the
+    # FIRST user turn (away from the edge fn's NLU entity pre-extract, which
+    # reads only the LAST user message).
+    history[0] = {"role": "user", "content": f"{_GROUP_CONTEXT_NOTE}\n\n{history[0]['content']}"[:_RETAIL_CHAT_MAX_CHARS]}
+    return history
+
+
+def _thread_history(conversation_sid: str, trigger_author: str, trigger_body: str) -> list[dict]:
+    """Rebuild the group transcript from Twilio (newest page → chronological).
+    Falls back to the single triggering message if the fetch fails — one
+    degraded turn beats silence."""
+    try:
+        r = requests.get(
+            f"{_CONVERSATIONS_BASE}/{conversation_sid}/Messages",
+            params={"Order": "desc", "PageSize": _THREAD_FETCH_PAGE},
+            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            timeout=15,
+        )
+        messages = list(reversed((r.json() or {}).get("messages") or []))
+    except Exception as e:
+        log.warning("group-chat thread fetch failed (%s) — single-turn fallback", e)
+        messages = []
+    return _build_history(messages, trigger_author, trigger_body)
 
 
 def _post_group_reply(conversation_sid: str, body: str) -> None:
@@ -194,19 +235,74 @@ def _handle_inbound(get_enabled: Callable[[], bool], url: str, form: dict, signa
         return JSONResponse({"status": "over-budget"}, status_code=200)
 
     history = _thread_history(conversation_sid, author or "guest", body)
-    try:
-        upstream = _chat_edge_post(history, "owned", conversation_sid)
-        reply = (upstream.json() or {}).get("reply") or ""
-    except Exception:  # any edge failure (incl. HTTPException) → friendly canned reply
-        reply = ""
-    if not reply.strip():
-        reply = _CONCIERGE_OFFLINE_REPLY
-    _post_group_reply(conversation_sid, reply)
+    _post_group_reply(conversation_sid, _concierge_reply(history, conversation_sid))
     return JSONResponse({"status": "replied"}, status_code=200)
 
 
-def build_store_group_chat_router(get_enabled: Callable[[], bool]) -> APIRouter:
+def _concierge_reply(history: list[dict], client_key: str) -> str:
+    """Ask the chat edge fn (scope hard-locked 'owned'); any failure — incl.
+    HTTPException — or an empty reply degrades to the friendly offline line.
+    [event:<id>] tags in the model's text become direct store-event links."""
+    try:
+        upstream = _chat_edge_post(history, "owned", client_key)
+        reply = (upstream.json() or {}).get("reply") or ""
+    except Exception:
+        reply = ""
+    return _linkify_events(reply.strip()) or _CONCIERGE_OFFLINE_REPLY
+
+
+def _simulate_messages(payload: dict) -> list[dict]:
+    """Validate + bound the /simulate harness thread: a non-empty list of
+    {author, body}, last message being the (would-be) triggering text."""
+    msgs = payload.get("messages") if isinstance(payload, dict) else None
+    if not isinstance(msgs, list) or not msgs:
+        raise HTTPException(400, "messages required — [{author, body}, ...]")
+    clean: list[dict] = []
+    for m in msgs[-_THREAD_FETCH_PAGE:]:
+        if not isinstance(m, dict):
+            continue
+        author = str(m.get("author") or "").strip()
+        body = str(m.get("body") or "").strip()[:_RETAIL_CHAT_MAX_CHARS]
+        if body:
+            clean.append({"author": author or "guest", "body": body})
+    if not clean:
+        raise HTTPException(400, "no valid messages")
+    return clean
+
+
+def build_store_group_chat_router(
+    get_enabled: Callable[[], bool],
+    get_is_production: Callable[[], bool],
+) -> APIRouter:
     router = APIRouter()
+
+    @router.post("/api/store/group-chat/simulate")
+    def group_chat_simulate(request: Request, payload: dict = Body(...)):
+        """Twilio-free test harness for the group-chat concierge (drives the
+        /store/test/groupchat page): the same pipeline as the webhook —
+        mention gate → transcript build → chat edge fn with scope hard-locked
+        'owned' — but the thread comes from the request body and the reply
+        returns as JSON instead of posting to Twilio. Non-prod only (404 in
+        production, like every /store/test/* page) and shares the retail-chat
+        budget guard keyed per client IP; unlike the webhook, over-budget is
+        surfaced to the tester (429) rather than silent. Does NOT require
+        STORE_GROUP_CONCIERGE_ENABLED — the point is testing before Twilio
+        exists."""
+        if get_is_production():
+            raise HTTPException(404, "not found")
+        msgs = _simulate_messages(payload)
+        trigger = msgs[-1]
+        if not _mentioned(trigger["body"]):
+            return JSONResponse({"status": "no-mention", "reply": None}, status_code=200)
+        ip = _client_ip(request)
+        _retail_chat_budget_check(f"gc-sim:{ip}", public=True)
+        history = _build_history(msgs, trigger["author"], trigger["body"])
+        reply = _concierge_reply(history, ip)
+        # history echoed back so the harness can show exactly what the LLM saw.
+        return JSONResponse(
+            {"status": "replied", "reply": reply[:_REPLY_MAX_CHARS], "history": history},
+            status_code=200,
+        )
 
     @router.post("/api/store/group-chat/inbound")
     async def group_chat_inbound(request: Request):  # pragma: no cover - async route body not attributable by coverage.py via TestClient; thin wrapper — logic + behavior covered via _handle_inbound in test_store_group_chat.py

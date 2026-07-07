@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Group-chat concierge — VibePass</title>
+  <link rel="stylesheet" href="/static/store/test/test.css" />
+  <style>
+    /* Fake group-text UI over the shared test.css tokens. */
+    .gc-wrap { max-width: 680px; }
+    .gc-thread { display: flex; flex-direction: column; gap: 8px; min-height: 320px; max-height: 55vh;
+                 overflow-y: auto; padding: 16px; background: var(--card, #15151c); border-radius: 12px; }
+    .bubble { max-width: 78%; padding: 9px 13px; border-radius: 14px; font-size: 14px; line-height: 1.45;
+              white-space: pre-wrap; overflow-wrap: anywhere; }
+    .bubble .who { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+    .bubble.them { align-self: flex-start; background: rgba(255,255,255,.07); }
+    .bubble.me { align-self: flex-end; background: #2b4a7a; }
+    .bubble.bot { align-self: flex-start; background: rgba(201,169,106,.16); border: 1px solid rgba(201,169,106,.35); }
+    .bubble.hint { align-self: center; background: none; color: var(--muted); font-size: 12px; }
+    .gc-compose { display: flex; gap: 8px; margin-top: 12px; }
+    .gc-compose input[type=text] { padding: 12px 14px; font-size: 14px; }
+    .gc-compose .name { width: 110px; }
+    .gc-compose .msg { flex: 1; }
+    .gc-meta { margin-top: 10px; font-size: 12px; color: var(--muted); }
+    details.debug { margin-top: 16px; font-size: 12px; }
+    details.debug pre { background: var(--card, #15151c); padding: 12px; border-radius: 8px;
+                        overflow-x: auto; max-height: 240px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/store/test">VibePass</a>
+    <span class="pill" id="serverEnv">sandbox</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <h3>Browse</h3>
+      <a href="/store/test"><span class="num"></span> Home</a>
+      <a href="/store/test/search"><span class="num"></span> Search</a>
+      <a href="/store/test/performer"><span class="num"></span> Performers</a>
+      <a href="/store/test/venue"><span class="num"></span> Venues</a>
+      <a href="/store/test/groupchat"><span class="num"></span> Group chat</a>
+    </nav>
+
+    <main class="content gc-wrap">
+      <h1>Group-chat concierge</h1>
+      <p class="subtitle">A fake group text. Type as anyone (switch the name to play several friends).
+        Mention <strong>@vibe</strong> and the concierge answers the whole thread — the exact webhook
+        pipeline (transcript build → chat edge fn, owned inventory), just without Twilio.</p>
+
+      <div id="thread" class="gc-thread" aria-live="polite"></div>
+
+      <form id="compose" class="gc-compose">
+        <input id="who" class="name" type="text" value="Sam" aria-label="Sender name" />
+        <input id="msg" class="msg" type="text" placeholder="Try: @vibe find us something Saturday night" autofocus
+               aria-label="Message" />
+        <button type="submit" style="padding: 12px 20px">Send</button>
+      </form>
+      <div class="gc-meta">
+        <button id="reset" class="ghost" style="padding: 4px 10px; font-size: 12px">Reset thread</button>
+        <span id="status"></span>
+      </div>
+
+      <details class="debug">
+        <summary>Last transcript sent to the LLM</summary>
+        <pre id="debugHistory">(nothing sent yet)</pre>
+      </details>
+    </main>
+  </div>
+
+  <script src="/static/store/test/groupchat.js"></script>
+</body>
+</html>

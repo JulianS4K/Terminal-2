@@ -1599,6 +1599,10 @@ from routers.store_group_chat import (  # noqa: E402
 )
 app.include_router(build_store_group_chat_router(
     get_enabled=lambda: STORE_GROUP_CONCIERGE_ENABLED,
+    # Gates the Twilio-free /api/store/group-chat/simulate harness (404 in
+    # prod, same policy as /store/test/*). Getter resolves the live symbol so
+    # the test monkeypatch (app._is_production) binds.
+    get_is_production=lambda: _is_production(),
 ))
 
 

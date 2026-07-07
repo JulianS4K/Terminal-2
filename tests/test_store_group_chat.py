@@ -286,6 +286,8 @@ def test_history_is_speaker_labelled_and_alternating(capture_http):
     assert [h["role"] for h in history] == ["user"]
     assert "Sam: somewhere fun saturday" in history[0]["content"]
     assert "Riley: @vibe find us something Saturday" in history[0]["content"]
+    # The group-context + [event:<id>] tagging instruction rides the first turn.
+    assert history[0]["content"].startswith(gc_mod._GROUP_CONTEXT_NOTE)
 
 
 def test_history_appends_trigger_when_thread_ends_with_us(capture_http):
@@ -310,7 +312,8 @@ def test_history_skips_media_only_and_survives_all_ours(capture_http):
     ]
     _post_webhook(_mention_params(author="Sam", body="@vibe hi"))
     history = capture_http["edge_posts"][0]["json"]["history"]
-    assert history == [{"role": "user", "content": "Sam: @vibe hi"}]
+    assert [h["role"] for h in history] == ["user"]
+    assert history[0]["content"].endswith("Sam: @vibe hi")
 
 
 def test_thread_fetch_failure_falls_back_to_single_turn(monkeypatch, capture_http):
@@ -321,7 +324,8 @@ def test_thread_fetch_failure_falls_back_to_single_turn(monkeypatch, capture_htt
     r = _post_webhook(_mention_params(author="Sam", body="@vibe help"))
     assert r.json()["status"] == "replied"
     history = capture_http["edge_posts"][0]["json"]["history"]
-    assert history == [{"role": "user", "content": "Sam: @vibe help"}]
+    assert [h["role"] for h in history] == ["user"]
+    assert history[0]["content"].endswith("Sam: @vibe help")
 
 
 def test_edge_failure_posts_offline_reply(monkeypatch, capture_http):
@@ -362,6 +366,57 @@ def test_reply_post_failure_is_logged_not_raised(monkeypatch, capture_http, capl
     assert any("reply post failed" in m for m in caplog.messages)
 
 
+# ---------- Direct store-event links in replies ----------
+
+def test_event_tags_become_store_links(monkeypatch, capture_http):
+    """The model tags recommendations with [event:<id>]; the reply that
+    reaches the group carries direct /store/event/{id} links instead."""
+    monkeypatch.setattr(gc_mod, "_STORE_BASE", "https://vibepass.example")
+
+    def fake_post(url, headers=None, json=None, data=None, auth=None, timeout=None):  # noqa: A002
+        if "/functions/v1/chat" in url:
+            return _FakeResp({"reply": "1. Yankees vs Red Sox Sat 7:05pm [event:3091462]\n2. Mets Sun 1:10pm [event:3091999]\nWant me to hold either?"}, 200)
+        capture_http["twilio_posts"].append({"url": url, "data": data or {}})
+        return _FakeResp({"sid": "IM126"}, 201)
+
+    monkeypatch.setattr(gc_mod.requests, "post", fake_post)
+    _post_webhook(_mention_params())
+    body = capture_http["twilio_posts"][0]["data"]["Body"]
+    assert "https://vibepass.example/store/event/3091462" in body
+    assert "https://vibepass.example/store/event/3091999" in body
+    assert "[event:" not in body
+
+
+def test_malformed_event_tags_are_stripped(monkeypatch, capture_http):
+    monkeypatch.setattr(gc_mod, "_STORE_BASE", "https://vibepass.example")
+
+    def fake_post(url, headers=None, json=None, data=None, auth=None, timeout=None):  # noqa: A002
+        if "/functions/v1/chat" in url:
+            return _FakeResp({"reply": "Try the Garden show [event:abc] or [event:12] tonight."}, 200)
+        capture_http["twilio_posts"].append({"url": url, "data": data or {}})
+        return _FakeResp({"sid": "IM127"}, 201)
+
+    monkeypatch.setattr(gc_mod.requests, "post", fake_post)
+    _post_webhook(_mention_params())
+    body = capture_http["twilio_posts"][0]["data"]["Body"]
+    assert "[event:" not in body
+    assert "Try the Garden show or tonight." == body
+
+
+def test_event_tags_stripped_when_no_base_url(monkeypatch, capture_http):
+    monkeypatch.setattr(gc_mod, "_STORE_BASE", "")
+
+    def fake_post(url, headers=None, json=None, data=None, auth=None, timeout=None):  # noqa: A002
+        if "/functions/v1/chat" in url:
+            return _FakeResp({"reply": "Yankees Sat [event:3091462]"}, 200)
+        capture_http["twilio_posts"].append({"url": url, "data": data or {}})
+        return _FakeResp({"sid": "IM128"}, 201)
+
+    monkeypatch.setattr(gc_mod.requests, "post", fake_post)
+    _post_webhook(_mention_params())
+    assert capture_http["twilio_posts"][0]["data"]["Body"] == "Yankees Sat"
+
+
 # ---------- Budget guard ----------
 
 def test_over_budget_stays_silent(monkeypatch, capture_http):
@@ -395,6 +450,78 @@ def test_route_disabled_by_default_end_to_end():
     r = client.post(WEBHOOK_PATH, data=_mention_params())
     assert r.status_code == 200
     assert r.json()["status"] == "disabled"
+
+
+# ---------- /simulate — Twilio-free test harness ----------
+
+def test_simulate_404_in_production(monkeypatch, capture_http):
+    monkeypatch.setattr(app_module, "_is_production", lambda: True)
+    r = client.post("/api/store/group-chat/simulate", json={"messages": [{"author": "Sam", "body": "@vibe hi"}]})
+    assert r.status_code == 404
+    assert not capture_http["edge_posts"]
+
+
+def test_simulate_validates_payload(capture_http):
+    assert client.post("/api/store/group-chat/simulate", json={}).status_code == 400
+    assert client.post("/api/store/group-chat/simulate", json={"messages": []}).status_code == 400
+    r = client.post("/api/store/group-chat/simulate", json={"messages": ["junk", {"author": "Sam", "body": "  "}]})
+    assert r.status_code == 400
+    assert not capture_http["edge_posts"]
+
+
+def test_simulate_no_mention_stays_out(capture_http):
+    r = client.post("/api/store/group-chat/simulate", json={"messages": [
+        {"author": "Sam", "body": "anyone free saturday?"},
+    ]})
+    assert r.status_code == 200
+    assert r.json() == {"status": "no-mention", "reply": None}
+    assert not capture_http["edge_posts"]
+
+
+def test_simulate_replies_with_owned_scope_and_history(capture_http):
+    r = client.post("/api/store/group-chat/simulate", json={"messages": [
+        {"author": "vibepass", "body": "hey! what are you all thinking?"},
+        {"author": "Sam", "body": "somewhere fun saturday"},
+        {"author": "Riley", "body": "@vibe find us something Saturday"},
+    ]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "replied"
+    assert "Yankees" in body["reply"]
+    # Same transcript rules as the webhook: leading assistant dropped, user
+    # turns merged + speaker-labelled — and echoed back for the harness debug.
+    assert [h["role"] for h in body["history"]] == ["user"]
+    assert "Sam: somewhere fun saturday" in body["history"][0]["content"]
+    # scope is server-set 'owned'; no Twilio call happens on this path.
+    assert capture_http["edge_posts"][0]["json"]["scope"] == "owned"
+    assert not capture_http["twilio_posts"] and not capture_http["gets"]
+
+
+def test_simulate_surfaces_budget_429(monkeypatch, capture_http):
+    """Unlike the webhook (silent — Twilio would redeliver), the harness shows
+    the tester the budget refusal."""
+    monkeypatch.setattr(retail_chat_mod, "_RETAIL_CHAT_IP_DAILY_MAX", 1)
+    msgs = {"messages": [{"author": "Sam", "body": "@vibe hi"}]}
+    assert client.post("/api/store/group-chat/simulate", json=msgs).status_code == 200
+    r = client.post("/api/store/group-chat/simulate", json=msgs)
+    assert r.status_code == 429
+    assert len(capture_http["edge_posts"]) == 1
+
+
+def test_simulate_edge_failure_returns_offline_reply(monkeypatch, capture_http):
+    def fake_post(url, headers=None, json=None, data=None, auth=None, timeout=None):  # noqa: A002
+        raise RuntimeError("edge fn down")
+
+    monkeypatch.setattr(gc_mod.requests, "post", fake_post)
+    r = client.post("/api/store/group-chat/simulate", json={"messages": [{"author": "Sam", "body": "@vibe hi"}]})
+    assert r.status_code == 200
+    assert r.json()["reply"] == retail_chat_mod._CONCIERGE_OFFLINE_REPLY
+
+
+def test_groupchat_test_page_served_in_non_prod():
+    r = client.get("/store/test/groupchat")
+    assert r.status_code == 200
+    assert "Group-chat concierge" in r.text
 
 
 # ---------- Public config card wiring ----------
