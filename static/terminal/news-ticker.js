@@ -49,12 +49,24 @@
 
   const state = {
     items:       [],
-    source:      'all',            // 'all' | 'ESPN' | 'Transactions' | 'Injuries' | 'Scores' | 'Standings' | 'Reddit' | 'Broadway' | 'Fed'
+    source:      'all',            // 'all' | 'ESPN' | 'Transactions' | 'Injuries' | 'Scores' | 'Standings' | 'Reddit' | 'Broadway' | 'Fed' | 'X'
     windowHours: WINDOW_DEFAULT,   // 24 | 48 | 168
     league:      'ALL',
+    category:    'ALL',            // X-source secondary facet (mirrors league for ESPN)
     search:      '',
     loading:     false,
+    xCat:        Object.create(null),  // handle(lower, de-@'d) -> category, from get_x_news_categories
   };
+
+  // Human labels for the X-account category buckets (raw values come from
+  // important_x_accounts.category, normalized server-side in get_x_news_categories).
+  const CAT_LABEL = {
+    sports:                 'Sports',
+    entertainment_concerts: 'Concerts',
+    entertainment_broadway: 'Broadway',
+    other:                  'Other',
+  };
+  const catLabel = c => CAT_LABEL[c] || c;
 
   // ---------- helpers ----------
   const esc = window.TermRender.escapeHtml;
@@ -91,20 +103,30 @@
   // Reddit rows can land with no resolved league → bucket as GEN.
   const leagueOf = it => (it && it.league) ? it.league : 'GEN';
 
+  // X-post category: derived from the account roster (get_x_news_categories) via
+  // the post's `team` = '@<author_handle>'. Unmapped handles bucket as 'other'
+  // (also the honest fallback when the roster RPC isn't applied to prod yet).
+  const catOf = it => {
+    if (!it) return 'other';
+    const h = (it.team || '').replace(/^@/, '').toLowerCase();
+    return state.xCat[h] || 'other';
+  };
+
   // Source label: for Reddit rows show the originating sub ('r/<sub>', carried
   // in `team`); for injury rows show the affected team; otherwise the plain
   // source name.
   const srcLabel = it => {
     if (!it) return '';
     if (it.source === 'Reddit' && it.team) return it.team;
+    if (it.source === 'X' && it.team) return it.team;             // '@<handle>'
     if (it.source === 'Injuries') return it.team || 'Injuries';
     if (it.source === 'Broadway') return it.team || 'Broadway';   // show title
     return it.source || '';
   };
 
-  // A story carried under a team byline (Reddit sub, injured player's team, or
-  // Broadway show title) gets a secondary source line in the reel.
-  const hasSub = it => !!(it && it.team && (it.source === 'Reddit' || it.source === 'Injuries' || it.source === 'Broadway'));
+  // A story carried under a team byline (Reddit sub, X handle, injured player's
+  // team, or Broadway show title) gets a secondary source line in the reel.
+  const hasSub = it => !!(it && it.team && (it.source === 'Reddit' || it.source === 'X' || it.source === 'Injuries' || it.source === 'Broadway'));
 
   function el(id) { return document.getElementById(id); }
 
@@ -148,6 +170,21 @@
     }
   }
 
+  // One-shot load of the X-account category map (handle → category). Powers the
+  // X-source CATEGORY facet. Best-effort: on any error (incl. RPC not applied
+  // yet) the map stays empty and X posts bucket under 'Other' — no crash.
+  async function fetchXCategories() {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+    try {
+      const res = await Auth.client.rpc('get_x_news_categories');
+      if (res.error || !Array.isArray(res.data)) return;
+      const map = Object.create(null);
+      res.data.forEach(r => { if (r && r.handle) map[String(r.handle).toLowerCase()] = r.category || 'other'; });
+      state.xCat = map;
+    } catch (_) { /* leave map empty → 'other' bucket */ }
+  }
+
   // ---------- filtering ----------
   // Base = items narrowed by source + search but NOT league, so league chips
   // can show accurate faceted counts (standard facet behaviour).
@@ -165,7 +202,12 @@
     return arr;
   }
 
+  // The active secondary facet depends on source: X → category, else → league.
   function visibleItems(base) {
+    if (state.source === 'X') {
+      if (state.category === 'ALL') return base;
+      return base.filter(x => catOf(x) === state.category);
+    }
     if (state.league === 'ALL') return base;
     return base.filter(x => leagueOf(x) === state.league);
   }
@@ -173,9 +215,20 @@
   // ---------- render ----------
   function setMeta(txt) { const m = el('newsTickerMeta'); if (m) m.textContent = txt; }
 
+  // Show the league facet for every source except X, which gets the category
+  // facet instead — the same "click source → reveals a second filter" pattern.
+  function syncFacetGroups() {
+    const isX = state.source === 'X';
+    const lg = el('newsLeagueGroup'), cat = el('newsCategoryGroup');
+    if (lg)  lg.hidden  = isX;
+    if (cat) cat.hidden = !isX;
+  }
+
   function renderAll() {
     const base = baseItems();
-    renderLeagueChips(base);
+    syncFacetGroups();
+    if (state.source === 'X') renderCategoryChips(base);
+    else                      renderLeagueChips(base);
     const vis = visibleItems(base);
     renderReel(vis);
     renderList(vis);
@@ -200,6 +253,25 @@
     let html = `<button class="ctrl-btn${state.league === 'ALL' ? ' is-active' : ''}" data-news-league="ALL">All ${base.length}</button>`;
     leagues.forEach(([lg, n]) => {
       html += `<button class="ctrl-btn${state.league === lg ? ' is-active' : ''}" data-news-league="${esc(lg)}">${esc(lg)} ${n}</button>`;
+    });
+    wrap.innerHTML = html;
+  }
+
+  // X-source CATEGORY chips — the league-facet analogue for X posts. Faceted
+  // with live counts over the source-narrowed base, same as renderLeagueChips.
+  function renderCategoryChips(base) {
+    const wrap = el('newsCategoryChips');
+    if (!wrap) return;
+    const counts = new Map();
+    base.forEach(it => { const c = catOf(it); counts.set(c, (counts.get(c) || 0) + 1); });
+    const cats = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+
+    // Keep the active category selectable even if it dropped to 0 under a new filter.
+    if (state.category !== 'ALL' && !counts.has(state.category)) cats.push([state.category, 0]);
+
+    let html = `<button class="ctrl-btn${state.category === 'ALL' ? ' is-active' : ''}" data-news-cat="ALL">All ${base.length}</button>`;
+    cats.forEach(([c, n]) => {
+      html += `<button class="ctrl-btn${state.category === c ? ' is-active' : ''}" data-news-cat="${esc(c)}">${esc(catLabel(c))} ${n}</button>`;
     });
     wrap.innerHTML = html;
   }
@@ -276,6 +348,10 @@
     document.querySelectorAll('[data-news-src]').forEach(btn => {
       btn.addEventListener('click', () => {
         state.source = btn.getAttribute('data-news-src');
+        // Reset both secondary facets so a stale league/category chip can't
+        // hide rows after a source switch.
+        state.league = 'ALL';
+        state.category = 'ALL';
         setActive(btn.parentElement, btn);
         renderAll();              // client-side, no re-fetch
       });
@@ -300,6 +376,17 @@
       });
     }
 
+    // Category chips (X source) — same delegated pattern as league chips.
+    const catChips = el('newsCategoryChips');
+    if (catChips) {
+      catChips.addEventListener('click', e => {
+        const btn = e.target.closest('[data-news-cat]');
+        if (!btn) return;
+        state.category = btn.getAttribute('data-news-cat');
+        renderAll();
+      });
+    }
+
     const search = el('newsSearch');
     if (search) {
       search.addEventListener('input', () => {
@@ -317,6 +404,7 @@
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireControls();
+    fetchXCategories();   // load the X category map (best-effort, parallel with news)
     fetchNews();
     setInterval(() => {
       if (document.visibilityState === 'visible') fetchNews();
