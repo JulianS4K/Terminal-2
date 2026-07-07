@@ -80,6 +80,35 @@ main.wrap {
    no-op for non-grid/flex items, so this is safe everywhere. */
 main.wrap section { min-width: 0; }
 
+/* Desktop table containment — companion to the guard above (the ≤768px layer
+   already handles phones via `table { display:block; overflow-x:auto }`).
+   min-width:0 keeps a section inside its track, but a dense table whose
+   min-content exceeds the track still overflows the section box and paints
+   over the neighbouring panel/column. Two shapes:
+   1) Any panel body hosting a table (every page names these <thing>Body)
+      is its own horizontal scroll box — the fix .wrap.sales shipped per-body
+      below, made the default so a future panel can't regress (the PR #803
+      lesson: prefer a safe default over a per-ID allowlist). :has() scopes it
+      to actual table hosts; a browser without :has() ignores the rule (status
+      quo). Overlay popovers (chart tooltip, term-search suggest, subs
+      typeahead) all live outside *Body hosts, so nothing intentionally
+      escapes one of these boxes.
+   2) The narrow side-by-side columns that put dense tables in 1/2–1/3-width
+      tracks — the event Splits/Zones .dual-src columns and the performer
+      ESPN-tab grid columns — scroll their own track instead of bleeding
+      across the neighbour (their min-width:0 shrinks the track, but a table
+      can't shrink below min-content).
+   (.full-list-host needs nothing: its overflow-y:auto already computes
+   overflow-x to auto, so the wide listings/orders tables scroll today.) */
+main.wrap [id$="Body"]:has(table) { overflow-x: auto; }
+.dual-src-col, .espn-col { overflow-x: auto; }
+/* Header cells never wrap — a squeezed table used to fold "OURS AVG $" /
+   "Δ QTY 24H" into 2-3-line slivers before it ran out of room. Headers are
+   short bounded labels, so keeping them one-line just raises the table's
+   min-content; with the containment above that now means "scroll", not
+   "crush" (body cells still wrap, so free-text columns behave as before). */
+table th { white-space: nowrap; }
+
 /* Sales page: leagues | away-leaderboard | performer as responsive columns with
    a full-width health strip on top. It has no bespoke layout of its own, so it
    used to lean on the 12-col grid's blowout (min-width:auto) to size the columns
