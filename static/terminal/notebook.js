@@ -105,6 +105,16 @@
     } catch (e) { setStatus(e.message, 'err'); }
   }
 
+  async function bulkMlbNotebooks() {
+    if (!confirm('Generate a performer notebook for every MLB team? (Teams that already have one are skipped.)')) return;
+    try {
+      setStatus('force-running MLB teams…', 'ok');
+      const res = await apiFetch('/api/notebook/performers/bulk', { method: 'POST', body: { league: 'MLB' } });
+      setStatus(`MLB: ${res.created_count} created, ${res.skipped_count} already existed`, 'ok');
+      await loadNotebooks();
+    } catch (e) { setStatus(e.message, 'err'); }
+  }
+
   async function pollPerformerSource(id, tries) {
     tries = tries || 0;
     if (tries > 40) return;
@@ -680,6 +690,7 @@
   function wire() {
     el('nbNew').addEventListener('click', createNotebook);
     el('nbPerformer').addEventListener('click', createPerformerNotebook);
+    el('nbBulkMlb').addEventListener('click', bulkMlbNotebooks);
     el('nbTransforms').addEventListener('click', renderTransforms);
     el('nbSettings').addEventListener('click', renderSettings);
     document.querySelectorAll('.nb-tab').forEach(b => b.addEventListener('click', () => {

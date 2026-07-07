@@ -380,6 +380,21 @@ def build_open_notebook_router(
             raise HTTPException(404, "performer not found")
         return p
 
+    def _generate_performer_notebook(db, background: BackgroundTasks, performer_id, name) -> dict:
+        """Create a notebook + performer SQL-digest source and kick off ingest
+        (+ Wikipedia enrichment). Shared by the single and bulk generators; the
+        caller passes an already-resolved display name."""
+        nb = repo.create_notebook(db, name=name,
+                                  description="Auto-generated performer notebook (SQL digest)")
+        asset = {"kind": "performer", "performer_id": performer_id, "performer_name": name}
+        src = repo.create_source(db, title=name, asset=asset, status="queued")
+        repo.link_source(db, nb["id"], src["id"])
+        job = repo.create_job(db, kind="ingest", ref_id=src["id"])
+        background.add_task(_run_ingest, src["id"], job["id"])
+        if onb_config.ONB_WIKI_SOURCES:
+            background.add_task(_add_wikipedia_sources, nb["id"], performer_id, name)
+        return {"notebook": nb, "source": src, "job_id": job["id"]}
+
     @router.post("/api/notebook/performers/notebook")
     def onb_create_performer_notebook(background: BackgroundTasks,
                                       body: dict = Body(...), _=Depends(require_auth)):
@@ -392,18 +407,36 @@ def build_open_notebook_router(
             db, performer_id=body.get("performer_id"), name=body.get("name"))
         if not p:
             raise HTTPException(404, "performer not found")
-        nb = repo.create_notebook(db, name=p.get("name") or f"Performer {p['id']}",
-                                  description="Auto-generated performer notebook (SQL digest)")
-        asset = {"kind": "performer", "performer_id": p["id"], "performer_name": p.get("name")}
-        src = repo.create_source(db, title=p.get("name"), asset=asset, status="queued")
-        repo.link_source(db, nb["id"], src["id"])
-        job = repo.create_job(db, kind="ingest", ref_id=src["id"])
-        background.add_task(_run_ingest, src["id"], job["id"])
-        # Enrich with Wikipedia (performer article + recent season pages for
-        # sports) so the notebook has narrative beyond the SQL digest.
-        if onb_config.ONB_WIKI_SOURCES:
-            background.add_task(_add_wikipedia_sources, nb["id"], p["id"], p.get("name"))
-        return {"notebook": nb, "source": src, "performer": p, "job_id": job["id"]}
+        name = p.get("name") or f"Performer {p['id']}"
+        out = _generate_performer_notebook(db, background, p["id"], name)
+        return {**out, "performer": p}
+
+    @router.post("/api/notebook/performers/bulk")
+    def onb_bulk_performer_notebooks(background: BackgroundTasks,
+                                     body: dict = Body(default={}), _=Depends(require_auth)):
+        """Force-run: generate a performer notebook for every team in a league
+        (default MLB). Idempotent — a performer that already has a notebook (by
+        name) is skipped, so re-running only fills gaps. Ingest + Wikipedia
+        enrichment run in the background per team."""
+        _enabled()
+        db = _db()
+        league = ((body or {}).get("league") or "MLB").strip().upper()
+        teams = onb_performers.league_performers(db, league)
+        if not teams:
+            raise HTTPException(404, f"no performers mapped for league {league!r}")
+        existing = {(nb.get("name") or "").strip().lower()
+                    for nb in repo.list_notebooks(db)}
+        created, skipped = [], []
+        for t in teams:
+            name = t.get("name") or f"Performer {t['id']}"
+            if name.strip().lower() in existing:
+                skipped.append(name)
+                continue
+            out = _generate_performer_notebook(db, background, t["id"], name)
+            created.append({"performer": name, "notebook": out["notebook"]["id"],
+                            "job_id": out["job_id"]})
+        return {"league": league, "created_count": len(created),
+                "skipped_count": len(skipped), "created": created, "skipped": skipped}
 
     # ---- jobs ------------------------------------------------------------
     @router.get("/api/notebook/jobs/{job_id}")
