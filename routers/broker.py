@@ -1162,8 +1162,59 @@ def build_broker_router(
             .execute()
         ).data or []
 
-        # 1) Decide which source to use. Priority: curated > fallback > unmapped.
         sources_present = {r.get("zone_source") for r in rows}
+
+        # 0) LIVE curated zones win. zone_metrics is cron-fed (zone-backfill), so a
+        # freshly-imported venue's curated zones lag there — and even a backfilled
+        # snapshot can miss zones the latest listings now populate.
+        # get_event_zones_rollup computes the curated split LIVE off
+        # performer_zones + the latest listings, so the NEW zones surface
+        # immediately and completely. When present, the live curated set is
+        # authoritative for the zone LIST + qty/retail bounds, enriched per-zone
+        # with the latest matching zone_metrics row for the full distribution
+        # (get-in / percentiles / wholesale / owned) once the cron lands one.
+        try:
+            live = get_require_sb()().rpc(
+                "get_event_zones_rollup",
+                {"p_event_id": event_id, "p_owned_only": False},
+            ).execute().data or []
+        except Exception:
+            live = []
+        live_curated = [r for r in live if r.get("source") == "curated" and r.get("zone")]
+        if live_curated:
+            latest_cur = {}
+            for r in rows:
+                if r.get("zone_source") == "curated" and r.get("zone") not in latest_cur:
+                    latest_cur[r.get("zone")] = r
+            out = []
+            parking_count = 0
+            for lr in live_curated:
+                z = lr.get("zone")
+                if not include_parking and z and _PARKING_ZONE_RE.search(z):
+                    parking_count += 1
+                    continue
+                merged = dict(latest_cur.get(z) or {})
+                merged["zone"] = z
+                merged["zone_source"] = "curated"
+                # live rollup is the current truth for qty + retail bounds
+                if lr.get("tickets") is not None:
+                    merged["tickets_count"] = lr.get("tickets")
+                if lr.get("min_retail") is not None:
+                    merged["retail_min"] = lr.get("min_retail")
+                if lr.get("max_retail") is not None:
+                    merged["retail_max"] = lr.get("max_retail")
+                if merged.get("getin_price") is None:
+                    merged["getin_price"] = lr.get("min_retail")
+                out.append(merged)
+            out.sort(key=lambda r: -(r.get("tickets_count") or 0))
+            return {
+                "zones": out, "count": len(out), "source": "curated",
+                "available_sources": sorted(sources_present | {"curated"}),
+                "parking_hidden": parking_count,
+                "include_parking": include_parking, "live": True,
+            }
+
+        # 1) Decide which source to use. Priority: curated > fallback > unmapped.
         if "curated" in sources_present:
             chosen_source = "curated"
         elif "fallback" in sources_present:
