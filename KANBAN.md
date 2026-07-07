@@ -199,6 +199,7 @@ Prioritized program from the 2026-06-19 cross-axis bottleneck audit (code · dat
 
 | Item | Action |
 |---|---|
+| **Recharge TwitterAPI.io credits** — starter balance exhausted 2026-07-07 18:14Z after 660 tweets (≈$0.10 @ ~$0.15/1k); X wire is in 402-backoff (one probe/~30 min, mig `20260707200000`) | Recharge at the twitterapi.io dashboard → wire auto-resumes ≤30 min, no other action. Post-recharge steady-state is cheap: incremental `since:` polling bills only NEW tweets (rough order: low single-digit $/mo at current roster volume vs ~$130/mo without it). Watch `SELECT * FROM v_x_news_usage;` (hourly est_usd + 402/429 counts). |
 | Apply migration `20260516230000_security_release_health_cron_heartbeat.sql` | `apply_migration` via MCP — adds 3 RHC rows (heartbeat, aging_7d, pg_net) |
 | Apply migration `20260515300000_security_secdef_post_pr101_compliance.sql` | `apply_migration` — Phase 1 §6 retrofit on 11 fns + RLS enable on `aq_*_map` |
 | Mass-triage 47 aging bot_chat entries (>2 days old) | Per-lane sweep before PR #176 applies; otherwise `coordination.bot_chat_aging_7d` row will FAIL |
