@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.6.0 (2026-07-07)
+**Doc version:** v1.7.0 (2026-07-07)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -100,7 +100,12 @@ truncated to a snapshot. One call —
 `POST /api/notebook/performers/notebook {"name": "New York Yankees"}` (or
 `{"performer_id": N}`) — resolves the performer, creates a notebook, ingests the
 digest, and it's ready for Ask/Chat/Podcast. The terminal's **+ Performer** button
-does this (defaults to New York Yankees).
+does this (defaults to New York Yankees). **Bulk / force-run:**
+`POST /api/notebook/performers/bulk {"league": "MLB"}` (default MLB) generates a
+notebook for every team in a league, **idempotently** — a performer that already
+has a notebook (matched by name) is skipped, so re-running only fills gaps. The
+terminal's **+ MLB (all)** button fires it. League membership comes from
+`performer_espn_team_xref` (`open_notebook/performers.py:league_performers`).
 
 **Wikipedia auto-enrichment** (`open_notebook/wikipedia.py`, flag `ONB_WIKI_SOURCES`,
 on by default): on performer-notebook creation, a background task attaches the
