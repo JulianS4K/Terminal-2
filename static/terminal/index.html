@@ -54,9 +54,13 @@
           <button class="ctrl-btn is-active" data-news-win="48">48h</button>
           <button class="ctrl-btn"           data-news-win="168">7d</button>
         </div>
-        <div class="ctrl-group news-league-group">
+        <div class="ctrl-group news-league-group" id="newsLeagueGroup">
           <span class="ctrl-lbl">LEAGUE</span>
           <span id="newsLeagueChips" class="news-league-chips"><button class="ctrl-btn is-active" data-news-league="ALL">All</button></span>
+        </div>
+        <div class="ctrl-group news-league-group" id="newsCategoryGroup" hidden>
+          <span class="ctrl-lbl">CATEGORY</span>
+          <span id="newsCategoryChips" class="news-league-chips"><button class="ctrl-btn is-active" data-news-cat="ALL">All</button></span>
         </div>
         <div class="ctrl-group">
           <input id="newsSearch" class="ctrl-input" type="search" placeholder="filter headlines…" autocomplete="off" aria-label="Filter news headlines" />
@@ -147,6 +151,6 @@
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260704txn"></script>
   <script src="home.js?v=20260702b"></script>
-  <script src="news-ticker.js?v=20260706x"></script>
+  <script src="news-ticker.js?v=20260707xcat"></script>
 </body>
 </html>
