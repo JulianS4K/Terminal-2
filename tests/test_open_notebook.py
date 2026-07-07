@@ -1291,6 +1291,8 @@ def _rich_perf_db():
             {"title": "Win title", "source": "kalshi", "last_price": 0.3, "volume": 1000},
             {"question": "Make playoffs", "source": "kalshi", "yes_price": 0.6},  # no volume → tail ""
         ]},
+        "predict_event_median_24h": {"current_median": 120, "predicted_median_24h": 125, "spike_up_prob_pct": 8},
+        "get_event_prediction_markets": {"game_markets": [{"title": "Team X ML", "yes_price": 0.58}]},
     })
     db.store["entity_performer_map"] = [{"tevo_performer_id": 100, "tevo_performer_name": "Team X",
         "top_category_name": "Sports", "what_event_type": "sports", "espn_team_id": "t1", "espn_league": "MLB"}]
@@ -1327,6 +1329,25 @@ def _rich_perf_db():
         "flip_margin_pct": 33.3, "signal": "primary_cheaper"}]
     db.store["seatgeek_event_metrics"] = [{"tevo_event_id": 1, "listings_all_min": 55,
         "listings_all_median": 110, "sold_price_median": 95, "fill_rate": 0.42, "captured_at": "2099-08-30"}]
+    db.store["seatdata_event_stats"] = [{"tevo_event_id": 1, "get_in": 52, "median_price": 118,
+        "listing_fill_rate": 0.6, "pulled_at": "2099-08-30"}]
+    db.store["v_sg_blindspot_evo_tracking"] = [{"tevo_event_id": 1, "rank": 1, "sg_sold_qty": 30,
+        "sg_sold_median": 100, "evo_tickets": 10, "evo_getin": 58, "evo_owned_share": 0.1}]
+    db.store["sg_market_chart"] = [{"tevo_event_id": 1, "rank": 5, "ma7_volume": 200, "ma7_median": 110,
+        "days_on_chart": 20, "chart_date": "2099-08-30"}]
+    db.store["v_sg_historic_per_performer"] = [{"tevo_performer_id": 100, "season_label": "2025",
+        "sales": 1000, "min_price": 40, "median_price": 111, "p75_price": 180, "max_price": 400}]
+    db.store["matchup_history"] = [{"host_performer_id": 100, "team_a_name": "X", "team_b_name": "Y",
+        "event_date": "2099-09-01", "retail_median": 120, "getin_price": 50}]
+    db.store["v_team_at_venue_history"] = [{"espn_team_id": "t1", "tevo_venue_name": "Stadium",
+        "side": "home", "games_played": 80, "wins": 50, "losses": 30, "avg_attendance": 40000}]
+    db.store["cast_price_ref"] = [{"tevo_performer_id": 100, "overall_median_price": 130,
+        "home_median_price": 140, "away_median_price": 120}]
+    db.store["espn_attendance_latest"] = [{"espn_team_id": "t1", "home_avg": 40000, "home_pct": 95,
+        "rank": 3, "captured_at": "2099-08-30"}]
+    db.store["espn_transactions"] = [{"espn_team_id": "t1", "txn_date": "2099-08-01", "description": "Signed P"}]
+    db.store["v_event_active_weather_alerts"] = [{"tevo_event_id": 1, "event": "Heat Advisory",
+        "severity": "Moderate", "headline": "Hot out"}]
     return db
 
 
@@ -1350,6 +1371,17 @@ def test_performer_digest_enrichment():
     assert "Primary vs secondary" in text and "AXS primary get-in $45" in text
     assert "flip +33%" in text and "[primary_cheaper]" in text
     assert "SeatGeek secondary" in text and "sold-median $95" in text
+    for header in ("SeatData secondary", "SG clearing vs our inventory", "SeatGeek popularity",
+                   "Price forecast (24h)", "Game odds", "Severe weather alerts",
+                   "Historical price (SeatGeek", "Head-to-head history", "Team at venue",
+                   "Cast price reference", "Attendance", "Roster moves"):
+        assert header in text, header
+    assert "24h→ $125" in text and "spike-up% 8" in text        # forecast rpc
+    assert "Team X ML" in text                                   # per-event game odds
+    assert "2025: median $111" in text                           # historical percentiles
+    assert "95% full" in text and "Signed P" in text            # attendance + transactions
+    assert "Heat Advisory" in text                               # severe weather alert
+    assert "overall $130" in text                                # cast price ref
 
 
 def test_digest_helper_branches():
@@ -1439,6 +1471,41 @@ def test_digest_realized_sales_partial():
     db2.store["d0_perf_price_stats"] = [{"performer_id": 8, "median": 5}]
     _, t2 = onb_performers.build_performer_digest(db2, 8, performer_name="B")
     assert "Price stats" in t2 and "Home/away" not in t2
+
+
+def test_market_extra_branches():
+    P = onb_performers
+    # _kv_bits: price kind, None-skip, raw kind
+    assert P._kv_bits({"a": 10, "b": None, "c": 5},
+                      [("a", "A", "price"), ("b", "B", "raw"), ("c", "C", "raw")]) == ["A $10", "C 5"]
+    # _rpc_obj: list non-empty → first; default [] → None; dict → dict; scalar → None
+    assert P._rpc_obj(FakeSB(rpc={"x": [{"k": 1}]}), "x", {}) == {"k": 1}
+    assert P._rpc_obj(FakeSB(), "x", {}) is None
+    assert P._rpc_obj(FakeSB(rpc={"x": {"k": 2}}), "x", {}) == {"k": 2}
+    assert P._rpc_obj(FakeSB(rpc={"x": 5}), "x", {}) is None
+
+    ev = [{"id": 30, "name": "A"}, {"id": 31, "name": "NoRow"}]
+    # per-event helpers: all-None row (no bits, skipped) + missing-row event → section empty
+    db = FakeSB(); db.store["seatdata_event_stats"] = [{"tevo_event_id": 30, "pulled_at": "1"}]
+    assert P._sec_seatdata(db, ev) == []
+    db = FakeSB(); db.store["v_sg_blindspot_evo_tracking"] = [{"tevo_event_id": 30}]
+    assert P._sec_blindspot(db, ev) == []
+    db = FakeSB(); db.store["sg_market_chart"] = [{"tevo_event_id": 30, "chart_date": "1"}]
+    assert P._sec_sg_chart(db, ev) == []
+    # forecast: rpc row with no bits → skip; rpc empty → _rpc_obj None → continue
+    assert P._sec_forecast(FakeSB(rpc={"predict_event_median_24h": {"category": "x"}}), ev) == []
+    assert P._sec_forecast(FakeSB(), ev) == []
+    # event markets: game with no title (skipped) + no rpc → empty games
+    assert P._sec_event_markets(
+        FakeSB(rpc={"get_event_prediction_markets": {"game_markets": [{"yes_price": 0.5}]}}), ev) == []
+    assert P._sec_event_markets(FakeSB(), ev) == []
+    # weather alerts: no rows → []
+    assert P._sec_weather_alerts(FakeSB(), ev) == []
+    # item helpers: all-None row → no bits → []
+    db = FakeSB(); db.store["cast_price_ref"] = [{"tevo_performer_id": 5}]
+    assert P._sec_cast_price(db, 5) == []
+    db = FakeSB(); db.store["espn_attendance_latest"] = [{"espn_team_id": "t", "captured_at": "1"}]
+    assert P._sec_attendance(db, "t") == []
 
 
 def test_performer_helpers():
