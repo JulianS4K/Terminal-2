@@ -81,6 +81,22 @@ def resolve_performer(db, *, performer_id: int | None = None, name: str | None =
     return None
 
 
+def league_performers(db, league: str) -> list[dict]:
+    """All performers mapped to an ESPN league (e.g. 'MLB') → [{'id','name'}].
+    Used by the bulk performer-notebook generator."""
+    rows = _safe(lambda: _rows(db.table("performer_espn_team_xref").select("tevo_performer_id")
+                               .eq("espn_league", league).execute()), [])
+    out, seen = [], set()
+    for r in rows:
+        pid = r.get("tevo_performer_id")
+        if pid is None or pid in seen:
+            continue
+        seen.add(pid)
+        resolved = resolve_performer(db, performer_id=pid)
+        out.append({"id": pid, "name": resolved.get("name")})
+    return out
+
+
 def _upcoming_events(db, pid: int) -> list[dict]:
     now_utc = _dt.datetime.now(_dt.timezone.utc)
     cols = "id,name,occurs_at_local,venue_name,venue_location,primary_performer_name,state,performer_ids"

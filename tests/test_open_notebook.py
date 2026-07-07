@@ -1573,6 +1573,51 @@ def test_performer_routes(monkeypatch, perf_db, stub_providers):
     assert c.post(f"/api/notebook/notebooks/{nid}/sources", json={"kind": "performer"}).status_code == 400
     assert c.post(f"/api/notebook/notebooks/{nid}/sources",
                   json={"kind": "performer", "performer_id": 100}).status_code == 200
+    # performer that resolves with no name → notebook titled "Performer <id>"
+    r3 = c.post("/api/notebook/performers/notebook", json={"performer_id": 555})
+    assert r3.status_code == 200 and r3.json()["notebook"]["name"] == "Performer 555"
+
+
+def test_bulk_performer_notebooks(monkeypatch, stub_providers):
+    db = FakeSB()
+    db.store["performer_espn_team_xref"] = [
+        {"tevo_performer_id": 100, "espn_league": "MLB"},
+        {"tevo_performer_id": 101, "espn_league": "MLB"},
+        {"tevo_performer_id": 100, "espn_league": "MLB"},   # dup → deduped
+        {"tevo_performer_id": None, "espn_league": "MLB"},   # None → skipped
+        {"tevo_performer_id": 102, "espn_league": "MLB"},   # no map entry → name fallback
+    ]
+    db.store["entity_performer_map"] = [
+        {"tevo_performer_id": 100, "tevo_performer_name": "New York Yankees"},
+        {"tevo_performer_id": 101, "tevo_performer_name": "Boston Red Sox"},
+    ]
+    monkeypatch.setattr(app_module, "require_sb", lambda: db)
+    monkeypatch.setattr(onb_config, "ONB_WIKI_SOURCES", False)  # no network in bg tasks
+    c = TestClient(app_module.app)
+
+    # first run creates one notebook per unique team (incl. the fallback-named one)
+    r = c.post("/api/notebook/performers/bulk", json={"league": "mlb"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["league"] == "MLB" and body["created_count"] == 3 and body["skipped_count"] == 0
+    names = {x["performer"] for x in body["created"]}
+    assert {"New York Yankees", "Boston Red Sox", "Performer 102"} <= names
+
+    # idempotent re-run (default league MLB): everything already exists → skipped
+    r2 = c.post("/api/notebook/performers/bulk", json={})
+    assert r2.json()["created_count"] == 0 and r2.json()["skipped_count"] == 3
+
+    # a league with no mapped teams → 404
+    assert c.post("/api/notebook/performers/bulk", json={"league": "XFL"}).status_code == 404
+
+
+def test_league_performers(monkeypatch):
+    db = FakeSB()
+    db.store["performer_espn_team_xref"] = [{"tevo_performer_id": 100, "espn_league": "MLB"}]
+    db.store["entity_performer_map"] = [{"tevo_performer_id": 100, "tevo_performer_name": "NYY"}]
+    out = onb_performers.league_performers(db, "MLB")
+    assert out == [{"id": 100, "name": "NYY"}]
+    assert onb_performers.league_performers(db, "NFL") == []
 
 
 # ============================================================ wikipedia enrich
