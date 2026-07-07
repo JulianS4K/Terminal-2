@@ -2165,6 +2165,12 @@ body[data-page="login"] {
   border-color: rgba(34, 211, 238, .45);
   background: rgba(34, 211, 238, .10);
 }
+/* X (Twitter) posts — monochrome silver, matching the X brand. */
+.news-badge-x {
+  color: #e5e7eb;
+  border-color: rgba(229, 231, 235, .45);
+  background: rgba(229, 231, 235, .10);
+}
 
 /* ---------- TD listings table (TD Markets tab) ---------- */
 .td-listings-tbl { width: 100%; border-collapse: collapse; font-size: 0.84em; }

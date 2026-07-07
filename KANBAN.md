@@ -199,6 +199,7 @@ Prioritized program from the 2026-06-19 cross-axis bottleneck audit (code · dat
 
 | Item | Action |
 |---|---|
+| **Activate the X news wire** (built INERT 2026-07-06, PR pending — migs `20260706113000` + `20260706114500`; operator to provide sources + API key) | (1) `apply_migration` both migs (whitelist first); (2) create the vault secret: `SELECT vault.create_secret('<twitterapi.io key>', 'TWITTERAPI_IO_KEY');`; (3) seed/enable sources: `UPDATE x_news_sources SET enabled=true WHERE source_value IN ('@wojespn', …);` or INSERT `kind='query'` rows for keyword tracking (the 28 high-priority insiders ship seeded DISABLED). Spend = ~1 advanced-search call/source per `poll_interval_minutes` (default 15m); tune per row. Until (2)+(3) the crons no-op. |
 | Apply migration `20260516230000_security_release_health_cron_heartbeat.sql` | `apply_migration` via MCP — adds 3 RHC rows (heartbeat, aging_7d, pg_net) |
 | Apply migration `20260515300000_security_secdef_post_pr101_compliance.sql` | `apply_migration` — Phase 1 §6 retrofit on 11 fns + RLS enable on `aq_*_map` |
 | Mass-triage 47 aging bot_chat entries (>2 days old) | Per-lane sweep before PR #176 applies; otherwise `coordination.bot_chat_aging_7d` row will FAIL |
