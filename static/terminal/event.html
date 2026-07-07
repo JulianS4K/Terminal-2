@@ -236,6 +236,15 @@
       <div id="splitsBody"></div>
     </section>
 
+    <section id="zone-metrics">
+      <div class="panel-title">ZONE METRICS — PER-ZONE INVENTORY &amp; PRICING</div>
+      <!-- renderZones() builds the TEvo(curated zones)|SG(sections) dual-source
+           grid into #zonesBody. TEvo side = per-zone event-shaped metrics from
+           zone_metrics (curated performer_zones win; fallback otherwise), fed by
+           setZonesTevo(data.zones); SG side merges in via loadSgZonesSplits. -->
+      <div id="zonesBody"></div>
+    </section>
+
     <section id="prediction-markets">
       <div class="panel-title row">
         <span>PREDICTION MARKETS</span>
@@ -547,6 +556,6 @@
   <script src="nav.js?v=20260704txn"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="event.js?v=20260704mrg"></script>
+  <script src="event.js?v=20260707zm"></script>
 </body>
 </html>
