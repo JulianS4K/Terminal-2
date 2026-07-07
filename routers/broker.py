@@ -1193,18 +1193,17 @@ def build_broker_router(
                 if not include_parking and z and _PARKING_ZONE_RE.search(z):
                     parking_count += 1
                     continue
+                # live rollup is the current truth for the zone's qty + retail
+                # bounds (it only lists a zone that has live listings); the
+                # matching zone_metrics row (if any) supplies the fuller
+                # distribution. get-in defaults to the live min when absent.
                 merged = dict(latest_cur.get(z) or {})
                 merged["zone"] = z
                 merged["zone_source"] = "curated"
-                # live rollup is the current truth for qty + retail bounds
-                if lr.get("tickets") is not None:
-                    merged["tickets_count"] = lr.get("tickets")
-                if lr.get("min_retail") is not None:
-                    merged["retail_min"] = lr.get("min_retail")
-                if lr.get("max_retail") is not None:
-                    merged["retail_max"] = lr.get("max_retail")
-                if merged.get("getin_price") is None:
-                    merged["getin_price"] = lr.get("min_retail")
+                merged["tickets_count"] = lr.get("tickets")
+                merged["retail_min"] = lr.get("min_retail")
+                merged["retail_max"] = lr.get("max_retail")
+                merged.setdefault("getin_price", lr.get("min_retail"))
                 out.append(merged)
             out.sort(key=lambda r: -(r.get("tickets_count") or 0))
             return {
