@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.5.0 (2026-07-04)
+**Doc version:** v1.6.0 (2026-07-07)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -73,9 +73,18 @@ Sources folded in (all already ingested by the platform — no external API call
   color (`d0_perf_*`) + hot sections (`d0_perf_top5_sections`).
 - **Primary vs secondary (broker edge)** — per event, AXS **primary** (face) get-in
   vs best secondary + precomputed flip margin/signal (`v_event_primary_vs_secondary`),
-  and a SeatGeek cross-market secondary read (`seatgeek_event_metrics`). (Ticketmaster
-  face-value has no standalone priced table — it flows via SeatData's `sd_tm_event_id`;
-  AXS is the live primary feed.)
+  a SeatGeek cross-market read (`seatgeek_event_metrics`), a SeatData 3rd-market read
+  (`seatdata_event_stats`), the SG-clears-vs-our-EVO-inventory "blindspot" gap
+  (`v_sg_blindspot_evo_tracking`), national popularity trend (`sg_market_chart`), our
+  own 24h price-drift forecast (`predict_event_median_24h`), and per-event game odds
+  (`get_event_prediction_markets`). (Ticketmaster face-value has no standalone priced
+  table — it flows via SeatData's `sd_tm_event_id`; AXS is the live primary feed.)
+- **Historical price anchors** — performer season percentiles
+  (`v_sg_historic_per_performer`), head-to-head history (`matchup_history`),
+  team-at-venue record + attendance (`v_team_at_venue_history`), and cast price
+  reference (`cast_price_ref`).
+- **Demand context (sports)** — attendance/capacity (`espn_attendance_latest`), roster
+  transactions (`espn_transactions`), and severe-weather alerts (`v_event_active_weather_alerts`).
 - **Per-event context** — game-day weather w/ climatology fallback
   (`v_event_weather_with_fallback`), demand velocity (`event_sentiment`).
 - **Buzz / markets / macro** — Reddit pulse + notable posts (`v_performer_reddit_pulse`,

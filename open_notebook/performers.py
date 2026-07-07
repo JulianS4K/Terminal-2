@@ -157,6 +157,28 @@ def _fmt_price(v) -> str:
         return "n/a"
 
 
+def _kv_bits(row: dict, spec: list) -> list[str]:
+    """Build 'label value' bits from a row per spec = [(key, label, kind)]; kind
+    'price' formats as money, anything else is raw. None values are dropped.
+    Centralizes the per-field null-check so section helpers stay branch-light."""
+    out = []
+    for key, label, kind in spec:
+        v = row.get(key)
+        if v is None:
+            continue
+        out.append(f"{label} {_fmt_price(v) if kind == 'price' else v}")
+    return out
+
+
+def _rpc_obj(db, name: str, params: dict):
+    """Call an RPC that returns a single JSON object (list-wrapped or bare)."""
+    res = _safe(lambda: db.rpc(name, params).execute(), None)
+    data = getattr(res, "data", None)
+    if isinstance(data, list):
+        return data[0] if data else None
+    return data if isinstance(data, dict) else None
+
+
 # ---------------------------------------------------------------------------
 # Enrichment sections — each reads a fixed, non-sensitive Supabase source and
 # returns markdown lines (or [] when there's nothing). All best-effort (_safe):
@@ -443,6 +465,181 @@ def _sec_macro(db, n: int = 6) -> list[str]:
     return out
 
 
+# ---- extra market reads (per event) ----------------------------------------
+
+def _sec_seatdata(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        row = _safe(lambda e=e: _rows(db.table("seatdata_event_stats")
+                    .select("get_in,median_price,avg_price,listing_fill_rate,pulled_at")
+                    .eq("tevo_event_id", e["id"]).order("pulled_at", desc=True).limit(1).execute()), [])
+        if not row:
+            continue
+        bits = _kv_bits(row[0], [("get_in", "get-in", "price"), ("median_price", "median", "price"),
+                                 ("listing_fill_rate", "fill", "raw")])
+        if bits:
+            out.append(f"- {e.get('name', '')}: " + ", ".join(bits))
+    return ["## SeatData secondary"] + out + [""] if out else []
+
+
+def _sec_blindspot(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        row = _safe(lambda e=e: _rows(db.table("v_sg_blindspot_evo_tracking")
+                    .select("sg_sold_qty,sg_sold_median,evo_tickets,evo_getin,evo_owned_share")
+                    .eq("tevo_event_id", e["id"]).limit(1).execute()), [])
+        if not row:
+            continue
+        bits = _kv_bits(row[0], [("sg_sold_qty", "SG sold", "raw"), ("sg_sold_median", "SG median", "price"),
+                                 ("evo_tickets", "our tix", "raw"), ("evo_getin", "our get-in", "price"),
+                                 ("evo_owned_share", "owned share", "raw")])
+        if bits:
+            out.append(f"- {e.get('name', '')}: " + ", ".join(bits))
+    return ["## SG clearing vs our inventory (blindspot)"] + out + [""] if out else []
+
+
+def _sec_sg_chart(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        row = _safe(lambda e=e: _rows(db.table("sg_market_chart")
+                    .select("rank,ma7_volume,ma7_median,days_on_chart,chart_date")
+                    .eq("tevo_event_id", e["id"]).order("chart_date", desc=True).limit(1).execute()), [])
+        if not row:
+            continue
+        bits = _kv_bits(row[0], [("rank", "rank", "raw"), ("ma7_volume", "7d vol", "raw"),
+                                 ("ma7_median", "7d median", "price"), ("days_on_chart", "days on chart", "raw")])
+        if bits:
+            out.append(f"- {e.get('name', '')}: " + ", ".join(bits))
+    return ["## SeatGeek popularity"] + out + [""] if out else []
+
+
+def _sec_forecast(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        r = _rpc_obj(db, "predict_event_median_24h", {"p_event_id": e["id"]})
+        if not r:
+            continue
+        bits = _kv_bits(r, [("current_median", "now", "price"), ("predicted_median_24h", "24h→", "price"),
+                            ("spike_up_prob_pct", "spike-up%", "raw")])
+        if bits:
+            out.append(f"- {e.get('name', '')}: " + ", ".join(bits))
+    return ["## Price forecast (24h)"] + out + [""] if out else []
+
+
+def _sec_event_markets(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        obj = _rpc_obj(db, "get_event_prediction_markets", {"p_event_id": e["id"]})
+        for g in ((obj or {}).get("game_markets") or [])[:2]:
+            title = g.get("title") or g.get("question") or ""
+            if title:
+                out.append(f"- {e.get('name', '')}: {title} ({g.get('yes_price') or g.get('last_price') or ''})")
+    return ["## Game odds"] + out + [""] if out else []
+
+
+def _sec_weather_alerts(db, events: list[dict], n: int = 5) -> list[str]:
+    out: list[str] = []
+    for e in events[:n]:
+        rows = _safe(lambda e=e: _rows(db.table("v_event_active_weather_alerts")
+                     .select("event,severity,headline").eq("tevo_event_id", e["id"]).limit(2).execute()), [])
+        for a in rows:
+            out.append(f"- {e.get('name', '')}: {a.get('severity', '')} {a.get('event', '')} "
+                       f"— {a.get('headline', '')}")
+    return ["## Severe weather alerts"] + out + [""] if out else []
+
+
+# ---- historical anchors + demand context -----------------------------------
+
+def _sec_hist_performer(db, performer_id: int, n: int = 4) -> list[str]:
+    rows = _safe(lambda: _rows(db.table("v_sg_historic_per_performer")
+                 .select("season_label,sales,min_price,median_price,p75_price,max_price")
+                 .eq("tevo_performer_id", performer_id).order("season_label", desc=True).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Historical price (SeatGeek, by season)"]
+    for r in rows:
+        out.append(f"- {r.get('season_label', '')}: median {_fmt_price(r.get('median_price'))} "
+                   f"(min {_fmt_price(r.get('min_price'))}, p75 {_fmt_price(r.get('p75_price'))}, "
+                   f"{r.get('sales', '?')} sales)")
+    out.append("")
+    return out
+
+
+def _sec_matchups(db, performer_id: int, n: int = 6) -> list[str]:
+    rows = _safe(lambda: _rows(db.table("matchup_history")
+                 .select("team_a_name,team_b_name,event_date,retail_median,getin_price")
+                 .eq("host_performer_id", performer_id).order("event_date", desc=True).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Head-to-head history"]
+    for r in rows:
+        out.append(f"- {str(r.get('event_date', ''))[:10]} {r.get('team_a_name', '')} vs "
+                   f"{r.get('team_b_name', '')}: median {_fmt_price(r.get('retail_median'))}, "
+                   f"get-in {_fmt_price(r.get('getin_price'))}")
+    out.append("")
+    return out
+
+
+def _sec_team_venue_hist(db, team_id, n: int = 6) -> list[str]:
+    if not team_id:
+        return []
+    rows = _safe(lambda: _rows(db.table("v_team_at_venue_history")
+                 .select("tevo_venue_name,side,wins,losses,avg_attendance")
+                 .eq("espn_team_id", team_id).order("games_played", desc=True).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Team at venue (history)"]
+    for r in rows:
+        out.append(f"- {r.get('tevo_venue_name', '')} ({r.get('side', '')}): "
+                   f"{r.get('wins', '?')}-{r.get('losses', '?')}, avg att {r.get('avg_attendance', '?')}")
+    out.append("")
+    return out
+
+
+def _sec_cast_price(db, performer_id: int) -> list[str]:
+    row = _safe(lambda: _rows(db.table("cast_price_ref")
+                .select("home_median_price,away_median_price,overall_median_price")
+                .eq("tevo_performer_id", performer_id).limit(1).execute()), [])
+    if not row:
+        return []
+    bits = _kv_bits(row[0], [("overall_median_price", "overall", "price"),
+                             ("home_median_price", "home", "price"), ("away_median_price", "away", "price")])
+    return ["## Cast price reference", "- " + ", ".join(bits), ""] if bits else []
+
+
+def _sec_attendance(db, team_id) -> list[str]:
+    if not team_id:
+        return []
+    row = _safe(lambda: _rows(db.table("espn_attendance_latest")
+                .select("home_avg,home_pct,rank,captured_at")
+                .eq("espn_team_id", team_id).order("captured_at", desc=True).limit(1).execute()), [])
+    if not row:
+        return []
+    r = row[0]
+    bits = []
+    if r.get("home_avg") is not None:
+        bits.append(f"home avg {r['home_avg']}")
+    if r.get("home_pct") is not None:
+        bits.append(f"{r['home_pct']}% full")
+    if r.get("rank") is not None:
+        bits.append(f"league rank #{r['rank']}")
+    return ["## Attendance", "- " + ", ".join(bits), ""] if bits else []
+
+
+def _sec_transactions(db, team_id, n: int = 6) -> list[str]:
+    if not team_id:
+        return []
+    rows = _safe(lambda: _rows(db.table("espn_transactions").select("txn_date,description")
+                 .eq("espn_team_id", team_id).order("txn_date", desc=True).limit(n).execute()), [])
+    if not rows:
+        return []
+    out = ["## Roster moves"]
+    for r in rows:
+        out.append(f"- {str(r.get('txn_date', ''))[:10]} — {r.get('description', '')}")
+    out.append("")
+    return out
+
+
 def build_performer_digest(db, performer_id: int, *, performer_name: str | None = None) -> tuple[str, str]:
     """Return (title, text) — a rich, non-sensitive markdown digest for one
     performer, assembled from a fixed set of safe Supabase sources (identity,
@@ -499,6 +696,11 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
 
     lines += _sec_flip(db, events)             # primary (AXS) vs secondary + flip edge
     lines += _sec_sg_secondary(db, events)     # SeatGeek cross-market reference
+    lines += _sec_seatdata(db, events)         # SeatData 3rd-market read
+    lines += _sec_blindspot(db, events)        # SG clearing vs our EVO inventory
+    lines += _sec_sg_chart(db, events)         # national popularity trend
+    lines += _sec_forecast(db, events)         # our 24h price-drift model
+    lines += _sec_event_markets(db, events)    # per-event game odds
     lines += _sec_sentiment(db, events)        # demand velocity
     lines += _sec_hot_sections(db, performer_id)
 
@@ -531,13 +733,21 @@ def build_performer_digest(db, performer_id: int, *, performer_name: str | None 
 
     # ---- Demand & context inputs (weigh each against price) ----
     lines += _sec_weather(db, events)
+    lines += _sec_weather_alerts(db, events)
     lines += _sec_team_form(db, team_id)
     lines += _sec_recent_results(db, performer_id)
     lines += _sec_injuries(db, team_id)
+    lines += _sec_attendance(db, team_id)
+    lines += _sec_transactions(db, team_id)
     lines += _sec_schedule(db, performer_id)
     lines += _sec_reddit(db, performer_id)
     lines += _sec_x(db, performer_id)
     lines += _sec_news(db, team_id)
+    # ---- Historical price anchors ----
+    lines += _sec_hist_performer(db, performer_id)
+    lines += _sec_matchups(db, performer_id)
+    lines += _sec_team_venue_hist(db, team_id)
+    lines += _sec_cast_price(db, performer_id)
     lines += _sec_wikipedia(db, performer_id)
     lines += _sec_roster(db, performer_id)
     lines += _sec_macro(db)
