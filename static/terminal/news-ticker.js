@@ -25,6 +25,12 @@
 //                 FED tag. Window-gated on WHEN the reading first landed in our
 //                 store — a new print flashes at the top, then ages out, so the
 //                 wire surfaces the Fed only when it actually updates.
+//   * X         — v_x_news_ticker (TwitterAPI.io advanced-search pipeline, mig
+//                 20260706114500 — reddit mechanics: roster + pg_net queue,
+//                 48h, deduped first-post-shows). INERT until the operator
+//                 creates vault.TWITTERAPI_IO_KEY + enables roster rows. Each
+//                 row carries `team` = '@<author>' for attribution.
+//                 item_type='x_post'; X tag.
 //
 // Server params: window hours (re-query). Client-side (instant): source toggle,
 // league chips (faceted with live counts), free-text search. Auto-refreshes
@@ -113,8 +119,8 @@
   };
 
   // Source label: for Reddit rows show the originating sub ('r/<sub>', carried
-  // in `team`); for injury rows show the affected team; otherwise the plain
-  // source name.
+  // in `team`); for X rows the author handle ('@<user>', same slot); for
+  // injury rows show the affected team; otherwise the plain source name.
   const srcLabel = it => {
     if (!it) return '';
     if (it.source === 'Reddit' && it.team) return it.team;
@@ -124,8 +130,8 @@
     return it.source || '';
   };
 
-  // A story carried under a team byline (Reddit sub, X handle, injured player's
-  // team, or Broadway show title) gets a secondary source line in the reel.
+  // A story carried under a byline (Reddit sub, X author handle, injured
+  // player's team, or Broadway show title) gets a secondary source line in the reel.
   const hasSub = it => !!(it && it.team && (it.source === 'Reddit' || it.source === 'X' || it.source === 'Injuries' || it.source === 'Broadway'));
 
   function el(id) { return document.getElementById(id); }
@@ -285,6 +291,7 @@
     transaction: ['TXN', 'news-badge-txn'],
     cast:     ['CAST', 'news-badge-cast'],
     macro:    ['FED', 'news-badge-fed'],
+    x_post:   ['X', 'news-badge-x'],
   };
   function badge(it) {
     const lg = leagueOf(it);

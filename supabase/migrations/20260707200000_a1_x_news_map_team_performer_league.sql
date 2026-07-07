@@ -1,10 +1,12 @@
 -- ============================================================================
--- Migration 20260707140000 — map X (Twitter) news to team/performer/league
+-- Migration 20260707200000 — map X (Twitter) news to team/performer/league
 --
 -- Lane:     A1 (data plane) — read surface for the D0 terminal news wire
 -- Touches:  v_x_news_ticker (REPLACE, W), important_x_accounts (R),
 --           performer_metadata (R)
--- Pre-reqs: 20260707130000 (X category facet RPC), x_news + important_x_accounts,
+-- Pre-reqs: 20260707190000 (x_news_roster_import — the LATEST prior definition of
+--           v_x_news_ticker; this MUST run after it, else that plain view def
+--           clobbers this enrichment), 20260707130000 (X category RPC),
 --           get_terminal_news_ticker.x_posts CTE reads this view's league + url
 --
 -- WHAT (operator-directed 2026-07-07): make X posts first-class in the news wire
