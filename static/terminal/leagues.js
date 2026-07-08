@@ -61,6 +61,8 @@
   const EXTRA_KEYS = new Set(EXTRA_LEAGUES.map(l => l.key));
 
   let _teamLeagues = [];   // [{ key, label, teams }] from /api/broker/leagues
+  let _leagueKpis = null;  // { LEAGUE: {total_revenue, tickets_sold, ...} } from get_d0_league_kpis
+  let _curLeague = null;   // active league key (so a late KPI load can paint its strip)
   const $ = id => document.getElementById(id);
 
   function currentLeague() {
@@ -94,7 +96,40 @@
       e.preventDefault();
       $('lgResults').setAttribute('hidden', '');
     });
+    // League sales KPIs — one call for all leagues, cached; paints the active
+    // league's strip when it lands (fire-and-forget, non-blocking).
+    loadLeagueKpis().catch(e => console.error('[leagueKpis]', e));
     load(pickInitial(currentLeague()));
+  }
+
+  // Realized-sales KPIs per league (get_d0_league_kpis, mig 20260708120100).
+  // Read-only; hidden honestly if the RPC isn't deployed yet.
+  async function loadLeagueKpis() {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_d0_league_kpis');
+    if (res.error) return;   // 42883 (not deployed) / forbidden → strip stays hidden
+    _leagueKpis = {};
+    (res.data || []).forEach(r => { _leagueKpis[r.league] = r; });
+    if (_curLeague) renderSalesStrip(_curLeague);
+  }
+
+  function renderSalesStrip(key) {
+    const sec = $('lgSales');
+    const k = _leagueKpis && _leagueKpis[key];
+    if (!k) { sec.hidden = true; return; }
+    sec.hidden = false;
+    const usdBig = v => v == null ? '—'
+      : (Math.abs(+v) >= 1e6 ? '$' + (+v / 1e6).toFixed(1) + 'M' : '$' + T.fmtNum(Math.round(+v)));
+    const usd = v => v == null ? '—' : '$' + T.fmtNum(Math.round(+v));
+    $('lgSalesStrip').innerHTML = [
+      { n: usdBig(k.total_revenue),          l: 'revenue' },
+      { n: T.fmtNum(k.tickets_sold),         l: 'tickets sold' },
+      { n: usd(k.median_price),              l: 'median px' },
+      { n: usd(k.weighted_median_price),     l: 'wtd median' },
+      { n: T.fmtNum(k.sale_lines),           l: 'sale lines' },
+    ].map(c => `<div class="kpi-cell"><span class="kpi-num">${c.n}</span>` +
+               `<span class="kpi-lbl">${escapeHtml(c.l)}</span></div>`).join('');
   }
 
   function pickInitial(want) {
@@ -162,6 +197,8 @@
   // Team leagues — /api/broker/performers/by-league/{league}
   // ------------------------------------------------------------------
   async function loadTeamLeague(key) {
+    _curLeague = key;
+    renderSalesStrip(key);           // paint from cache if KPIs already loaded
     const isExtra = EXTRA_KEYS.has(key);
     const label = displayLeagueLabel(key);
     setHero(shortCode(key), leagueLongName(key, label),
@@ -204,6 +241,7 @@
         id: p.performer_id, name: p.performer_name || '—',
         demand, owned, events, mktMed,
         blind: demand > 0 && owned === 0,
+        conf: p.conference || null, div: p.division || null,
       };
     }).sort((a, b) => b.demand - a.demand);
 
@@ -238,9 +276,11 @@
           ? `<a href="performer.html?performer=${t.id}">${escapeHtml(t.name)}</a>`
           : `<span class="nm">${escapeHtml(t.name)}</span>`;
         const dot = t.blind ? '<span class="blind-dot" title="blind spot — open market, we own 0">◇</span>' : '';
+        const divTag = t.div ? `<span class="dm-div">${escapeHtml(confAbbr(t.conf))} ${escapeHtml(t.div)}</span>`
+                     : (t.conf ? `<span class="dm-div">${escapeHtml(t.conf)}</span>` : '');
         return `<div class="dm-row">
           <span class="dm-rank">${i + 1}</span>
-          <span class="dm-name">${nameHtml}${dot}
+          <span class="dm-name">${nameHtml}${dot}${divTag}
             <div class="dm-bar"><div class="dm-bar-fill" style="width:${Math.round(t.demand / max * 100)}%"></div></div>
           </span>
           <span class="dm-val" title="market tickets (home+road)">${num(t.demand)}</span>
@@ -282,22 +322,50 @@
   // order), each opening its performer page. When the league has no ingested
   // performers it reports the pending state rather than an empty box.
   function renderPerformers(teams, label, isExtra) {
-    const roster = [...teams].sort((a, b) => a.name.localeCompare(b.name));
-    $('lgPerformersMeta').textContent = roster.length ? `${roster.length} linked` : '';
-    if (!roster.length) {
+    if (!teams.length) {
+      $('lgPerformersMeta').textContent = '';
       $('lgPerformersBody').innerHTML = isExtra
         ? `<div class="empty">${escapeHtml(label)} isn’t ingested yet — no ESPN performer mapping. The major leagues + racing are live.</div>`
         : '<div class="empty">no performers mapped for this league yet</div>';
       return;
     }
-    $('lgPerformersBody').innerHTML = '<div class="perf-chips">' + roster.map(t => {
+    const byName = (a, b) => a.name.localeCompare(b.name);
+    const chip = t => {
       const ev = t.events ? `<span class="pc-ev" title="upcoming events tracked">${t.events}</span>` : '';
       return t.id != null
         ? `<a class="perf-chip" href="performer.html?performer=${t.id}" title="Open ${escapeHtml(t.name)} performer page">${escapeHtml(t.name)}${ev}</a>`
         : `<span class="perf-chip plain" title="no performer page mapped">${escapeHtml(t.name)}${ev}</span>`;
-    }).join('') + '</div>';
+    };
+    // Split by division — group key is conference+division (e.g. "AFC East",
+    // "Eastern Atlantic"), conference alone (MLS), or one flat group when the
+    // league isn't divisioned (WNBA / not-yet-ingested extras).
+    const groups = new Map();
+    teams.forEach(t => {
+      const gkey = t.div ? `${t.conf} ${t.div}` : (t.conf || '');
+      if (!groups.has(gkey)) groups.set(gkey, []);
+      groups.get(gkey).push(t);
+    });
+    if (groups.size === 1 && groups.has('')) {
+      $('lgPerformersMeta').textContent = `${teams.length} linked`;
+      $('lgPerformersBody').innerHTML =
+        '<div class="perf-chips">' + [...teams].sort(byName).map(chip).join('') + '</div>';
+      return;
+    }
+    const gkeys = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+    $('lgPerformersMeta').textContent = `${teams.length} linked · ${gkeys.length} divisions`;
+    $('lgPerformersBody').innerHTML = gkeys.map(gk => {
+      const list = groups.get(gk).sort(byName);
+      return `<div class="perf-group">
+        <div class="perf-group-hd">${escapeHtml(gk || 'Other')} <span class="muted small">${list.length}</span></div>
+        <div class="perf-chips">${list.map(chip).join('')}</div>
+      </div>`;
+    }).join('');
   }
 
+  // Short conference label for the inline division tag ("American League" → "AL").
+  function confAbbr(c) {
+    return c === 'American League' ? 'AL' : c === 'National League' ? 'NL' : (c || '');
+  }
   function displayLeagueLabel(key) {
     const bk = _teamLeagues.find(l => l.key === key);
     if (bk) return bk.label || key;
@@ -328,8 +396,10 @@
   async function loadRacing(series) {
     setHero(series === 'f1' ? 'F1' : 'NASCAR', RACING_NAME[series] || series, RACING_SUB[series] || 'Motorsport');
     T.setStatus('Loading ' + (RACING_NAME[series] || series) + '…');
-    // Drivers aren't TEvo performers → no roster panel for racing series.
+    // Drivers aren't TEvo performers, and racing has no d0_sales_fact league KPIs.
+    _curLeague = null;
     $('lgPerformers').hidden = true;
+    $('lgSales').hidden = true;
     $('lgPrimaryTitle').textContent = 'SCHEDULE';
     $('lgSecondaryTitle').textContent = 'DRIVER STANDINGS';
     $('lgPrimaryMeta').textContent = '';

@@ -245,6 +245,28 @@ def test_by_league_maps_rows_and_computes_delta_pct(client, monkeypatch):
     assert fake.rpc_calls[0] == ("get_performers_by_league", {"p_league": "NBA"})
 
 
+def test_by_league_merges_division(client, monkeypatch):
+    row = {"performer_id": 16303, "performer_name": "New York Knicks", "league": "NBA"}
+    fake = FakeSupabase(
+        rpc_data={"get_performers_by_league": [row]},
+        table_data={"league_team_divisions": [
+            {"tevo_performer_id": 16303, "conference": "Eastern", "division": "Atlantic"}]},
+    )
+    _use_db(monkeypatch, fake)
+    p = client.get("/api/broker/performers/by-league/NBA").json()["performers"][0]
+    assert p["conference"] == "Eastern"
+    assert p["division"] == "Atlantic"
+    assert "league_team_divisions" in fake.table_calls
+
+
+def test_by_league_division_absent_is_null(client, monkeypatch):
+    # No league_team_divisions row → conference/division default to null (FE ungrouped).
+    row = {"performer_id": 999, "performer_name": "Someteam", "league": "NBA"}
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"get_performers_by_league": [row]}))
+    p = client.get("/api/broker/performers/by-league/NBA").json()["performers"][0]
+    assert p["conference"] is None and p["division"] is None
+
+
 # ---------- /api/broker/event/{id}/section-metrics ----------
 
 def test_section_metrics_empty(client, monkeypatch):

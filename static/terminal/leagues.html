@@ -69,9 +69,18 @@
     .kpi-num.warn { color:var(--warn, #f59e0b); }
     .kpi-lbl { font-size:10px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted, #8a8a8a); }
 
-    /* Performers roster — linked chips, one per performer in the league */
+    /* Sales KPI sub-strip (realized comps, season to date) */
+    .lg-sales-lbl { font-size:10px; letter-spacing:.6px; text-transform:uppercase;
+      color:var(--muted, #8a8a8a); margin:0 0 6px 2px; }
+
+    /* Performers roster — linked chips, grouped by conference/division */
     .lg-performers { background:var(--panel, #141414); border:1px solid var(--line, #2a2a2a);
       border-radius:8px; padding:12px 14px; }
+    .perf-group { margin-bottom:11px; }
+    .perf-group:last-child { margin-bottom:0; }
+    .perf-group-hd { font-size:11px; font-weight:600; letter-spacing:.5px; text-transform:uppercase;
+      color:var(--muted, #8a8a8a); margin:0 0 6px; padding-bottom:3px; border-bottom:1px solid var(--line-2, #1f1f1f); }
+    .dm-name .dm-div { color:var(--dim, #4a4a4a); font-size:10px; font-weight:500; margin-left:5px; }
     .perf-chips { display:flex; flex-wrap:wrap; gap:6px; }
     .perf-chip { display:inline-flex; align-items:center; gap:5px; padding:4px 9px;
       background:var(--panel-2, #1a1a1a); border:1px solid var(--line, #2a2a2a); border-radius:5px;
@@ -127,8 +136,14 @@
       </div>
     </section>
 
-    <!-- KPI strip -->
+    <!-- KPI strip (market / inventory) -->
     <section class="kpi-strip" id="lgStrip"></section>
+
+    <!-- Sales KPIs (realized comps, season to date) — team leagues only -->
+    <section id="lgSales" hidden>
+      <div class="lg-sales-lbl">SALES · SEASON TO DATE — realized comps</div>
+      <div class="kpi-strip" id="lgSalesStrip"></div>
+    </section>
 
     <!-- Performers roster — every performer in the league, linked to its page.
          Team leagues only; hidden for racing series (drivers aren't performers). -->
@@ -175,6 +190,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260708lg"></script>
-  <script src="leagues.js?v=20260708lg2"></script>
+  <script src="leagues.js?v=20260708lg3"></script>
 </body>
 </html>
