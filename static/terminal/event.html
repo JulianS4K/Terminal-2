@@ -86,6 +86,7 @@
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
       <button class="event-tab" data-tab="cast" role="tab" aria-selected="false" id="tabBtnCast" hidden style="display:none">Cast <span class="tab-count" id="tabCountCast"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
+      <button class="event-tab" data-tab="predictions" role="tab" aria-selected="false">🔮 Predictions <span class="tab-count" id="tabCountPredictions"></span></button>
       <button class="event-tab" data-tab="alerts" role="tab" aria-selected="false">★ Watchlist &amp; Alerts <span class="tab-count" id="tabCountAlerts"></span></button>
       <button class="event-tab" data-tab="our-orders" role="tab" aria-selected="false">Our Orders <span class="tab-count" id="tabCountOurOrders"></span></button>
     </nav>
@@ -451,6 +452,16 @@
     </div>
 
     <!-- "Our Orders" merged tab — fires 3 parallel RPCs on first activate -->
+    <div class="tab-pane" id="panePredictions" role="tabpanel" hidden>
+      <section id="predictions-full">
+        <div class="panel-title row">
+          <span>🔮 PREDICTIONS — our EVO-owned inventory (model clearing + sell-by)</span>
+          <span class="muted small" id="predictionsMeta">tap tab to load</span>
+        </div>
+        <div id="predictionsBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
     <div class="tab-pane" id="paneAlerts" role="tabpanel" hidden>
       <section id="alerts-this-event">
         <div class="panel-title">THIS EVENT — TRACKING &amp; ALERTS</div>

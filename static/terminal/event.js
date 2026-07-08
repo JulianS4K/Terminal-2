@@ -3994,7 +3994,7 @@
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
     'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
-    'our-orders': false, 'alerts': false, 'cast': false,
+    'our-orders': false, 'alerts': false, 'cast': false, 'predictions': false,
   } };
 
   function wireTabs(eventId) {
@@ -4061,6 +4061,8 @@
         updateOurOrdersTabCount();
       } else if (tabId === 'cast' && !_tabState.loaded['cast']) {
         await loadCastTab(eventId);
+      } else if (tabId === 'predictions' && !_tabState.loaded['predictions']) {
+        await loadPredictions(eventId);
       }
     });
   }
@@ -4087,6 +4089,7 @@
       'alerts':       'paneAlerts',
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
+      'predictions':  'panePredictions',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -4215,6 +4218,76 @@
         <td>${r.in_hand_date ? T.fmtDate(r.in_hand_date) : '—'}</td>
         <td>${escapeHtml(r.market_source || '—')}</td>
         <td>${r.is_broker_owned ? '<span class="pill broker">broker</span>' : '<span class="pill market">market</span>'}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Predictions (our EVO-owned inventory: model clearing + sell-by) ----------
+  async function loadPredictions(eventId) {
+    const body = document.getElementById('predictionsBody');
+    const meta = document.getElementById('predictionsMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading predictions…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_predictions', { p_event_id: eventId });
+    if (res.error) {
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    _tabState.loaded['predictions'] = true;
+    renderPredictions(res.data, performance.now() - t0);
+  }
+
+  function renderPredictions(d, ms) {
+    const body = document.getElementById('predictionsBody');
+    const meta = document.getElementById('predictionsMeta');
+    const countChip = document.getElementById('tabCountPredictions');
+    if (!body) return;
+    const rows = (d && d.rows) || [];
+    if (countChip) countChip.textContent = String(rows.length);
+    if (meta) meta.textContent = `${rows.length} owned section${rows.length === 1 ? '' : 's'} · `
+      + `${d && d.dte_days != null ? d.dte_days + 'd to event' : ''} · ${ms.toFixed(0)}ms`;
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no EVO-owned inventory on this event</div>';
+      return;
+    }
+    const money = (v) => (v != null ? '$' + T.fmtNum(Math.round(v)) : '—');
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th class="num">Qty</th><th class="num">Our Ask</th>
+        <th class="num">Now</th><th class="num">Rolling +4d</th><th class="num">Event-day</th>
+        <th class="num">Rec. Ask</th><th class="num">P(sell)</th><th>p50 Sell-by</th>
+        <th class="num">Own-book gap</th><th>Basis</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.className = 'owned-row';
+      const gap = r.own_book_gap_pct;
+      const gapCell = gap != null
+        ? `<span class="${gap >= 0 ? 'pos' : 'neg'}">${gap > 0 ? '+' : ''}${T.fmtNum(gap)}%</span>`
+        : '—';
+      const psell = r.p_sell_before_event_pct != null ? T.fmtNum(r.p_sell_before_event_pct) + '%' : '—';
+      tr.innerHTML = `
+        <td>${escapeHtml(r.section || '—')}</td>
+        <td class="num">${T.fmtNum(r.our_qty)}</td>
+        <td class="num">${money(r.our_ask)}</td>
+        <td class="num">${money(r.clearing_now)}</td>
+        <td class="num">${money(r.clearing_rolling)}</td>
+        <td class="num">${money(r.clearing_event_day)}</td>
+        <td class="num">${money(r.recommended_ask)}</td>
+        <td class="num">${psell}</td>
+        <td>${r.p50_sell_by ? T.fmtDate(r.p50_sell_by) : '—'}</td>
+        <td class="num">${gapCell}</td>
+        <td class="muted small">${escapeHtml(r.basis || '—')}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
