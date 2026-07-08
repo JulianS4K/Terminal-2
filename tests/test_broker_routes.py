@@ -267,6 +267,24 @@ def test_by_league_division_absent_is_null(client, monkeypatch):
     assert p["conference"] is None and p["division"] is None
 
 
+def test_by_league_division_read_error_degrades(client, monkeypatch):
+    # If the divisions read throws, the route still returns performers (conf/div
+    # null) rather than 500 — division enrichment is best-effort.
+    row = {"performer_id": 16303, "performer_name": "New York Knicks", "league": "NBA"}
+
+    class _BoomDivisions(FakeSupabase):
+        def table(self, name):
+            if name == "league_team_divisions":
+                raise RuntimeError("transient divisions read failure")
+            return super().table(name)
+
+    _use_db(monkeypatch, _BoomDivisions(rpc_data={"get_performers_by_league": [row]}))
+    body = client.get("/api/broker/performers/by-league/NBA").json()
+    assert body["count"] == 1
+    p = body["performers"][0]
+    assert p["conference"] is None and p["division"] is None
+
+
 # ---------- /api/broker/event/{id}/section-metrics ----------
 
 def test_section_metrics_empty(client, monkeypatch):
