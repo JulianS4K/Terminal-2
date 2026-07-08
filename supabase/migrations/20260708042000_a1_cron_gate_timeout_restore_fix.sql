@@ -5,6 +5,9 @@
 -- Touches:  public.cron_should_fire(text) (CREATE OR REPLACE — W);
 --           reads cron_policy, writes cron_gate_decisions (both unchanged).
 -- Pre-reqs: 20260702075500 (movers 840s prefix), 20260701213000 (900s role cap).
+-- Already applied to prod · via MCP 2026-07-08 (operator-approved this session).
+--   Verified: post-apply gate probe under SET 777s retains 777s (pre-fix: 2min);
+--   re-apply is a no-op (CREATE OR REPLACE, same definition).
 --
 -- WHY (refresh_movers_agg cron_deadman FAIL root-caused, 2026-07-08):
 --   A pg_cron command runs as ONE implicit transaction (simple protocol), and
