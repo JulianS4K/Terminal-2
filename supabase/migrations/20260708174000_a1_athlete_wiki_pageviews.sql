@@ -198,7 +198,10 @@ BEGIN
    WHERE res.event_id = z.event_id AND res.capture_date = z.capture_date
      AND (p_capture_date IS NULL OR z.capture_date = p_capture_date);
 
-  -- (7) roster wiki pageviews (over the stored roster) + the star's pageviews
+  -- (7) roster wiki pageviews (over the stored roster) + the star's pageviews.
+  --     Unnest each roster once via LATERAL, then equi-join athlete ids (both
+  --     text) so the planner can hash-join — an IN (set-returning subquery) here
+  --     degrades to a per-row nested loop over the whole athlete table.
   UPDATE zone_price_observations z
      SET roster_wiki_pv_sum = agg.pv_sum,
          roster_wiki_pv_max = agg.pv_max
@@ -209,9 +212,9 @@ BEGIN
                 FROM zone_price_observations
                WHERE roster_athlete_ids IS NOT NULL
                  AND (p_capture_date IS NULL OR capture_date = p_capture_date)) z2
+        CROSS JOIN LATERAL jsonb_array_elements_text(z2.roster_athlete_ids) AS aid(id)
         JOIN athlete_wikipedia aw
-          ON aw.espn_athlete_id IN (SELECT jsonb_array_elements_text(z2.roster_athlete_ids))
-         AND aw.wiki_pv_30d IS NOT NULL
+          ON aw.espn_athlete_id = aid.id AND aw.wiki_pv_30d IS NOT NULL
        GROUP BY z2.event_id, z2.capture_date
     ) agg
    WHERE agg.event_id = z.event_id AND agg.capture_date = z.capture_date
