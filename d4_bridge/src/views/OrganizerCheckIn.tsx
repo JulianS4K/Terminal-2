@@ -892,67 +892,92 @@ export default function OrganizerCheckIn() {
 
   if (!event) return null;
 
+  const rejectCount = recentScans.filter((s) => s.status !== 'SUCCESS').length;
+
   return (
-    <div className="max-w-xl mx-auto px-4 py-12">
-      <button onClick={() => navigate('/dashboard')} className="flex items-center text-slate-400 hover:text-slate-900 mb-10 transition-colors font-bold uppercase tracking-widest text-[10px]">
-        <ArrowLeft className="w-4 h-4 mr-2" />
-        Back to Dashboard
+    <div className="max-w-7xl mx-auto px-4 py-10">
+      <style>{`
+        @keyframes checkinScanline { 0% { top: 8%; } 100% { top: 92%; } }
+        .checkin-scanline { animation: checkinScanline 2s ease-in-out infinite alternate; }
+      `}</style>
+
+      <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 text-slate-500 hover:text-slate-900 text-[10px] font-black uppercase tracking-widest mb-6 transition-colors">
+        <ArrowLeft className="w-3.5 h-3.5" />
+        Back to dashboard
       </button>
 
-      <div className="text-center mb-12">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900 mb-2">Check In</h1>
-        <div className="inline-flex items-center space-x-2 px-3 py-1 bg-indigo-50 border border-indigo-100 rounded-full">
-           <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse"></div>
-           <p className="text-indigo-500 font-bold text-[10px] uppercase tracking-widest">{event.title}</p>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
+        <div>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Door Check-In</p>
+          <span className="inline-flex items-baseline gap-3 flex-wrap">
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">{event.title}</h1>
+            <span className="marker text-brand-secondary text-lg rotate-[-3deg] leading-none whitespace-nowrap">at the door ✦</span>
+          </span>
         </div>
-        
-        <div className="flex items-center justify-center space-x-4 mt-6">
-           <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${isOffline ? 'bg-red-50 text-red-500 border border-red-200' : 'bg-emerald-50 text-emerald-500 border border-emerald-200'}`}>
+        <div className="flex flex-wrap items-center gap-2">
+           <div className={`flex items-center space-x-2 px-3 py-2 rounded text-[10px] font-black uppercase tracking-widest ${isOffline ? 'bg-red-50 text-red-500 border border-red-200' : 'bg-emerald-50 text-emerald-500 border border-emerald-200'}`}>
               {isOffline ? <WifiOff className="w-3 h-3" /> : <Wifi className="w-3 h-3" />}
               <span>{isOffline ? 'Offline' : 'Online'}</span>
            </div>
            <button
              onClick={() => downloadRegistry()}
              disabled={downloading}
-             className="flex items-center space-x-2 px-3 py-1 bg-slate-900 text-white rounded-full text-[9px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all disabled:opacity-50"
+             className="flex items-center space-x-2 px-3 py-2 bg-slate-900 text-white rounded text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all disabled:opacity-50"
            >
               <Download className={`w-3 h-3 ${downloading ? 'animate-bounce' : ''}`} aria-hidden="true" />
-              <span>{downloading ? 'Syncing...' : 'Sync Offline Registry'}</span>
+              <span>{downloading ? 'Syncing...' : 'Sync'}</span>
            </button>
            <button
              type="button"
              onClick={exportAttendeesCsv}
              aria-label="Export attendees as CSV"
-             className="flex items-center space-x-2 px-3 py-1 bg-white text-slate-900 border border-slate-200 rounded-full text-[9px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all"
+             className="flex items-center space-x-2 px-3 py-2 bg-white text-slate-900 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm"
            >
               <Download className="w-3 h-3" aria-hidden="true" />
               <span>Export CSV</span>
            </button>
         </div>
-
-        {pendingUpdates.length > 0 && (
-           <div className="mt-4 flex flex-col items-center justify-center space-y-2">
-             <div className="text-[10px] font-bold text-amber-500 uppercase tracking-widest">
-               {pendingUpdates.length} Unsynced Validations
-             </div>
-             {!isOffline && (
-               <button 
-                 onClick={syncPendingUpdates} 
-                 disabled={syncing}
-                 className="flex items-center text-[9px] font-black text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1 rounded-full transition-all uppercase tracking-widest disabled:opacity-50"
-               >
-                 <RefreshCw className={`w-3 h-3 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-                 Force Sync
-               </button>
-             )}
-           </div>
-        )}
       </div>
 
-      <div className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl mb-8 overflow-hidden">
+      {pendingUpdates.length > 0 && (
+         <div className="mb-6 flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
+           <div className="text-[11px] font-bold text-amber-700 uppercase tracking-widest">
+             {pendingUpdates.length} unsynced validations
+           </div>
+           {!isOffline && (
+             <button
+               onClick={syncPendingUpdates}
+               disabled={syncing}
+               className="flex items-center text-[10px] font-black text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 px-3 py-1.5 rounded transition-all uppercase tracking-widest disabled:opacity-50"
+             >
+               <RefreshCw className={`w-3 h-3 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+               Force Sync
+             </button>
+           )}
+         </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* SCANNER STAGE */}
+        <div className="lg:col-span-2 space-y-6">
+      <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         {scanning ? (
-           <div className="relative mb-8">
-              <div id="reader" className="w-full rounded-2xl border-2 border-indigo-100 overflow-hidden"></div>
+           <div className="relative mb-2">
+              <div className="relative rounded-2xl overflow-hidden bg-black border border-slate-800">
+                <div id="reader" className="w-full overflow-hidden"></div>
+                {/* punk reticle + scanline overlay */}
+                <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 max-w-[70%] max-h-[70%]">
+                  <div className="absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 border-brand-primary"></div>
+                  <div className="absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 border-brand-primary"></div>
+                  <div className="absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 border-brand-primary"></div>
+                  <div className="absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 border-brand-primary"></div>
+                  <div className="checkin-scanline absolute left-2 right-2 h-0.5 bg-brand-primary shadow-[0_0_12px_#00FF00]"></div>
+                </div>
+                <div className="pointer-events-none absolute top-4 left-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-white/80">
+                  <span className="w-2 h-2 bg-brand-primary rounded-full animate-ping"></span> Scanning…
+                </div>
+                <div className="pointer-events-none absolute bottom-4 left-0 right-0 text-center type text-[11px] uppercase tracking-widest text-white/40">point camera at the rotating QR pass</div>
+              </div>
               <button
                 onClick={() => {
                   void stopScanner();
@@ -965,34 +990,34 @@ export default function OrganizerCheckIn() {
               </button>
            </div>
         ) : (
-          <div className="flex flex-col space-y-4 mb-8">
-             <button 
+          <div className="flex flex-col space-y-4 mb-2">
+             <button
                onClick={startScanner}
-               className="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl py-6 flex flex-col items-center justify-center transition-all shadow-xl shadow-indigo-100"
+               className="w-full bg-slate-900 hover:bg-black text-white rounded-2xl py-8 flex flex-col items-center justify-center transition-all border border-slate-800"
              >
-                <ScanLine className="w-8 h-8 mb-2" />
-                <span className="text-[10px] font-bold uppercase tracking-widest">Open Camera Scanner</span>
+                <ScanLine className="w-8 h-8 mb-2 text-brand-primary" />
+                <span className="disp text-2xl tracking-wide">OPEN CAMERA SCANNER</span>
              </button>
-             
+
              <div className="relative">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
-                <div className="relative flex justify-center text-[9px] uppercase font-bold tracking-widest text-slate-300"><span className="bg-white px-4">Manual Entry</span></div>
+                <div className="relative flex justify-center text-[9px] uppercase font-bold tracking-widest text-slate-300"><span className="bg-white px-4">Manual Entry — no camera?</span></div>
              </div>
 
              <form onSubmit={(e) => handleCheckIn(e)} className="relative">
-                <input 
+                <input
                   type="text"
-                  placeholder="Enter Ticket ID..."
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-5 pl-14 pr-24 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                  placeholder="Enter pass ID or last 6 digits…"
+                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-5 pl-14 pr-24 text-slate-900 font-mono focus:outline-none focus:border-tm-blue transition-all"
                   value={searchId}
                   onChange={(e) => setSearchId(e.target.value)}
                 />
                 <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-                <button 
+                <button
                   type="submit"
                   className="absolute right-4 top-1/2 -translate-y-1/2 bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors"
                 >
-                  Verify
+                  Check
                 </button>
              </form>
           </div>
@@ -1117,40 +1142,54 @@ export default function OrganizerCheckIn() {
           )}
         </AnimatePresence>
       </div>
+        </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-12">
-         <div className="bg-slate-900 p-6 rounded-3xl text-center">
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Inside Venue</p>
-            <p className="text-2xl font-bold text-white">{insideVenue}</p>
-         </div>
-         <div className="bg-slate-50 p-6 rounded-3xl text-center border border-slate-100">
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">Total Authorized</p>
-            <p className="text-2xl font-bold text-slate-900">{event.totalTickets}</p>
-         </div>
-      </div>
+        {/* SIDEBAR: stats + scan log */}
+        <div className="space-y-6">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 text-center">
+              <p className="disp text-3xl tracking-tight text-green-600" style={{ transform: 'skewX(-3deg)' }}>{insideVenue}</p>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">In</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 text-center">
+              <p className="disp text-3xl tracking-tight text-slate-900" style={{ transform: 'skewX(-3deg)' }}>{event.totalTickets}</p>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Sold</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 text-center">
+              <p className="disp text-3xl tracking-tight text-rose-500" style={{ transform: 'skewX(-3deg)' }}>{rejectCount}</p>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Rejects</p>
+            </div>
+          </div>
 
-      {recentScans.length > 0 && (
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
-          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 border-b border-slate-50 pb-4">Recent Scans</h3>
-          <div className="space-y-4">
-            {recentScans.map((scan, idx) => (
-              <div key={idx} className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className={`w-1.5 h-1.5 rounded-full ${scan.status === 'SUCCESS' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-900 truncate max-w-[120px]">{scan.name}</p>
-                    <p className="text-[9px] text-slate-400 font-medium uppercase tracking-tighter">{scan.id}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className={`text-[9px] font-black uppercase tracking-[0.15em] ${scan.status === 'SUCCESS' ? 'text-green-500' : 'text-red-500'}`}>{scan.status}</p>
-                  <p className="text-[9px] text-slate-300 font-medium">{scan.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                </div>
-              </div>
-            ))}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Scan log</h2>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">live</span>
+            </div>
+            {recentScans.length === 0 ? (
+              <p className="px-5 py-6 text-xs text-slate-400 font-bold uppercase tracking-widest">No scans yet.</p>
+            ) : (
+              <ul className="divide-y divide-slate-50 max-h-[420px] overflow-y-auto">
+                {recentScans.map((scan, idx) => {
+                  const ok = scan.status === 'SUCCESS';
+                  return (
+                    <li key={idx} className="flex items-center gap-3 px-5 py-3">
+                      <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${ok ? 'bg-green-50 text-green-600' : 'bg-rose-50 text-rose-500'}`}>
+                        {ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-slate-800 truncate">{ok ? scan.name : 'Rejected'}</p>
+                        <p className="text-[11px] text-slate-400 truncate uppercase tracking-tighter">{scan.id}</p>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-300 shrink-0">{scan.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

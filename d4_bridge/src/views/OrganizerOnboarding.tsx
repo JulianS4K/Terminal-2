@@ -93,15 +93,15 @@ export default function OrganizerOnboarding() {
   if (!user) {
     return (
       <div className="max-w-2xl mx-auto p-12 text-center">
-        <h2 className="text-3xl font-black uppercase italic tracking-tighter text-white mb-4">
+        <h2 className="text-3xl font-bold tracking-tight text-slate-900 mb-4">
           Sign in to get started
         </h2>
-        <p className="text-white/50 mb-6">
+        <p className="text-slate-500 mb-6">
           Bridge organizers need an account to manage events and track sales.
         </p>
         <button
           onClick={openAuthModal}
-          className="px-8 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all"
+          className="px-8 py-3 bg-tm-blue text-white font-bold rounded hover:bg-[#015bbd] shadow-sm transition-all"
         >
           Sign In
         </button>
@@ -196,51 +196,59 @@ export default function OrganizerOnboarding() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="max-w-3xl mx-auto p-6 md:p-12"
+      className="max-w-2xl mx-auto px-4 py-12"
     >
-      {/* Progress bar */}
-      <div className="flex items-center gap-2 mb-10">
-        {STEPS.map((s) => {
+      {/* Stepper */}
+      <div className="flex items-center justify-between mb-10">
+        {STEPS.map((s, i) => {
           const done = s.n < step;
           const current = s.n === step;
           return (
-            <div key={s.n} className="flex-1 flex items-center gap-2">
-              <div
-                className={`w-8 h-8 flex items-center justify-center text-[10px] font-black transition-all ${
-                  done
-                    ? 'bg-brand-primary text-black'
-                    : current
-                    ? 'bg-white text-black'
-                    : 'bg-white/10 text-white/40'
-                }`}
-              >
-                {done ? <Check size={14} /> : s.n}
+            <div key={s.n} className={`flex items-center ${i < STEPS.length - 1 ? 'flex-1' : ''}`}>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black transition-all ${
+                    done
+                      ? 'bg-tm-blue text-white'
+                      : current
+                      ? 'bg-tm-blue text-white'
+                      : 'bg-white border border-slate-200 text-slate-400'
+                  }`}
+                >
+                  {done ? <Check size={14} /> : s.n}
+                </span>
+                <span className={`text-xs font-bold hidden sm:inline ${current || done ? 'text-slate-900' : 'text-slate-400'}`}>
+                  {s.title}
+                </span>
               </div>
-              {s.n < STEPS.length && (
-                <div className={`flex-1 h-0.5 ${done ? 'bg-brand-primary' : 'bg-white/10'}`} />
+              {i < STEPS.length - 1 && (
+                <div className={`flex-1 h-px mx-3 ${done ? 'bg-tm-blue' : 'bg-slate-200'}`} />
               )}
             </div>
           );
         })}
       </div>
 
-      <div className="bg-white/5 border border-white/10 p-6 md:p-10">
-        <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mb-2">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8">
+        <p className="text-[10px] text-tm-blue font-black uppercase tracking-widest mb-2">
           Step {step} of {STEPS.length} · {STEPS[step - 1].subtitle}
         </p>
-        <h1 className="text-4xl md:text-5xl font-black uppercase italic tracking-tighter text-white mb-6">
-          {STEPS[step - 1].title}
-        </h1>
+        <div className="flex items-baseline gap-3 flex-wrap mb-6">
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">
+            {STEPS[step - 1].title}
+          </h1>
+          <span className="marker text-brand-secondary text-lg rotate-[-3deg] leading-none whitespace-nowrap">let's go ✦</span>
+        </div>
 
         {step === 1 && (
-          <div className="space-y-5 text-white/80">
+          <div className="space-y-5 text-slate-600">
             <p>
               Bridge is a primary ticketing layer plus simultaneous distribution to
               the major secondary marketplaces — StubHub, SeatGeek, AXS, Gametime,
               and more — without exclusivity. The venue keeps pricing control and
               owns every buyer record.
             </p>
-            <p className="text-white/60 text-sm">
+            <p className="text-slate-500 text-sm">
               You'll set up an organization (your venue or promoter brand), give it
               a name and color, then list your first event. The whole thing takes
               under five minutes. Distribution and payouts wire in later — for
@@ -254,7 +262,7 @@ export default function OrganizerOnboarding() {
             <div className="flex justify-end pt-4">
               <button
                 onClick={goNext}
-                className="px-6 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all flex items-center gap-2"
+                className="px-8 py-3 bg-tm-blue text-white font-bold rounded hover:bg-[#015bbd] shadow-sm transition-all flex items-center gap-2"
               >
                 Get Started <ChevronRight size={16} />
               </button>
@@ -265,13 +273,13 @@ export default function OrganizerOnboarding() {
         {step === 2 && (
           <form onSubmit={handleCreateOrg} className="space-y-5">
             {orgs.length > 0 ? (
-              <div className="bg-brand-primary/10 border border-brand-primary/30 p-4 text-xs text-brand-primary">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs font-bold text-tm-blue">
                 You already have {orgs.length} org{orgs.length === 1 ? '' : 's'}. You can skip
                 ahead or create a new one (e.g., a second venue or brand).
               </div>
             ) : null}
             <div>
-              <label htmlFor="ob-name" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
+              <label htmlFor="ob-name" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
                 Org Name *
               </label>
               <input
@@ -282,18 +290,18 @@ export default function OrganizerOnboarding() {
                 maxLength={100}
                 required
                 placeholder="e.g. Mister Saturday Night, Public Records, Brooklyn Steel"
-                className="w-full bg-white/5 border border-white/10 px-4 py-3 text-white font-bold focus:border-brand-primary focus:outline-none transition-all"
+                className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-sm text-slate-900 focus:border-tm-blue focus:outline-none transition-all"
               />
-              <p className="text-white/40 text-xs mt-1">
+              <p className="text-slate-400 text-xs mt-1">
                 The name buyers see on tickets and the storefront.
               </p>
             </div>
             <div>
-              <label htmlFor="ob-slug" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
+              <label htmlFor="ob-slug" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
                 URL Slug *
               </label>
-              <div className="flex">
-                <span className="bg-white/5 border border-white/10 border-r-0 px-3 py-3 text-white/40 font-bold text-sm">
+              <div className="flex items-center bg-white border border-slate-200 rounded-lg px-4 focus-within:border-tm-blue">
+                <span className="text-sm text-slate-400">
                   /o/
                 </span>
                 <input
@@ -307,10 +315,10 @@ export default function OrganizerOnboarding() {
                   maxLength={80}
                   required
                   placeholder="brooklyn-steel"
-                  className="flex-1 bg-white/5 border border-white/10 px-4 py-3 text-white font-bold focus:border-brand-primary focus:outline-none transition-all"
+                  className="flex-1 py-3 text-sm text-slate-900 focus:outline-none"
                 />
               </div>
-              <p className="text-white/40 text-xs mt-1">
+              <p className="text-slate-400 text-xs mt-1">
                 Your storefront URL — share this once you're set up.
               </p>
             </div>
@@ -318,7 +326,7 @@ export default function OrganizerOnboarding() {
               <button
                 type="button"
                 onClick={goPrev}
-                className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black uppercase tracking-tighter italic transition-all"
+                className="px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded hover:bg-slate-50 transition-all"
               >
                 Back
               </button>
@@ -327,7 +335,7 @@ export default function OrganizerOnboarding() {
                   <button
                     type="button"
                     onClick={goNext}
-                    className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black uppercase tracking-tighter italic transition-all"
+                    className="px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded hover:bg-slate-50 transition-all"
                   >
                     Skip
                   </button>
@@ -335,7 +343,7 @@ export default function OrganizerOnboarding() {
                 <button
                   type="submit"
                   disabled={creatingOrg || !isValidOrgSlug(orgSlug)}
-                  className="px-6 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all disabled:opacity-50 flex items-center gap-2"
+                  className="px-8 py-3 bg-tm-blue text-white font-bold rounded hover:bg-[#015bbd] shadow-sm transition-all disabled:opacity-50 flex items-center gap-2"
                 >
                   {creatingOrg ? 'Creating…' : (
                     <>
@@ -351,18 +359,18 @@ export default function OrganizerOnboarding() {
         {step === 3 && (
           <div className="space-y-5">
             {!activeOrg ? (
-              <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 text-xs text-yellow-400 font-bold uppercase tracking-widest">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-xs text-yellow-700 font-bold uppercase tracking-widest">
                 No active org. Go back and create one first.
               </div>
             ) : (
               <>
                 <div>
-                  <label className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
                     Logo (optional)
                   </label>
                   <label
                     htmlFor="ob-logo"
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-black uppercase tracking-widest cursor-pointer transition-all"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-600 cursor-pointer transition-all"
                   >
                     <ImageIcon size={14} /> Upload Logo
                   </label>
@@ -373,11 +381,11 @@ export default function OrganizerOnboarding() {
                     onChange={handleLogoUpload}
                     className="hidden"
                   />
-                  <p className="text-white/40 text-xs mt-2">PNG, JPG, WebP, SVG. Max 2 MB. Skip for now if you don't have one ready.</p>
+                  <p className="text-slate-400 text-xs mt-2">PNG, JPG, WebP, SVG. Max 2 MB. Skip for now if you don't have one ready.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label htmlFor="ob-primary" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
+                    <label htmlFor="ob-primary" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
                       Primary
                     </label>
                     <div className="flex items-center gap-2">
@@ -387,13 +395,13 @@ export default function OrganizerOnboarding() {
                         value={primary}
                         onChange={(e) => setPrimary(e.target.value)}
                         maxLength={7}
-                        className="flex-1 bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-bold focus:border-brand-primary focus:outline-none transition-all"
+                        className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:border-tm-blue focus:outline-none transition-all"
                       />
-                      <div className="w-10 h-10 border border-white/10" style={{ background: primary }} aria-hidden />
+                      <div className="w-10 h-10 rounded border border-slate-200" style={{ background: primary }} aria-hidden />
                     </div>
                   </div>
                   <div>
-                    <label htmlFor="ob-accent" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
+                    <label htmlFor="ob-accent" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
                       Accent
                     </label>
                     <div className="flex items-center gap-2">
@@ -403,9 +411,9 @@ export default function OrganizerOnboarding() {
                         value={accent}
                         onChange={(e) => setAccent(e.target.value)}
                         maxLength={7}
-                        className="flex-1 bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-bold focus:border-brand-primary focus:outline-none transition-all"
+                        className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 focus:border-tm-blue focus:outline-none transition-all"
                       />
-                      <div className="w-10 h-10 border border-white/10" style={{ background: accent }} aria-hidden />
+                      <div className="w-10 h-10 rounded border border-slate-200" style={{ background: accent }} aria-hidden />
                     </div>
                   </div>
                 </div>
@@ -415,7 +423,7 @@ export default function OrganizerOnboarding() {
               <button
                 type="button"
                 onClick={goPrev}
-                className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black uppercase tracking-tighter italic transition-all"
+                className="px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded hover:bg-slate-50 transition-all"
               >
                 Back
               </button>
@@ -423,7 +431,7 @@ export default function OrganizerOnboarding() {
                 <button
                   type="button"
                   onClick={goNext}
-                  className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black uppercase tracking-tighter italic transition-all"
+                  className="px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded hover:bg-slate-50 transition-all"
                 >
                   Skip
                 </button>
@@ -431,7 +439,7 @@ export default function OrganizerOnboarding() {
                   type="button"
                   onClick={handleSaveTheme}
                   disabled={savingTheme || !activeOrg}
-                  className="px-6 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all disabled:opacity-50 flex items-center gap-2"
+                  className="px-8 py-3 bg-tm-blue text-white font-bold rounded hover:bg-[#015bbd] shadow-sm transition-all disabled:opacity-50 flex items-center gap-2"
                 >
                   {savingTheme ? 'Saving…' : (
                     <>
@@ -445,11 +453,11 @@ export default function OrganizerOnboarding() {
         )}
 
         {step === 4 && (
-          <div className="space-y-5 text-white/80">
+          <div className="space-y-5 text-slate-600">
             <p>
               Your storefront is live. Now create your first event.
             </p>
-            <p className="text-white/60 text-sm">
+            <p className="text-slate-500 text-sm">
               You'll set the date, capacity, ticket tiers (GA, VIP, etc.), and
               prices. Save it as a draft first if you want to come back to it,
               or publish it the moment it's ready. Once published, the event
@@ -460,7 +468,7 @@ export default function OrganizerOnboarding() {
               <button
                 type="button"
                 onClick={goPrev}
-                className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black uppercase tracking-tighter italic transition-all"
+                className="px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded hover:bg-slate-50 transition-all"
               >
                 Back
               </button>
@@ -468,14 +476,14 @@ export default function OrganizerOnboarding() {
                 <button
                   type="button"
                   onClick={goNext}
-                  className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black uppercase tracking-tighter italic transition-all"
+                  className="px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded hover:bg-slate-50 transition-all"
                 >
                   Skip
                 </button>
                 <button
                   type="button"
                   onClick={() => navigate('/create-event')}
-                  className="px-6 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all flex items-center gap-2"
+                  className="px-8 py-3 bg-tm-blue text-white font-bold rounded hover:bg-[#015bbd] shadow-sm transition-all flex items-center gap-2"
                 >
                   Create First Event <ChevronRight size={16} />
                 </button>
@@ -485,7 +493,7 @@ export default function OrganizerOnboarding() {
         )}
 
         {step === 5 && (
-          <div className="space-y-5 text-white/80">
+          <div className="space-y-5 text-slate-600">
             <p>
               You're set up. Here's where to go from here.
             </p>
@@ -505,10 +513,10 @@ export default function OrganizerOnboarding() {
                 />
               )}
             </div>
-            <div className="bg-white/5 border border-white/10 p-4 text-xs text-white/50 mt-4">
-              <p className="font-black uppercase tracking-widest text-white/30 mb-2">Tips</p>
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs text-slate-500 mt-4">
+              <p className="font-black uppercase tracking-widest text-slate-400 mb-2">Tips</p>
               <ul className="space-y-1.5 list-disc list-inside">
-                <li>Add team members under <strong>Members</strong> in Org Settings — give them the role they need (manager, scanner, content, finance).</li>
+                <li>Add team members under <strong className="text-slate-700">Members</strong> in Org Settings — give them the role they need (manager, scanner, content, finance).</li>
                 <li>To embed an event card on your venue's website, copy the snippet from any event's settings page.</li>
                 <li>The door scanner works offline once you've loaded the event — load it on event day before guests arrive.</li>
               </ul>
@@ -517,13 +525,29 @@ export default function OrganizerOnboarding() {
               <button
                 type="button"
                 onClick={finish}
-                className="px-6 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all flex items-center gap-2"
+                className="px-8 py-3 bg-tm-blue text-white font-bold rounded hover:bg-[#015bbd] shadow-sm transition-all flex items-center gap-2"
               >
                 Go to Dashboard <ChevronRight size={16} />
               </button>
             </div>
           </div>
         )}
+      </div>
+
+      {/* Feature strip */}
+      <div className="mt-6 grid grid-cols-3 gap-3">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <Globe className="w-5 h-5 text-tm-blue mx-auto mb-2" />
+          <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Sell tickets</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <Sparkles className="w-5 h-5 text-tm-blue mx-auto mb-2" />
+          <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">White-label</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <Calendar className="w-5 h-5 text-tm-blue mx-auto mb-2" />
+          <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Team access</p>
+        </div>
       </div>
     </motion.div>
   );
@@ -542,20 +566,20 @@ function Tile({
 }) {
   const inner = (
     <>
-      <div className="text-brand-primary mb-2">{icon}</div>
-      <h3 className="text-sm font-black uppercase italic tracking-tighter text-white mb-1">{title}</h3>
-      <p className="text-xs text-white/50">{body}</p>
+      <div className="text-tm-blue mb-2">{icon}</div>
+      <h3 className="text-sm font-bold tracking-tight text-slate-900 mb-1">{title}</h3>
+      <p className="text-xs text-slate-500">{body}</p>
     </>
   );
   if (href) {
     return (
       <a
         href={href}
-        className="block bg-white/5 border border-white/10 hover:border-brand-primary p-4 transition-all"
+        className="block bg-white rounded-xl border border-slate-200 hover:border-tm-blue p-4 transition-all"
       >
         {inner}
       </a>
     );
   }
-  return <div className="bg-white/5 border border-white/10 p-4">{inner}</div>;
+  return <div className="bg-white rounded-xl border border-slate-200 p-4">{inner}</div>;
 }

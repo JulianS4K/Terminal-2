@@ -66,14 +66,29 @@ function EmbedInner({ event, org }: { event: Event; org: Organization | null }) 
 
   return (
     <div
-      className="bg-black text-white p-6 md:p-8 border"
+      className="group max-w-md bg-[#0a0a0a] text-white overflow-hidden border"
       style={{
         borderColor: theme.primary,
         borderLeftWidth: '4px',
       }}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
+      {event.image ? (
+        <div className="relative h-44 overflow-hidden">
+          <img src={event.image} className="xerox w-full h-full object-cover" alt="" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-transparent to-transparent" />
+          {theme.logoUrl && (
+            <img
+              src={theme.logoUrl}
+              alt={`${org?.name ?? 'Organizer'} logo`}
+              className="absolute top-3 right-3 h-7"
+            />
+          )}
+          <div className="absolute bottom-3 left-4 right-4">
+            <h2 className="disp text-3xl leading-[0.9] tracking-tight text-white">{event.title}</h2>
+          </div>
+        </div>
+      ) : (
+        <div className="p-5 pb-0">
           {theme.logoUrl && (
             <img
               src={theme.logoUrl}
@@ -81,33 +96,38 @@ function EmbedInner({ event, org }: { event: Event; org: Organization | null }) 
               className="h-8 mb-3"
             />
           )}
-          <h2 className="text-2xl md:text-3xl font-black uppercase italic tracking-tighter text-white mb-2">
-            {event.title}
-          </h2>
-          <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest mb-1">
+          <h2 className="disp text-3xl leading-[0.9] tracking-tight text-white">{event.title}</h2>
+        </div>
+      )}
+
+      <div className="p-5">
+        <div className="flex items-center justify-between gap-3 mb-4 type text-[11px] uppercase tracking-widest text-white/50">
+          <span>
             {event.date
               ? formatInTz(event.date.toDate(), event.timezone || 'UTC')
               : 'TBA'}
-          </p>
-          <p className="text-sm text-white/60">{event.location}</p>
+          </span>
+          <span className="text-right">{event.location}</span>
         </div>
-      </div>
 
-      {soldOut ? (
-        <div className="mt-6 px-6 py-3 bg-white/5 text-white/40 text-center font-black uppercase tracking-tighter italic">
-          Sold Out
-        </div>
-      ) : (
-        <a
-          href={buyHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-6 inline-block w-full md:w-auto px-8 py-3 font-black uppercase tracking-tighter italic text-center transition-all"
-          style={{ background: theme.primary, color: '#000' }}
-        >
-          Get Tickets →
-        </a>
-      )}
+        {soldOut ? (
+          <div className="px-6 py-3 bg-white/5 text-white/40 text-center disp text-lg tracking-wide">
+            SOLD OUT
+          </div>
+        ) : (
+          <a
+            href={buyHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="disp block w-full py-3 text-lg tracking-wide text-center hover:scale-[1.01] transition-transform"
+            style={{ background: theme.primary, color: '#000' }}
+          >
+            GET TICKETS →
+          </a>
+        )}
+
+        <p className="type text-[9px] uppercase tracking-[0.25em] text-white/25 text-center mt-3">▲ secured by exos</p>
+      </div>
     </div>
   );
 }
@@ -152,14 +172,14 @@ export default function EmbedEvent() {
 
   if (status === 'loading') {
     return (
-      <div className="bg-black text-white/50 p-8 text-center font-bold uppercase tracking-[0.3em] animate-pulse">
+      <div className="bg-black text-white/40 p-8 text-center type text-[11px] uppercase tracking-[0.3em] animate-pulse">
         Loading…
       </div>
     );
   }
   if (status === 'not-found') {
     return (
-      <div className="bg-black text-white/50 p-8 text-center text-sm">
+      <div className="bg-black text-white/40 p-8 text-center type text-xs uppercase tracking-widest">
         Event unavailable.
       </div>
     );

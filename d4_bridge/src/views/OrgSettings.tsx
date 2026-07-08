@@ -27,6 +27,13 @@ import DeveloperSettings from '../components/DeveloperSettings';
 // instead of a rule-rejection at save time.
 const HEX_COLOR = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
 
+// Light "TM" form vocabulary (matches the OrgSettings mockup).
+const LBL = 'block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2';
+const FLD =
+  'w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-sm text-slate-900 focus:outline-none focus:border-tm-blue transition-colors disabled:opacity-60 disabled:bg-slate-50';
+const CARD = 'bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8';
+const SECTION = 'text-sm font-black text-slate-900 uppercase tracking-widest';
+
 export default function OrgSettings() {
   const { orgId } = useParams<{ orgId: string }>();
   const { user, isAdmin } = useAuth();
@@ -72,22 +79,28 @@ export default function OrgSettings() {
 
   if (!user) {
     return (
-      <div className="max-w-3xl mx-auto p-12 text-center text-white/60 font-bold uppercase tracking-widest">
-        Sign in required.
+      <div className="min-h-screen bg-tm-gray text-slate-900">
+        <div className="max-w-3xl mx-auto px-4 py-24 text-center text-slate-500 font-bold uppercase tracking-widest">
+          Sign in required.
+        </div>
       </div>
     );
   }
   if (loading) {
     return (
-      <div className="max-w-3xl mx-auto p-24 text-center text-slate-300 font-bold uppercase tracking-[0.3em] animate-pulse">
-        Loading…
+      <div className="min-h-screen bg-tm-gray text-slate-900">
+        <div className="max-w-3xl mx-auto px-4 py-24 text-center text-slate-400 font-black uppercase tracking-[0.3em] animate-pulse">
+          Loading…
+        </div>
       </div>
     );
   }
   if (!org) {
     return (
-      <div className="max-w-3xl mx-auto p-12 text-center text-white/60 font-bold uppercase tracking-widest">
-        Org not found.
+      <div className="min-h-screen bg-tm-gray text-slate-900">
+        <div className="max-w-3xl mx-auto px-4 py-24 text-center text-slate-500 font-bold uppercase tracking-widest">
+          Org not found.
+        </div>
       </div>
     );
   }
@@ -209,289 +222,323 @@ window.addEventListener('message', function(e) {
 </script>`;
   }
 
+  const previewColor = HEX_COLOR.test(primaryColor) ? primaryColor : '#00FF00';
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="max-w-2xl mx-auto p-6 md:p-12"
+      className="min-h-screen bg-tm-gray text-slate-900"
     >
-      <button
-        onClick={() => navigate('/orgs')}
-        className="flex items-center gap-2 text-white/40 hover:text-white text-[10px] font-black uppercase tracking-widest mb-6 transition-all"
-      >
-        <ArrowLeft size={14} /> Back to orgs
-      </button>
+      <div className="max-w-5xl mx-auto px-4 py-10">
+        <button
+          onClick={() => navigate('/orgs')}
+          className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 text-[10px] font-black uppercase tracking-widest mb-6 transition-colors"
+        >
+          <ArrowLeft size={14} strokeWidth={2.5} /> All organizations
+        </button>
 
-      <h1 className="text-4xl md:text-5xl font-black uppercase italic tracking-tighter text-white mb-2">
-        {org.name}
-      </h1>
-      <p className="text-white/50 text-sm mb-10">
-        Settings · /o/{org.slug}
-      </p>
-
-      {!canEdit && (
-        <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 mb-6 text-yellow-400 text-xs font-bold uppercase tracking-widest">
-          You're a {activeRole ?? 'guest'} — only owners can change org settings.
-        </div>
-      )}
-
-      <div className="space-y-6">
-        <div>
-          <label htmlFor="org-name" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
-            Org Name
-          </label>
-          <input
-            id="org-name"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={!canEdit}
-            maxLength={100}
-            className="w-full bg-white/5 border border-white/10 px-4 py-3 text-white font-bold focus:border-brand-primary focus:outline-none disabled:opacity-50 transition-all"
-          />
-        </div>
-
-        {/*
-          White-label theme block. Sprint 2: logo + two colors. The
-          theme is applied via ThemeContext on org-scoped surfaces
-          (/o/:slug, EventDetails for events whose orgId resolves to
-          this org). Platform shell (Home, MyTickets, etc.) stays
-          neutral so the buyer's "across all events" surfaces don't
-          retint as they navigate.
-        */}
-        <fieldset className="border border-white/10 p-5 space-y-5">
-          <legend className="text-[10px] text-white/60 font-black uppercase tracking-widest px-2">
-            Storefront Theme
-          </legend>
-
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
-            <label className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
-              Logo
-            </label>
-            <div className="flex items-center gap-4">
-              {logoUrl ? (
-                <img
-                  src={logoUrl}
-                  alt="Org logo"
-                  className="w-20 h-20 object-contain bg-white/5 border border-white/10 p-2"
-                />
-              ) : (
-                <div className="w-20 h-20 bg-white/5 border border-white/10 flex items-center justify-center text-white/30 text-[9px] font-black uppercase tracking-widest">
-                  no logo
-                </div>
-              )}
-              <div>
-                <input
-                  ref={fileInputRef}
-                  id="org-logo-upload"
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                  onChange={handleLogoUpload}
-                  disabled={!canEdit || uploadingLogo}
-                  className="hidden"
-                />
-                <label
-                  htmlFor="org-logo-upload"
-                  className={`inline-flex items-center gap-2 px-4 py-2 border border-white/10 text-[10px] font-black uppercase tracking-widest transition-all ${
-                    canEdit && !uploadingLogo
-                      ? 'bg-white/5 hover:bg-white/10 cursor-pointer'
-                      : 'bg-white/5 opacity-50 cursor-not-allowed'
-                  }`}
-                >
-                  <Upload size={12} />
-                  {uploadingLogo ? 'Uploading…' : logoUrl ? 'Replace' : 'Upload'}
-                </label>
-                <p className="text-white/30 text-xs mt-2">PNG, JPG, WebP, or SVG. Max 2 MB.</p>
-              </div>
-            </div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Organization</p>
+            <span className="inline-flex items-baseline gap-3 flex-wrap">
+              <h1 className="text-3xl md:text-4xl font-bold tracking-tight">{org.name}</h1>
+              <span className="marker text-brand-secondary text-lg rotate-[-3deg] leading-none whitespace-nowrap">white-label ✦</span>
+            </span>
+            <p className="text-slate-500 text-sm mt-2">exos.live/o/{org.slug}</p>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="org-primary" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
-                Primary color
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  id="org-primary"
-                  type="text"
-                  value={primaryColor}
-                  onChange={(e) => setPrimaryColor(e.target.value)}
-                  disabled={!canEdit}
-                  placeholder="#FFE714"
-                  maxLength={7}
-                  className="flex-1 bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-bold focus:border-brand-primary focus:outline-none disabled:opacity-50 transition-all"
-                />
-                <div
-                  aria-hidden
-                  className="w-10 h-10 border border-white/10"
-                  style={{ background: HEX_COLOR.test(primaryColor) ? primaryColor : 'transparent' }}
-                />
-              </div>
-            </div>
-            <div>
-              <label htmlFor="org-accent" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
-                Accent color
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  id="org-accent"
-                  type="text"
-                  value={accentColor}
-                  onChange={(e) => setAccentColor(e.target.value)}
-                  disabled={!canEdit}
-                  placeholder="#1A1A1A"
-                  maxLength={7}
-                  className="flex-1 bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-bold focus:border-brand-primary focus:outline-none disabled:opacity-50 transition-all"
-                />
-                <div
-                  aria-hidden
-                  className="w-10 h-10 border border-white/10"
-                  style={{ background: HEX_COLOR.test(accentColor) ? accentColor : 'transparent' }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <p className="text-white/40 text-xs">
-            Theme applies on storefront pages (/o/{org.slug}) and event pages
-            for events under this org. Platform shell stays neutral.
-          </p>
-        </fieldset>
-
-        <fieldset className="border border-white/10 p-5 space-y-3">
-          <legend className="text-[10px] text-white/60 font-black uppercase tracking-widest px-2">
-            Marketing &amp; socials
-          </legend>
-          <p className="text-white/50 text-xs">
-            Social handles + tracking pixel IDs (public IDs only — no secrets).
-            Handles show on your storefront; pixels load on your public pages
-            after a visitor accepts cookies.
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            {(([['Instagram','instagram'],['Facebook','facebook'],['TikTok','tiktok'],['X','x'],['Website','website']]) as readonly (readonly ['Instagram'|'Facebook'|'TikTok'|'X'|'Website', 'instagram'|'facebook'|'tiktok'|'x'|'website'])[]).map(([label, key]) => (
-              <label key={key} className="block">
-                <span className="text-[10px] text-white/40 uppercase tracking-widest">{label}</span>
-                <input
-                  type="text"
-                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-white text-sm"
-                  value={marketing.socials?.[key] ?? ''}
-                  onChange={(e) => setMarketing((m) => ({ ...m, socials: { ...m.socials, [key]: e.target.value } }))}
-                  disabled={!canEdit}
-                  placeholder={label}
-                />
-              </label>
-            ))}
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {(([['Meta Pixel','meta','000000000000000'],['GA4','ga4','G-XXXXXXXXXX'],['TikTok Pixel','tiktok','CXXXXXXXXXXXXXXXXXXX']]) as readonly (readonly [string, 'meta'|'ga4'|'tiktok', string])[]).map(([label, key, hint]) => (
-              <label key={key} className="block">
-                <span className="text-[10px] text-white/40 uppercase tracking-widest">{label}</span>
-                <input
-                  type="text"
-                  className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-white text-sm"
-                  value={marketing.pixels?.[key] ?? ''}
-                  onChange={(e) => setMarketing((m) => ({ ...m, pixels: { ...m.pixels, [key]: e.target.value } }))}
-                  disabled={!canEdit}
-                  placeholder={hint}
-                />
-              </label>
-            ))}
-          </div>
-        </fieldset>
-
-        <fieldset className="border border-white/10 p-5 space-y-3">
-          <legend className="text-[10px] text-white/60 font-black uppercase tracking-widest px-2">
-            Payments
-          </legend>
-          <p className="text-white/50 text-xs">
-            Connect Stripe to sell paid tickets — payouts go to your account and the
-            platform takes a fee. Free events need nothing here.
-          </p>
-          {stripeEnabled ? (
+          {canEdit && (
             <button
-              type="button"
-              onClick={handleSetupPayments}
-              disabled={!canEdit || paymentsBusy}
-              className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50"
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-tm-blue text-white px-6 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm transition-colors disabled:opacity-50 shrink-0"
             >
-              {paymentsBusy ? 'Opening Stripe…' : 'Set up payments'}
+              {saving ? 'Saving…' : 'Save changes'}
             </button>
-          ) : (
-            <p className="text-[10px] text-white/30 uppercase tracking-widest">
-              Paid ticketing isn't enabled yet — coming soon.
-            </p>
           )}
-        </fieldset>
-
-        {/*
-          Embed snippet — venues paste this on their own website to
-          render an event-card iframe. The snippet has a EVENT_ID
-          placeholder; the host swaps in the real event id after
-          they create the event. Paired with EmbedEvent.tsx and the
-          /embed/event/:eventId route.
-        */}
-        <fieldset className="border border-white/10 p-5 space-y-3">
-          <legend className="text-[10px] text-white/60 font-black uppercase tracking-widest px-2">
-            Embed on your website
-          </legend>
-          <p className="text-white/50 text-xs">
-            Paste this snippet on your venue's site (WordPress, Wix, Squarespace,
-            or any HTML page). Replace <code className="text-brand-primary">EVENT_ID</code>{' '}
-            with your event's id from the dashboard. The iframe self-resizes.
-          </p>
-          <textarea
-            readOnly
-            value={buildEmbedSnippet(org.id)}
-            onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-            rows={9}
-            className="w-full bg-black border border-white/10 px-3 py-2 text-[11px] text-white/80 font-mono whitespace-pre-wrap break-all focus:outline-none focus:border-brand-primary"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard
-                .writeText(buildEmbedSnippet(org.id))
-                .then(() => toast({ kind: 'success', message: 'Snippet copied.' }))
-                .catch(() => toast({ kind: 'error', message: 'Copy failed — select and copy manually.' }));
-            }}
-            className="px-4 py-2 bg-white/5 hover:bg-white/10 text-[10px] font-black uppercase tracking-widest text-white/80 transition-all"
-          >
-            Copy snippet
-          </button>
-        </fieldset>
-
-        {/* Developer — API keys + outbound webhooks (self-contained CRUD). */}
-        <DeveloperSettings orgId={org.id} canEdit={canEdit} />
-
-        <div className="bg-white/5 border border-white/10 p-4 text-xs text-white/50 space-y-1">
-          <div>
-            <span className="font-black uppercase tracking-widest text-white/30">Slug:</span>{' '}
-            {org.slug} (rename in a future sprint)
-          </div>
-          <div>
-            <span className="font-black uppercase tracking-widest text-white/30">Owner:</span>{' '}
-            {org.ownerUid}
-          </div>
-          <div>
-            <span className="font-black uppercase tracking-widest text-white/30">Stripe Connect:</span>{' '}
-            {org.payments?.connectedAccountId ? 'Connected' : 'Not connected (Sprint 3)'}
-          </div>
-          <div>
-            <span className="font-black uppercase tracking-widest text-white/30">Distribution:</span>{' '}
-            {org.distribution?.enabled ? 'Lysted enabled' : 'Lysted not enabled (Sprint 4)'}
-          </div>
         </div>
 
-        {canEdit && (
+        {/* Tabs */}
+        <div className="flex gap-6 border-b border-slate-200 mb-8">
+          <button className="pb-3 text-sm font-bold text-slate-900 border-b-2 border-tm-blue -mb-px">General</button>
           <button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full px-8 py-4 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all disabled:opacity-50"
+            onClick={() => navigate(`/orgs/${org.id}/members`)}
+            className="pb-3 text-sm font-bold text-slate-400 hover:text-slate-600 transition-colors"
           >
-            {saving ? 'Saving…' : 'Save'}
+            Members
           </button>
+          <span className="pb-3 text-sm font-bold text-slate-300 cursor-default">Billing</span>
+        </div>
+
+        {!canEdit && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-amber-700 text-xs font-bold uppercase tracking-widest">
+            You're a {activeRole ?? 'guest'} — only owners can change org settings.
+          </div>
         )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Profile */}
+            <div className={CARD}>
+              <h2 className={`${SECTION} mb-6`}>Profile</h2>
+              <div>
+                <label htmlFor="org-name" className={LBL}>Org Name</label>
+                <input
+                  id="org-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={!canEdit}
+                  maxLength={100}
+                  className={FLD}
+                />
+              </div>
+            </div>
+
+            {/*
+              White-label theme block. Sprint 2: logo + two colors. The
+              theme is applied via ThemeContext on org-scoped surfaces
+              (/o/:slug, EventDetails for events whose orgId resolves to
+              this org). Platform shell (Home, MyTickets, etc.) stays
+              neutral so the buyer's "across all events" surfaces don't
+              retint as they navigate.
+            */}
+            <div className={CARD}>
+              <h2 className={`${SECTION} mb-2`}>White-label theme</h2>
+              <p className="text-xs text-slate-400 mb-6">
+                Applied to your storefront (exos.live/o/{org.slug}) and event pages hosted by this org. Platform shell stays neutral.
+              </p>
+
+              <div className="mb-6">
+                <label className={LBL}>Logo</label>
+                <div className="flex items-center gap-4">
+                  {logoUrl ? (
+                    <img
+                      src={logoUrl}
+                      alt="Org logo"
+                      className="w-16 h-16 object-contain bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    />
+                  ) : (
+                    <div className="w-16 h-16 bg-slate-900 rounded-lg flex items-center justify-center text-white font-black italic text-xl">
+                      {org.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div>
+                    <input
+                      ref={fileInputRef}
+                      id="org-logo-upload"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      onChange={handleLogoUpload}
+                      disabled={!canEdit || uploadingLogo}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="org-logo-upload"
+                      className={`inline-flex items-center gap-2 px-4 py-2 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest transition-colors ${
+                        canEdit && !uploadingLogo
+                          ? 'text-tm-blue hover:border-tm-blue cursor-pointer'
+                          : 'text-slate-300 opacity-60 cursor-not-allowed'
+                      }`}
+                    >
+                      <Upload size={12} />
+                      {uploadingLogo ? 'Uploading…' : logoUrl ? 'Replace' : 'Upload'}
+                    </label>
+                    <p className="text-slate-400 text-xs mt-2">PNG, JPG, WebP, or SVG. Max 2 MB.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div>
+                  <label htmlFor="org-primary" className={LBL}>Primary color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="org-primary"
+                      type="text"
+                      value={primaryColor}
+                      onChange={(e) => setPrimaryColor(e.target.value)}
+                      disabled={!canEdit}
+                      placeholder="#FFE714"
+                      maxLength={7}
+                      className={`${FLD} flex-1 font-mono`}
+                    />
+                    <div
+                      aria-hidden
+                      className="w-11 h-11 rounded-lg border border-slate-200 shrink-0"
+                      style={{ background: HEX_COLOR.test(primaryColor) ? primaryColor : '#f1f5f9' }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="org-accent" className={LBL}>Accent color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="org-accent"
+                      type="text"
+                      value={accentColor}
+                      onChange={(e) => setAccentColor(e.target.value)}
+                      disabled={!canEdit}
+                      placeholder="#1A1A1A"
+                      maxLength={7}
+                      className={`${FLD} flex-1 font-mono`}
+                    />
+                    <div
+                      aria-hidden
+                      className="w-11 h-11 rounded-lg border border-slate-200 shrink-0"
+                      style={{ background: HEX_COLOR.test(accentColor) ? accentColor : '#f1f5f9' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Live storefront preview — bound to the real theme fields. */}
+              <div className="mt-6">
+                <p className={LBL}>Storefront preview</p>
+                <div className="rounded-xl overflow-hidden border border-slate-200">
+                  <div className="bg-black px-5 py-4 flex items-center justify-between">
+                    <span className="text-white font-black italic text-lg truncate">
+                      {org.name.charAt(0).toUpperCase()} · {org.name.toUpperCase()}
+                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: previewColor }}>Events</span>
+                  </div>
+                  <div className="bg-[#0a0a0a] p-5 grid grid-cols-3 gap-3">
+                    <div className="aspect-[3/4] bg-[#1a1a1a] relative">
+                      <span className="absolute bottom-1 left-1 text-white text-[9px] font-black">EVENT</span>
+                      <span className="absolute top-1 right-1 text-[9px] font-black" style={{ color: previewColor }}>$30</span>
+                    </div>
+                    <div className="aspect-[3/4] bg-[#1a1a1a]" />
+                    <div className="aspect-[3/4] bg-[#1a1a1a]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Marketing & socials */}
+            <div className={CARD}>
+              <h2 className={`${SECTION} mb-2`}>Marketing &amp; socials</h2>
+              <p className="text-xs text-slate-400 mb-5">
+                Social handles + tracking pixel IDs (public IDs only — no secrets).
+                Handles show on your storefront; pixels load on your public pages
+                after a visitor accepts cookies.
+              </p>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {(([['Instagram','instagram'],['Facebook','facebook'],['TikTok','tiktok'],['X','x'],['Website','website']]) as readonly (readonly ['Instagram'|'Facebook'|'TikTok'|'X'|'Website', 'instagram'|'facebook'|'tiktok'|'x'|'website'])[]).map(([label, key]) => (
+                  <label key={key} className="block">
+                    <span className="text-[10px] text-slate-400 uppercase tracking-widest">{label}</span>
+                    <input
+                      type="text"
+                      className={`${FLD} mt-1`}
+                      value={marketing.socials?.[key] ?? ''}
+                      onChange={(e) => setMarketing((m) => ({ ...m, socials: { ...m.socials, [key]: e.target.value } }))}
+                      disabled={!canEdit}
+                      placeholder={label}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {(([['Meta Pixel','meta','000000000000000'],['GA4','ga4','G-XXXXXXXXXX'],['TikTok Pixel','tiktok','CXXXXXXXXXXXXXXXXXXX']]) as readonly (readonly [string, 'meta'|'ga4'|'tiktok', string])[]).map(([label, key, hint]) => (
+                  <label key={key} className="block">
+                    <span className="text-[10px] text-slate-400 uppercase tracking-widest">{label}</span>
+                    <input
+                      type="text"
+                      className={`${FLD} mt-1`}
+                      value={marketing.pixels?.[key] ?? ''}
+                      onChange={(e) => setMarketing((m) => ({ ...m, pixels: { ...m.pixels, [key]: e.target.value } }))}
+                      disabled={!canEdit}
+                      placeholder={hint}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/*
+              Embed snippet — venues paste this on their own website to
+              render an event-card iframe. The snippet has a EVENT_ID
+              placeholder; the host swaps in the real event id after
+              they create the event. Paired with EmbedEvent.tsx and the
+              /embed/event/:eventId route.
+            */}
+            <div className={CARD}>
+              <h2 className={`${SECTION} mb-2`}>Embed on your website</h2>
+              <p className="text-xs text-slate-400 mb-4">
+                Paste this snippet on your venue's site (WordPress, Wix, Squarespace,
+                or any HTML page). Replace <code className="text-tm-blue font-mono">EVENT_ID</code>{' '}
+                with your event's id from the dashboard. The iframe self-resizes.
+              </p>
+              <textarea
+                readOnly
+                value={buildEmbedSnippet(org.id)}
+                onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                rows={9}
+                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-100 font-mono whitespace-pre-wrap break-all focus:outline-none focus:border-tm-blue"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard
+                    .writeText(buildEmbedSnippet(org.id))
+                    .then(() => toast({ kind: 'success', message: 'Snippet copied.' }))
+                    .catch(() => toast({ kind: 'error', message: 'Copy failed — select and copy manually.' }));
+                }}
+                className="mt-3 px-4 py-2 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest text-slate-600 hover:border-tm-blue hover:text-tm-blue transition-colors"
+              >
+                Copy snippet
+              </button>
+            </div>
+
+            {/* Developer — API keys + outbound webhooks (self-contained CRUD). */}
+            <DeveloperSettings orgId={org.id} canEdit={canEdit} />
+          </div>
+
+          {/* Sidebar */}
+          <div className="space-y-6">
+            {/* Payments */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+              <h2 className={`${SECTION} mb-3`}>Payments</h2>
+              <p className="text-xs text-slate-400 mb-4">
+                Connect Stripe to sell paid tickets — payouts go to your account and the
+                platform takes a fee. Free events need nothing here.
+              </p>
+              {stripeEnabled ? (
+                <button
+                  type="button"
+                  onClick={handleSetupPayments}
+                  disabled={!canEdit || paymentsBusy}
+                  className="w-full border border-slate-200 rounded py-2.5 text-slate-700 text-[10px] font-black uppercase tracking-widest hover:border-tm-blue hover:text-tm-blue transition-colors disabled:opacity-50"
+                >
+                  {paymentsBusy ? 'Opening Stripe…' : 'Set up payments'}
+                </button>
+              ) : (
+                <p className="text-[10px] text-slate-400 uppercase tracking-widest">
+                  Paid ticketing isn't enabled yet — coming soon.
+                </p>
+              )}
+            </div>
+
+            {/* Meta info */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-xs text-slate-500 space-y-2">
+              <div>
+                <span className="font-black uppercase tracking-widest text-slate-400">Slug:</span>{' '}
+                {org.slug} (rename in a future sprint)
+              </div>
+              <div>
+                <span className="font-black uppercase tracking-widest text-slate-400">Owner:</span>{' '}
+                <span className="font-mono break-all">{org.ownerUid}</span>
+              </div>
+              <div>
+                <span className="font-black uppercase tracking-widest text-slate-400">Stripe Connect:</span>{' '}
+                {org.payments?.connectedAccountId ? 'Connected' : 'Not connected (Sprint 3)'}
+              </div>
+              <div>
+                <span className="font-black uppercase tracking-widest text-slate-400">Distribution:</span>{' '}
+                {org.distribution?.enabled ? 'Lysted enabled' : 'Lysted not enabled (Sprint 4)'}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </motion.div>
   );

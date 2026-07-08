@@ -8,11 +8,15 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
 import { useToast } from '../context/ToastContext';
 import { createOrganization, isValidOrgSlug, slugify } from '../lib/orgs';
+
+const LBL = 'block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5';
+const INP =
+  'w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-300 focus:outline-none focus:border-tm-blue focus:ring-2 focus:ring-tm-blue/15 transition-colors';
 
 export default function CreateOrg() {
   const { user, openAuthModal } = useAuth();
@@ -35,16 +39,17 @@ export default function CreateOrg() {
 
   if (!user) {
     return (
-      <div className="max-w-3xl mx-auto p-12 text-center">
-        <h2 className="text-3xl font-black uppercase italic tracking-tighter text-white mb-4">
-          Sign in to create an org
-        </h2>
-        <button
-          onClick={openAuthModal}
-          className="px-8 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all"
-        >
-          Sign In
-        </button>
+      <div className="min-h-screen bg-tm-gray text-slate-900">
+        <div className="max-w-3xl mx-auto px-4 py-24 text-center">
+          <span className="marker text-brand-secondary text-lg inline-block rotate-[-3deg] mb-3">hold up ✦</span>
+          <h2 className="text-3xl font-bold tracking-tight mb-6">Sign in to create an org</h2>
+          <button
+            onClick={openAuthModal}
+            className="bg-tm-blue text-white px-7 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm transition-colors"
+          >
+            Sign In
+          </button>
+        </div>
       </div>
     );
   }
@@ -52,6 +57,7 @@ export default function CreateOrg() {
   const slugError = slug.length > 0 && !isValidOrgSlug(slug)
     ? 'Slug must be lowercase letters, numbers, and dashes (max 80 chars).'
     : null;
+  const slugAvailable = slug.length > 0 && isValidOrgSlug(slug);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -94,81 +100,116 @@ export default function CreateOrg() {
     }
   }
 
+  const avatarLetter = (name.trim()[0] || '?').toUpperCase();
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="max-w-2xl mx-auto p-6 md:p-12"
+      className="min-h-screen bg-tm-gray text-slate-900"
     >
-      <button
-        onClick={() => navigate('/orgs')}
-        className="flex items-center gap-2 text-white/40 hover:text-white text-[10px] font-black uppercase tracking-widest mb-6 transition-all"
-      >
-        <ArrowLeft size={14} /> Back to orgs
-      </button>
-
-      <h1 className="text-4xl md:text-5xl font-black uppercase italic tracking-tighter text-white mb-2">
-        Create an Org
-      </h1>
-      <p className="text-white/50 text-sm mb-10 max-w-prose">
-        An org owns events and inventory. Multiple staff can share access via
-        roles (owner, manager, finance, scanner, content). You'll start as the
-        owner; you can invite others after.
-      </p>
-
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div>
-          <label htmlFor="org-name" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
-            Org Name *
-          </label>
-          <input
-            id="org-name"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={100}
-            required
-            placeholder="Brooklyn Steel"
-            className="w-full bg-white/5 border border-white/10 px-4 py-3 text-white font-bold focus:border-brand-primary focus:outline-none transition-all"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="org-slug" className="block text-[10px] text-white/60 font-black uppercase tracking-widest mb-2">
-            URL Slug *
-          </label>
-          <div className="flex">
-            <span className="bg-white/5 border border-white/10 border-r-0 px-3 py-3 text-white/40 font-bold text-sm">
-              /o/
-            </span>
-            <input
-              id="org-slug"
-              type="text"
-              value={slug}
-              onChange={(e) => {
-                setSlug(e.target.value);
-                setSlugManuallyEdited(true);
-              }}
-              maxLength={80}
-              required
-              placeholder="brooklyn-steel"
-              className="flex-1 bg-white/5 border border-white/10 px-4 py-3 text-white font-bold focus:border-brand-primary focus:outline-none transition-all"
-            />
-          </div>
-          {slugError && <p className="text-red-400 text-xs mt-2 font-bold uppercase tracking-widest">{slugError}</p>}
-          <p className="text-white/30 text-xs mt-2">
-            Lowercase letters, numbers, and dashes. Will become your storefront URL when white-label ships.
-          </p>
-        </div>
-
+      <div className="max-w-2xl mx-auto px-4 py-12">
         <button
-          type="submit"
-          disabled={submitting || !name.trim() || !isValidOrgSlug(slug)}
-          className="w-full px-8 py-4 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => navigate('/orgs')}
+          className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 text-[10px] font-black uppercase tracking-widest mb-6 transition-colors"
         >
-          {submitting ? 'Creating…' : 'Create Org'}
+          <ArrowLeft size={14} strokeWidth={2.5} /> Orgs
         </button>
-      </form>
+
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Team · Setup</p>
+        <span className="inline-flex items-baseline gap-3 flex-wrap mb-1">
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tight">New organization</h1>
+          <span className="marker text-brand-secondary text-lg rotate-[-3deg] leading-none whitespace-nowrap">new crew ✦</span>
+        </span>
+        <p className="text-slate-500 text-sm mb-8 max-w-prose">
+          An org owns events and inventory. Multiple staff can share access via
+          roles (owner, manager, finance, scanner, content). You'll start as the
+          owner; you can invite others after.
+        </p>
+
+        <form onSubmit={handleSubmit}>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8 space-y-6">
+            <div className="flex items-center gap-4">
+              <div
+                className="w-16 h-16 flex items-center justify-center font-black text-black text-2xl shrink-0"
+                style={{ background: '#00FF00' }}
+                aria-hidden
+              >
+                {avatarLetter}
+              </div>
+              <div className="flex-1">
+                <label htmlFor="org-name" className={LBL}>
+                  Organization name *
+                </label>
+                <input
+                  id="org-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={100}
+                  required
+                  placeholder="Brooklyn Steel"
+                  className={INP}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="org-slug" className={LBL}>
+                Public handle *
+              </label>
+              <div className="flex items-center gap-0">
+                <span className="text-sm text-slate-400 bg-slate-100 border border-r-0 border-slate-200 rounded-l-lg px-3 py-2.5 font-mono whitespace-nowrap">
+                  exos.live/o/
+                </span>
+                <input
+                  id="org-slug"
+                  type="text"
+                  value={slug}
+                  onChange={(e) => {
+                    setSlug(e.target.value);
+                    setSlugManuallyEdited(true);
+                  }}
+                  maxLength={80}
+                  required
+                  placeholder="brooklyn-steel"
+                  className={`${INP} rounded-l-none`}
+                  style={{ borderRadius: '0 .5rem .5rem 0' }}
+                />
+              </div>
+              {slugError ? (
+                <p className="text-[11px] text-rose-500 mt-1.5 font-semibold">{slugError}</p>
+              ) : slugAvailable ? (
+                <p className="text-[11px] text-emerald-600 mt-1.5 font-semibold flex items-center gap-1">
+                  <Check size={13} strokeWidth={3} /> Available
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-400 mt-1.5">
+                  Lowercase letters, numbers, and dashes. Becomes your storefront URL when white-label ships.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 mt-6">
+            <button
+              type="submit"
+              disabled={submitting || !name.trim() || !isValidOrgSlug(slug)}
+              className="bg-tm-blue text-white px-7 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? 'Creating…' : 'Create organization'}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/orgs')}
+              className="px-5 py-3 rounded font-bold text-sm text-slate-500 hover:text-slate-900 transition-colors"
+            >
+              Cancel
+            </button>
+            <span className="ml-auto text-[11px] text-slate-400 hidden sm:inline">you can change all of this later</span>
+          </div>
+        </form>
+      </div>
     </motion.div>
   );
 }

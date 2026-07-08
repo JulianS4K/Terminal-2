@@ -900,23 +900,23 @@ export default function CreateEvent() {
   if (!user) {
     return (
       <div className="max-w-xl mx-auto px-4 py-24 text-center">
-        <h1 className="text-3xl font-bold text-slate-900 mb-4">Sign in to create an event</h1>
-        <p className="text-slate-500 mb-10">Use the navbar to sign in, then come back here.</p>
-        <Link to="/" className="bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold text-xs uppercase tracking-widest shadow-xl">Back home</Link>
+        <h1 className="disp text-4xl uppercase tracking-wide text-white mb-4">Sign in to create an event</h1>
+        <p className="type text-white/50 mb-10 uppercase tracking-widest text-xs">Use the navbar to sign in, then come back here.</p>
+        <Link to="/" className="inline-block bg-brand-primary text-black px-10 py-4 font-black uppercase italic tracking-tighter text-xs">Back home</Link>
       </div>
     );
   }
   if (!user.emailVerified) {
     return (
       <div className="max-w-xl mx-auto px-4 py-24 text-center">
-        <h1 className="text-3xl font-bold text-slate-900 mb-4">Verify your email first</h1>
-        <p className="text-slate-500 mb-10">
-          We sent a verification link to <strong>{user.email}</strong>. Click it,
+        <h1 className="disp text-4xl uppercase tracking-wide text-white mb-4">Verify your email first</h1>
+        <p className="type text-white/50 mb-10 uppercase tracking-widest text-xs">
+          We sent a verification link to <strong className="text-brand-primary">{user.email}</strong>. Click it,
           then refresh this page to start creating events.
         </p>
         <button
           onClick={() => window.location.reload()}
-          className="bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold text-xs uppercase tracking-widest shadow-xl"
+          className="inline-block bg-brand-primary text-black px-10 py-4 font-black uppercase italic tracking-tighter text-xs"
         >
           I&apos;ve verified — reload
         </button>
@@ -926,12 +926,18 @@ export default function CreateEvent() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-12">
-      <div className="flex items-center justify-between mb-12">
+      <Link to="/dashboard" className="type inline-flex items-center gap-2 text-white/40 hover:text-brand-primary text-[10px] uppercase tracking-widest mb-6 transition-colors">
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to dashboard
+      </Link>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 mb-2">Configure Experience</h1>
-          <p className="text-slate-500 font-medium text-sm tracking-wide">Enter the technical specs for your event listing.</p>
+          <p className="type text-[10px] text-white/40 uppercase tracking-widest mb-2">New Event</p>
+          <span className="inline-flex items-baseline gap-3 flex-wrap">
+            <h1 className="disp text-4xl md:text-5xl uppercase tracking-wide text-white">Create Event</h1>
+            <span className="marker text-brand-secondary text-lg -rotate-3 leading-none whitespace-nowrap">new drop ✦</span>
+          </span>
         </div>
-        <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-bold">1</div>
+        <div className="w-12 h-12 bg-brand-primary flex items-center justify-center text-black font-black italic">1</div>
       </div>
 
       {/*
@@ -951,13 +957,13 @@ export default function CreateEvent() {
               <Link to="/orgs" className="underline hover:no-underline">Switch</Link>
             </div>
           ) : orgs.length === 0 ? (
-            <div className="bg-yellow-500/10 border border-yellow-500/30 px-4 py-3 text-xs font-bold uppercase tracking-widest text-yellow-600">
+            <div className="bg-yellow-500/10 border border-yellow-500/30 px-4 py-3 text-xs font-bold uppercase tracking-widest text-yellow-400">
               No organization yet —{' '}
               <Link to="/orgs/new" className="underline hover:no-underline">create one</Link>{' '}
               to enable white-label and distribution. Or proceed without one (legacy path).
             </div>
           ) : (
-            <div className="bg-yellow-500/10 border border-yellow-500/30 px-4 py-3 text-xs font-bold uppercase tracking-widest text-yellow-600">
+            <div className="bg-yellow-500/10 border border-yellow-500/30 px-4 py-3 text-xs font-bold uppercase tracking-widest text-yellow-400">
               No active org —{' '}
               <Link to="/orgs" className="underline hover:no-underline">pick one</Link>{' '}
               before publishing.
@@ -967,19 +973,19 @@ export default function CreateEvent() {
       )}
 
       <form onSubmit={(e) => handleSubmit(e, true)} className="space-y-10 group">
-        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
+        <div className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="md:col-span-2 space-y-2">
-              <label htmlFor="event-title" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Event Descriptor</label>
+              <label htmlFor="event-title" className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Event Descriptor</label>
               <div className="relative">
-                <Tag className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" aria-hidden="true" />
+                <Tag className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4" aria-hidden="true" />
                 <input
                   id="event-title"
                   required
                   type="text"
                   maxLength={TITLE_MAX}
                   placeholder="e.g. Midnight Horizon Festival"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                  className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={formData.title}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 />
@@ -987,10 +993,10 @@ export default function CreateEvent() {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="event-category" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Category</label>
+              <label htmlFor="event-category" className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Category</label>
               <select
                 id="event-category"
-                className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all appearance-none"
+                className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors appearance-none"
                 value={formData.category}
                 onChange={(e) => setFormData({ ...formData, category: e.target.value })}
               >
@@ -999,7 +1005,7 @@ export default function CreateEvent() {
             </div>
 
             <div className="space-y-4 md:col-span-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Genres for {formData.category}</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Genres for {formData.category}</label>
               <div className="flex flex-wrap gap-2">
                 {genresFor(formData.category).map(genre => (
                   <button
@@ -1009,7 +1015,7 @@ export default function CreateEvent() {
                     className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
                       formData.genres.includes(genre)
                         ? 'bg-brand-primary text-black border-black'
-                        : 'bg-slate-50 text-slate-400 border-transparent hover:border-slate-200'
+                        : 'bg-white/5 text-white/40 border-white/10 hover:border-white/30'
                     }`}
                   >
                     {genre}
@@ -1019,11 +1025,11 @@ export default function CreateEvent() {
             </div>
 
             <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Custom Subgenres</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Custom Subgenres</label>
               <input
                 type="text"
                 placeholder={`e.g. Ambient, Techno, Deep House (max ${SUBGENRES_MAX_COUNT}, comma-separated)`}
-                className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                 value={formData.subgenres.join(', ')}
                 onChange={(e) => {
                   const val = Array.from(
@@ -1047,11 +1053,11 @@ export default function CreateEvent() {
                 the same artist twice for a back-to-back set if they
                 want. */}
             <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Performers</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Performers</label>
               <input
                 type="text"
                 placeholder={`e.g. Skrillex, Boys Noize, Boombox Cartel (max ${PERFORMERS_MAX_COUNT}, comma-separated)`}
-                className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                 value={formData.performers.join(', ')}
                 onChange={(e) => {
                   const val = e.target.value
@@ -1062,7 +1068,7 @@ export default function CreateEvent() {
                   setFormData({ ...formData, performers: val });
                 }}
               />
-              <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest leading-relaxed">
+              <p className="type text-[9px] text-white/30 uppercase tracking-widest leading-relaxed">
                 Order matters — first name is treated as the headliner in emails and the event page.
               </p>
             </div>
@@ -1072,7 +1078,7 @@ export default function CreateEvent() {
                 performers above so each link is tied to a named artist and
                 rendered next to them on the event page. */}
             <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Artist links (optional)</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Artist links (optional)</label>
               <ArtistLinksEditor
                 performers={formData.performers}
                 value={formData.artistLinks}
@@ -1081,16 +1087,16 @@ export default function CreateEvent() {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="event-price" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Admission Price (USD)</label>
+              <label htmlFor="event-price" className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Admission Price (USD)</label>
               <div className="relative">
-                <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" aria-hidden="true" />
+                <DollarSign className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4" aria-hidden="true" />
                 <input
                   id="event-price"
                   required
                   type="number"
                   min="0"
                   step="0.01"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                  className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={formData.price}
                   onChange={(e) => setFormData({ ...formData, price: e.target.value })}
                 />
@@ -1098,15 +1104,15 @@ export default function CreateEvent() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Doors Open</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Doors Open</label>
               <div className="relative">
                 <CalendarIcon
-                  className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none"
+                  className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4 pointer-events-none"
                   aria-hidden="true"
                 />
                 <input
                   type="datetime-local"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner cursor-pointer"
+                  className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                   value={formData.timing.doorsOpen}
                   onClick={(e) => {
                     // showPicker() opens the native calendar+time
@@ -1148,16 +1154,16 @@ export default function CreateEvent() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Show Start</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Show Start</label>
               <div className="relative">
                 <CalendarIcon
-                  className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none"
+                  className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4 pointer-events-none"
                   aria-hidden="true"
                 />
                 <input
                   required
                   type="datetime-local"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner cursor-pointer"
+                  className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                   value={formData.timing.startTime || formData.date}
                   onClick={(e) => {
                     const el = e.currentTarget as HTMLInputElement;
@@ -1171,15 +1177,15 @@ export default function CreateEvent() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Show End</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Show End</label>
               <div className="relative">
                 <CalendarIcon
-                  className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none"
+                  className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4 pointer-events-none"
                   aria-hidden="true"
                 />
                 <input
                   type="datetime-local"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner cursor-pointer"
+                  className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                   value={formData.timing.endTime}
                   onClick={(e) => {
                     const el = e.currentTarget as HTMLInputElement;
@@ -1193,13 +1199,13 @@ export default function CreateEvent() {
             </div>
 
             <div className="md:col-span-2 space-y-2">
-              <label htmlFor="event-timezone" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Event Timezone</label>
-              <p className="text-[9px] text-slate-300 font-medium uppercase tracking-widest leading-relaxed">
+              <label htmlFor="event-timezone" className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Event Timezone</label>
+              <p className="type text-[9px] text-white/30 uppercase tracking-widest leading-relaxed">
                 All event times above are interpreted in this zone, no matter where the viewer is.
               </p>
               <select
                 id="event-timezone"
-                className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all appearance-none"
+                className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors appearance-none"
                 value={formData.timezone}
                 onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}
               >
@@ -1215,14 +1221,14 @@ export default function CreateEvent() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Inventory Depth</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Inventory Depth</label>
               <div className="relative">
-                <ListOrdered className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                <ListOrdered className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4" />
                 <input
                   required
                   type="number"
                   min="1"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                  className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={formData.totalTickets}
                   onChange={(e) => setFormData({ ...formData, totalTickets: e.target.value })}
                 />
@@ -1230,15 +1236,15 @@ export default function CreateEvent() {
             </div>
 
             <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Venue</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Venue</label>
               <div className="relative">
-                <MapPin className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" aria-hidden="true" />
+                <MapPin className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4" aria-hidden="true" />
                 <input
                   required
                   type="text"
                   maxLength={LOCATION_MAX}
                   placeholder="e.g. Brooklyn Steel"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                  className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={formData.location}
                   onChange={(e) => setFormData({ ...formData, location: e.target.value })}
                 />
@@ -1249,7 +1255,7 @@ export default function CreateEvent() {
                   Used for calendar invites, map embeds, and tax
                   jurisdictions when the payments team wires those up. */}
               <details className="mt-3">
-                <summary className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer hover:text-slate-700">
+                <summary className="type text-[9px] text-white/40 uppercase tracking-widest cursor-pointer hover:text-white">
                   Add address details (optional — for maps & receipts)
                 </summary>
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-3 mt-3">
@@ -1258,7 +1264,7 @@ export default function CreateEvent() {
                     placeholder="Street"
                     aria-label="Street"
                     maxLength={120}
-                    className="md:col-span-6 bg-white border border-slate-200 rounded-xl py-3 px-4 text-slate-900 text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    className="md:col-span-6 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
                     value={formData.address.street}
                     onChange={(e) => setFormData({ ...formData, address: { ...formData.address, street: e.target.value } })}
                   />
@@ -1267,7 +1273,7 @@ export default function CreateEvent() {
                     placeholder="City"
                     aria-label="City"
                     maxLength={80}
-                    className="md:col-span-3 bg-white border border-slate-200 rounded-xl py-3 px-4 text-slate-900 text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    className="md:col-span-3 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
                     value={formData.address.city}
                     onChange={(e) => setFormData({ ...formData, address: { ...formData.address, city: e.target.value } })}
                   />
@@ -1276,7 +1282,7 @@ export default function CreateEvent() {
                     placeholder="State / Region"
                     aria-label="State or region"
                     maxLength={80}
-                    className="md:col-span-2 bg-white border border-slate-200 rounded-xl py-3 px-4 text-slate-900 text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    className="md:col-span-2 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
                     value={formData.address.region}
                     onChange={(e) => setFormData({ ...formData, address: { ...formData.address, region: e.target.value } })}
                   />
@@ -1285,7 +1291,7 @@ export default function CreateEvent() {
                     placeholder="Postal"
                     aria-label="Postal code"
                     maxLength={20}
-                    className="md:col-span-1 bg-white border border-slate-200 rounded-xl py-3 px-4 text-slate-900 text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    className="md:col-span-1 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
                     value={formData.address.postal}
                     onChange={(e) => setFormData({ ...formData, address: { ...formData.address, postal: e.target.value } })}
                   />
@@ -1294,7 +1300,7 @@ export default function CreateEvent() {
                     placeholder="Country"
                     aria-label="Country"
                     maxLength={80}
-                    className="md:col-span-6 bg-white border border-slate-200 rounded-xl py-3 px-4 text-slate-900 text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    className="md:col-span-6 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
                     value={formData.address.country}
                     onChange={(e) => setFormData({ ...formData, address: { ...formData.address, country: e.target.value } })}
                   />
@@ -1303,9 +1309,9 @@ export default function CreateEvent() {
             </div>
 
             <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Event Artwork</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Event Artwork</label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="relative border-2 border-dashed border-slate-200 rounded-2xl p-8 flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer group">
+                <div className="relative border border-dashed border-white/20 p-8 flex flex-col items-center justify-center bg-black/40 hover:bg-black/60 transition-all cursor-pointer group">
                   <input
                     type="file"
                     accept="image/*"
@@ -1317,18 +1323,18 @@ export default function CreateEvent() {
                   {uploadingImage ? (
                     <Loader2 className="w-8 h-8 text-brand-primary mb-2 animate-spin" aria-hidden="true" />
                   ) : (
-                    <Upload className="w-8 h-8 text-slate-400 mb-2 group-hover:text-brand-primary" aria-hidden="true" />
+                    <Upload className="w-8 h-8 text-white/40 mb-2 group-hover:text-brand-primary" aria-hidden="true" />
                   )}
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  <p className="type text-[10px] text-white/40 uppercase tracking-widest">
                     {uploadingImage ? 'Uploading…' : 'Upload Custom Art'}
                   </p>
                 </div>
                 {formData.image ? (
-                  <div className="w-full h-32 rounded-2xl overflow-hidden border border-slate-200">
+                  <div className="w-full h-32 overflow-hidden border border-white/10">
                     <img src={formData.image} alt="Event artwork preview" className="w-full h-full object-cover" />
                   </div>
                 ) : (
-                  <div className="w-full h-32 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+                  <div className="w-full h-32 bg-black/40 border border-white/10 flex items-center justify-center type text-[10px] text-white/30 uppercase tracking-widest">
                     Artwork Preview
                   </div>
                 )}
@@ -1345,17 +1351,17 @@ export default function CreateEvent() {
             </div>
 
             <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Core Narrative</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Core Narrative</label>
               <textarea
                 required
                 rows={5}
                 maxLength={DESCRIPTION_MAX}
                 placeholder="Describe the experience atmosphere..."
-                className="w-full bg-slate-50 border-2 border-transparent rounded-3xl py-4 px-6 text-slate-900 font-medium focus:outline-none focus:border-brand-primary focus:bg-white transition-all resize-none shadow-inner"
+                className="w-full bg-black border border-white/20 py-4 px-6 text-white font-medium focus:outline-none focus:border-brand-primary transition-colors resize-none"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               />
-              <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest ml-1">
+              <p className="type text-[9px] text-white/30 uppercase tracking-widest ml-1">
                 {formData.description.length} / {DESCRIPTION_MAX}
               </p>
             </div>
@@ -1363,9 +1369,9 @@ export default function CreateEvent() {
         </div>
 
         {/* Ticket Tiers Section */}
-        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
+        <div className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-[0.2em]">Inventory Tiers</h3>
+              <h3 className="disp text-lg uppercase tracking-wide text-white">Inventory Tiers</h3>
               <button 
                 type="button" 
                 onClick={addTier}
@@ -1377,58 +1383,58 @@ export default function CreateEvent() {
            
            <div className="space-y-6">
               {ticketTiers.map((tier, index) => (
-                <div key={tier.id} className="p-6 bg-slate-50 rounded-3xl border border-slate-100 relative group/tier">
+                <div key={tier.id} className="p-6 bg-black/40 border border-white/10 relative group/tier">
                    {ticketTiers.length > 1 && (
                      <button 
                        type="button"
                        onClick={() => removeTier(tier.id)}
-                       className="absolute top-4 right-4 text-slate-300 hover:text-red-500 transition-colors"
+                       className="absolute top-4 right-4 text-white/30 hover:text-brand-accent transition-colors"
                      >
                        <Tag className="w-4 h-4 rotate-45" />
                      </button>
                    )}
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2 col-span-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Tier Designation</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Tier Designation</label>
                          <input 
                            required 
                            type="text"
                            placeholder="e.g. VIP Backstage"
-                           className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.name}
                            onChange={(e) => updateTier(tier.id, 'name', e.target.value)}
                          />
                       </div>
                       <div className="space-y-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Price (USD)</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Price (USD)</label>
                          <input 
                            required 
                            type="number"
                            min="0"
                            step="0.01"
-                           className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.price}
                            onChange={(e) => updateTier(tier.id, 'price', e.target.value)}
                          />
                       </div>
                       <div className="space-y-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Quantity Available</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Quantity Available</label>
                          <input 
                            required 
                            type="number"
                            min="1"
-                           className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.capacity}
                            onChange={(e) => updateTier(tier.id, 'capacity', e.target.value)}
                          />
                       </div>
                       <div className="space-y-2 col-span-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Tier Benefits</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Tier Benefits</label>
                          <input
                            required
                            type="text"
                            placeholder="What is included?"
-                           className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-medium focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-3 px-5 text-white font-medium focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.description}
                            onChange={(e) => updateTier(tier.id, 'description', e.target.value)}
                          />
@@ -1443,14 +1449,14 @@ export default function CreateEvent() {
                           window, so a tier the organizer never opens
                           this section for behaves like before. */}
                       <details className="col-span-2 mt-2">
-                        <summary className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer hover:text-slate-700">
+                        <summary className="type text-[9px] text-white/40 uppercase tracking-widest cursor-pointer hover:text-white">
                           Advanced (sale window, visibility, type)
                         </summary>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/10">
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Type</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Type</label>
                             <select
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                               value={tier.ticketType}
                               onChange={(e) => updateTier(tier.id, 'ticketType', e.target.value)}
                             >
@@ -1460,9 +1466,9 @@ export default function CreateEvent() {
                             </select>
                           </div>
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Visibility</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Visibility</label>
                             <select
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                               value={tier.visibility}
                               onChange={(e) => updateTier(tier.id, 'visibility', e.target.value)}
                             >
@@ -1471,24 +1477,24 @@ export default function CreateEvent() {
                             </select>
                           </div>
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Sales Open</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Sales Open</label>
                             <input
                               type="datetime-local"
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                               value={tier.salesStart}
                               onChange={(e) => updateTier(tier.id, 'salesStart', e.target.value)}
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Sales Close</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Sales Close</label>
                             <input
                               type="datetime-local"
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                               value={tier.salesEnd}
                               onChange={(e) => updateTier(tier.id, 'salesEnd', e.target.value)}
                             />
                           </div>
-                          <p className="md:col-span-2 text-[9px] text-slate-300 font-medium uppercase tracking-widest leading-relaxed">
+                          <p className="md:col-span-2 type text-[9px] text-white/30 uppercase tracking-widest leading-relaxed">
                             Times above are interpreted in the event's
                             timezone ({formData.timezone}). Leaving a
                             field blank means no constraint on that side.
@@ -1502,11 +1508,11 @@ export default function CreateEvent() {
         </div>
 
         {/* Promo Codes Section */}
-        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
+        <div className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-[0.2em]">Promo Codes</h3>
-              <p className="text-[9px] text-slate-300 font-medium uppercase tracking-widest mt-1">
+              <h3 className="disp text-lg uppercase tracking-wide text-white">Promo Codes</h3>
+              <p className="type text-[9px] text-white/30 uppercase tracking-widest mt-1">
                 Optional. Buyers redeem at checkout.
               </p>
             </div>
@@ -1520,7 +1526,7 @@ export default function CreateEvent() {
           </div>
 
           {promoCodes.length === 0 ? (
-            <p className="text-[10px] text-slate-300 font-medium uppercase tracking-widest">
+            <p className="type text-[10px] text-white/30 uppercase tracking-widest">
               No promo codes defined.
             </p>
           ) : (
@@ -1528,24 +1534,24 @@ export default function CreateEvent() {
               {promoCodes.map((p) => (
                 <div
                   key={p.id}
-                  className="p-6 bg-slate-50 rounded-3xl border border-slate-100 grid grid-cols-1 md:grid-cols-12 gap-4 items-end"
+                  className="p-6 bg-black/40 border border-white/10 grid grid-cols-1 md:grid-cols-12 gap-4 items-end"
                 >
                   <div className="md:col-span-3 space-y-2">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Code</label>
+                    <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Code</label>
                     <input
                       required
                       type="text"
                       placeholder="EARLY30"
                       maxLength={32}
-                      className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold uppercase focus:outline-none focus:border-brand-primary transition-all font-mono"
+                      className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold uppercase focus:outline-none focus:border-brand-primary transition-colors font-mono"
                       value={p.code}
                       onChange={(e) => updatePromoCode(p.id, 'code', e.target.value)}
                     />
                   </div>
                   <div className="md:col-span-3 space-y-2">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Type</label>
+                    <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Type</label>
                     <select
-                      className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all appearance-none"
+                      className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors appearance-none"
                       value={p.type}
                       onChange={(e) => updatePromoCode(p.id, 'type', e.target.value)}
                     >
@@ -1554,7 +1560,7 @@ export default function CreateEvent() {
                     </select>
                   </div>
                   <div className="md:col-span-2 space-y-2">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">
+                    <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">
                       Value {p.type === 'percentage' ? '(%)' : '($)'}
                     </label>
                     <input
@@ -1563,31 +1569,31 @@ export default function CreateEvent() {
                       min="0"
                       step="0.01"
                       max={p.type === 'percentage' ? 100 : undefined}
-                      className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                      className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                       value={p.value}
                       onChange={(e) => updatePromoCode(p.id, 'value', e.target.value)}
                     />
                   </div>
                   <div className="md:col-span-2 space-y-2">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">
+                    <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">
                       Usage Limit
                     </label>
                     <input
                       type="number"
                       min="1"
                       placeholder="Unlimited"
-                      className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                      className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                       value={p.usageLimit}
                       onChange={(e) => updatePromoCode(p.id, 'usageLimit', e.target.value)}
                     />
                   </div>
                   <div className="md:col-span-1 space-y-2">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">
+                    <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">
                       Expires
                     </label>
                     <input
                       type="date"
-                      className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-3 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all text-xs"
+                      className="w-full bg-black border border-white/20 py-3 px-3 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors text-xs"
                       value={p.expiresAt}
                       onChange={(e) => updatePromoCode(p.id, 'expiresAt', e.target.value)}
                     />
@@ -1597,7 +1603,7 @@ export default function CreateEvent() {
                       type="button"
                       aria-label={`Remove promo code ${p.code || '(empty)'}`}
                       onClick={() => removePromoCode(p.id)}
-                      className="text-slate-300 hover:text-red-500 transition-colors p-2"
+                      className="text-white/30 hover:text-brand-accent transition-colors p-2"
                     >
                       <X className="w-4 h-4" aria-hidden="true" />
                     </button>
@@ -1609,8 +1615,8 @@ export default function CreateEvent() {
                       case). Each checkbox is a tier the code reveals
                       when applied at checkout. */}
                   {ticketTiers.some((t) => t.visibility === 'hidden') && (
-                    <div className="md:col-span-12 mt-2 pt-3 border-t border-slate-100">
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                    <div className="md:col-span-12 mt-2 pt-3 border-t border-white/10">
+                      <p className="type text-[9px] text-white/40 uppercase tracking-widest mb-2">
                         Unlocks hidden tiers
                       </p>
                       <div className="flex flex-wrap gap-2">
@@ -1623,8 +1629,8 @@ export default function CreateEvent() {
                                 key={t.id}
                                 className={`flex items-center gap-2 px-3 py-1 rounded-full border cursor-pointer text-[10px] font-bold uppercase tracking-widest ${
                                   checked
-                                    ? 'bg-slate-900 text-white border-slate-900'
-                                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                                    ? 'bg-brand-primary text-black border-brand-primary'
+                                    : 'bg-black text-white/60 border-white/20 hover:border-white/40'
                                 }`}
                               >
                                 <input
@@ -1647,11 +1653,11 @@ export default function CreateEvent() {
         </div>
 
         {/* Branding Section */}
-        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
-           <h3 className="text-sm font-bold text-slate-900 uppercase tracking-[0.2em] mb-2">Platform Customization</h3>
+        <div className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
+           <h3 className="disp text-lg uppercase tracking-wide text-white mb-2">Platform Customization</h3>
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Primary Color</label>
+                 <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Primary Color</label>
                  <div className="flex items-center space-x-3">
                     <input 
                       type="color"
@@ -1661,14 +1667,14 @@ export default function CreateEvent() {
                     />
                     <input 
                       type="text"
-                      className="flex-grow bg-slate-50 border-2 border-transparent rounded-xl py-3 px-4 text-slate-900 font-mono text-xs focus:outline-none focus:border-brand-primary"
+                      className="flex-grow bg-black border border-white/20 py-3 px-4 text-white font-mono text-xs focus:outline-none focus:border-brand-primary"
                       value={formData.branding.primaryColor}
                       onChange={(e) => setFormData({ ...formData, branding: { ...formData.branding, primaryColor: e.target.value } })}
                     />
                  </div>
               </div>
               <div className="space-y-2">
-                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Accent Color</label>
+                 <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Accent Color</label>
                  <div className="flex items-center space-x-3">
                     <input 
                       type="color"
@@ -1678,21 +1684,21 @@ export default function CreateEvent() {
                     />
                     <input 
                       type="text"
-                      className="flex-grow bg-slate-50 border-2 border-transparent rounded-xl py-3 px-4 text-slate-900 font-mono text-xs focus:outline-none focus:border-brand-primary"
+                      className="flex-grow bg-black border border-white/20 py-3 px-4 text-white font-mono text-xs focus:outline-none focus:border-brand-primary"
                       value={formData.branding.accentColor}
                       onChange={(e) => setFormData({ ...formData, branding: { ...formData.branding, accentColor: e.target.value } })}
                     />
                  </div>
               </div>
               <div className="md:col-span-2 space-y-2">
-                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Custom Vanit Slug</label>
+                 <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Custom Vanit Slug</label>
                  <div className="relative">
-                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold font-mono">vibepass.io/e/</span>
+                    <span className="absolute left-6 top-1/2 -translate-y-1/2 text-white/40 text-xs font-bold font-mono">vibepass.io/e/</span>
                     <input
                       type="text"
                       maxLength={SLUG_MAX}
                       placeholder="summer-horizon-2026"
-                      className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-32 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary"
+                      className="w-full bg-black border border-white/20 py-4 pl-32 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary"
                       value={formData.branding.customSlug}
                       onChange={(e) =>
                         setFormData({
@@ -1714,21 +1720,21 @@ export default function CreateEvent() {
            </div>
         </div>
 
-        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
+        <div className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <Globe className="text-brand-primary w-5 h-5" />
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-[0.2em]">Exclusivity Logic</h3>
+              <h3 className="disp text-lg uppercase tracking-wide text-white">Exclusivity Logic</h3>
            </div>
            
            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl border border-transparent hover:border-indigo-100 transition-all">
+              <div className="flex items-center justify-between p-6 bg-black/40 border border-white/10 hover:border-brand-primary/40 transition-all">
                  <div>
-                    <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1">Primary Market Only</p>
-                    <p className="text-[9px] text-slate-400 font-medium">Bypass distribution networks</p>
+                    <p className="type text-[10px] text-white uppercase tracking-widest mb-1">Primary Market Only</p>
+                    <p className="type text-[9px] text-white/40">Bypass distribution networks</p>
                  </div>
                  <input 
                     type="checkbox" 
-                    className="w-5 h-5 accent-indigo-500"
+                    className="w-5 h-5 accent-[#00FF00]"
                     checked={formData.exclusivity.primaryMarketOnly}
                     onChange={(e) => setFormData({ 
                       ...formData, 
@@ -1736,14 +1742,14 @@ export default function CreateEvent() {
                     })}
                  />
               </div>
-              <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl border border-transparent hover:border-indigo-100 transition-all">
+              <div className="flex items-center justify-between p-6 bg-black/40 border border-white/10 hover:border-brand-primary/40 transition-all">
                  <div>
-                    <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1">Custom URL Only</p>
-                    <p className="text-[9px] text-slate-400 font-medium">Private listing logic</p>
+                    <p className="type text-[10px] text-white uppercase tracking-widest mb-1">Custom URL Only</p>
+                    <p className="type text-[9px] text-white/40">Private listing logic</p>
                  </div>
                  <input 
                     type="checkbox" 
-                    className="w-5 h-5 accent-indigo-500"
+                    className="w-5 h-5 accent-[#00FF00]"
                     checked={formData.exclusivity.customUrlOnly}
                     onChange={(e) => setFormData({ 
                       ...formData, 
@@ -1755,29 +1761,29 @@ export default function CreateEvent() {
         </div>
 
         {/* Distribution Networks */}
-        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
+        <div className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <ShieldCheck className="text-brand-primary w-5 h-5" />
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-[0.2em]">Purchase Controls</h3>
+              <h3 className="disp text-lg uppercase tracking-wide text-white">Purchase Controls</h3>
            </div>
            
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Max per transaction</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Max per transaction</label>
                 <input 
                   type="number"
                   min="1"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                  className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={formData.purchaseLimits.maxPerOrder}
                   onChange={(e) => setFormData({ ...formData, purchaseLimits: { ...formData.purchaseLimits, maxPerOrder: e.target.value } })}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Max per user account</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Max per user account</label>
                 <input 
                   type="number"
                   min="1"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner"
+                  className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={formData.purchaseLimits.maxPerAccount}
                   onChange={(e) => setFormData({ ...formData, purchaseLimits: { ...formData.purchaseLimits, maxPerAccount: e.target.value } })}
                 />
@@ -1786,13 +1792,13 @@ export default function CreateEvent() {
         </div>
 
         {/* Distribution Networks */}
-        <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
+        <div className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <Tag className="text-brand-primary w-5 h-5" />
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-[0.2em]">Distribution Hub</h3>
+              <h3 className="disp text-lg uppercase tracking-wide text-white">Distribution Hub</h3>
            </div>
            
-           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-relaxed">Select global markets for synchronized inventory listing.</p>
+           <p className="type text-[10px] text-white/40 uppercase tracking-widest leading-relaxed">Select global markets for synchronized inventory listing.</p>
            
            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {[
@@ -1807,7 +1813,7 @@ export default function CreateEvent() {
                 { id: 'tickpick', name: 'TickPick' },
                 { id: 'gotickets', name: 'GoTickets' }
               ].map(network => (
-                <label key={network.id} className="flex items-center space-x-3 p-4 bg-slate-50 rounded-2xl cursor-pointer hover:bg-slate-100 transition-colors border border-transparent has-[:checked]:border-brand-primary has-[:checked]:bg-indigo-50/30">
+                <label key={network.id} className="flex items-center space-x-3 p-4 bg-black/40 cursor-pointer hover:bg-black/60 transition-colors border border-white/10 has-[:checked]:border-brand-primary has-[:checked]:bg-brand-primary/10">
                    <input
                      type="checkbox"
                      className="w-4 h-4 accent-brand-primary"
@@ -1823,7 +1829,7 @@ export default function CreateEvent() {
                        setFormData({ ...formData, distributionNetworks: next });
                      }}
                    />
-                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-600">{network.name}</span>
+                   <span className="type text-[10px] uppercase tracking-widest text-white/60">{network.name}</span>
                 </label>
               ))}
            </div>
@@ -1854,7 +1860,7 @@ export default function CreateEvent() {
               clearDraft();
               navigate('/dashboard');
             }}
-            className="flex-1 bg-white border-2 border-slate-100 text-slate-400 py-5 rounded-2xl font-bold uppercase tracking-widest text-xs hover:border-slate-200 transition-all font-mono"
+            className="flex-1 bg-transparent border border-white/20 text-white/50 py-5 font-black uppercase tracking-widest text-xs hover:border-white/40 hover:text-white transition-all"
           >
             Cancel Session
           </button>
@@ -1862,14 +1868,14 @@ export default function CreateEvent() {
             type="button"
             disabled={loading || uploadingImage}
             onClick={(e) => handleSubmit(e as unknown as FormEvent, false)}
-            className="flex-1 bg-white border-2 border-slate-200 text-slate-700 py-5 rounded-2xl font-bold uppercase tracking-widest text-xs hover:border-slate-400 transition-all disabled:opacity-50"
+            className="flex-1 bg-transparent border border-white/30 text-white py-5 font-black uppercase tracking-widest text-xs hover:border-brand-primary transition-all disabled:opacity-50"
           >
             {loading ? 'Saving…' : 'Save Draft'}
           </button>
           <button
             type="submit"
             disabled={loading || uploadingImage}
-            className="flex-[2] bg-slate-900 text-white py-5 rounded-2xl font-bold uppercase tracking-widest text-xs hover:bg-slate-800 transition-all shadow-2xl shadow-slate-200 disabled:opacity-50"
+            className="flex-[2] bg-brand-primary text-black py-5 font-black uppercase italic tracking-tighter text-xs hover:bg-brand-primary/90 transition-all disabled:opacity-50"
           >
             {loading
               ? 'Publishing…'

@@ -109,26 +109,28 @@ export default function ClaimTicket() {
 
   if (loading) {
     return (
-      <div className="max-w-xl mx-auto p-24 text-center text-slate-300 font-bold uppercase tracking-[0.3em] animate-pulse">
-        Loading your ticket...
+      <div className="wall min-h-screen flex items-center justify-center">
+        <p className="disp text-3xl tracking-tight text-white/20 animate-pulse" style={{ transform: 'skewX(-4deg)' }}>LOADING YOUR TICKET…</p>
       </div>
     );
   }
 
   if (!transfer || transfer.status !== 'pending') {
     return (
-      <div className="max-w-xl mx-auto px-4 py-24 text-center">
-        <XCircle className="w-20 h-20 text-slate-100 mx-auto mb-8" />
-        <h1 className="text-3xl font-bold text-slate-900 mb-4">Transfer Expired</h1>
-        <p className="text-slate-500 mb-10">
-          This transfer link is no longer active or the assets have already been claimed.
-        </p>
-        <button
-          onClick={() => navigate('/')}
-          className="bg-slate-900 text-white px-10 py-4 rounded-2xl font-bold text-xs uppercase tracking-widest shadow-xl"
-        >
-          Back Home
-        </button>
+      <div className="wall min-h-screen">
+        <div className="max-w-xl mx-auto px-4 py-24 text-center">
+          <XCircle className="w-20 h-20 text-white/20 mx-auto mb-8" />
+          <h1 className="disp text-5xl tracking-tight leading-none mb-4" style={{ transform: 'skewX(-4deg)' }}>TRANSFER EXPIRED</h1>
+          <p className="type text-white/40 text-sm mb-10">
+            This transfer link is no longer active or the assets have already been claimed.
+          </p>
+          <button
+            onClick={() => navigate('/')}
+            className="disp bg-brand-primary text-black px-10 py-3 text-lg tracking-wide hover:scale-[1.01] transition-transform"
+          >
+            BACK HOME
+          </button>
+        </div>
       </div>
     );
   }
@@ -144,126 +146,125 @@ export default function ClaimTicket() {
     user && user.email?.toLowerCase() !== transfer.receiverEmail.toLowerCase();
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-12">
-      <div className="text-center mb-12">
-        <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-primary rounded-[1.5rem] mb-6 shadow-xl shadow-indigo-100">
-          <ShieldCheck className="text-white w-8 h-8" aria-hidden="true" />
+    <div className="wall min-h-screen">
+      <div className="max-w-2xl mx-auto px-4 py-16 relative z-10">
+        <div className="text-center mb-12">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-primary mb-6">
+            <ShieldCheck className="text-black w-8 h-8" aria-hidden="true" />
+          </div>
+          <h1 className="disp text-5xl tracking-tight leading-none mb-2" style={{ transform: 'skewX(-4deg)' }}>CLAIM YOUR TICKET</h1>
+          <p className="type text-[11px] text-white/40 uppercase tracking-[0.25em]">
+            secure exchange · verification
+          </p>
         </div>
-        <h1 className="text-4xl font-bold text-slate-900 tracking-tight mb-2">Claim Your Ticket</h1>
-        <p className="text-slate-500 font-medium tracking-wide uppercase tracking-[0.2em] text-[10px]">
-          Verification
-        </p>
-      </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-[2.5rem] border border-slate-100 shadow-2xl overflow-hidden mb-8"
-      >
-        <div className="p-10 border-b border-slate-50 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full blur-3xl -mr-16 -mt-16 opacity-50"></div>
-          <div className="flex items-center space-x-6 relative z-10">
-            <div className="w-24 h-24 bg-slate-100 rounded-2xl overflow-hidden shrink-0 shadow-inner">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-[#111] border border-white/10 overflow-hidden mb-8"
+        >
+          <div className="group p-8 border-b border-white/5 flex items-center gap-6">
+            <div className="w-24 h-24 bg-white/5 overflow-hidden shrink-0">
               {displayImage ? (
-                <img src={displayImage} alt={displayTitle} className="w-full h-full object-cover" />
+                <img src={displayImage} alt={displayTitle} className="xerox w-full h-full object-cover" />
               ) : null}
             </div>
-            <div className="text-left">
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-1">
-                Invitation for
+            <div>
+              <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">
+                invitation for
               </p>
-              <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">{displayTitle}</h2>
-              <div className="flex items-center space-x-4">
-                <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase tracking-widest border border-slate-100">
+              <h2 className="disp text-3xl tracking-tight leading-none mb-3">{displayTitle}</h2>
+              <div className="flex items-center gap-3">
+                <span className="type text-[9px] text-white/60 bg-white/5 border border-white/10 px-3 py-1 uppercase tracking-widest">
                   {displayTier}
                 </span>
-                <span className="text-[10px] font-bold text-green-500 bg-green-50 px-3 py-1 rounded-full uppercase tracking-widest border border-green-100">
-                  Verified
+                <span className="type text-[9px] text-brand-primary bg-brand-primary/10 border border-brand-primary/30 px-3 py-1 uppercase tracking-widest">
+                  verified
                 </span>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="p-10 bg-slate-50/50">
-          {!user ? (
-            <div className="text-center">
-              <p className="text-slate-500 font-medium mb-8">
-                Identification required to claim assets.
-              </p>
-              <button
-                onClick={() =>
-                  toast({
-                    kind: 'info',
-                    message: 'Sign in from the navbar to claim this ticket.',
-                  })
-                }
-                className="w-full bg-slate-900 text-white py-5 rounded-2xl font-bold uppercase tracking-widest text-xs shadow-xl shadow-slate-200"
-              >
-                Authorize via Identity Provider
-              </button>
-            </div>
-          ) : isWrongUser ? (
-            <div className="bg-red-50 p-8 rounded-3xl border border-red-100 text-center">
-              <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" aria-hidden="true" />
-              <p className="text-red-900 font-bold mb-2">Identification Conflict</p>
-              <p className="text-red-700 text-sm mb-6">
-                This asset is registered for <strong>{transfer.receiverEmail}</strong>, but you are
-                identified as <strong>{user.email}</strong>.
-              </p>
-              <button
-                className="text-red-900 font-bold text-xs uppercase tracking-widest hover:underline"
-                onClick={async () => {
-                  await logout();
-                  openAuthModal();
-                }}
-              >
-                Switch Profile
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-8">
-              <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="text-left">
-                    <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-1">
-                      From
-                    </p>
-                    <p className="text-sm font-bold text-slate-600">Secure Sender</p>
-                  </div>
-                  <ArrowRight className="text-brand-primary w-5 h-5 mx-4" aria-hidden="true" />
-                  <div className="text-right">
-                    <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest mb-1">
-                      Target Account
-                    </p>
-                    <p className="text-sm font-bold text-slate-600 truncate max-w-[140px]">
-                      {user.email}
-                    </p>
-                  </div>
-                </div>
-                <div className="pt-6 border-t border-slate-50 flex items-center justify-center">
-                  <CheckCircle2 className="w-4 h-4 text-green-500 mr-2" aria-hidden="true" />
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                    Ready to claim
-                  </span>
-                </div>
+          <div className="p-8 bg-black/40">
+            {!user ? (
+              <div className="text-center">
+                <p className="type text-white/50 text-sm mb-8">
+                  Identification required to claim assets.
+                </p>
+                <button
+                  onClick={() =>
+                    toast({
+                      kind: 'info',
+                      message: 'Sign in from the navbar to claim this ticket.',
+                    })
+                  }
+                  className="disp w-full bg-white text-black py-4 text-lg tracking-wide hover:bg-brand-primary transition-all"
+                >
+                  AUTHORIZE VIA IDENTITY PROVIDER
+                </button>
               </div>
+            ) : isWrongUser ? (
+              <div className="bg-brand-accent/10 p-8 border border-brand-accent/30 text-center">
+                <XCircle className="w-12 h-12 text-brand-accent mx-auto mb-4" aria-hidden="true" />
+                <p className="disp text-xl tracking-tight text-white mb-2">IDENTIFICATION CONFLICT</p>
+                <p className="type text-white/60 text-sm mb-6">
+                  This asset is registered for <strong className="text-white">{transfer.receiverEmail}</strong>, but you are
+                  identified as <strong className="text-white">{user.email}</strong>.
+                </p>
+                <button
+                  className="type text-brand-accent text-xs uppercase tracking-widest hover:underline"
+                  onClick={async () => {
+                    await logout();
+                    openAuthModal();
+                  }}
+                >
+                  Switch Profile
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                <div className="bg-white/5 border border-white/10 p-7">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="text-left">
+                      <p className="type text-[9px] text-white/30 uppercase tracking-widest mb-1">
+                        from
+                      </p>
+                      <p className="disp text-lg tracking-tight">SECURE SENDER</p>
+                    </div>
+                    <ArrowRight className="text-brand-primary w-6 h-6 mx-4 shrink-0" aria-hidden="true" />
+                    <div className="text-right min-w-0">
+                      <p className="type text-[9px] text-white/30 uppercase tracking-widest mb-1">
+                        target account
+                      </p>
+                      <p className="disp text-lg tracking-tight truncate">
+                        {user.email}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="pt-5 border-t border-white/5 flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-brand-primary" aria-hidden="true" />
+                    <span className="type text-[10px] text-white/40 uppercase tracking-widest">
+                      ready to claim
+                    </span>
+                  </div>
+                </div>
 
-              <button
-                onClick={handleClaim}
-                disabled={claiming}
-                className="w-full bg-slate-900 text-white py-6 rounded-2xl font-bold uppercase tracking-widest text-xs hover:bg-slate-800 transition-all shadow-2xl shadow-slate-200 active:scale-95 disabled:opacity-50"
-              >
-                {claiming ? 'Claiming...' : 'Claim Ticket'}
-              </button>
-            </div>
-          )}
-        </div>
-      </motion.div>
+                <button
+                  onClick={handleClaim}
+                  disabled={claiming}
+                  className="disp w-full bg-brand-primary text-black py-4 text-xl tracking-wide hover:scale-[1.01] transition-transform disabled:opacity-50"
+                >
+                  {claiming ? 'CLAIMING…' : 'CLAIM TICKET'}
+                </button>
+              </div>
+            )}
+          </div>
+        </motion.div>
 
-      <p className="text-center text-[9px] text-slate-300 font-bold uppercase tracking-[0.4em]">
-        VP SECURE EXCHANGE PROTOCOL v1.0.4
-      </p>
+        <p className="text-center type text-[9px] text-white/25 uppercase tracking-[0.35em]">
+          exos secure exchange protocol v1.0.4
+        </p>
+      </div>
     </div>
   );
 }
