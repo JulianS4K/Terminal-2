@@ -1,9 +1,9 @@
--- Migration 20260708161000 · lane:A1 (data plane — ingest/discovery) ·
+-- Migration 20260708181000 · lane:A1 (data plane — ingest/discovery) ·
 --   writes (DDL): td_events_discover_drain() (recreate — Eventbrite field dialect) ·
 --   reads: net._http_response, td_discover_targets ·
 --   writes on run: td_discovered_events ·
 --   spends: charges 1 TicketsData credit per drained 200 (already spent at fetch) ·
---   pre: 20260609130000 (td_events_discover_drain v1), 20260708160000 (eventbrite target)
+--   pre: 20260609130000 (td_events_discover_drain v1), 20260708180000 (eventbrite target)
 --
 -- ## APPLIED via MCP 2026-07-08 (operator-directed). Idempotent CREATE OR REPLACE;
 --    re-apply is a no-op. This file is the codification.

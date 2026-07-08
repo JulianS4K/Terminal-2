@@ -59,7 +59,7 @@ NATIVE_PLATFORMS = frozenset({"seatgeek"})
 #   - eventbrite: RE-ENABLED 2026-07-08 (operator directive) — wiring in the
 #     Eventbrite organizer feed via /events + /fetch, starting with organizer
 #     https://www.eventbrite.com/o/105655500371 (see migration
-#     20260708160000_td_eventbrite_organizer_discovery.sql).
+#     20260708180000_td_eventbrite_organizer_discovery.sql).
 OPERATOR_DISABLED_PLATFORMS = frozenset({"dice"})
 
 EXCLUDED_PLATFORMS = NATIVE_PLATFORMS | OPERATOR_DISABLED_PLATFORMS

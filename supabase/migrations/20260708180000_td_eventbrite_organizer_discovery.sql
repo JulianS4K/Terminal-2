@@ -1,4 +1,4 @@
--- Migration 20260708160000 · lane:A1 (data plane — ingest/discovery) ·
+-- Migration 20260708180000 · lane:A1 (data plane — ingest/discovery) ·
 --   writes (DDL): td_discover_targets_platform_check (widen to add 'eventbrite') ·
 --   writes on run: td_discover_targets (seed one Eventbrite organizer target) ·
 --   reads: — ·
