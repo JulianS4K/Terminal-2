@@ -169,10 +169,12 @@
       // page; unmapped (primary-only) rows open the Eventbrite-source page
       // (event.html?eb=<td_event_id>) — a reduced primary-face view.
       const name = r.event_name || `Eventbrite ${escapeHtml(String(r.td_event_id || '?'))}`;
-      const ebPage = `event.html?eb=${encodeURIComponent(String(r.td_event_id || ''))}`;
+      // Source page only exists when we have a td_event_id to key it on; a row
+      // without one (degenerate) stays plain text rather than a dead ?eb= link.
+      const ebPage = r.td_event_id ? `event.html?eb=${encodeURIComponent(String(r.td_event_id))}` : null;
       const nameCell = r.tevo_event_id
         ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(name)}</a>`
-        : `<a href="${escapeHtml(ebPage)}">${escapeHtml(name)}</a>`;
+        : (ebPage ? `<a href="${escapeHtml(ebPage)}">${escapeHtml(name)}</a>` : escapeHtml(name));
       const unmapped = r.tevo_event_id ? '' : ' <span class="badge muted" title="Primary-only — no canonical TEvo/secondary market; opens the Eventbrite-source page">primary-only</span>';
 
       // Price band. Free events flagged explicitly; otherwise min–max face.
@@ -205,9 +207,8 @@
       const ebHref = /^https?:\/\//i.test(r.event_url || '') ? r.event_url : null;
       const links = [];
       if (ebHref) links.push(`<a href="${escapeHtml(ebHref)}" target="_blank" rel="noopener">Eventbrite ↗</a>`);
-      links.push(r.tevo_event_id
-        ? `<a href="event.html?event=${r.tevo_event_id}">EVENT</a>`
-        : `<a href="${escapeHtml(ebPage)}">EVENT</a>`);
+      if (r.tevo_event_id) links.push(`<a href="event.html?event=${r.tevo_event_id}">EVENT</a>`);
+      else if (ebPage) links.push(`<a href="${escapeHtml(ebPage)}">EVENT</a>`);
 
       tr.innerHTML = `
         <td>${nameCell}${unmapped}</td>
