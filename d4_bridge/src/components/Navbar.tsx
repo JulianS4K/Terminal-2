@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Ticket, User, LogOut, PlusCircle, LayoutDashboard } from 'lucide-react';
+import { Ticket, User, LogOut, PlusCircle, LayoutDashboard, Bell } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useT } from '../context/LanguageContext';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -30,6 +30,13 @@ export default function Navbar() {
                 <Link to="/dashboard" className="type text-[12px] uppercase tracking-widest text-white/60 hover:text-brand-primary transition-colors hidden sm:flex items-center gap-2">
                   <LayoutDashboard className="w-4 h-4 text-brand-primary" />
                   <span>{t('nav.dashboard')}</span>
+                </Link>
+                <Link
+                  to="/alerts"
+                  aria-label="Alerts"
+                  className="text-white/60 hover:text-brand-primary transition-colors"
+                >
+                  <Bell className="w-5 h-5" />
                 </Link>
                 <div className="relative group/user">
                   <button className="flex items-center gap-3 bg-white/5 p-1 pr-5 border border-white/10 hover:border-brand-primary/60 transition-colors">

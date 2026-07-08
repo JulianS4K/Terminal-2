@@ -42,6 +42,7 @@ const OrganizerEventReport = lazy(() => import('./views/OrganizerEventReport'));
 const PromoteEvent = lazy(() => import('./views/PromoteEvent'));
 const OrgPromote = lazy(() => import('./views/OrgPromote'));
 const NotFound = lazy(() => import('./views/NotFound'));
+const Notifications = lazy(() => import('./views/Notifications'));
 
 /**
  * @license
@@ -107,6 +108,7 @@ export default function App() {
                     <Route path="/organizer/:id" element={<OrganizerProfile />} />
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/my-tickets" element={<MyTickets />} />
+                    <Route path="/alerts" element={<Notifications />} />
                     <Route path="/ticket/:id" element={<TicketDetail />} />
                     <Route path="/wallet/pass/:ticketId" element={<WalletPass />} />
                     <Route path="/transfer/:id" element={<TransferTicket />} />

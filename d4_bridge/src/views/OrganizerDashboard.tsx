@@ -3,6 +3,7 @@ import { Event } from '../types';
 import { listOrgEvents } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
+import AccessDenied from '../components/AccessDenied';
 import { Link } from 'react-router-dom';
 import { Plus, Settings, Users, BarChart3, ChevronRight, Music, MapPin, Calendar, CheckCircle2, Download, Megaphone, Search, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -83,7 +84,13 @@ export default function OrganizerDashboard() {
   const showOnboardingNudge =
     user && !isAdmin && orgs.length === 0 && !onboardingDismissed;
 
-  if (!user) return <div className="max-w-7xl mx-auto p-20 text-center text-gray-500">Sign in to manage your events.</div>;
+  if (!user)
+    return (
+      <AccessDenied
+        scrawl="crew access only"
+        message="Sign in with your organizer account to manage your events, or head back to the public floor."
+      />
+    );
 
   return (
     <div className="bg-[#f2f4f7] min-h-screen">

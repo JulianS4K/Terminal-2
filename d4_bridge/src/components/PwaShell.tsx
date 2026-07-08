@@ -61,12 +61,12 @@ function SwUpdateBanner() {
       <div className="flex items-start gap-3">
         <RefreshCw size={18} className="flex-shrink-0 mt-0.5" />
         <div className="flex-1 min-w-0">
-          <p className="font-black uppercase tracking-tighter italic text-sm">Update Available</p>
-          <p className="text-xs mt-0.5 opacity-80">A new version is ready. Reload to apply.</p>
+          <p className="disp text-base tracking-wide uppercase leading-none">Update Available</p>
+          <p className="type text-xs mt-1 opacity-80">A new version is ready. Reload to apply.</p>
         </div>
         <button
           onClick={apply}
-          className="bg-black text-brand-primary px-3 py-1.5 text-[10px] font-black uppercase tracking-tighter italic hover:bg-white hover:text-black transition-all"
+          className="disp bg-black text-brand-primary px-3 py-1.5 text-sm tracking-wide uppercase hover:bg-white hover:text-black transition-all"
         >
           Reload
         </button>
@@ -104,7 +104,7 @@ function OfflineBanner() {
   return (
     <div
       role="status"
-      className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-black px-4 py-2 text-center text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
+      className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-black px-4 py-2 text-center type text-[10px] uppercase tracking-widest flex items-center justify-center gap-2"
     >
       <WifiOff size={14} />
       Offline — some features won't work until you're back online
@@ -172,13 +172,13 @@ function InstallPrompt() {
       <div className="flex items-start gap-3 pr-6">
         <Download size={18} className="flex-shrink-0 mt-0.5 text-brand-primary" />
         <div className="flex-1 min-w-0">
-          <p className="font-black uppercase tracking-tighter italic text-sm">Install Exos</p>
-          <p className="text-xs mt-0.5 text-white/60">
+          <p className="disp text-base tracking-wide uppercase leading-none">Install Exos</p>
+          <p className="type text-xs mt-1 text-white/60">
             Faster, full-screen, works offline for tickets you've already loaded.
           </p>
           <button
             onClick={install}
-            className="mt-3 bg-brand-primary text-black px-3 py-1.5 text-[10px] font-black uppercase tracking-tighter italic hover:bg-white transition-all"
+            className="disp mt-3 bg-brand-primary text-black px-3 py-1.5 text-sm tracking-wide uppercase hover:bg-white transition-all"
           >
             Install
           </button>
