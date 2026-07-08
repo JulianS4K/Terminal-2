@@ -13,10 +13,11 @@
 //     deploy is never masked by a stale bundle; cache is the offline fallback.
 // Bump CACHE to invalidate the offline shell on the next visit.
 
-const CACHE = 'vibepass-store-v1';
+const CACHE = 'vibepass-store-v2';
 const SHELL = [
   '/store',
   '/static/store/style.css',
+  '/static/store/theme.js',
   '/static/store/store.js',
   '/static/store/seatmap.js',
   '/static/store/lib/tevomaps.bundle.js',

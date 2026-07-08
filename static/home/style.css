@@ -64,6 +64,7 @@ main.grid {
   transform: translateY(-2px);
 }
 .card.terminal    { border-top-color: var(--accent); }
+.card.fantasy     { border-top-color: var(--pos); }
 .card.store       { border-top-color: var(--info); }
 .card.bridge      { border-top-color: #c084fc; }
 .card.locked {
@@ -81,6 +82,7 @@ main.grid {
   margin-bottom: 12px;
 }
 .card.terminal    .card-tag { color: var(--accent); }
+.card.fantasy     .card-tag { color: var(--pos); }
 .card.store       .card-tag { color: var(--info); }
 .card.bridge      .card-tag { color: #c084fc; }
 
@@ -101,6 +103,7 @@ main.grid {
   text-transform: uppercase; letter-spacing: 0.5px;
   color: var(--accent);
 }
+.card.fantasy .card-cta { color: var(--pos); }
 .card.bridge .card-cta { color: #c084fc; }
 .card-note {
   margin-top: 8px;

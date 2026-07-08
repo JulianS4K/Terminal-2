@@ -540,6 +540,54 @@ def test_terminal_proxy_404_for_missing_whitelisted_file(client):
     assert r.status_code == 404
 
 
+def test_terminal_fantasy_html_redirects_to_d5(client):
+    # Fantasy moved to the D5 /fantasy/ surface — the old terminal page URL
+    # 308-redirects (preserving any ?league= deep-link query).
+    r = client.get("/terminal/fantasy.html", follow_redirects=False)
+    assert r.status_code == 308
+    assert r.headers["location"] == "/fantasy/"
+    r = client.get("/terminal/fantasy.html?league=5", follow_redirects=False)
+    assert r.status_code == 308
+    assert r.headers["location"] == "/fantasy/?league=5"
+
+
+# ---- /fantasy family (D5 surface) ----
+def test_fantasy_redirect(client):
+    r = client.get("/fantasy", follow_redirects=False)
+    assert r.status_code == 308
+    assert r.headers["location"] == "/fantasy/"
+
+
+def test_fantasy_index_serves(client):
+    r = client.get("/fantasy/", follow_redirects=False)
+    assert r.status_code == 200
+
+
+def test_fantasy_proxy_serves_existing_asset(client):
+    r = client.get("/fantasy/boot.js", follow_redirects=False)
+    assert r.status_code == 200
+
+
+def test_fantasy_proxy_rejects_path_traversal(client):
+    r = client.get("/fantasy/..%2fsecret.html", follow_redirects=False)
+    assert r.status_code == 404
+
+
+def test_fantasy_proxy_rejects_backslash(client):
+    r = client.get("/fantasy/foo%5cbar.html", follow_redirects=False)
+    assert r.status_code == 404
+
+
+def test_fantasy_proxy_rejects_unknown_extension(client):
+    r = client.get("/fantasy/secret.env", follow_redirects=False)
+    assert r.status_code == 404
+
+
+def test_fantasy_proxy_404_for_missing_whitelisted_file(client):
+    r = client.get("/fantasy/definitely-not-here-xyz.js", follow_redirects=False)
+    assert r.status_code == 404
+
+
 def test_undelivered_landing(client):
     r = client.get("/undelivered", follow_redirects=False)
     assert r.status_code == 200

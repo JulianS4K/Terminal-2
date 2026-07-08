@@ -65,6 +65,14 @@ services:
       - type: redirect
         source: /login.html
         destination: /terminal/login.html
+      # Fantasy was promoted to its own D5 surface, served only by the FastAPI
+      # storefront shell — there is no /fantasy/ subtree on this static CDN. Send
+      # the legacy terminal-hosted URL cross-origin to the new surface so old
+      # bookmarks / shared links don't 404. (Same-origin redirect can't work: the
+      # target doesn't exist on this host.)
+      - type: redirect
+        source: /fantasy.html
+        destination: https://vibepass-storefront-test.onrender.com/fantasy/
 
       # Root index — bare `/` serves the unified landing selector (cards for
       # Terminal / Undelivered / Store). Rewrite (not redirect) so the URL

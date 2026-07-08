@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="ivory">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0a0b0e" />
+  <meta name="theme-color" content="#f4f1ea" />
   <meta name="robots" content="noindex" />
   <link rel="apple-touch-icon" href="/static/store/favicon.svg" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; base-uri 'self'; form-action 'self'" />
@@ -11,12 +11,14 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>{{ERR_TITLE}} — VibePass</title>
   <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <script src="/static/store/theme.js"></script>
   <link rel="stylesheet" href="/static/store/style.css" />
 </head>
 <body data-page="error">
   <header class="topbar">
     <a class="brand" href="/store">VibePass</a>
     <span class="badge mvp">MVP · browse only · no real purchases</span>
+    <button type="button" class="theme-toggle" aria-label="Switch to dark theme" aria-pressed="false" title="Switch to dark theme">☾</button>
   </header>
 
   <main class="wrap err-main">

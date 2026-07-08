@@ -70,11 +70,17 @@
     _initResolve();
   });
 
+  // Login page path. Defaults to the sibling 'login.html' (relative — resolves
+  // under /static/terminal/ on localhost and / on the Render CDN). A spun-off
+  // surface that reuses this auth (e.g. the D5 /fantasy/ page, which has no
+  // sibling login.html) sets window.LOGIN_URL to an absolute path pointing at
+  // the terminal login before this script loads. Backward-compatible: unset →
+  // unchanged relative behavior.
+  const LOGIN_PAGE = (typeof window !== 'undefined' && window.LOGIN_URL) || 'login.html';
+
   function loginUrl(returnUrl) {
     const here = returnUrl || (location.pathname + location.search);
-    // Relative path — browser resolves relative to current page, so works
-    // under both /static/terminal/ (localhost uvicorn) and / (Render CDN).
-    return 'login.html?return=' + encodeURIComponent(here);
+    return LOGIN_PAGE + '?return=' + encodeURIComponent(here);
   }
 
   async function requireAuth() {
@@ -102,7 +108,7 @@
     // redirect URL exactly). Use new URL() to resolve login.html relative to
     // current page — yields /static/terminal/login.html on localhost or
     // /login.html on Render where publishPath=static/terminal serves at root.
-    const redirectTo = new URL('login.html?return=' + encodeURIComponent(here), location.href).toString();
+    const redirectTo = new URL(LOGIN_PAGE + '?return=' + encodeURIComponent(here), location.href).toString();
     const { error } = await client.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -115,7 +121,7 @@
 
   async function signOut() {
     try { await client.auth.signOut(); } catch (e) { console.warn('signOut error', e); }
-    window.location.href = 'login.html';
+    window.location.href = LOGIN_PAGE;
   }
 
   function getAccessToken() {
