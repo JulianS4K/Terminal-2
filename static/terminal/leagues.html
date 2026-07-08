@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Leagues</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260707a" />
+  <style>
+    /* Leagues hub — page-specific layout. Reuses shared tokens/classes
+       (.panel-title, .empty, .muted, .num, .ours, .race-badge) from style.css;
+       only the hub-unique picker/hero/KPI/ranking chrome lives here. Inline is
+       CSP-allowed (style-src 'unsafe-inline'); JS must stay external. */
+    .wrap.leagues { display:flex; flex-direction:column; gap:14px; }
+
+    /* League picker — team leagues, a divider, then racing series. */
+    .lg-picker { display:flex; flex-wrap:wrap; gap:6px; align-items:stretch;
+      background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
+    .lg-btn { display:flex; flex-direction:column; align-items:flex-start; gap:1px;
+      min-width:66px; padding:6px 10px; background:var(--panel-2, #1a1a1a);
+      border:1px solid var(--line); border-radius:6px; color:var(--muted);
+      font-family:var(--mono, monospace); font-size:12px; font-weight:600;
+      letter-spacing:.5px; cursor:pointer; transition:border-color .1s, color .1s; }
+    .lg-btn:hover { color:var(--text); border-color:var(--dim, #4a4a4a); }
+    .lg-btn.active { color:var(--accent); border-color:var(--accent); }
+    .lg-btn .sub { font-size:9px; font-weight:500; letter-spacing:.5px;
+      color:var(--dim, #4a4a4a); text-transform:uppercase; }
+    .lg-btn.active .sub { color:var(--accent); opacity:.75; }
+    .lg-sep { width:1px; align-self:stretch; margin:2px 4px; background:var(--line); }
+
+    /* Hero */
+    .lg-hero { display:flex; align-items:center; gap:18px; background:var(--panel);
+      border:1px solid var(--line); border-radius:8px; padding:16px 18px; }
+    .lg-logo { flex:0 0 auto; width:72px; height:72px; display:flex; align-items:center;
+      justify-content:center; border:1px solid var(--line); border-radius:8px;
+      background:var(--panel-2, #1a1a1a); color:var(--accent);
+      font-family:var(--mono, monospace); font-weight:700; font-size:15px; text-align:center; line-height:1.1; }
+    .lg-hero h1 { margin:0 0 4px; font-size:22px; font-weight:700; color:var(--text); }
+    .lg-hero .meta { margin:0; color:var(--muted); font-size:13px; }
+    .lg-hero .meta .badge { color:var(--info, #60a5fa); border:1px solid var(--info, #60a5fa);
+      border-radius:4px; padding:0 5px; font-size:11px; margin-left:2px; }
+
+    /* KPI strip */
+    .kpi-strip { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));
+      gap:1px; background:var(--line); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    .kpi-cell { display:flex; flex-direction:column; gap:2px; padding:12px 14px; background:var(--panel); }
+    .kpi-num { font-family:var(--mono, monospace); font-size:20px; font-weight:700; color:var(--text); }
+    .kpi-num.ours { color:var(--accent); }
+    .kpi-num.warn { color:var(--warn, #f59e0b); }
+    .kpi-lbl { font-size:10px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); }
+
+    /* Two-pane grid: ranking/schedule (wide) + teams/standings */
+    .lg-grid { display:grid; grid-template-columns:1.4fr 1fr; gap:14px; align-items:start; }
+    @media (max-width: 900px) { .lg-grid { grid-template-columns:1fr; } }
+    .lg-grid > section { background:var(--panel); border:1px solid var(--line);
+      border-radius:8px; padding:12px 14px; min-width:0; }
+
+    /* Demand ranking rows (team leagues) */
+    .dm-row { display:grid; grid-template-columns:26px 1fr 76px 60px; align-items:center;
+      gap:8px; padding:5px 0; border-bottom:1px solid var(--line-2, #1f1f1f); }
+    .dm-row:last-child { border-bottom:0; }
+    .dm-rank { font-family:var(--mono, monospace); font-size:12px; color:var(--muted); text-align:right; }
+    .dm-name { min-width:0; }
+    .dm-name a, .dm-name span.nm { color:var(--text); font-weight:600; font-size:13px; }
+    .dm-name a:hover { color:var(--accent); }
+    .dm-bar { height:5px; margin-top:4px; background:var(--panel-2, #1a1a1a); border-radius:3px; overflow:hidden; }
+    .dm-bar-fill { height:100%; background:var(--accent); opacity:.7; border-radius:3px; }
+    .dm-val { font-family:var(--mono, monospace); font-size:12px; text-align:right; color:var(--text); }
+    .dm-owned { font-family:var(--mono, monospace); font-size:12px; text-align:right; }
+    .dm-owned.ours { color:var(--accent); }
+    .blind-dot { color:var(--warn, #f59e0b); margin-left:4px; cursor:help; }
+    .lg-note { margin-top:8px; color:var(--dim, #4a4a4a); font-size:11px; }
+  </style>
+</head>
+<body data-page="leagues">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap leagues">
+
+    <!-- League picker — team leagues (ESPN-tracked) + racing series. Built by JS. -->
+    <div class="lg-picker" id="lgPicker" role="tablist" aria-label="League picker">
+      <div class="empty muted small">loading leagues…</div>
+    </div>
+
+    <!-- Hero -->
+    <section class="lg-hero" id="lgHero">
+      <div class="lg-logo" id="lgLogo">—</div>
+      <div class="lg-hero-meta">
+        <h1 id="lgName">—</h1>
+        <p class="meta"><span id="lgSub">—</span> <span class="badge">ESPN</span></p>
+      </div>
+    </section>
+
+    <!-- KPI strip -->
+    <section class="kpi-strip" id="lgStrip"></section>
+
+    <!-- Primary (ranking / schedule) + secondary (blind spots / standings) -->
+    <div class="lg-grid">
+      <section id="lgPrimary">
+        <div class="panel-title row">
+          <span id="lgPrimaryTitle">—</span>
+          <span class="muted small" id="lgPrimaryMeta"></span>
+        </div>
+        <div id="lgPrimaryBody"><div class="empty">loading…</div></div>
+      </section>
+      <section id="lgSecondary">
+        <div class="panel-title row">
+          <span id="lgSecondaryTitle">—</span>
+          <span class="muted small" id="lgSecondaryMeta"></span>
+        </div>
+        <div id="lgSecondaryBody"><div class="empty">loading…</div></div>
+      </section>
+    </div>
+
+    <!-- Racing results drawer (revealed when a completed race is clicked) -->
+    <section id="lgResults" hidden>
+      <div class="panel-title row">
+        <span id="lgResultsTitle">RACE RESULTS</span>
+        <a href="#" class="muted small" id="lgResultsClose">✕ close</a>
+      </div>
+      <div id="lgResultsBody"><div class="empty">loading…</div></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <script src="pwa.js?v=20260702"></script>
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260708lg"></script>
+  <script src="leagues.js?v=20260708lg"></script>
+</body>
+</html>
