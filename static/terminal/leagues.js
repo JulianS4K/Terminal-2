@@ -43,6 +43,23 @@
     'f1': 'Motorsport · Formula 1 · driver championship',
   };
 
+  // Additional leagues carried over from the D0 wireframe that have no ESPN
+  // performer mapping ingested yet. Shown in the picker (so the full slate is
+  // present + navigable) but their panels honestly report "ingest pending"
+  // rather than faking rows — get_performers_by_league returns empty for them,
+  // and the render path degrades to the pending state. If a league is later
+  // ingested, it lights up automatically (no code change).
+  const EXTRA_LEAGUES = [
+    { key: 'CFB',    label: 'CFB',    sub: 'College' },
+    { key: 'CBB',    label: 'CBB',    sub: 'College' },
+    { key: 'CFL',    label: 'CFL',    sub: 'Pro' },
+    { key: 'NWSL',   label: 'NWSL',   sub: 'Pro' },
+    { key: 'Tennis', label: 'TENNIS', sub: 'ATP·WTA' },
+    { key: 'PBR',    label: 'PBR',    sub: 'Tour' },
+    { key: 'PGA',    label: 'PGA',    sub: 'Tour' },
+  ];
+  const EXTRA_KEYS = new Set(EXTRA_LEAGUES.map(l => l.key));
+
   let _teamLeagues = [];   // [{ key, label, teams }] from /api/broker/leagues
   const $ = id => document.getElementById(id);
 
@@ -85,6 +102,8 @@
       if (isRacing(want)) return want;
       const hit = _teamLeagues.find(l => String(l.key).toLowerCase() === want.toLowerCase());
       if (hit) return hit.key;
+      const ex = EXTRA_LEAGUES.find(l => l.key.toLowerCase() === want.toLowerCase());
+      if (ex) return ex.key;
     }
     if (_teamLeagues.length) return _teamLeagues[0].key;
     return RACING_SERIES[0].key;
@@ -95,8 +114,12 @@
     const btn = (key, label, sub, kind) =>
       `<button class="lg-btn" data-league="${escapeHtml(key)}" data-kind="${kind}" role="tab">` +
       `${escapeHtml(label)}<span class="sub">${escapeHtml(sub)}</span></button>`;
-    const teamBtns = _teamLeagues.map(l =>
-      btn(l.key, l.label, (l.teams ? l.teams + ' tm' : 'teams'), 'team')).join('');
+    // Backend team leagues first, then the wireframe carry-over leagues (dedup
+    // by key so a backend-promoted league never doubles), then racing series.
+    const extras = EXTRA_LEAGUES.filter(e => !_teamLeagues.some(l => l.key === e.key));
+    const teamBtns =
+      _teamLeagues.map(l => btn(l.key, l.label, (l.teams ? l.teams + ' tm' : 'teams'), 'team')).join('') +
+      extras.map(l => btn(l.key, l.label, l.sub, 'team')).join('');
     const raceBtns = RACING_SERIES.map(s => btn(s.key, s.label, s.sub, 'racing')).join('');
     picker.innerHTML = teamBtns + (teamBtns && raceBtns ? '<div class="lg-sep"></div>' : '') + raceBtns;
     picker.querySelectorAll('.lg-btn').forEach(b =>
@@ -139,9 +162,16 @@
   // Team leagues — /api/broker/performers/by-league/{league}
   // ------------------------------------------------------------------
   async function loadTeamLeague(key) {
-    const label = (_teamLeagues.find(l => l.key === key) || {}).label || key;
-    setHero(shortCode(key), leagueLongName(key, label), 'Team league · per-team demand & owned position');
+    const isExtra = EXTRA_KEYS.has(key);
+    const label = displayLeagueLabel(key);
+    setHero(shortCode(key), leagueLongName(key, label),
+      isExtra ? 'ESPN league · ingest pending (no performer mapping yet)'
+              : 'Team league · per-team demand & owned position');
     T.setStatus('Loading ' + label + '…');
+    $('lgPerformers').hidden = false;
+    $('lgPerformersTitle').textContent = 'PERFORMERS — ' + label;
+    $('lgPerformersMeta').textContent = '';
+    $('lgPerformersBody').innerHTML = '<div class="empty">loading…</div>';
     $('lgPrimaryTitle').textContent = 'TEAMS — BY DEMAND';
     $('lgSecondaryTitle').textContent = 'BLIND SPOTS — TEAMS WE DON’T OWN';
     $('lgPrimaryMeta').textContent = '';
@@ -156,6 +186,7 @@
       T.setStatus(e.message, 'err');
       $('lgPrimaryBody').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
       $('lgSecondaryBody').innerHTML = '';
+      $('lgPerformersBody').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
       renderStrip([{ n: '—', l: 'teams' }]);
       return;
     }
@@ -190,10 +221,16 @@
     ]);
     T.setStatus('Loaded', 'ok');
 
+    // Performers roster — every team in the league as a linked chip.
+    renderPerformers(teams, label, isExtra);
+
     // Primary — full demand ranking with inline bars.
+    const pendingMsg = isExtra
+      ? `${escapeHtml(label)} isn’t ingested yet — no ESPN performer mapping. The major leagues + racing are live.`
+      : 'no ESPN-tracked team metrics for this league yet';
     $('lgPrimaryMeta').textContent = teams.length ? `${teams.length} teams · ranked by market tix` : '';
     if (!teams.length) {
-      $('lgPrimaryBody').innerHTML = '<div class="empty">no ESPN-tracked team metrics for this league yet</div>';
+      $('lgPrimaryBody').innerHTML = `<div class="empty">${pendingMsg}</div>`;
     } else {
       const max = Math.max(1, ...teams.map(t => t.demand));
       $('lgPrimaryBody').innerHTML = teams.map((t, i) => {
@@ -241,9 +278,36 @@
     }
   }
 
+  // Performers roster — one linked chip per performer in the league (alpha
+  // order), each opening its performer page. When the league has no ingested
+  // performers it reports the pending state rather than an empty box.
+  function renderPerformers(teams, label, isExtra) {
+    const roster = [...teams].sort((a, b) => a.name.localeCompare(b.name));
+    $('lgPerformersMeta').textContent = roster.length ? `${roster.length} linked` : '';
+    if (!roster.length) {
+      $('lgPerformersBody').innerHTML = isExtra
+        ? `<div class="empty">${escapeHtml(label)} isn’t ingested yet — no ESPN performer mapping. The major leagues + racing are live.</div>`
+        : '<div class="empty">no performers mapped for this league yet</div>';
+      return;
+    }
+    $('lgPerformersBody').innerHTML = '<div class="perf-chips">' + roster.map(t => {
+      const ev = t.events ? `<span class="pc-ev" title="upcoming events tracked">${t.events}</span>` : '';
+      return t.id != null
+        ? `<a class="perf-chip" href="performer.html?performer=${t.id}" title="Open ${escapeHtml(t.name)} performer page">${escapeHtml(t.name)}${ev}</a>`
+        : `<span class="perf-chip plain" title="no performer page mapped">${escapeHtml(t.name)}${ev}</span>`;
+    }).join('') + '</div>';
+  }
+
+  function displayLeagueLabel(key) {
+    const bk = _teamLeagues.find(l => l.key === key);
+    if (bk) return bk.label || key;
+    const ex = EXTRA_LEAGUES.find(l => l.key === key);
+    if (ex) return ex.label;
+    return key;
+  }
   function shortCode(key) {
     const k = String(key).toUpperCase();
-    return k === 'WORLD CUP' ? 'WC' : k.slice(0, 4);
+    return k === 'WORLD CUP' ? 'WC' : k === 'TENNIS' ? 'TEN' : k.slice(0, 4);
   }
   function leagueLongName(key, label) {
     const LONG = {
@@ -251,6 +315,9 @@
       NHL: 'National Hockey League', NFL: 'National Football League',
       MLS: 'Major League Soccer', WNBA: "Women's National Basketball Association",
       'World Cup': 'FIFA World Cup',
+      CFB: 'College Football', CBB: 'College Basketball',
+      CFL: 'Canadian Football League', NWSL: "National Women's Soccer League",
+      Tennis: 'Tennis · ATP & WTA', PBR: 'Professional Bull Riders', PGA: 'PGA Tour',
     };
     return LONG[key] || LONG[label] || label;
   }
@@ -261,6 +328,8 @@
   async function loadRacing(series) {
     setHero(series === 'f1' ? 'F1' : 'NASCAR', RACING_NAME[series] || series, RACING_SUB[series] || 'Motorsport');
     T.setStatus('Loading ' + (RACING_NAME[series] || series) + '…');
+    // Drivers aren't TEvo performers → no roster panel for racing series.
+    $('lgPerformers').hidden = true;
     $('lgPrimaryTitle').textContent = 'SCHEDULE';
     $('lgSecondaryTitle').textContent = 'DRIVER STANDINGS';
     $('lgPrimaryMeta').textContent = '';
