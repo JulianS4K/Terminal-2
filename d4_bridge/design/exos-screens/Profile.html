@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Profile</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme {
+    --color-brand-primary: #00FF00; --color-brand-secondary: #FF00FF; --color-brand-accent: #FF2A2A;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif; --font-display: "Anton", sans-serif;
+    --font-type: "Special Elite", monospace; --font-marker: "Permanent Marker", cursive;
+  }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); }
+</style>
+</head>
+<body class="wall grain text-white">
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+    <a href="Home.html" class="flex items-center gap-3 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg></div><span class="disp text-4xl tracking-tight text-white leading-none pt-1" style="transform:skewX(-6deg)">EXOS</span></a>
+    <div class="flex items-center gap-3 bg-white/5 p-1 pr-4 border border-white/10"><div class="w-9 h-9 bg-brand-primary text-black disp text-lg flex items-center justify-center">R</div><span class="type text-[11px] uppercase tracking-widest text-white hidden sm:inline">0x7f3a</span></div>
+  </div></div>
+</nav>
+
+<div class="max-w-4xl mx-auto px-4 py-12 relative z-10">
+  <div class="flex items-center gap-6 mb-12">
+    <div class="w-24 h-24 bg-brand-primary flex items-center justify-center disp text-5xl text-black">R</div>
+    <div>
+      <h1 class="disp text-5xl tracking-tight leading-none" style="transform:skewX(-4deg)">RILEY OKAFOR</h1>
+      <p class="type text-white/40 text-[10px] uppercase tracking-widest mt-2">pass holder // general access</p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+    <div class="md:col-span-2 space-y-8">
+      <div class="bg-[#111] border border-white/10 p-8">
+        <h2 class="disp text-3xl tracking-tight mb-6" style="transform:skewX(-4deg)">FOLLOWING ORGANIZERS</h2>
+        <div class="text-center py-14 border border-white/5 border-dashed">
+          <p class="type text-white/30 mb-4 text-[13px] uppercase tracking-widest">your following list is empty</p>
+          <a href="Home.html" class="disp inline-block px-6 py-2 bg-white text-black text-lg tracking-wide hover:bg-brand-primary transition-colors">FIND EVENTS</a>
+        </div>
+      </div>
+    </div>
+    <div class="space-y-4">
+      <a href="MyTickets.html" class="block p-6 bg-brand-primary text-black hover:bg-white transition-colors group">
+        <h3 class="disp text-2xl tracking-tight">MY VAULT</h3>
+        <p class="type text-[10px] uppercase tracking-widest opacity-70">access your passes</p>
+      </a>
+      <div class="bg-[#111] border border-white/10 p-6">
+        <div class="flex items-center gap-2 mb-4 text-white/40">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span class="type text-[10px] uppercase tracking-widest">settings</span>
+        </div>
+        <ul class="space-y-3">
+          <li><button class="type text-[12px] uppercase tracking-widest text-white hover:text-brand-primary transition-colors">edit profile</button></li>
+          <li><button class="type text-[12px] uppercase tracking-widest text-white hover:text-brand-primary transition-colors">payment methods</button></li>
+          <li><button class="type text-[12px] uppercase tracking-widest text-white hover:text-brand-primary transition-colors">privacy</button></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

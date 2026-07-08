@@ -98,8 +98,16 @@ export default function TransferTicket() {
     }
   };
 
-  if (loading) return <div className="max-w-7xl mx-auto p-40 text-center text-white/20 font-black uppercase tracking-widest italic animate-pulse">Loading Ticket...</div>;
-  if (!ticket || ticket.ownerId !== user?.uid) return <div className="max-w-2xl mx-auto p-20 text-center font-black uppercase tracking-widest italic text-brand-accent">Access Denied</div>;
+  if (loading) return (
+    <div className="wall min-h-screen flex items-center justify-center">
+      <p className="disp text-3xl tracking-tight text-white/20 animate-pulse" style={{ transform: 'skewX(-4deg)' }}>LOADING TICKET…</p>
+    </div>
+  );
+  if (!ticket || ticket.ownerId !== user?.uid) return (
+    <div className="wall min-h-screen flex items-center justify-center">
+      <p className="disp text-4xl tracking-tight text-brand-accent" style={{ transform: 'skewX(-4deg)' }}>ACCESS DENIED</p>
+    </div>
+  );
 
   // After a successful transfer, render the share-link success state
   // instead of the form. The sender keeps the page open, copies the
@@ -117,28 +125,28 @@ export default function TransferTicket() {
       }
     };
     return (
-      <div className="bg-[#000000] min-h-screen text-white">
-        <div className="max-w-2xl mx-auto px-4 py-20">
-          <div className="flex items-center justify-between mb-16">
+      <div className="wall min-h-screen text-white">
+        <div className="max-w-2xl mx-auto px-4 py-16 relative z-10">
+          <div className="flex items-center justify-between mb-14">
             <div>
-              <p className="text-brand-primary text-xs font-black uppercase tracking-widest italic mb-2">Transfer Sent</p>
-              <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none">Share The Link</h1>
+              <p className="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">// transfer sent</p>
+              <h1 className="disp text-5xl tracking-tight leading-none" style={{ transform: 'skewX(-4deg)' }}>SHARE THE LINK</h1>
             </div>
             <div className="w-14 h-14 bg-brand-primary flex items-center justify-center">
               <Check className="text-black w-6 h-6" />
             </div>
           </div>
 
-          <div className="bg-[#111111] border border-white/10 p-10 mb-8">
-            <p className="text-[10px] font-black text-white/30 uppercase tracking-widest italic mb-2">Sent to</p>
-            <p className="text-2xl font-black uppercase italic tracking-tighter mb-8 break-all">{completedReceiverEmail}</p>
-            <p className="text-[10px] font-black text-white/30 uppercase tracking-widest italic mb-2">Claim link</p>
+          <div className="bg-[#111] border border-white/10 p-9 mb-8">
+            <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-2">sent to</p>
+            <p className="disp text-3xl tracking-tight leading-none mb-8 break-all">{completedReceiverEmail}</p>
+            <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-2">claim link</p>
             <div className="bg-black border border-white/10 p-5 flex items-center justify-between gap-3 mb-6">
-              <code className="text-[11px] font-mono text-white/70 break-all flex-1">{claimUrl}</code>
+              <code className="type text-[11px] text-white/70 break-all flex-1">{claimUrl}</code>
               <button
                 type="button"
                 onClick={handleCopy}
-                className={`shrink-0 px-4 py-2 font-black uppercase tracking-tighter italic text-[10px] transition-all flex items-center gap-2 ${
+                className={`disp shrink-0 px-4 py-2 text-sm tracking-wide transition-all flex items-center gap-2 ${
                   linkCopied ? 'bg-brand-primary text-black' : 'bg-white text-black hover:bg-brand-primary'
                 }`}
               >
@@ -146,83 +154,77 @@ export default function TransferTicket() {
                 {linkCopied ? 'COPIED' : 'COPY'}
               </button>
             </div>
-            <p className="text-[11px] text-white/40 italic font-medium leading-relaxed mb-2">
+            <p className="type text-[12px] text-white/45 leading-relaxed">
               We've also queued an email to {completedReceiverEmail} with this link. Send the link directly via text or any other app — the receiver signs in with the email above to claim.
             </p>
           </div>
 
-          <div className="flex gap-4">
-            <button
-              type="button"
-              onClick={() => navigate('/my-tickets')}
-              className="flex-1 bg-white text-black py-5 font-black uppercase tracking-tighter italic text-xs hover:bg-brand-primary transition-all"
-            >
-              BACK TO TICKETS
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/my-tickets')}
+            className="disp w-full bg-white text-black py-4 text-xl tracking-wide hover:bg-brand-primary transition-all"
+          >
+            BACK TO TICKETS
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-[#000000] min-h-screen text-white">
-      <div className="max-w-2xl mx-auto px-4 py-20">
-        <div className="flex items-center justify-between mb-16">
+    <div className="wall min-h-screen text-white">
+      <div className="max-w-2xl mx-auto px-4 py-16 relative z-10">
+        <div className="flex items-center justify-between mb-14">
           <div>
-            <p className="text-brand-primary text-xs font-black uppercase tracking-widest italic mb-2">Transfer Ticket</p>
-            <h1 className="text-4xl font-black uppercase italic tracking-tighter leading-none">Send Ticket</h1>
+            <p className="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">// transfer ticket</p>
+            <h1 className="disp text-5xl tracking-tight leading-none" style={{ transform: 'skewX(-4deg)' }}>SEND TICKET</h1>
           </div>
           <div className="w-14 h-14 bg-white flex items-center justify-center">
             <Send className="text-black w-6 h-6" />
           </div>
         </div>
 
-        <div className="bg-[#111111] border border-white/10 p-10 relative overflow-hidden mb-12">
-          <div className="relative z-10">
-            <div className="flex items-center space-x-6 mb-12">
-               <div className="w-24 h-32 bg-white/5 border border-white/10 overflow-hidden shrink-0">
-                  <img src={event?.image} alt="" className="w-full h-full object-cover grayscale" />
-               </div>
-               <div>
-                  <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter italic mb-1">Ticket Details</p>
-                  <h2 className="text-2xl font-black text-white italic uppercase tracking-tighter mb-2">{event?.title}</h2>
-                  <p className="text-[10px] font-black text-brand-primary uppercase italic tracking-tighter">Tier: {ticket.tierName || 'GENERAL'}</p>
-               </div>
+        <div className="group bg-[#111] border border-white/10 p-9">
+          <div className="flex items-center gap-6 mb-10">
+             <div className="w-24 h-32 bg-white/5 border border-white/10 overflow-hidden shrink-0">
+                <img src={event?.image} alt="" className="xerox w-full h-full object-cover" />
+             </div>
+             <div>
+                <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">ticket details</p>
+                <h2 className="disp text-3xl tracking-tight leading-none mb-2">{event?.title}</h2>
+                <p className="type text-[11px] text-brand-primary uppercase tracking-widest">tier: {ticket.tierName || 'GENERAL'}</p>
+             </div>
+          </div>
+
+          <form onSubmit={handleTransfer} className="space-y-8">
+            <div className="space-y-3">
+              <label className="type text-[10px] text-white/30 uppercase tracking-widest ml-1">recipient email</label>
+              <div className="relative">
+                <UserPlus className="absolute left-5 top-1/2 -translate-y-1/2 text-brand-primary w-5 h-5" />
+                <input
+                  required
+                  type="email"
+                  placeholder="enter recipient email address"
+                  className="type w-full bg-white/5 border border-white/10 py-5 pl-14 pr-6 text-white placeholder-white/35 focus:outline-none focus:border-brand-primary transition-all text-base tracking-wide"
+                  value={recipientEmail}
+                  onChange={(e) => setRecipientEmail(e.target.value)}
+                />
+              </div>
             </div>
 
-            <form onSubmit={handleTransfer} className="space-y-10">
-              <div className="space-y-4">
-                <label className="text-[10px] font-black text-white/30 uppercase tracking-widest italic ml-1">Recipient Email</label>
-                <div className="relative">
-                  <UserPlus className="absolute left-6 top-1/2 -translate-y-1/2 text-brand-primary w-5 h-5" />
-                  <input
-                    required
-                    type="email"
-                    placeholder="Enter recipient email address"
-                    className="w-full bg-white/5 border border-white/10 py-6 pl-16 pr-8 text-white font-black uppercase italic tracking-tighter focus:outline-none focus:border-brand-primary transition-all text-lg"
-                    value={recipientEmail}
-                    onChange={(e) => setRecipientEmail(e.target.value)}
-                  />
-                </div>
-              </div>
+            <div className="p-6 bg-black border border-white/5 flex items-start gap-4">
+               <ShieldAlert className="w-6 h-6 text-brand-accent shrink-0" />
+               <p className="type text-[12px] text-white/45 leading-relaxed">Warning: Sending this ticket permanently removes it from your account. The recipient receives it instantly once you authorize. This cannot be undone.</p>
+            </div>
 
-              <div className="p-8 bg-black border border-white/5 space-y-4">
-                 <div className="flex items-start">
-                    <ShieldAlert className="w-6 h-6 text-brand-accent mr-4 shrink-0" />
-                    <p className="text-[11px] text-white/40 font-bold leading-relaxed italic uppercase tracking-tighter">Warning: Sending this ticket will permanently remove it from your account. The recipient will receive it instantly once you authorize. This cannot be undone.</p>
-                 </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={sending}
-                className="primary-button w-full text-sm disabled:opacity-20"
-              >
-                {sending ? 'Sending...' : 'Send Ticket'}
-              </button>
-            </form>
-          </div>
+            <button
+              type="submit"
+              disabled={sending}
+              className="disp w-full bg-brand-primary text-black py-4 text-xl tracking-wide hover:scale-[1.01] transition-transform disabled:opacity-20"
+            >
+              {sending ? 'SENDING…' : 'SEND TICKET'}
+            </button>
+          </form>
         </div>
       </div>
     </div>

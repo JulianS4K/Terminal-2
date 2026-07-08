@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Roles &amp; Permissions</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-tm-blue:#026cdf; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-[#f2f4f7] text-slate-900; } }
+  .card{ @apply bg-white rounded-2xl border border-slate-200 shadow-sm; }
+</style>
+<style>/*punk-stitch*/ .marker{font-family:"Permanent Marker",cursive;} .disp{font-family:"Anton",sans-serif;}</style>
+</head>
+<body class="bg-[#f2f4f7] text-slate-900">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <div class="flex items-center gap-3 bg-white/5 p-1 pr-4 border border-white/10"><div class="w-9 h-9 bg-brand-primary text-black font-black italic flex items-center justify-center">K</div></div>
+</div></div></nav>
+
+<div class="max-w-6xl mx-auto px-4 py-10">
+  <a href="OrgMembers.html" class="flex items-center gap-2 text-slate-500 hover:text-slate-900 text-[10px] font-black uppercase tracking-widest mb-6"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg> Members</a>
+  <div class="mb-8"><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Team access</p><span class="inline-flex items-baseline gap-3 flex-wrap"><h1 class="text-3xl md:text-4xl font-bold tracking-tight">Roles &amp; Permissions</h1><span class="marker text-[#FF00FF] text-lg rotate-[-3deg] leading-none whitespace-nowrap">who does what ✦</span></span><p class="text-slate-500 text-sm mt-2">What each role can do. Toggle to customize — changes are enforced server-side by <span class="font-mono text-xs text-slate-600">exos_has_org_role()</span>.</p></div>
+
+  <!-- role cards -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8" id="roles"></div>
+
+  <!-- matrix -->
+  <div class="card overflow-x-auto">
+    <table class="w-full text-left min-w-[720px]">
+      <thead><tr class="bg-slate-50 border-b border-slate-100">
+        <th class="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Permission</th>
+        <th class="px-4 py-4 text-[10px] font-black text-slate-900 uppercase tracking-widest text-center">Owner</th>
+        <th class="px-4 py-4 text-[10px] font-black text-tm-blue uppercase tracking-widest text-center">Manager</th>
+        <th class="px-4 py-4 text-[10px] font-black text-emerald-600 uppercase tracking-widest text-center">Finance</th>
+        <th class="px-4 py-4 text-[10px] font-black text-amber-600 uppercase tracking-widest text-center">Scanner</th>
+        <th class="px-4 py-4 text-[10px] font-black text-violet-600 uppercase tracking-widest text-center">Content</th>
+      </tr></thead>
+      <tbody class="divide-y divide-slate-50" id="matrix"></tbody>
+    </table>
+  </div>
+  <div class="flex justify-end mt-6"><button class="bg-tm-blue text-white px-8 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm">Save permissions</button></div>
+</div>
+
+<script>
+  const roles=[
+    {n:'Owner',c:'bg-slate-900 text-white',d:'Full control. Billing, members, delete.'},
+    {n:'Manager',c:'bg-blue-50 text-tm-blue border border-blue-100',d:'Run events end-to-end. No billing.'},
+    {n:'Finance',c:'bg-emerald-50 text-emerald-700 border border-emerald-100',d:'Money: reports, refunds, payouts.'},
+    {n:'Scanner',c:'bg-amber-50 text-amber-700 border border-amber-100',d:'Door only. Scan + admit.'},
+    {n:'Content',c:'bg-violet-50 text-violet-700 border border-violet-100',d:'Edit listings, storefront, promo.'},
+  ];
+  document.getElementById('roles').innerHTML = roles.map(r=>`
+    <div class="card p-4"><span class="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${r.c} mb-3">${r.n}</span><p class="text-[11px] text-slate-500 leading-snug">${r.d}</p></div>`).join('');
+  // [owner,manager,finance,scanner,content]
+  const perms=[
+    ['Create & edit events',      [1,1,0,0,1]],
+    ['Publish / cancel events',   [1,1,0,0,0]],
+    ['View sales & financials',   [1,1,1,0,0]],
+    ['Refund / void tickets',     [1,1,1,0,0]],
+    ['Scan at the door',          [1,1,0,1,0]],
+    ['Send announcements',        [1,1,0,0,1]],
+    ['Promo codes & promote',     [1,1,0,0,1]],
+    ['Edit storefront & branding',[1,1,0,0,1]],
+    ['Manage members',            [1,0,0,0,0]],
+    ['Billing & payouts',         [1,0,1,0,0]],
+  ];
+  const yes='<span class="inline-flex w-6 h-6 rounded-full bg-green-50 text-green-600 items-center justify-center mx-auto"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span>';
+  const no='<span class="inline-flex w-6 h-6 items-center justify-center mx-auto text-slate-200"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12h14"/></svg></span>';
+  document.getElementById('matrix').innerHTML = perms.map(([label,arr])=>`
+    <tr class="hover:bg-slate-50/50">
+      <td class="px-6 py-3.5 text-sm font-bold text-slate-700">${label}</td>
+      ${arr.map(v=>`<td class="px-4 py-3.5 text-center">${v?yes:no}</td>`).join('')}
+    </tr>`).join('');
+</script>
+</body>
+</html>

@@ -399,8 +399,8 @@ export default function EventDetails() {
     window.location.href = `sms:?&body=${encodeURIComponent(text)}`;
   };
 
-  if (loading) return <div className="max-w-7xl mx-auto p-24 text-center text-slate-300 font-bold uppercase tracking-[0.3em] animate-pulse">Loading Experience Details...</div>;
-  if (!event) return <div className="max-w-7xl mx-auto p-20 text-center font-bold text-slate-300 uppercase tracking-widest text-xs">Event not found.</div>;
+  if (loading) return <div className="wall min-h-screen"><div className="max-w-7xl mx-auto p-24 text-center type text-white/50 uppercase tracking-[0.3em] animate-pulse">loading experience details…</div></div>;
+  if (!event) return <div className="wall min-h-screen"><div className="max-w-7xl mx-auto p-20 text-center type text-white/50 uppercase tracking-widest text-xs">event not found.</div></div>;
 
   // Helper: live sold/capacity for a given tier from the sub-collection,
   // falling back to the embedded values if the sub-collection hasn't loaded
@@ -437,25 +437,32 @@ export default function EventDetails() {
   const accentBorderStyle = event.branding?.accentColor ? { borderColor: event.branding.accentColor } : {};
 
   return (
-    <div className="bg-[#000000] min-h-screen text-white">
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <button onClick={() => navigate(-1)} className="flex items-center text-white/50 hover:text-white mb-12 transition-colors font-black uppercase tracking-tighter italic text-xs">
-          <ArrowLeft className="w-4 h-4 mr-2 text-brand-primary" />
-          Back to Events
+    <div className="wall grain min-h-screen text-white relative">
+      {/* Local reproduction of the mockup's bespoke `.grain` film-grain
+          overlay — not in index.css, so it's copied verbatim from the
+          EventDetails/Checkout mockup <style> blocks. `.wall`, `.disp`,
+          `.type`, `.neon`, `.xerox`, `.stamp` all live in index.css. */}
+      <style>{`
+        .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+      `}</style>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
+        <button onClick={() => navigate(-1)} className="type inline-flex items-center gap-2 text-white/50 hover:text-white mb-10 transition-colors text-[12px] uppercase tracking-widest">
+          <ArrowLeft className="w-4 h-4 text-brand-primary" />
+          back to events
         </button>
 
         {eventStatus === 'cancelled' && (
-          <div className="mb-8 p-5 rounded-2xl border border-red-400/40 bg-red-500/10">
-            <p className="text-xs font-black uppercase tracking-widest text-red-300 mb-2">
+          <div className="mb-8 p-5 border border-brand-accent/40 bg-brand-accent/10">
+            <p className="type text-xs uppercase tracking-widest text-brand-accent mb-2">
               This event has been cancelled
             </p>
             {event.cancelReason && (
               <p className="text-sm text-red-100/80 mb-2">
-                <span className="font-black uppercase tracking-widest text-red-300/60 text-[10px]">Reason: </span>
+                <span className="type uppercase tracking-widest text-brand-accent/60 text-[10px]">Reason: </span>
                 {event.cancelReason}
               </p>
             )}
-            <p className="text-xs text-red-100/60">
+            <p className="type text-xs text-red-100/60 leading-relaxed">
               If you bought directly through this site, your refund will be issued
               automatically within 5 business days. If you bought via a partner site
               (StubHub, Vivid Seats, etc.) please contact that channel for refund
@@ -465,54 +472,54 @@ export default function EventDetails() {
         )}
 
         {eventStatus === 'draft' && isOrganizer && (
-          <div className="mb-8 p-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 flex items-center justify-between">
-            <p className="text-[10px] font-black uppercase tracking-widest text-amber-200">
+          <div className="mb-8 p-4 border border-amber-300/30 bg-amber-300/10 flex items-center justify-between">
+            <p className="type text-[10px] uppercase tracking-widest text-amber-200">
               DRAFT — only you can see this. Publish from the Edit screen to list it.
             </p>
             <Link
               to={`/edit-event/${event.id}`}
-              className="text-[10px] font-black uppercase tracking-widest text-amber-200 hover:text-white"
+              className="type text-[10px] uppercase tracking-widest text-amber-200 hover:text-white"
             >
               Edit →
             </Link>
           </div>
         )}
         {eventStatus === 'cancelled' && (
-          <div className="mb-8 p-4 rounded-2xl border border-red-300/40 bg-red-300/10">
-            <p className="text-[10px] font-black uppercase tracking-widest text-red-200">
+          <div className="mb-8 p-4 border border-brand-accent/40 bg-brand-accent/10">
+            <p className="type text-[10px] uppercase tracking-widest text-brand-accent">
               CANCELLED — sales are closed.
             </p>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-16">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-14">
           {/* Left Column: Image and Description */}
           <div className="lg:col-span-2">
-            <div className="aspect-video relative mb-12 border border-white/10 group overflow-hidden">
-              <img 
-                src={event.image || 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?q=80&w=1200'} 
+            <div className="group aspect-video relative mb-12 border border-white/10 overflow-hidden">
+              <img
+                src={event.image || 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=1200'}
                 alt={event.title}
-                className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700"
+                className="xerox w-full h-full object-cover transition-all duration-700"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-80"></div>
               <div className="absolute bottom-8 left-8 right-8">
-                <span className="bg-brand-primary text-black px-3 py-1 text-[10px] font-black uppercase tracking-tighter italic mb-4 inline-block">
+                <span className="disp bg-brand-primary text-black px-3 text-lg tracking-wide inline-block mb-3">
                   {event.category}
                 </span>
-                <h1 className="text-5xl md:text-7xl font-black uppercase italic tracking-tighter leading-none">{event.title}</h1>
+                <h1 className="disp text-5xl md:text-7xl tracking-tight leading-[0.85]">{event.title}</h1>
               </div>
             </div>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px bg-white/10 border border-white/10 mb-16">
-              <div className="flex items-center p-8 bg-[#111111]">
-                <div className="w-12 h-12 bg-white/5 flex items-center justify-center mr-6">
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-white/10 border border-white/10 mb-14">
+              <div className="flex items-center gap-5 p-7 bg-[#111]">
+                <div className="w-12 h-12 bg-white/5 flex items-center justify-center shrink-0">
                    <Calendar className="text-brand-primary w-6 h-6" />
                 </div>
                 <div>
-                   <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-1">Date & Time</p>
-                   <p className="font-black text-xl uppercase tracking-tighter italic">{formatInTz(event.date.toDate(), event.timezone, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
+                   <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">date &amp; time</p>
+                   <p className="disp text-xl tracking-tight">{formatInTz(event.date.toDate(), event.timezone, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
                    {event.date && eventStatus !== 'cancelled' && (
-                     <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mt-1">
+                     <p className="type text-[10px] text-brand-primary uppercase tracking-widest mt-1">
                        <EventCountdown
                          startsAt={event.date.toDate()}
                          doorsOpen={
@@ -526,7 +533,7 @@ export default function EventDetails() {
                      </p>
                    )}
                    {event.timing && (
-                     <div className="flex gap-3 mt-1 text-[10px] text-white/40 font-black uppercase tracking-widest italic">
+                     <div className="flex gap-3 mt-1 type text-[10px] text-white/40 uppercase tracking-widest">
                         {event.timing.doorsOpen && (
                           <span>
                             DOORS {formatInTz(
@@ -556,13 +563,13 @@ export default function EventDetails() {
                    )}
                 </div>
               </div>
-              <div className="flex items-center p-8 bg-[#111111]">
-                <div className="w-12 h-12 bg-white/5 flex items-center justify-center mr-6">
+              <div className="flex items-center gap-5 p-7 bg-[#111]">
+                <div className="w-12 h-12 bg-white/5 flex items-center justify-center shrink-0">
                    <MapPin className="text-brand-primary w-6 h-6" />
                 </div>
                 <div>
-                   <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-1">Location</p>
-                   <p className="font-black text-xl uppercase tracking-tighter italic">{event.location}</p>
+                   <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">location</p>
+                   <p className="disp text-xl tracking-tight">{event.location}</p>
                 </div>
               </div>
               {/* Performers block — only renders when the organizer
@@ -571,9 +578,9 @@ export default function EventDetails() {
                   genres because at a music event, performer names
                   are usually what the buyer cares about most. */}
               {event.performers && event.performers.length > 0 ? (
-                <div className="p-8 bg-[#111111] sm:col-span-2">
-                  <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-3">Performers</p>
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-3">
+                <div className="p-7 bg-[#111] sm:col-span-2">
+                  <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-3">performers</p>
+                  <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
                     {event.performers.map((name, i) => {
                       const links = linksForArtist(name, event.artistLinks);
                       return (
@@ -581,8 +588,8 @@ export default function EventDetails() {
                           <span
                             className={
                               i === 0
-                                ? 'font-black text-3xl uppercase tracking-tighter italic text-white'
-                                : 'font-black text-lg uppercase tracking-tighter italic text-white/60'
+                                ? 'disp text-3xl tracking-tight text-white'
+                                : 'disp text-xl tracking-tight text-white/60'
                             }
                           >
                             {name}
@@ -594,13 +601,13 @@ export default function EventDetails() {
                   </div>
                 </div>
               ) : null}
-              <div className="flex items-center p-8 bg-[#111111] sm:col-span-2">
-                <div className="w-12 h-12 bg-white/5 flex items-center justify-center mr-6">
+              <div className="flex items-center gap-5 p-7 bg-[#111] sm:col-span-2">
+                <div className="w-12 h-12 bg-white/5 flex items-center justify-center shrink-0">
                    <Tag className="text-brand-primary w-6 h-6" />
                 </div>
                 <div>
-                   <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-1">Genres</p>
-                   <p className="font-black text-xl uppercase tracking-tighter italic">
+                   <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">genres</p>
+                   <p className="disp text-xl tracking-tight">
                       {event.genres?.join(', ') || event.category}
                       {event.subgenres && event.subgenres.length > 0 && <span className="text-white/40 ml-2">({event.subgenres.join(', ')})</span>}
                    </p>
@@ -608,37 +615,37 @@ export default function EventDetails() {
               </div>
             </div>
 
-            <div className="mb-16">
-              <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-8 border-l-4 border-brand-primary pl-4">ABOUT THE EVENT</h2>
-              <p className="text-white/60 text-xl leading-relaxed italic font-medium whitespace-pre-wrap">{event.description}</p>
+            <div className="mb-14">
+              <h2 className="disp text-3xl tracking-tight mb-6 border-l-4 border-brand-primary pl-4">ABOUT THE EVENT</h2>
+              <p className="type text-white/60 text-base leading-relaxed whitespace-pre-wrap">{event.description}</p>
             </div>
-            
-            <div className="mb-16 bg-[#111111] border border-white/10 p-8 flex items-center justify-between group">
-               <div className="flex items-center space-x-6">
-                  <div className="w-16 h-16 bg-brand-primary flex items-center justify-center text-2xl font-black text-black italic">
+
+            <div className="mb-14 bg-[#111] border border-white/10 p-7 flex items-center justify-between group">
+               <div className="flex items-center gap-5">
+                  <div className="w-16 h-16 bg-brand-primary flex items-center justify-center disp text-3xl text-black">
                     {(org?.name || 'O').charAt(0).toUpperCase()}
                   </div>
                   <div>
-                    <p className="text-[10px] text-white/40 font-black uppercase tracking-widest mb-1">Presented By</p>
-                    <h3 className="text-2xl font-black italic uppercase tracking-tighter">{org?.name || 'Event Organizer'}</h3>
+                    <p className="type text-[10px] text-white/40 uppercase tracking-widest mb-1">presented by</p>
+                    <h3 className="disp text-2xl tracking-tight">{org?.name || 'Event Organizer'}</h3>
                     {org?.marketing?.socials && Object.values(org.marketing.socials).some(Boolean) ? (
                       <SocialLinks socials={org.marketing.socials} className="flex items-center gap-3 mt-2" />
                     ) : null}
                   </div>
                </div>
-               <Link to={`/organizer/${event.orgId ?? ''}`} className="px-6 py-3 bg-white/5 border border-white/10 text-xs font-black uppercase tracking-widest group-hover:bg-brand-primary group-hover:text-black transition-all">
-                  View Profile
+               <Link to={`/organizer/${event.orgId ?? ''}`} className="type px-5 py-2.5 bg-white/5 border border-white/10 text-[11px] uppercase tracking-widest group-hover:bg-brand-primary group-hover:text-black transition-colors">
+                  view profile
                </Link>
             </div>
           </div>
 
           {/* Right Column: Checkout Card */}
           <div className="lg:col-span-1">
-            <div className="sticky top-28 bg-[#111111] border border-white/10 shadow-2xl overflow-hidden">
-              <div className="p-8">
+            <div className="sticky top-24 bg-[#111] border border-white/10 overflow-hidden">
+              <div className="p-7">
                 <div className="mb-8">
-                    <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-2">Price</p>
-                    <p className="text-6xl font-black text-brand-primary tracking-tighter italic">{formatCurrency(priceToDisplay * quantity, event.currency)}</p>
+                    <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-2">price</p>
+                    <p className="disp text-6xl neon tracking-tight">{formatCurrency(priceToDisplay * quantity, event.currency)}</p>
                     {selectedTier && (() => {
                       // Scheduled-pricing urgency nudge: surface the next upward
                       // step so buyers see "price rises to $X on <date>".
@@ -646,80 +653,80 @@ export default function EventDetails() {
                       const next = nextPriceStep(selectedTier.priceSchedule);
                       if (!next || next.price <= cur) return null;
                       return (
-                        <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-brand-accent italic">
-                          ⏱ Price rises to {formatCurrency(next.price, event.currency)} on{' '}
+                        <p className="type mt-2 text-[10px] uppercase tracking-widest text-brand-accent">
+                          ⏱ price rises to {formatCurrency(next.price, event.currency)} on{' '}
                           {formatInTz(new Date(next.startsAt), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                         </p>
                       );
                     })()}
                 </div>
 
-                <div className="mb-10">
-                   <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-4">Quantity</p>
-                   <div className="flex items-center space-x-6 bg-black p-4 border border-white/5">
-                      <button 
+                <div className="mb-8">
+                   <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-3">quantity</p>
+                   <div className="flex items-center gap-5 bg-black p-3 border border-white/10">
+                      <button
                         onClick={() => setQuantity(Math.max(1, quantity - 1))}
                         className="w-10 h-10 bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
                       >
                         <Minus className="w-4 h-4 text-white" />
                       </button>
-                      <span className="text-2xl font-black italic">{quantity}</span>
-                      <button 
+                      <span className="disp text-2xl flex-1 text-center">{quantity}</span>
+                      <button
                         onClick={() => setQuantity(Math.min(maxPerOrder, quantity + 1))}
                         className="w-10 h-10 bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
                       >
                         <Plus className="w-4 h-4 text-white" />
                       </button>
                    </div>
-                   <p className="text-[8px] text-white/20 font-black uppercase tracking-widest mt-2 italic">Max per order: {maxPerOrder} | Total Limit: {maxPerAccount}</p>
+                   <p className="type text-[9px] text-white/20 uppercase tracking-widest mt-2">max per order: {maxPerOrder} · total limit: {maxPerAccount}</p>
                 </div>
 
                 {/* Tier Selection */}
                 {event.ticketTiers && event.ticketTiers.length > 0 && (
-                  <div className="mb-10 space-y-2">
-                     <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-4">Select Ticket Type</p>
+                  <div className="mb-8 space-y-2">
+                     <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-3">select ticket type</p>
                      {visibleTiers.map((tier) => (
                        <button
                          key={tier.id}
                          onClick={() => setSelectedTierId(tier.id)}
-                         className={`w-full p-6 text-left border-2 transition-all relative overflow-hidden flex flex-col items-start ${
-                           selectedTierId === tier.id 
-                             ? 'border-brand-primary bg-brand-primary/5' 
+                         className={`w-full p-5 text-left border-2 transition-all relative overflow-hidden flex flex-col items-start ${
+                           selectedTierId === tier.id
+                             ? 'border-brand-primary bg-brand-primary/5'
                              : 'border-white/10 hover:border-white/30 hover:bg-white/5'
                          }`}
                        >
                          {selectedTierId === tier.id && (
-                            <div className="absolute top-0 right-0 w-8 h-8 bg-brand-primary flex items-center justify-center">
+                            <div className="absolute top-0 right-0 w-7 h-7 bg-brand-primary flex items-center justify-center">
                                <CheckCircle2 className="w-4 h-4 text-black" />
                             </div>
                          )}
-                         
-                         <div className="flex justify-between items-center w-full mb-1">
-                            <p className="font-black text-white text-lg uppercase tracking-tighter italic">{tier.name}</p>
+
+                         <div className="flex justify-between items-center w-full mb-1 gap-3">
+                            <p className="disp text-xl tracking-tight text-white">{tier.name}</p>
                             {(() => {
                               const eff = effectiveTierPrice(tier.price, tier.priceSchedule);
                               const markedDown = eff < tier.price;
                               return (
-                                <p className="font-black text-brand-primary text-lg tracking-tighter italic">
+                                <span className="inline-flex items-center gap-2 shrink-0">
                                   {markedDown && (
-                                    <span className="text-white/30 line-through mr-2 text-sm">{formatCurrency(tier.price, event.currency)}</span>
+                                    <span className="type text-white/30 line-through text-xs">{formatCurrency(tier.price, event.currency)}</span>
                                   )}
-                                  {formatCurrency(eff, event.currency)}
-                                </p>
+                                  <span className="stamp neon text-base">{formatCurrency(eff, event.currency)}</span>
+                                </span>
                               );
                             })()}
                          </div>
-                         
-                         <p className="text-[10px] text-white/50 font-medium mb-4 uppercase tracking-tighter">{tier.description}</p>
-                         
+
+                         <p className="type text-[10px] text-white/50 mb-3">{tier.description}</p>
+
                          {(() => {
                            const live = liveTier(tier.id, tier.capacity);
                            const remaining = Math.max(0, live.capacity - live.sold);
                            return (
-                             <div className="flex items-center space-x-2">
-                               <div className={`w-1.5 h-1.5 ${remaining < 10 ? 'bg-brand-accent' : 'bg-brand-primary'}`}></div>
-                               <span className="text-[9px] font-black text-white/30 uppercase tracking-widest leading-none">
-                                 {remaining} SLOTS REMAINING
+                             <div className="flex items-center gap-2">
+                               <span className={`w-1.5 h-1.5 ${remaining < 10 ? 'bg-brand-accent' : 'bg-brand-primary'}`}></span>
+                               <span className="type text-[9px] text-white/30 uppercase tracking-widest leading-none">
+                                 {remaining} slots remaining
                                </span>
                              </div>
                            );
@@ -729,19 +736,19 @@ export default function EventDetails() {
                   </div>
                 )}
 
-                <div className="space-y-6 mb-10">
+                <div className="space-y-6 mb-6">
                   <div className="bg-black p-4 border border-white/5">
-                     <p className="text-[10px] text-white/30 font-black uppercase tracking-tighter mb-2">DISCOUNT_CODE</p>
+                     <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-2">discount_code</p>
                      <div className="flex gap-2">
-                        <input 
-                          className="flex-grow bg-white/5 border border-white/10 px-4 py-3 text-xs font-black uppercase tracking-tighter text-white focus:outline-none focus:border-brand-primary"
-                          placeholder="ENTER_TOKEN"
+                        <input
+                          className="type flex-grow bg-white/5 border border-white/10 px-4 py-3 text-[11px] uppercase tracking-widest text-white focus:outline-none focus:border-brand-primary"
+                          placeholder="enter_token"
                           value={discountCode}
                           onChange={(e) => setDiscountCode(e.target.value)}
                         />
-                        <button 
+                        <button
                           onClick={applyDiscount}
-                          className="px-6 py-3 bg-white text-black text-[10px] font-black uppercase tracking-tighter hover:bg-brand-primary transition-all shrink-0"
+                          className="disp px-5 bg-white text-black text-lg tracking-wide hover:bg-brand-primary transition-colors shrink-0"
                         >
                           APPLY
                         </button>
@@ -749,14 +756,14 @@ export default function EventDetails() {
                   </div>
 
                   <div className="divide-y divide-white/5 border-t border-white/5">
-                    <div className="flex justify-between text-[10px] py-4 font-black uppercase tracking-tighter">
-                      <span className="text-white/30">Status</span>
-                      <span className={soldOut ? 'text-brand-accent' : 'text-brand-primary'}>
+                    <div className="flex justify-between type text-[10px] py-3.5 uppercase tracking-widest">
+                      <span className="text-white/30">status</span>
+                      <span className={soldOut ? 'text-brand-accent' : 'neon'}>
                         {soldOut ? t('event.soldOut') : t('event.available')}
                       </span>
                     </div>
-                    <div className="flex justify-between text-[10px] py-4 font-black uppercase tracking-tighter">
-                      <span className="text-white/30">Tickets Available</span>
+                    <div className="flex justify-between type text-[10px] py-3.5 uppercase tracking-widest">
+                      <span className="text-white/30">tickets available</span>
                       <span className="text-white">
                         {selectedTier
                           ? (() => {
@@ -787,14 +794,14 @@ export default function EventDetails() {
                 <button
                   disabled={(soldOut && !voucher?.canBypass) || purchasing}
                   onClick={handlePurchase}
-                  className="primary-button w-full flex items-center justify-center space-x-4 disabled:bg-white/10 disabled:text-white/20"
+                  className="disp w-full bg-brand-primary text-black py-4 text-xl tracking-wide flex items-center justify-center gap-3 hover:scale-[1.01] transition-transform disabled:bg-white/10 disabled:text-white/20 disabled:scale-100"
                 >
                   {purchasing ? (
-                    <span className="animate-pulse uppercase tracking-tighter italic text-xs font-black">{t('event.processing')}</span>
+                    <span className="animate-pulse tracking-wide">{t('event.processing')}</span>
                   ) : (
                     <>
                       <Ticket className="w-5 h-5" />
-                      <span className="uppercase tracking-tighter italic text-sm font-black">{(soldOut && !voucher?.canBypass) ? t('event.soldOut') : t('event.buy')}</span>
+                      <span className="tracking-wide">{(soldOut && !voucher?.canBypass) ? t('event.soldOut') : t('event.buy')}</span>
                     </>
                   )}
                 </button>
@@ -824,29 +831,29 @@ export default function EventDetails() {
                     type="button"
                     disabled={purchasing}
                     onClick={handleTestBuy}
-                    className="mt-3 w-full bg-amber-500/10 border-2 border-amber-500/40 hover:bg-amber-500/20 text-amber-200 py-3 font-black uppercase italic tracking-tighter text-xs transition-all disabled:opacity-50"
+                    className="type mt-3 w-full bg-amber-500/10 border-2 border-amber-500/40 hover:bg-amber-500/20 text-amber-200 py-3 uppercase tracking-widest text-[11px] transition-all disabled:opacity-50"
                   >
-                    🧪 Test Mint (admin · bypasses Stripe)
+                    🧪 test mint (admin · bypasses stripe)
                   </button>
                 )}
 
-                <div className="mt-8 flex flex-col space-y-4 text-[9px] font-black uppercase tracking-[0.2em] text-white/30">
-                  <div className="flex items-center">
-                    <ShieldCheck className="w-4 h-4 mr-3 text-brand-primary" />
-                    SECURE DIGITAL ENTRY
+                <div className="mt-7 flex flex-col gap-3.5 type text-[10px] uppercase tracking-widest text-white/30">
+                  <div className="flex items-center gap-3">
+                    <ShieldCheck className="w-4 h-4 text-brand-primary" />
+                    secure digital entry
                   </div>
-                  <button onClick={() => setShowShare(true)} className="flex items-center hover:text-brand-primary transition-colors text-left">
-                    <Share2 className="w-4 h-4 mr-3 text-brand-primary" />
-                    Share Link
+                  <button onClick={() => setShowShare(true)} className="flex items-center gap-3 hover:text-brand-primary transition-colors text-left">
+                    <Share2 className="w-4 h-4 text-brand-primary" />
+                    share link
                   </button>
-                  <button onClick={handleSMSShare} className="flex items-center hover:text-brand-primary transition-colors text-left">
-                    <Send className="w-4 h-4 mr-3 text-brand-primary" />
-                    Send via SMS
+                  <button onClick={handleSMSShare} className="flex items-center gap-3 hover:text-brand-primary transition-colors text-left">
+                    <Send className="w-4 h-4 text-brand-primary" />
+                    send via sms
                   </button>
                   <AddToCalendar event={event} />
-                  <button onClick={handleInstagramStory} className="flex items-center hover:text-brand-primary transition-colors text-left">
-                    <Instagram className="w-4 h-4 mr-3 text-brand-primary" />
-                    Share to Instagram
+                  <button onClick={handleInstagramStory} className="flex items-center gap-3 hover:text-brand-primary transition-colors text-left">
+                    <Instagram className="w-4 h-4 text-brand-primary" />
+                    share to instagram
                   </button>
                   <SaveEventButton eventId={event.id} variant="row" />
                 </div>

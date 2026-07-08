@@ -223,9 +223,14 @@ export default function OrganizerEventReport() {
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
             Event Report
           </p>
-          <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">
-            {event.title}
-          </h1>
+          <span className="inline-flex items-baseline gap-3 flex-wrap">
+            <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900">
+              {event.title}
+            </h1>
+            <span className="marker text-brand-secondary text-lg rotate-[-3deg] leading-none whitespace-nowrap">
+              the numbers ✦
+            </span>
+          </span>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
@@ -402,7 +407,7 @@ function Stat({ label, value, icon }: { label: string; value: string; icon: Reac
         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{label}</p>
         <span className="text-slate-400">{icon}</span>
       </div>
-      <p className="text-2xl font-bold text-slate-900 tracking-tight">{value}</p>
+      <p className="disp text-4xl text-slate-900 tracking-tight" style={{ transform: 'skewX(-3deg)' }}>{value}</p>
     </div>
   );
 }

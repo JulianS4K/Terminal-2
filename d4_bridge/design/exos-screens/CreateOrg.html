@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — New Organization</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-tm-blue:#026cdf; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-[#f2f4f7] text-slate-900; } }
+  .card{ @apply bg-white rounded-2xl border border-slate-200 shadow-sm; }
+  .lbl{ @apply block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5; }
+  .inp{ @apply w-full bg-slate-50 border border-slate-200 rounded-lg px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-300 focus:outline-none focus:border-tm-blue focus:ring-2 focus:ring-tm-blue/15; }
+</style>
+<style>/*punk-stitch*/ .marker{font-family:"Permanent Marker",cursive;} .disp{font-family:"Anton",sans-serif;}</style>
+</head>
+<body class="bg-[#f2f4f7] text-slate-900">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <a href="Orgs.html" class="text-white/50 hover:text-white text-sm font-bold flex items-center gap-1.5"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg> Orgs</a>
+</div></div></nav>
+
+<div class="max-w-2xl mx-auto px-4 py-12">
+  <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Team · Setup</p>
+  <span class="inline-flex items-baseline gap-3 flex-wrap mb-1"><h1 class="text-3xl md:text-4xl font-bold tracking-tight">New organization</h1><span class="marker text-[#FF00FF] text-lg rotate-[-3deg] leading-none whitespace-nowrap">new crew ✦</span></span>
+  <p class="text-slate-500 text-sm mb-8">Everything you sell lives under an org. You can invite your team and set up billing after this.</p>
+
+  <div class="card p-6 md:p-8 space-y-6">
+    <div class="flex items-center gap-4">
+      <div class="w-16 h-16 flex items-center justify-center font-black text-black text-2xl shrink-0" style="background:#00FF00" id="avatar">K</div>
+      <div class="flex-1">
+        <label class="lbl">Organization name</label>
+        <input class="inp" id="nameInp" value="Knockdown Presents" />
+      </div>
+    </div>
+    <div>
+      <label class="lbl">Public handle</label>
+      <div class="flex items-center gap-0">
+        <span class="text-sm text-slate-400 bg-slate-100 border border-r-0 border-slate-200 rounded-l-lg px-3 py-2.5 font-mono">exos.live/o/</span>
+        <input class="inp rounded-l-none" style="border-radius:0 .5rem .5rem 0" id="handleInp" value="knockdown" />
+      </div>
+      <p class="text-[11px] text-emerald-600 mt-1.5 font-semibold flex items-center gap-1"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg> Available</p>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div><label class="lbl">Country</label><select class="inp"><option>United States</option><option>Canada</option><option>United Kingdom</option></select></div>
+      <div><label class="lbl">Default currency</label><select class="inp"><option>USD — $</option><option>CAD — $</option><option>GBP — £</option></select></div>
+    </div>
+    <div>
+      <label class="lbl">Brand color</label>
+      <div class="flex items-center gap-2.5" id="swatches"></div>
+    </div>
+  </div>
+
+  <div class="flex items-center gap-3 mt-6">
+    <a href="OrganizerOnboarding.html" class="bg-tm-blue text-white px-7 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm">Create organization</a>
+    <a href="Orgs.html" class="px-5 py-3 rounded font-bold text-sm text-slate-500 hover:text-slate-900">Cancel</a>
+    <span class="ml-auto text-[11px] text-slate-400">Step 1 of 4 · you can change all of this later</span>
+  </div>
+</div>
+
+<script>
+  const colors=['#00FF00','#FF00FF','#FFE714','#026cdf','#FF3B3B','#8B5CF6'];
+  let active='#00FF00';
+  const av=document.getElementById('avatar'), sw=document.getElementById('swatches');
+  const nameInp=document.getElementById('nameInp');
+  function initLetter(){ av.textContent=(nameInp.value.trim()[0]||'?').toUpperCase(); }
+  nameInp.addEventListener('input',initLetter);
+  function render(){ sw.innerHTML=colors.map(c=>`<button data-c="${c}" class="w-9 h-9 rounded-full ${c===active?'ring-2 ring-offset-2 ring-slate-900':''}" style="background:${c}"></button>`).join(''); }
+  sw.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return; active=b.dataset.c; av.style.background=active; render(); });
+  render(); initLetter();
+</script>
+</body>
+</html>

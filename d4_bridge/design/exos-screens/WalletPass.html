@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Pass</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme {
+    --color-brand-primary: #00FF00;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-display: "Anton", sans-serif;
+    --font-type: "Special Elite", monospace;
+  }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+</style>
+</head>
+<body class="wall grain text-white min-h-screen flex flex-col">
+  <!-- bare chrome: no navbar -->
+  <div class="flex items-center justify-between px-6 py-4">
+    <a href="TicketDetail.html" class="type inline-flex items-center gap-2 text-[11px] uppercase tracking-widest text-white/60 hover:text-white">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg> back
+    </a>
+    <div class="type text-[10px] uppercase tracking-widest text-white/30 flex items-center gap-2">
+      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+      max brightness for best scan
+    </div>
+  </div>
+
+  <div class="flex-1 flex flex-col items-center justify-center px-6 pb-12">
+    <div class="bg-white text-black rounded-[2rem] p-8 max-w-md w-full">
+      <div class="text-center mb-5">
+        <p class="disp text-2xl tracking-tight leading-none">BASEMENT: SHDW B2B KALTAR</p>
+        <p class="type text-[11px] uppercase tracking-widest text-black/50 mt-1">fri jul 11 · 11:00 pm</p>
+      </div>
+
+      <div class="relative flex flex-col items-center">
+        <div class="p-4 bg-white border-[3px] border-black rounded-2xl">
+          <svg id="qr" viewBox="0 0 25 25" class="w-[260px] h-[260px]" shape-rendering="crispEdges"></svg>
+        </div>
+      </div>
+
+      <div class="mt-6 pt-6 border-t border-dashed border-black/20 flex justify-between items-end">
+        <div><p class="type text-[9px] uppercase tracking-widest text-black/40 mb-1">holder</p><p class="disp text-lg tracking-tight leading-none">RILEY OKAFOR</p></div>
+        <div class="text-right"><p class="type text-[9px] uppercase tracking-widest text-black/40 mb-1">tier</p><p class="disp text-lg tracking-tight leading-none">GA</p></div>
+      </div>
+
+      <div class="mt-6 flex flex-col items-center">
+        <p class="type text-[9px] text-black/40 uppercase tracking-widest">code refreshes in</p>
+        <p class="disp text-3xl text-black tracking-tight leading-none mt-1"><span id="cd">00:24</span></p>
+        <div class="w-32 h-[3px] bg-black/10 mt-3"><div id="bar" class="h-full bg-brand-primary" style="width:80%"></div></div>
+      </div>
+
+      <div class="mt-6 text-center"><p class="type text-[9px] text-black/30 break-all">tkt_8f2a91cd4e</p></div>
+    </div>
+  </div>
+
+  <div class="px-6 pb-6 text-center">
+    <p class="type text-[9px] uppercase tracking-[0.3em] text-white/20">Exos · Scan-Only Pass</p>
+  </div>
+
+<script>
+  (function(){
+    const n=25, svg=document.getElementById('qr'); let out='';
+    const g=[]; for(let y=0;y<n;y++){g[y]=[];for(let x=0;x<n;x++)g[y][x]=Math.random()>0.52;}
+    function finder(ox,oy){ for(let y=-1;y<8;y++)for(let x=-1;x<8;x++){ const gy=oy+y,gx=ox+x; if(gy<0||gx<0||gy>=n||gx>=n)continue; const border=(x===0||x===6||y===0||y===6); const core=(x>=2&&x<=4&&y>=2&&y<=4); const sep=(x===-1||x===7||y===-1||y===7); g[gy][gx]= sep?false:(border||core); } }
+    finder(0,0);finder(n-7,0);finder(0,n-7);
+    for(let y=0;y<n;y++)for(let x=0;x<n;x++) if(g[y][x]) out+=`<rect x="${x}" y="${y}" width="1" height="1" fill="#000"/>`;
+    svg.innerHTML=out;
+  })();
+  (function(){ let t=24; const cd=document.getElementById('cd'), bar=document.getElementById('bar');
+    setInterval(()=>{ t=t<=0?30:t-1; cd.textContent='00:'+String(t).padStart(2,'0'); bar.style.width=(t/30*100)+'%'; },1000); })();
+</script>
+</body>
+</html>

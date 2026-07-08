@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — What are you doing tonight?</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme {
+    --color-brand-primary: #00FF00;
+    --color-brand-secondary: #FF00FF;
+    --color-brand-accent: #FF2A2A;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-display: "Anton", "Archivo Black", sans-serif;
+    --font-type: "Special Elite", "Courier New", monospace;
+    --font-marker: "Permanent Marker", cursive;
+  }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; }
+  .type{ font-family:"Special Elite",monospace; }
+  .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:
+      radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%),
+      radial-gradient(circle at 0% 100%, rgba(255,0,255,.045), transparent 45%),
+      #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); }
+  .xerox{ filter:grayscale(1) contrast(1.35) brightness(1.04); }
+  .xerox.group-hover\:on:hover{ filter:none; }
+  .stamp{ font-family:"Anton",sans-serif; border:2.5px solid currentColor; padding:0 7px 2px; display:inline-block; line-height:1.15; }
+  .tape{ position:absolute; width:96px; height:22px; background:rgba(0,255,0,.14); border-left:1px dashed rgba(0,255,0,.35); border-right:1px dashed rgba(0,255,0,.35); box-shadow:0 1px 3px rgba(0,0,0,.5); }
+  .under-spray{ position:relative; }
+  .under-spray::after{ content:""; position:absolute; left:0; right:0; bottom:-8px; height:12px; background:#00FF00; filter:blur(.5px); opacity:.95;
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='12'%3E%3Cpath d='M0 7 Q40 2 80 6 T160 5 T240 7 T300 4 L300 12 L0 12Z' fill='%23000'/%3E%3C/svg%3E") no-repeat center/100% 100%; }
+  ::-webkit-scrollbar{ width:7px; height:7px; } ::-webkit-scrollbar-track{ background:#050505; } ::-webkit-scrollbar-thumb{ background:#222; }
+  .no-bar::-webkit-scrollbar{ display:none; } .no-bar{ -ms-overflow-style:none; scrollbar-width:none; }
+</style>
+</head>
+<body class="wall grain text-white">
+
+<!-- ============ NAVBAR ============ -->
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex justify-between h-20 items-center">
+      <a href="#" class="flex items-center gap-3 group">
+        <div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors">
+          <svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+        </div>
+        <span class="disp text-4xl tracking-tight text-white leading-none pt-1 group-hover:neon transition-all" style="transform:skewX(-6deg)">EXOS</span>
+      </a>
+      <div class="flex items-center gap-5 sm:gap-8">
+        <a href="#" class="type text-[12px] uppercase tracking-widest text-white/60 hover:text-brand-primary transition-colors">my tickets</a>
+        <a href="#" class="type text-[12px] uppercase tracking-widest text-white/60 hover:text-brand-primary transition-colors hidden sm:inline">dashboard</a>
+        <button class="disp text-lg bg-brand-primary text-black px-5 py-1 hover:scale-[1.03] transition-transform tracking-wide">SIGN IN</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="relative overflow-hidden border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-14 relative z-10">
+    <div class="inline-flex items-center gap-2 border border-brand-primary/60 text-white px-3 py-1.5 mb-8">
+      <svg class="w-4 h-4 text-brand-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>
+      <span class="disp text-lg tracking-wide leading-none pt-0.5">NEW YORK</span>
+      <span class="text-[10px] text-white/50">▼</span>
+    </div>
+
+    <div class="relative max-w-4xl mb-7">
+      <h1 class="leading-[0.82]">
+        <span class="disp block text-6xl md:text-8xl tracking-tight text-white" style="transform:skewX(-5deg)">WHAT ARE YOU</span>
+        <span class="disp inline-block text-6xl md:text-9xl tracking-tight neon under-spray mt-2" style="transform:skewX(-5deg)">DOING TONIGHT?</span>
+      </h1>
+      <span class="marker absolute right-0 top-2 md:top-6 text-brand-secondary text-2xl md:text-3xl rotate-[7deg] hidden sm:block">real tickets only →</span>
+    </div>
+    <p class="type text-white/60 text-base md:text-lg max-w-xl mb-9 leading-relaxed">Every show, every basement, every after-hours in the city. No scalpers, no bots — rotating encrypted entry that lives on your phone.</p>
+
+    <div class="relative max-w-2xl mb-8">
+      <svg class="absolute left-5 top-1/2 -translate-y-1/2 text-white/70 w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="search" placeholder="search bands, venues, nights..." class="type w-full bg-[#111] border border-white/20 py-5 pl-14 pr-6 text-white placeholder-white/35 focus:outline-none focus:border-brand-primary transition-all text-base tracking-wide" />
+    </div>
+
+    <!-- date scroller -->
+    <div class="flex gap-2 overflow-x-auto no-bar -mx-1 px-1">
+      <button class="shrink-0 bg-brand-primary text-black px-6 py-2.5 min-w-[92px] text-center">
+        <span class="type text-[10px] uppercase tracking-widest block leading-none">tonight</span>
+        <span class="disp text-2xl tracking-wide leading-none mt-1 block">THU 10</span>
+      </button>
+      <button class="shrink-0 bg-white/5 border border-white/15 hover:border-brand-primary text-white/75 px-6 py-2.5 min-w-[92px] text-center transition-colors">
+        <span class="type text-[10px] uppercase tracking-widest block leading-none">tomorrow</span>
+        <span class="disp text-2xl tracking-wide leading-none mt-1 block">FRI 11</span>
+      </button>
+      <button class="shrink-0 bg-white/5 border border-white/15 hover:border-brand-primary text-white/75 px-6 py-2.5 min-w-[92px] text-center transition-colors">
+        <span class="type text-[10px] uppercase tracking-widest block leading-none">weekend</span>
+        <span class="disp text-2xl tracking-wide leading-none mt-1 block">SAT 12</span>
+      </button>
+      <button class="shrink-0 bg-white/5 border border-white/15 hover:border-brand-primary text-white/75 px-6 py-2.5 min-w-[92px] text-center transition-colors">
+        <span class="type text-[10px] uppercase tracking-widest block leading-none">sunday</span>
+        <span class="disp text-2xl tracking-wide leading-none mt-1 block">SUN 13</span>
+      </button>
+      <button class="shrink-0 flex items-center gap-2 text-white/70 px-5 py-2.5 border border-white/15 hover:border-brand-primary transition-colors">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>
+        <span class="type text-[11px] uppercase tracking-widest">pick date</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ============ GENRE PILLS ============ -->
+<div class="sticky top-20 z-40 bg-black/92 border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex gap-2 overflow-x-auto no-bar py-3.5 items-center" id="genres"></div>
+  </div>
+</div>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 relative z-10">
+
+  <!-- ============ FEATURED ============ -->
+  <section class="mb-20">
+    <div class="flex items-end justify-between mb-8">
+      <h2 class="disp text-4xl md:text-5xl tracking-tight text-white" style="transform:skewX(-5deg)">FEATURED <span class="neon">TONIGHT</span></h2>
+      <a href="#" class="type text-[12px] uppercase tracking-widest text-white/50 hover:text-brand-primary border-b border-white/30 pb-1">see all ↗</a>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <a href="#" class="group relative bg-[#111] border border-white/10 hover:border-brand-primary/60 transition-all overflow-hidden">
+        <div class="tape -top-2 left-8 rotate-[-6deg]"></div>
+        <div class="relative h-72 overflow-hidden">
+          <img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=1000" class="xerox group-hover:on w-full h-full object-cover transition-all duration-700" alt="" />
+          <div class="absolute inset-0 bg-gradient-to-t from-[#111] via-transparent to-transparent"></div>
+          <span class="stamp text-brand-accent absolute top-4 right-4 rotate-[-8deg] bg-black/50 text-base">SELLING FAST</span>
+        </div>
+        <div class="p-6">
+          <p class="type text-[11px] uppercase tracking-widest text-brand-primary mb-1">fri 11 jul · 11:00 pm · techno</p>
+          <h3 class="disp text-4xl md:text-5xl text-white leading-[0.9] tracking-tight mb-3">BASEMENT: SHDW B2B KALTAR</h3>
+          <div class="flex items-center justify-between border-t border-white/10 pt-3">
+            <span class="type text-[12px] uppercase tracking-wide text-white/60">Knockdown Center · Maspeth</span>
+            <span class="stamp text-brand-primary text-xl">$30+</span>
+          </div>
+        </div>
+      </a>
+      <a href="#" class="group relative bg-[#111] border border-white/10 hover:border-brand-primary/60 transition-all overflow-hidden">
+        <div class="tape -top-2 right-10 rotate-[5deg]"></div>
+        <div class="relative h-72 overflow-hidden">
+          <img src="https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?q=80&w=1000" class="xerox group-hover:on w-full h-full object-cover transition-all duration-700" alt="" />
+          <div class="absolute inset-0 bg-gradient-to-t from-[#111] via-transparent to-transparent"></div>
+          <span class="stamp text-brand-primary absolute top-4 left-4 rotate-[7deg] bg-black/50 text-base">LIVE</span>
+        </div>
+        <div class="p-6">
+          <p class="type text-[11px] uppercase tracking-widest text-brand-primary mb-1">sat 12 jul · 8:00 pm · indie</p>
+          <h3 class="disp text-4xl md:text-5xl text-white leading-[0.9] tracking-tight mb-3">MARLOWE FIELDS — LIVE</h3>
+          <div class="flex items-center justify-between border-t border-white/10 pt-3">
+            <span class="type text-[12px] uppercase tracking-wide text-white/60">Bowery Ballroom · Manhattan</span>
+            <span class="stamp text-brand-primary text-xl">$45+</span>
+          </div>
+        </div>
+      </a>
+    </div>
+  </section>
+
+  <!-- ============ POPULAR GRID ============ -->
+  <section class="mb-20">
+    <div class="flex items-end justify-between mb-8">
+      <h2 class="disp text-4xl md:text-5xl tracking-tight text-white" style="transform:skewX(-5deg)">POPULAR <span class="text-brand-secondary">THIS WEEK</span></h2>
+      <a href="#" class="type text-[12px] uppercase tracking-widest text-white/50 hover:text-brand-primary border-b border-white/30 pb-1">see all ↗</a>
+    </div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4" id="pop-grid"></div>
+  </section>
+
+  <!-- ============ AGENDA ============ -->
+  <section>
+    <div class="flex items-end justify-between mb-8">
+      <h2 class="disp text-4xl md:text-5xl tracking-tight text-white" style="transform:skewX(-5deg)">ALL <span class="neon">UPCOMING</span></h2>
+      <span class="marker text-white/35 text-lg rotate-[-3deg]">sorted by date</span>
+    </div>
+    <div id="agenda"></div>
+  </section>
+</main>
+
+<!-- ============ FOOTER (light) ============ -->
+<footer class="bg-white text-slate-900 border-t border-slate-100 pt-20 pb-10 mt-20 relative z-10">
+  <div class="max-w-7xl mx-auto px-4">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-10 mb-14">
+      <div>
+        <div class="flex items-center gap-2 mb-5">
+          <div class="w-9 h-9 bg-slate-900 rounded-xl flex items-center justify-center">
+            <svg class="text-white w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 11v2"/><path d="M13 17v2"/></svg>
+          </div>
+          <span class="disp text-2xl leading-none pt-1 text-slate-900">EXOS</span>
+        </div>
+        <p class="text-slate-500 text-sm font-medium leading-relaxed">The standard for secure digital entry. Encrypted rotating tokens eliminate fraud and scalping.</p>
+      </div>
+      <div><h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4">Platform</h4><ul class="space-y-3 text-sm text-slate-500 font-medium"><li><a href="#" class="hover:text-slate-900">Discover Events</a></li><li><a href="#" class="hover:text-slate-900">My Tickets</a></li><li><a href="#" class="hover:text-slate-900">Organizer Dashboard</a></li></ul></div>
+      <div><h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4">Trust &amp; Safety</h4><ul class="space-y-3 text-sm text-slate-500 font-medium"><li><a href="#" class="hover:text-slate-900">Security</a></li><li><a href="#" class="hover:text-slate-900">Transfers</a></li><li><a href="#" class="hover:text-slate-900">Safety</a></li></ul></div>
+      <div><h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4">Support</h4><ul class="space-y-3 text-sm text-slate-500 font-medium"><li><a href="#" class="hover:text-slate-900">Help Center</a></li><li><a href="#" class="hover:text-slate-900">Contact Us</a></li><li><a href="#" class="hover:text-slate-900">API Docs</a></li></ul></div>
+    </div>
+    <div class="pt-6 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
+      <p class="text-[10px] text-slate-300 font-bold uppercase tracking-widest">© 2026 EXOS TECHNOLOGIES • SECURE TICKETING</p>
+      <div class="flex gap-6 text-[10px] text-slate-300 font-bold uppercase tracking-widest"><a href="#" class="hover:text-slate-900">Privacy</a><a href="#" class="hover:text-slate-900">Terms</a><a href="#" class="hover:text-slate-900">Status</a></div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const genres = ['ALL','TECHNO','HOUSE','HIP-HOP','LIVE / INDIE','WAREHOUSE','JAZZ / SOUL','ROOFTOP','FREE'];
+  document.getElementById('genres').innerHTML = genres.map((g,i)=>{
+    const active = i===0;
+    return `<button class="shrink-0 disp text-lg tracking-wide px-4 py-0.5 border ${active?'bg-white text-black border-white':'bg-white/5 text-white/70 border-white/15 hover:border-brand-primary hover:text-brand-primary'} transition-colors">${g}</button>`;
+  }).join('');
+
+  const popular = [
+    { t:'NOCTURNE: AMBIENT ROOMS', v:'Public Records · Gowanus', d:'thu 10 jul', p:'25', g:'AMBIENT', img:'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?q=80&w=600' },
+    { t:'HOUSE OF YES: DISCO BALL', v:'House of Yes · Bushwick', d:'fri 11 jul', p:'35', g:'DISCO', img:'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?q=80&w=600' },
+    { t:'DAWN PATROL ALL-NIGHTER', v:'Nowadays · Ridgewood', d:'sat 12 jul', p:'40', g:'TECHNO', img:'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=600' },
+    { t:'THE WILDER SESSIONS', v:'Elsewhere · Bushwick', d:'sat 12 jul', p:'28', g:'INDIE', img:'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?q=80&w=600' },
+  ];
+  document.getElementById('pop-grid').innerHTML = popular.map(e=>`
+    <a href="#" class="group flex flex-col bg-[#111] border border-white/10 hover:border-brand-primary/60 transition-all">
+      <div class="relative aspect-[3/4] overflow-hidden">
+        <img src="${e.img}" class="xerox group-hover:on w-full h-full object-cover transition-all duration-700" alt="" />
+        <div class="absolute inset-0 bg-gradient-to-t from-[#111] via-transparent to-transparent"></div>
+        <span class="disp absolute top-2 left-2 bg-brand-primary text-black px-2 text-sm tracking-wide">${e.g}</span>
+        <div class="absolute bottom-3 left-3 right-3">
+          <p class="type text-[10px] uppercase tracking-widest text-brand-primary mb-0.5">${e.d}</p>
+          <h3 class="disp text-2xl text-white leading-[0.9] tracking-tight">${e.t}</h3>
+        </div>
+      </div>
+      <div class="p-3 flex items-center justify-between">
+        <span class="type text-[11px] uppercase text-white/50 truncate pr-2">${e.v}</span>
+        <span class="stamp text-brand-primary text-base shrink-0">$${e.p}+</span>
+      </div>
+    </a>`).join('');
+
+  const agenda = [
+    { date:'FRI 11 JUL', items:[
+      { t:'BASEMENT: SHDW B2B KALTAR', v:'Knockdown Center · Maspeth', time:'11:00PM', p:'30', g:'techno', hot:true, img:'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=300' },
+      { t:'VELVET HOUR — LIVE SOUL', v:'Sultan Room · Bushwick', time:'8:30PM', p:'22', g:'soul', img:'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?q=80&w=300' },
+      { t:'ROOFTOP SUNDOWN SESSIONS', v:'Elsewhere Rooftop · Bushwick', time:'6:00PM', p:'20', g:'house', img:'https://images.unsplash.com/photo-1485872299829-c673f5194813?q=80&w=300' },
+    ]},
+    { date:'SAT 12 JUL', items:[
+      { t:'MARLOWE FIELDS — LIVE', v:'Bowery Ballroom · Manhattan', time:'8:00PM', p:'45', g:'live', img:'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?q=80&w=300' },
+      { t:'DAWN PATROL ALL-NIGHTER', v:'Nowadays · Ridgewood', time:'12:00AM', p:'40', g:'techno', hot:true, img:'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=300' },
+      { t:'WAREHOUSE 88 — OPEN FORMAT', v:'Brooklyn Steel · E. Williamsburg', time:'10:00PM', p:'38', g:'warehouse', img:'https://images.unsplash.com/photo-1574391884720-bbc3740c59d1?q=80&w=300' },
+    ]},
+    { date:'SUN 13 JUL', items:[
+      { t:'SUNDAY SERVICE — GOSPEL BRUNCH', v:'The Sultan Room · Bushwick', time:'1:00PM', p:'0', g:'free', img:'https://images.unsplash.com/photo-1508973379184-7517410fb0bc?q=80&w=300' },
+      { t:'JAZZ IS DEAD: LATE SET', v:'Public Records · Gowanus', time:'9:00PM', p:'26', g:'jazz', img:'https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?q=80&w=300' },
+    ]},
+  ];
+  const money = p=> p==='0' ? 'FREE' : '$'+p+'+';
+  document.getElementById('agenda').innerHTML = agenda.map(day=>`
+    <div class="mb-10">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="marker text-2xl text-white rotate-[-2deg]">${day.date}</span>
+        <div class="flex-1 border-t border-dashed border-white/20"></div>
+        <span class="type text-[11px] uppercase tracking-widest text-white/35">${day.items.length} shows</span>
+      </div>
+      <div class="divide-y divide-white/5 border-y border-white/10">
+        ${day.items.map(e=>`
+        <a href="#" class="group grid grid-cols-[52px_1fr_auto] md:grid-cols-[64px_100px_1fr_auto_auto] items-center gap-3 md:gap-5 py-3.5 hover:bg-white/[0.03] px-1 transition-colors">
+          <div class="w-13 h-13 md:w-16 md:h-16 overflow-hidden hidden md:block"><img src="${e.img}" class="xerox group-hover:on w-full h-full object-cover transition-all duration-700" alt="" /></div>
+          <span class="disp text-2xl md:text-3xl text-white leading-none tracking-wide">${e.time}</span>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h3 class="disp text-xl md:text-2xl text-white leading-none tracking-tight truncate group-hover:neon transition-all">${e.t}</h3>
+              ${e.hot?'<span class="type text-[9px] uppercase tracking-widest text-brand-accent shrink-0">● selling fast</span>':''}
+            </div>
+            <p class="type text-[11px] uppercase tracking-wide text-white/40 mt-1 truncate">${e.v} · ${e.g}</p>
+          </div>
+          <span class="stamp text-brand-primary text-base hidden md:inline">${money(e.p)}</span>
+          <span class="disp text-base bg-white text-black px-3 py-0.5 group-hover:bg-brand-primary transition-colors tracking-wide whitespace-nowrap">TICKETS</span>
+        </a>`).join('')}
+      </div>
+    </div>`).join('');
+</script>
+</body>
+</html>

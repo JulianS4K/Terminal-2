@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Organizations</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-tm-blue:#026cdf; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-[#f2f4f7] text-slate-900; } }
+  .card{ @apply bg-white rounded-2xl border border-slate-200 shadow-sm; }
+</style>
+<style>/*punk-stitch*/ .marker{font-family:"Permanent Marker",cursive;} .disp{font-family:"Anton",sans-serif;}</style>
+</head>
+<body class="bg-[#f2f4f7] text-slate-900">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <div class="flex items-center gap-3 bg-white/5 p-1 pr-4 border border-white/10"><div class="w-9 h-9 bg-brand-primary text-black font-black italic flex items-center justify-center">K</div></div>
+</div></div></nav>
+<div class="max-w-4xl mx-auto px-4 py-12">
+  <div class="flex items-center justify-between mb-8">
+    <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Team</p><span class="inline-flex items-baseline gap-3 flex-wrap"><h1 class="text-3xl md:text-4xl font-bold tracking-tight">Organizations</h1><span class="marker text-[#FF00FF] text-lg rotate-[-3deg] leading-none whitespace-nowrap">your crews ✦</span></span></div>
+    <a href="OrganizerOnboarding.html" class="bg-tm-blue text-white px-6 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm flex items-center gap-2"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5v14"/></svg> New org</a>
+  </div>
+  <div class="space-y-3" id="orgs"></div>
+</div>
+<script>
+  const orgs=[
+    {n:'Knockdown Presents',h:'knockdown',role:'Owner',ev:6,init:'K',c:'#00FF00'},
+    {n:'House of Yes',h:'houseofyes',role:'Manager',ev:3,init:'H',c:'#FF00FF'},
+    {n:'Nowadays Collective',h:'nowadays',role:'Finance',ev:2,init:'N',c:'#FFE714'},
+  ];
+  const rc={Owner:'bg-slate-900 text-white',Manager:'bg-blue-50 text-tm-blue border border-blue-100',Finance:'bg-emerald-50 text-emerald-700 border border-emerald-100'};
+  document.getElementById('orgs').innerHTML = orgs.map(o=>`
+    <a href="OrgSettings.html" class="card p-5 flex items-center gap-4 hover:border-tm-blue transition-colors">
+      <div class="w-12 h-12 flex items-center justify-center font-black text-black text-xl shrink-0" style="background:${o.c}">${o.init}</div>
+      <div class="flex-1 min-w-0"><p class="font-bold text-slate-900">${o.n}</p><p class="text-[11px] text-slate-400">exos.live/o/${o.h} · ${o.ev} events</p></div>
+      <span class="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${rc[o.role]}">${o.role}</span>
+      <svg class="w-4 h-4 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+    </a>`).join('');
+</script>
+</body>
+</html>

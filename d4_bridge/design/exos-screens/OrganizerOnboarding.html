@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Get Started</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-tm-blue:#026cdf; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-[#f2f4f7] text-slate-900; } }
+  .lbl{ @apply block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2; }
+  .fld{ @apply w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-tm-blue; }
+</style>
+</head>
+<body class="bg-[#f2f4f7] text-slate-900">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+    <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+    <a href="#" class="text-[11px] font-black uppercase tracking-widest text-white/50 hover:text-white">Skip for now</a>
+  </div></div>
+</nav>
+
+<div class="max-w-2xl mx-auto px-4 py-12">
+  <!-- stepper -->
+  <div class="flex items-center justify-between mb-10" id="steps"></div>
+
+  <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
+    <p class="text-[10px] font-black text-tm-blue uppercase tracking-widest mb-2">Step 1 of 3</p>
+    <h1 class="text-3xl font-bold tracking-tight mb-2">Create your organization</h1>
+    <p class="text-slate-500 text-sm mb-8">This is the promoter, venue, or collective that hosts your events. Unlocks white-label storefront, distribution, and team access.</p>
+
+    <div class="space-y-5">
+      <div><label class="lbl">Organization name</label><input class="fld" placeholder="e.g. Knockdown Presents" /></div>
+      <div><label class="lbl">Handle</label>
+        <div class="flex items-center bg-white border border-slate-200 rounded-lg px-4 focus-within:border-tm-blue"><span class="text-sm text-slate-400">exos.live/o/</span><input class="flex-1 py-3 text-sm focus:outline-none" placeholder="knockdown" /></div>
+      </div>
+      <div><label class="lbl">What do you host?</label>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <button class="border-2 border-tm-blue bg-blue-50 rounded-lg px-3 py-3 text-xs font-bold text-tm-blue">Club nights</button>
+          <button class="border border-slate-200 rounded-lg px-3 py-3 text-xs font-bold text-slate-500 hover:border-slate-300">Live music</button>
+          <button class="border border-slate-200 rounded-lg px-3 py-3 text-xs font-bold text-slate-500 hover:border-slate-300">Festivals</button>
+          <button class="border border-slate-200 rounded-lg px-3 py-3 text-xs font-bold text-slate-500 hover:border-slate-300">Other</button>
+        </div>
+      </div>
+      <div><label class="lbl">Short description</label><textarea rows="2" class="fld resize-none" placeholder="One line about the org — shown on your public profile."></textarea></div>
+    </div>
+
+    <div class="flex justify-between items-center mt-8 pt-6 border-t border-slate-100">
+      <span class="text-xs text-slate-400">You can change all of this later.</span>
+      <button class="bg-tm-blue text-white px-8 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm flex items-center gap-2">Continue <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
+    </div>
+  </div>
+
+  <div class="mt-6 grid grid-cols-3 gap-3">
+    <div class="bg-white rounded-xl border border-slate-200 p-4 text-center"><svg class="w-5 h-5 text-tm-blue mx-auto mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg><p class="text-[10px] font-black text-slate-600 uppercase tracking-widest">Sell tickets</p></div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4 text-center"><svg class="w-5 h-5 text-tm-blue mx-auto mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg><p class="text-[10px] font-black text-slate-600 uppercase tracking-widest">White-label</p></div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4 text-center"><svg class="w-5 h-5 text-tm-blue mx-auto mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg><p class="text-[10px] font-black text-slate-600 uppercase tracking-widest">Team access</p></div>
+  </div>
+</div>
+
+<script>
+  const steps=[{n:'Organization',s:'active'},{n:'Branding',s:'todo'},{n:'Payouts',s:'todo'}];
+  document.getElementById('steps').innerHTML = steps.map((st,i)=>`
+    <div class="flex items-center ${i<steps.length-1?'flex-1':''}">
+      <div class="flex items-center gap-2">
+        <span class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black ${st.s==='active'?'bg-tm-blue text-white':'bg-white border border-slate-200 text-slate-400'}">${i+1}</span>
+        <span class="text-xs font-bold ${st.s==='active'?'text-slate-900':'text-slate-400'} hidden sm:inline">${st.n}</span>
+      </div>
+      ${i<steps.length-1?'<div class="flex-1 h-px bg-slate-200 mx-3"></div>':''}
+    </div>`).join('');
+</script>
+</body>
+</html>

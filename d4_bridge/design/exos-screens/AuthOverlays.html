@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Auth &amp; Overlays</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-secondary:#FF00FF; --color-brand-accent:#FF2A2A;
+    --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; --font-display:"Anton",sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.06), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.05), transparent 45%), #050505; }
+  .neon{ color:#00FF00; text-shadow:0 0 16px rgba(0,255,0,.45); }
+</style>
+</head>
+<body class="wall text-white min-h-screen relative">
+  <!-- dimmed app backdrop hint -->
+  <div class="max-w-7xl mx-auto px-6 py-10 blur-[2px] opacity-30 select-none pointer-events-none">
+    <div class="flex justify-between items-center h-16 mb-10"><span class="disp text-4xl" style="transform:skewX(-6deg)">EXOS</span><span class="type text-xs uppercase tracking-widest">what are you doing tonight?</span></div>
+    <div class="grid grid-cols-4 gap-4">
+      <div class="aspect-[3/4] bg-[#141414]"></div><div class="aspect-[3/4] bg-[#141414]"></div><div class="aspect-[3/4] bg-[#141414]"></div><div class="aspect-[3/4] bg-[#141414]"></div>
+    </div>
+  </div>
+
+  <!-- backdrop scrim -->
+  <div class="fixed inset-0 bg-black/80 z-40"></div>
+
+  <!-- AUTH MODAL -->
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-5">
+    <div class="relative bg-[#0e0e0e] border border-white/12 w-full max-w-md">
+      <button class="absolute top-4 right-4 text-white/40 hover:text-white type text-xs uppercase tracking-widest">close [x]</button>
+      <div class="p-9">
+        <div class="flex items-center gap-3 mb-7">
+          <div class="w-11 h-11 bg-brand-primary flex items-center justify-center"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div>
+          <span class="disp text-4xl tracking-tight leading-none pt-1" style="transform:skewX(-6deg)">EXOS</span>
+        </div>
+        <h1 class="disp text-4xl tracking-tight leading-[0.9] mb-2" style="transform:skewX(-4deg)">GET ON<br /><span class="neon">THE LIST</span></h1>
+        <p class="type text-white/55 text-sm mb-8 leading-relaxed">One account for tickets, transfers, and the door. Your passes live here — encrypted, non-transferable to scalpers.</p>
+        <button class="w-full flex items-center justify-center gap-3 bg-white text-black py-4 font-bold text-sm hover:bg-brand-primary transition-colors mb-3">
+          <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/></svg>
+          Continue with Google
+        </button>
+        <p class="type text-white/30 text-[10px] uppercase tracking-widest text-center leading-relaxed">by continuing you agree to the terms &amp; privacy policy</p>
+      </div>
+      <div class="bg-black border-t border-white/8 px-9 py-4 flex items-center justify-between type text-[10px] uppercase tracking-widest text-white/25">
+        <span>secure oauth</span><span class="neon">▲ encrypted session</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST STACK -->
+  <div class="fixed top-5 right-5 z-[60] space-y-3 w-[320px]">
+    <div class="bg-[#0e0e0e] border-l-4 border-brand-primary border-y border-r border-white/10 p-4 flex items-start gap-3">
+      <svg class="w-5 h-5 text-brand-primary shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>
+      <div><p class="disp text-lg tracking-wide leading-none mb-1">YOU'RE IN</p><p class="type text-[11px] text-white/50">2 tickets reserved — find them in My Tickets.</p></div>
+    </div>
+    <div class="bg-[#0e0e0e] border-l-4 border-brand-accent border-y border-r border-white/10 p-4 flex items-start gap-3">
+      <svg class="w-5 h-5 text-brand-accent shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+      <div><p class="disp text-lg tracking-wide leading-none mb-1">CHECKOUT FAILED</p><p class="type text-[11px] text-white/50">Card declined — try another payment method.</p></div>
+    </div>
+    <div class="bg-[#0e0e0e] border-l-4 border-white/40 border-y border-r border-white/10 p-4 flex items-start gap-3">
+      <svg class="w-5 h-5 text-white/60 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <div><p class="disp text-lg tracking-wide leading-none mb-1">HEADS UP</p><p class="type text-[11px] text-white/50">Entry code unlocks 24h before doors.</p></div>
+    </div>
+  </div>
+
+  <!-- PWA INSTALL PROMPT -->
+  <div class="fixed bottom-24 left-5 z-[55] w-[300px] bg-[#0e0e0e] border border-white/12 p-4 flex items-center gap-3">
+    <div class="w-11 h-11 bg-white flex items-center justify-center shrink-0"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div>
+    <div class="min-w-0 flex-1"><p class="disp text-base tracking-wide leading-none mb-1">ADD TO HOME SCREEN</p><p class="type text-[10px] text-white/45">Launch fullscreen. Passes offline at the door.</p></div>
+    <button class="disp bg-brand-primary text-black px-3 py-1 text-sm tracking-wide shrink-0">GET</button>
+  </div>
+
+  <!-- CONSENT BANNER -->
+  <div class="fixed bottom-0 left-0 right-0 z-[55] bg-black border-t border-white/12 px-5 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+    <p class="type text-[11px] text-white/50 uppercase tracking-widest">We use cookies for analytics + marketing pixels. Your call.</p>
+    <div class="flex gap-2 shrink-0">
+      <button class="type text-[11px] uppercase tracking-widest text-white/50 border border-white/15 px-4 py-2 hover:text-white">Reject</button>
+      <button class="disp bg-brand-primary text-black px-5 py-1.5 text-base tracking-wide">ACCEPT</button>
+    </div>
+  </div>
+</body>
+</html>

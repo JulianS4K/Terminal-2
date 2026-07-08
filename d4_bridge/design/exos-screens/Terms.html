@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Terms</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .prose h2{ @apply disp text-2xl md:text-3xl mt-12 mb-3 text-white; }
+  .prose h2 span{ @apply text-brand-primary; }
+  .prose p{ @apply text-white/60 leading-relaxed mb-3 text-[15px]; }
+  .prose ul{ @apply list-none space-y-2 mb-3; }
+  .prose li{ @apply text-white/60 text-[15px] pl-5 relative; }
+  .prose li:before{ content:'▸'; @apply text-brand-primary absolute left-0; }
+</style>
+</head>
+<body class="wall grain text-white min-h-screen">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <div class="flex gap-6 text-sm font-bold"><a href="Privacy.html" class="text-white/50 hover:text-white">Privacy</a><a href="Terms.html" class="text-brand-primary">Terms</a></div>
+</div></div></nav>
+
+<div class="max-w-3xl mx-auto px-4 py-14 md:py-20">
+  <p class="type text-brand-primary text-xs tracking-[0.3em] uppercase mb-4">// legal</p>
+  <h1 class="disp text-5xl md:text-7xl leading-[0.9] mb-3" style="transform:skewX(-4deg)">TERMS OF<br><span class="text-brand-primary">SERVICE</span></h1>
+  <p class="type text-white/40 text-sm">Last updated 04 Jul 2026 · by using Exos you agree to these</p>
+
+  <div class="prose mt-6">
+    <p>Exos connects fans with independent events and gives organizers the tools to sell and scan tickets. These terms cover both sides. Plain language; binding all the same.</p>
+
+    <h2>Your <span>ticket</span></h2>
+    <ul>
+      <li>A ticket is a revocable license to attend, not a transfer of property in the event.</li>
+      <li>Barcodes rotate every 30 seconds and are verified server-side. Screenshots don't scan — bring the live pass.</li>
+      <li>You may transfer a ticket for free to another person; the barcode reissues to them and yours voids.</li>
+      <li>Reselling above face value is prohibited except through official face-value exchange where enabled.</li>
+    </ul>
+
+    <h2>Refunds &amp; <span>changes</span></h2>
+    <p>If an organizer cancels an event, you're refunded to your original payment method. If an event is rescheduled, your ticket stays valid for the new date; you'll be notified and may request a refund within the window the organizer sets. Fees are refunded on cancellation, not on voluntary transfers.</p>
+
+    <h2>Organizer <span>obligations</span></h2>
+    <ul>
+      <li>You must have the right to sell tickets to the events you list.</li>
+      <li>You're responsible for the event happening as described and for honoring valid tickets at the door.</li>
+      <li>Payouts settle through Stripe on the schedule shown in your dashboard, minus platform and processing fees.</li>
+    </ul>
+
+    <h2>Conduct</h2>
+    <p>No fraud, no barcode duplication, no scraping, no reselling access to the platform. We void tickets and suspend accounts tied to fraudulent scans or chargebacks.</p>
+
+    <h2>Liability</h2>
+    <p>Exos is the ticketing technology, not the event producer. To the extent permitted by law, our liability is limited to the amount you paid for the affected ticket. Nothing here waives rights you can't legally waive.</p>
+
+    <h2>Contact</h2>
+    <p>Reach us at support@exos.live. We update these terms as the product grows; material changes are announced in-app before they take effect.</p>
+  </div>
+</div>
+</body>
+</html>

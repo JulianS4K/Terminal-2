@@ -90,31 +90,33 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
           initial={{ scale: 0.95, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.95, opacity: 0, y: 20 }}
-          className="relative bg-[#111111] border border-white/10 w-full max-w-md shadow-2xl overflow-hidden"
+          className="relative bg-[#0e0e0e] border border-white/12 w-full max-w-md shadow-2xl overflow-hidden"
         >
-          <div className="p-6 border-b border-white/5 flex justify-between items-center bg-black">
-             <div className="flex items-center space-x-2">
+          <div className="p-6 border-b border-white/10 flex justify-between items-center bg-black">
+             <div className="flex items-center gap-3">
                 {method !== 'options' && (
-                  <button onClick={() => setMethod('options')} className="mr-2 text-white/50 hover:text-white transition-all">
+                  <button onClick={() => setMethod('options')} className="mr-1 text-white/50 hover:text-brand-primary transition-colors">
                     <ArrowLeft className="w-4 h-4" />
                   </button>
                 )}
-                <Ticket className="w-5 h-5 text-brand-primary" />
-                <h2 className="text-xl font-black uppercase italic tracking-tighter">
-                  {method === 'options' ? 'Sign In / Sign Up' : method === 'email-login' ? 'Sign In' : method === 'email-signup' ? 'Create Account' : method}
+                <div className="w-9 h-9 bg-brand-primary flex items-center justify-center shrink-0">
+                  <Ticket className="w-5 h-5 text-black" />
+                </div>
+                <h2 className="disp text-2xl uppercase tracking-tight leading-none pt-1" style={{ transform: 'skewX(-4deg)' }}>
+                  {method === 'options' ? 'Get On The List' : method === 'email-login' ? 'Sign In' : method === 'email-signup' ? 'Create Account' : method}
                 </h2>
              </div>
-             <button onClick={onClose} className="text-white/40 hover:text-white font-black text-xs uppercase italic tracking-tighter">CLOSE [X]</button>
+             <button onClick={onClose} className="type text-white/40 hover:text-white text-[11px] uppercase tracking-widest transition-colors">close [x]</button>
           </div>
 
           <div className="p-8">
             {error && (
-              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 text-red-500 text-xs font-bold uppercase tracking-widest text-center">
+              <div className="mb-6 p-4 bg-brand-accent/10 border-l-4 border-brand-accent border-y border-r border-white/10 text-brand-accent type text-[11px] uppercase tracking-widest text-center">
                 {error}
               </div>
             )}
             {info && (
-              <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/50 text-emerald-400 text-xs font-bold uppercase tracking-widest text-center">
+              <div className="mb-6 p-4 bg-brand-primary/10 border-l-4 border-brand-primary border-y border-r border-white/10 text-brand-primary type text-[11px] uppercase tracking-widest text-center">
                 {info}
               </div>
             )}
@@ -124,7 +126,7 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                 <button
                   onClick={() => handleProviderSignIn('google')}
                   disabled={loading}
-                  className="w-full flex items-center justify-center space-x-3 p-4 bg-white text-black font-black uppercase tracking-widest hover:bg-white/90 transition-all text-xs"
+                  className="w-full flex items-center justify-center gap-3 p-4 bg-white text-black disp text-lg uppercase tracking-wide hover:bg-brand-primary transition-colors"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -138,7 +140,7 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                 <button
                   onClick={() => handleProviderSignIn('apple')}
                   disabled={loading}
-                  className="w-full flex items-center justify-center space-x-3 p-4 bg-zinc-900 border border-white/20 text-white font-black uppercase tracking-widest hover:bg-zinc-800 hover:border-white/40 transition-all text-xs"
+                  className="w-full flex items-center justify-center gap-3 p-4 bg-black border border-white/20 text-white disp text-lg uppercase tracking-wide hover:border-brand-primary hover:text-brand-primary transition-colors"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.56-1.701z" />
@@ -149,7 +151,7 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                 <button
                   onClick={() => handleProviderSignIn('microsoft')}
                   disabled={loading}
-                  className="w-full flex items-center justify-center space-x-3 p-4 bg-zinc-900 border border-white/20 text-white font-black uppercase tracking-widest hover:bg-zinc-800 hover:border-white/40 transition-all text-xs"
+                  className="w-full flex items-center justify-center gap-3 p-4 bg-black border border-white/20 text-white disp text-lg uppercase tracking-wide hover:border-brand-primary hover:text-brand-primary transition-colors"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M11.4 24H0V12.6h11.4V24zM24 24H12.6V12.6H24V24zM11.4 11.4H0V0h11.4v11.4zm12.6 0H12.6V0H24v11.4z" />
@@ -162,7 +164,7 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                     <div className="w-full border-t border-white/10"></div>
                   </div>
                   <div className="relative flex justify-center">
-                    <span className="bg-[#111111] px-4 text-[10px] text-white/50 uppercase font-black tracking-widest">or</span>
+                    <span className="bg-[#0e0e0e] px-4 type text-[10px] text-white/50 uppercase tracking-widest">or</span>
                   </div>
                 </div>
 
@@ -170,18 +172,18 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                   <button
                     onClick={() => setMethod('email-login')}
                     disabled={loading}
-                    className="flex flex-col items-center justify-center p-4 border border-white/10 hover:border-brand-primary text-white hover:text-brand-primary transition-all group"
+                    className="flex flex-col items-center justify-center p-4 border border-white/10 hover:border-brand-primary text-white hover:text-brand-primary transition-colors group"
                   >
-                     <Mail className="w-6 h-6 mb-2 text-white/50 group-hover:text-brand-primary transition-all" />
-                     <span className="text-[10px] font-black uppercase tracking-widest">Email Login</span>
+                     <Mail className="w-6 h-6 mb-2 text-white/50 group-hover:text-brand-primary transition-colors" />
+                     <span className="type text-[10px] uppercase tracking-widest">Email Login</span>
                   </button>
                   <button
                     onClick={() => setMethod('email-signup')}
                     disabled={loading}
-                    className="flex flex-col items-center justify-center p-4 border border-white/10 hover:border-brand-primary text-white hover:text-brand-primary transition-all group"
+                    className="flex flex-col items-center justify-center p-4 border border-white/10 hover:border-brand-primary text-white hover:text-brand-primary transition-colors group"
                   >
-                     <ShieldCheck className="w-6 h-6 mb-2 text-white/50 group-hover:text-brand-primary transition-all" />
-                     <span className="text-[10px] font-black uppercase tracking-widest">Sign Up</span>
+                     <ShieldCheck className="w-6 h-6 mb-2 text-white/50 group-hover:text-brand-primary transition-colors" />
+                     <span className="type text-[10px] uppercase tracking-widest">Sign Up</span>
                   </button>
                 </div>
 
@@ -192,10 +194,10 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
               <form onSubmit={handleEmailAuth} className="space-y-4">
                 {method === 'email-signup' && (
                    <div>
-                    <label className="block text-[10px] uppercase font-black tracking-widest text-white/50 mb-2">Display Name</label>
+                    <label className="block type text-[10px] uppercase tracking-widest text-white/50 mb-2">Display Name</label>
                     <input
                       type="text"
-                      className="w-full bg-black border border-white/20 p-4 text-white font-medium focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary transition-all"
+                      className="w-full type bg-black border border-white/20 p-4 text-white placeholder-white/35 focus:border-brand-primary focus:outline-none transition-colors"
                       placeholder="e.g. Satoshi Nakamoto"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
@@ -204,10 +206,10 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                   </div>
                 )}
                 <div>
-                  <label className="block text-[10px] uppercase font-black tracking-widest text-white/50 mb-2">Email Address</label>
+                  <label className="block type text-[10px] uppercase tracking-widest text-white/50 mb-2">Email Address</label>
                   <input
                     type="email"
-                    className="w-full bg-black border border-white/20 p-4 text-white font-medium focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary transition-all"
+                    className="w-full type bg-black border border-white/20 p-4 text-white placeholder-white/35 focus:border-brand-primary focus:outline-none transition-colors"
                     placeholder="you@domain.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -215,10 +217,10 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] uppercase font-black tracking-widest text-white/50 mb-2">Password</label>
+                  <label className="block type text-[10px] uppercase tracking-widest text-white/50 mb-2">Password</label>
                   <input
                     type="password"
-                    className="w-full bg-black border border-white/20 p-4 text-white font-medium focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary transition-all"
+                    className="w-full type bg-black border border-white/20 p-4 text-white placeholder-white/35 focus:border-brand-primary focus:outline-none transition-colors"
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -228,15 +230,15 @@ export default function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClos
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full flex items-center justify-center bg-brand-primary text-black p-4 font-black uppercase italic tracking-tighter hover:bg-white transition-all mt-6"
+                  className="w-full flex items-center justify-center bg-brand-primary text-black p-4 disp text-xl uppercase tracking-wide hover:bg-white transition-colors mt-6"
                 >
                   {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (method === 'email-login' ? 'Sign In' : 'Create Account')}
                 </button>
               </form>
             )}
           </div>
-          <div className="p-4 border-t border-white/5 bg-black/50 text-center">
-            <p className="text-[9px] text-white/40 uppercase tracking-widest">
+          <div className="px-8 py-4 border-t border-white/10 bg-black text-center">
+            <p className="type text-[10px] text-white/30 uppercase tracking-widest leading-relaxed">
               By continuing, you agree to our Terms of Service and Privacy Policy.
             </p>
           </div>

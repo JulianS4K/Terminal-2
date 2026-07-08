@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Organizer</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme {
+    --color-brand-primary: #00FF00; --color-brand-secondary: #FF00FF; --color-brand-accent: #FF2A2A;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif; --font-display: "Anton", sans-serif;
+    --font-type: "Special Elite", monospace; --font-marker: "Permanent Marker", cursive;
+  }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); } .xerox{ filter:grayscale(1) contrast(1.35) brightness(1.04); } .group:hover .xerox{ filter:none; }
+  .stamp{ font-family:"Anton",sans-serif; border:2.5px solid currentColor; padding:0 7px 2px; display:inline-block; line-height:1.15; }
+</style>
+</head>
+<body class="wall grain text-white">
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+    <a href="Home.html" class="flex items-center gap-3 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg></div><span class="disp text-4xl tracking-tight text-white leading-none pt-1" style="transform:skewX(-6deg)">EXOS</span></a>
+    <button class="disp text-lg bg-brand-primary text-black px-5 py-1 tracking-wide">SIGN IN</button>
+  </div></div>
+</nav>
+
+<!-- BANNER -->
+<div class="h-64 bg-[#111] relative overflow-hidden flex items-end border-b border-white/10">
+  <div class="absolute inset-0 opacity-30"><img src="https://images.unsplash.com/photo-1574391884720-bbc3740c59d1?q=80&w=1400" class="xerox w-full h-full object-cover" alt="" /></div>
+  <div class="absolute inset-0 bg-gradient-to-t from-black to-transparent"></div>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full relative z-10 pb-8 flex flex-col md:flex-row md:items-end justify-between gap-6">
+    <div class="flex items-end gap-6">
+      <div class="w-32 h-32 bg-brand-primary flex items-center justify-center disp text-6xl text-black border-4 border-black">K</div>
+      <div class="mb-2">
+        <h1 class="disp text-5xl tracking-tight leading-none" style="transform:skewX(-4deg)">KNOCKDOWN PRESENTS</h1>
+        <p class="type text-brand-primary text-[11px] uppercase tracking-widest mt-2">4,208 followers</p>
+      </div>
+    </div>
+    <button class="disp mb-2 bg-brand-primary text-black px-8 py-2.5 text-lg tracking-wide hover:bg-white transition-colors">FOLLOW</button>
+  </div>
+</div>
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-12 grid grid-cols-1 md:grid-cols-4 gap-12 relative z-10">
+  <div class="md:col-span-1 space-y-8">
+    <div>
+      <h3 class="type text-[10px] uppercase tracking-widest text-white/40 mb-2">about organizer</h3>
+      <p class="type text-[13px] text-white/60 leading-relaxed">Maspeth's biggest room. Warehouse techno, all-night bookings, and the occasional live set. No phones on the floor.</p>
+      <div class="flex items-center gap-4 mt-4 text-white/40">
+        <svg class="w-5 h-5 hover:text-brand-primary cursor-pointer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="20" x="2" y="2" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>
+        <svg class="w-5 h-5 hover:text-brand-primary cursor-pointer" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+      </div>
+    </div>
+    <div class="w-full h-px bg-white/10"></div>
+    <div>
+      <h3 class="type text-[10px] uppercase tracking-widest text-white/40 mb-2">notifications</h3>
+      <p class="type text-[11px] text-white/40 leading-relaxed">Follow to get alerts when this organizer announces events in your region.</p>
+    </div>
+  </div>
+
+  <div class="md:col-span-3">
+    <div class="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
+      <h2 class="disp text-3xl tracking-tight" style="transform:skewX(-4deg)">UPCOMING EXPERIENCES</h2>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="ev"></div>
+  </div>
+</div>
+<div class="h-20"></div>
+
+<script>
+  const ev = [
+    { t:'BASEMENT: SHDW B2B KALTAR', d:'FRI JUL 11', v:'Knockdown Center · Maspeth', p:'30', g:'TECHNO', img:'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=600' },
+    { t:'WAREHOUSE 88 — OPEN FORMAT', d:'SAT JUL 12', v:'Knockdown Center · Maspeth', p:'38', g:'WAREHOUSE', img:'https://images.unsplash.com/photo-1574391884720-bbc3740c59d1?q=80&w=600' },
+    { t:'DAWN PATROL ALL-NIGHTER', d:'SAT JUL 12', v:'Knockdown Center · Maspeth', p:'40', g:'TECHNO', img:'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?q=80&w=600' },
+    { t:'NOCTURNE: AMBIENT ROOMS', d:'THU JUL 17', v:'Knockdown Center · Maspeth', p:'25', g:'AMBIENT', img:'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?q=80&w=600' },
+  ];
+  document.getElementById('ev').innerHTML = ev.map(e=>`
+    <a href="EventDetails.html" class="bg-[#111] border border-white/10 overflow-hidden group hover:border-brand-primary/60 transition-colors">
+      <div class="aspect-video relative overflow-hidden">
+        <img src="${e.img}" class="xerox w-full h-full object-cover transition-all duration-700" alt="" />
+        <div class="absolute inset-0 bg-gradient-to-t from-black to-transparent opacity-80"></div>
+        <div class="absolute bottom-4 left-4 right-4">
+          <h3 class="disp text-2xl text-white tracking-tight leading-none mb-1">${e.t}</h3>
+          <p class="type text-[9px] text-brand-primary uppercase tracking-widest">${e.g}</p>
+        </div>
+      </div>
+      <div class="p-5">
+        <div class="type text-[10px] text-white/50 uppercase tracking-widest mb-1 flex items-center gap-2"><svg class="w-3 h-3 text-brand-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg> ${e.d}</div>
+        <div class="type text-[10px] text-white/50 uppercase tracking-widest pb-4 mb-4 border-b border-white/5 flex items-center gap-2 truncate"><svg class="w-3 h-3 text-brand-primary shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg> ${e.v}</div>
+        <div class="flex justify-between items-center">
+          <span class="stamp neon text-base">$${e.p}+</span>
+          <span class="type text-[9px] text-white/40 uppercase tracking-widest group-hover:text-brand-primary transition-colors">view details →</span>
+        </div>
+      </div>
+    </a>`).join('');
+</script>
+</body>
+</html>

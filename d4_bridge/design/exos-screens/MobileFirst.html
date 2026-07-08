@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Mobile-First Buyer Flow</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-secondary:#FF00FF; --color-brand-accent:#FF2A2A; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); }
+  .xerox{ filter:grayscale(1) contrast(1.35) brightness(1.04); }
+  .stamp{ font-family:"Anton",sans-serif; border:2.5px solid currentColor; padding:0 7px 2px; display:inline-block; line-height:1.15; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.045), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.05; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .no-bar::-webkit-scrollbar{ display:none; } .no-bar{ -ms-overflow-style:none; scrollbar-width:none; }
+
+  /* phone shell */
+  .phone{ position:relative; width:390px; height:800px; border-radius:46px; background:#000; border:1px solid rgba(255,255,255,.14); box-shadow:0 40px 90px -30px rgba(0,0,0,.9), inset 0 0 0 8px #0a0a0a; flex:0 0 auto; overflow:hidden; }
+  .island{ position:absolute; top:14px; left:50%; transform:translateX(-50%); width:118px; height:33px; background:#000; border-radius:20px; z-index:60; }
+  .statusbar{ position:absolute; top:0; left:0; right:0; height:54px; z-index:55; display:flex; align-items:center; justify-content:space-between; padding:20px 30px 0; pointer-events:none; }
+  .statusbar .t{ font-weight:700; font-size:14px; letter-spacing:.02em; }
+  .screen{ position:absolute; inset:0; overflow:hidden; border-radius:46px; }
+  .scroll{ position:absolute; inset:0; overflow-y:auto; }
+  .homeindicator{ position:absolute; bottom:9px; left:50%; transform:translateX(-50%); width:134px; height:5px; border-radius:3px; background:rgba(255,255,255,.4); z-index:70; pointer-events:none; }
+</style>
+</head>
+<body class="wall grain min-h-screen">
+
+<!-- header -->
+<div class="max-w-6xl mx-auto px-6 pt-16 pb-4 relative z-10">
+  <p class="type text-brand-primary text-xs tracking-[0.35em] uppercase mb-3">// designed for the thumb, not just shrunk</p>
+  <div class="flex items-end gap-4 flex-wrap">
+    <h1 class="disp text-5xl md:text-7xl leading-[0.85]" style="transform:skewX(-4deg)">MOBILE-<span class="neon">FIRST</span></h1>
+    <span class="marker text-brand-secondary text-2xl rotate-[-4deg] mb-2">the way it's actually used ✦</span>
+  </div>
+  <p class="text-white/55 text-sm mt-4 max-w-2xl leading-relaxed">The buyer lives on a phone. These four screens are built for it — a bottom tab bar in thumb reach, a sticky buy bar pinned to the bottom of the fold, a bottom-sheet checkout instead of a new page, and a wallet pass sized for the turnstile. Not the desktop layout reflowed.</p>
+</div>
+
+<!-- phones -->
+<div class="w-full overflow-x-auto no-bar px-6 pb-24 relative z-10">
+  <div class="flex gap-16 items-start w-max pt-6">
+
+    <!-- ========== 1. DISCOVER — bottom tab bar ========== -->
+    <div>
+      <div class="mb-5 max-w-[390px]">
+        <div class="flex items-center gap-2 mb-1"><span class="disp text-brand-primary text-lg">01</span><span class="disp text-2xl tracking-tight">DISCOVER</span></div>
+        <p class="type text-white/45 text-[12px] leading-relaxed">Bottom tab bar keeps the whole app one thumb-tap away. Search is a tap, not a hidden menu. Cards are full-width and tappable edge to edge.</p>
+      </div>
+      <div class="phone">
+        <div class="island"></div>
+        <div class="statusbar"><span class="t text-white">9:41</span><span class="t text-white">􀙇 􀛨 􀋦</span></div>
+        <div class="screen bg-[#050505]">
+          <div class="scroll no-bar pb-24">
+            <!-- compact header -->
+            <div class="pt-14 px-5 pb-3 sticky top-0 bg-[#050505]/95 backdrop-blur z-20 border-b border-white/5">
+              <div class="flex items-center justify-between mb-3">
+                <span class="disp text-3xl tracking-tight neon" style="transform:skewX(-6deg)">EXOS</span>
+                <div class="w-9 h-9 bg-brand-primary text-black disp flex items-center justify-center text-lg">R</div>
+              </div>
+              <div class="flex items-center gap-2 bg-white/5 border border-white/10 rounded-full px-4 h-11">
+                <svg class="w-4 h-4 text-white/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <span class="type text-white/40 text-sm">search shows, venues, artists</span>
+              </div>
+            </div>
+            <!-- genre pills -->
+            <div class="flex gap-2 px-5 py-3 overflow-x-auto no-bar">
+              <span class="shrink-0 disp text-sm bg-brand-primary text-black px-3 py-1.5">TONIGHT</span>
+              <span class="shrink-0 type text-xs uppercase tracking-widest text-white/55 border border-white/15 rounded-full px-3.5 py-2">Techno</span>
+              <span class="shrink-0 type text-xs uppercase tracking-widest text-white/55 border border-white/15 rounded-full px-3.5 py-2">House</span>
+              <span class="shrink-0 type text-xs uppercase tracking-widest text-white/55 border border-white/15 rounded-full px-3.5 py-2">Live</span>
+              <span class="shrink-0 type text-xs uppercase tracking-widest text-white/55 border border-white/15 rounded-full px-3.5 py-2">Free</span>
+            </div>
+            <!-- feed -->
+            <div class="px-5 space-y-4" id="m-feed"></div>
+          </div>
+          <!-- BOTTOM TAB BAR -->
+          <div class="absolute bottom-0 left-0 right-0 z-40 bg-black/92 backdrop-blur border-t border-white/10 px-2 pt-2 pb-7">
+            <div class="grid grid-cols-4">
+              <div class="flex flex-col items-center gap-1 py-1.5">
+                <svg class="w-6 h-6 text-brand-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                <span class="type text-[9px] uppercase tracking-widest text-brand-primary">Discover</span>
+              </div>
+              <div class="flex flex-col items-center gap-1 py-1.5">
+                <svg class="w-6 h-6 text-white/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <span class="type text-[9px] uppercase tracking-widest text-white/40">Search</span>
+              </div>
+              <div class="flex flex-col items-center gap-1 py-1.5 relative">
+                <svg class="w-6 h-6 text-white/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg>
+                <span class="absolute top-0 right-6 w-4 h-4 bg-brand-secondary text-black text-[9px] font-black rounded-full flex items-center justify-center">3</span>
+                <span class="type text-[9px] uppercase tracking-widest text-white/40">Tickets</span>
+              </div>
+              <div class="flex flex-col items-center gap-1 py-1.5">
+                <svg class="w-6 h-6 text-white/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+                <span class="type text-[9px] uppercase tracking-widest text-white/40">You</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="homeindicator"></div>
+      </div>
+    </div>
+
+    <!-- ========== 2. EVENT DETAIL — sticky buy bar ========== -->
+    <div>
+      <div class="mb-5 max-w-[390px]">
+        <div class="flex items-center gap-2 mb-1"><span class="disp text-brand-primary text-lg">02</span><span class="disp text-2xl tracking-tight">EVENT · STICKY BUY BAR</span></div>
+        <p class="type text-white/45 text-[12px] leading-relaxed">Price and the primary CTA never scroll away — pinned to the bottom of the fold where the thumb rests. The rest of the page scrolls behind it.</p>
+      </div>
+      <div class="phone">
+        <div class="island"></div>
+        <div class="statusbar"><span class="t text-white">9:41</span><span class="t text-white">􀙇 􀛨 􀋦</span></div>
+        <div class="screen bg-[#050505]">
+          <!-- floating back -->
+          <div class="absolute top-14 left-4 z-30 w-10 h-10 rounded-full bg-black/55 backdrop-blur border border-white/15 flex items-center justify-center">
+            <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
+          </div>
+          <div class="absolute top-14 right-4 z-30 w-10 h-10 rounded-full bg-black/55 backdrop-blur border border-white/15 flex items-center justify-center">
+            <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/></svg>
+          </div>
+          <div class="scroll no-bar pb-28">
+            <!-- full-bleed hero -->
+            <div class="relative h-[380px]">
+              <img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=800" class="xerox w-full h-full object-cover" alt="" />
+              <div class="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/20 to-transparent"></div>
+              <span class="stamp text-brand-accent absolute top-16 right-4 rotate-[-7deg] bg-black/50">SELLING FAST</span>
+              <div class="absolute bottom-4 left-5 right-5">
+                <span class="disp bg-brand-primary text-black px-2.5 text-sm inline-block mb-2">TECHNO</span>
+                <h2 class="disp text-4xl leading-[0.85] tracking-tight">BASEMENT: SHDW B2B KALTAR</h2>
+              </div>
+            </div>
+            <!-- facts -->
+            <div class="px-5 pt-5 space-y-4">
+              <div class="flex items-center gap-3">
+                <div class="w-11 h-11 border border-white/15 flex flex-col items-center justify-center leading-none"><span class="type text-[9px] text-brand-primary uppercase">Fri</span><span class="disp text-lg">11</span></div>
+                <div><p class="font-bold text-sm">Friday 11 July · 11:00PM</p><p class="type text-white/45 text-[12px]">doors 10PM · 21+</p></div>
+              </div>
+              <div class="flex items-center gap-3">
+                <div class="w-11 h-11 border border-white/15 flex items-center justify-center"><svg class="w-5 h-5 text-brand-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg></div>
+                <div><p class="font-bold text-sm">Knockdown Center</p><p class="type text-white/45 text-[12px]">52-19 Flushing Ave · Maspeth</p></div>
+              </div>
+              <p class="text-white/60 text-sm leading-relaxed pt-1">Two of the borough's heaviest selectors, back to back 'til close. Warehouse system, no phones on the floor, one room, all night.</p>
+              <div class="flex items-center gap-3 pt-1">
+                <div class="w-9 h-9 bg-brand-primary text-black disp flex items-center justify-center">K</div>
+                <div class="flex-1"><p class="text-sm font-bold">Knockdown Presents</p><p class="type text-white/40 text-[11px]">4,208 followers</p></div>
+                <button class="type text-[11px] uppercase tracking-widest border border-white/20 rounded-full px-3 py-1.5 text-white/70">Follow</button>
+              </div>
+            </div>
+          </div>
+          <!-- STICKY BUY BAR -->
+          <div class="absolute bottom-0 left-0 right-0 z-40 bg-black/92 backdrop-blur border-t border-white/10 px-5 pt-3.5 pb-7 flex items-center gap-4">
+            <div class="leading-none"><p class="type text-white/40 text-[10px] uppercase tracking-widest mb-1">from</p><p class="disp text-3xl neon">$30</p></div>
+            <button class="flex-1 bg-brand-primary text-black disp text-xl tracking-wide h-14 flex items-center justify-center active:scale-[0.98] transition-transform">GET TICKETS</button>
+          </div>
+        </div>
+        <div class="homeindicator"></div>
+      </div>
+    </div>
+
+    <!-- ========== 3. CHECKOUT — bottom sheet ========== -->
+    <div>
+      <div class="mb-5 max-w-[390px]">
+        <div class="flex items-center gap-2 mb-1"><span class="disp text-brand-primary text-lg">03</span><span class="disp text-2xl tracking-tight">CHECKOUT · BOTTOM SHEET</span></div>
+        <p class="type text-white/45 text-[12px] leading-relaxed">Tier selection slides up over the event instead of loading a new page — the buyer keeps context. Steppers are 44px hit targets. Pay bar sticks to the bottom.</p>
+      </div>
+      <div class="phone">
+        <div class="island"></div>
+        <div class="statusbar"><span class="t text-white">9:41</span><span class="t text-white">􀙇 􀛨 􀋦</span></div>
+        <div class="screen bg-[#050505]">
+          <!-- dimmed event behind -->
+          <div class="absolute inset-0">
+            <img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=800" class="xerox w-full h-[380px] object-cover opacity-40" alt="" />
+            <div class="absolute inset-0 bg-black/70"></div>
+          </div>
+          <!-- bottom sheet -->
+          <div class="absolute bottom-0 left-0 right-0 z-30 bg-[#0c0c0c] border-t border-white/10 rounded-t-3xl pt-3 max-h-[86%] flex flex-col">
+            <div class="w-10 h-1.5 rounded-full bg-white/25 mx-auto mb-4"></div>
+            <div class="px-5 pb-2 flex items-center justify-between">
+              <div><h2 class="disp text-2xl leading-none">PICK YOUR <span class="neon">TICKETS</span></h2><p class="type text-white/40 text-[11px] mt-1">Basement: SHDW b2b Kaltar</p></div>
+              <div class="w-9 h-9 rounded-full bg-white/8 flex items-center justify-center"><svg class="w-4 h-4 text-white/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></div>
+            </div>
+            <div class="overflow-y-auto no-bar px-5 py-3 space-y-3">
+              <!-- tier: selected -->
+              <div class="border-2 border-brand-primary bg-brand-primary/5 p-4">
+                <div class="flex items-start justify-between mb-3">
+                  <div><p class="disp text-lg">GA STANDING</p><p class="type text-white/45 text-[11px]">general admission · all night</p></div>
+                  <p class="disp text-xl neon">$30</p>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="type text-brand-primary text-[11px] uppercase tracking-widest">in your order</span>
+                  <div class="flex items-center gap-3">
+                    <button class="w-11 h-11 border border-white/20 flex items-center justify-center text-xl active:bg-white/10">−</button>
+                    <span class="disp text-2xl w-6 text-center">2</span>
+                    <button class="w-11 h-11 bg-brand-primary text-black flex items-center justify-center text-xl active:scale-95">+</button>
+                  </div>
+                </div>
+              </div>
+              <!-- tier: available -->
+              <div class="border border-white/12 p-4">
+                <div class="flex items-start justify-between mb-3">
+                  <div><p class="disp text-lg">EARLY ENTRY + BAR</p><p class="type text-white/45 text-[11px]">skip the line · first round free</p></div>
+                  <p class="disp text-xl">$45</p>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="type text-brand-accent text-[11px] uppercase tracking-widest">8 left</span>
+                  <div class="flex items-center gap-3">
+                    <button class="w-11 h-11 border border-white/20 flex items-center justify-center text-xl text-white/30">−</button>
+                    <span class="disp text-2xl w-6 text-center text-white/40">0</span>
+                    <button class="w-11 h-11 border border-white/20 flex items-center justify-center text-xl active:bg-white/10">+</button>
+                  </div>
+                </div>
+              </div>
+              <!-- sold out tier -->
+              <div class="border border-white/8 p-4 opacity-50">
+                <div class="flex items-start justify-between">
+                  <div><p class="disp text-lg">VIP TABLE</p><p class="type text-white/45 text-[11px]">bottle service · 6 people</p></div>
+                  <span class="disp text-brand-accent text-base border-2 border-brand-accent px-2">SOLD OUT</span>
+                </div>
+              </div>
+            </div>
+            <!-- STICKY PAY BAR -->
+            <div class="border-t border-white/10 px-5 pt-3.5 pb-7 bg-[#0c0c0c]">
+              <div class="flex items-center justify-between mb-3">
+                <div><p class="type text-white/40 text-[10px] uppercase tracking-widest">2 × GA · incl. fees</p></div>
+                <p class="disp text-2xl">$67.40</p>
+              </div>
+              <button class="w-full bg-brand-primary text-black disp text-xl tracking-wide h-14 flex items-center justify-center gap-2 active:scale-[0.99] transition-transform">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.6 13.8c0-2 1.6-3 1.7-3-1-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7s-1.6-.7-2.6-.7c-1.3 0-2.6.8-3.2 2-1.4 2.4-.4 6 1 8 .6 1 1.4 2.1 2.4 2 1-.1 1.3-.6 2.5-.6s1.5.6 2.5.6 1.7-1 2.3-2c.7-1.1 1-2.2 1-2.3-.1 0-2.2-.8-2.2-3.2z"/></svg>
+                PAY
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="homeindicator"></div>
+      </div>
+    </div>
+
+    <!-- ========== 4. TICKET — wallet pass ========== -->
+    <div>
+      <div class="mb-5 max-w-[390px]">
+        <div class="flex items-center gap-2 mb-1"><span class="disp text-brand-primary text-lg">04</span><span class="disp text-2xl tracking-tight">TICKET · AT THE TURNSTILE</span></div>
+        <p class="type text-white/45 text-[12px] leading-relaxed">Brightness-boosted QR sized for a scanner at arm's length, live status pulse, and a one-tap add to Apple Wallet. This is the screen held up at the door.</p>
+      </div>
+      <div class="phone">
+        <div class="island"></div>
+        <div class="statusbar"><span class="t text-white">9:41</span><span class="t text-white">􀙇 􀛨 􀋦</span></div>
+        <div class="screen bg-[#050505]">
+          <div class="scroll no-bar pb-8">
+            <div class="pt-16 px-5 flex items-center justify-between">
+              <span class="type text-white/45 text-[11px] uppercase tracking-widest">your pass · 1 of 2</span>
+              <span class="inline-flex items-center gap-1.5 type text-brand-primary text-[11px] uppercase tracking-widest"><span class="w-2 h-2 rounded-full bg-brand-primary animate-pulse"></span>valid</span>
+            </div>
+            <!-- pass card -->
+            <div class="mx-5 mt-4 bg-white text-black overflow-hidden">
+              <div class="relative h-40">
+                <img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=800" class="xerox w-full h-full object-cover" alt="" />
+                <div class="absolute inset-0 bg-gradient-to-t from-white via-transparent to-transparent"></div>
+                <span class="disp bg-black text-brand-primary px-2.5 text-sm absolute top-3 left-3">TECHNO</span>
+              </div>
+              <div class="px-5 -mt-6 relative">
+                <h2 class="disp text-3xl leading-[0.85] tracking-tight text-black">BASEMENT: SHDW B2B KALTAR</h2>
+                <p class="type text-black/55 text-[12px] mt-2">Knockdown Center · Maspeth</p>
+                <p class="type text-black/55 text-[12px]">Fri 11 Jul · 11:00PM · GA Standing</p>
+              </div>
+              <!-- perforation -->
+              <div class="relative my-5">
+                <div class="border-t-2 border-dashed border-black/15 mx-5"></div>
+                <div class="absolute -left-3 -top-3 w-6 h-6 rounded-full bg-[#050505]"></div>
+                <div class="absolute -right-3 -top-3 w-6 h-6 rounded-full bg-[#050505]"></div>
+              </div>
+              <!-- QR -->
+              <div class="px-5 pb-6 text-center">
+                <div class="inline-block p-3 bg-white border-2 border-black">
+                  <svg id="qr" viewBox="0 0 25 25" class="w-44 h-44" shape-rendering="crispEdges"></svg>
+                </div>
+                <p class="type text-black/50 text-[11px] mt-3 tracking-widest">EXO-4471-7 · RILEY OKAFOR</p>
+              </div>
+            </div>
+            <!-- actions -->
+            <div class="px-5 mt-5 space-y-2.5">
+              <button class="w-full bg-black border border-white/15 text-white h-13 py-3.5 flex items-center justify-center gap-2 font-bold text-sm rounded">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.6 13.8c0-2 1.6-3 1.7-3-1-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7s-1.6-.7-2.6-.7c-1.3 0-2.6.8-3.2 2-1.4 2.4-.4 6 1 8 .6 1 1.4 2.1 2.4 2 1-.1 1.3-.6 2.5-.6s1.5.6 2.5.6 1.7-1 2.3-2c.7-1.1 1-2.2 1-2.3-.1 0-2.2-.8-2.2-3.2z"/></svg>
+                Add to Apple Wallet
+              </button>
+              <div class="grid grid-cols-2 gap-2.5">
+                <button class="type text-[11px] uppercase tracking-widest border border-white/15 text-white/70 py-3.5">Transfer</button>
+                <button class="type text-[11px] uppercase tracking-widest border border-white/15 text-white/70 py-3.5">View #2</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="homeindicator"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // discover feed
+  const feed = [
+    { t:'HOUSE OF YES: DISCO BALL', v:'House of Yes · Bushwick', d:'FRI 11 JUL', p:'35', g:'DISCO', img:'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?q=80&w=600', tag:'LIVE', tc:'brand-primary' },
+    { t:'DAWN PATROL ALL-NIGHTER', v:'Nowadays · Ridgewood', d:'SAT 12 JUL', p:'40', g:'TECHNO', img:'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=600', tag:'SELLING FAST', tc:'brand-accent' },
+    { t:'NOCTURNE: AMBIENT ROOMS', v:'Public Records · Gowanus', d:'THU 10 JUL', p:'25', g:'AMBIENT', img:'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?q=80&w=600', tag:'', tc:'' },
+    { t:'THE WILDER SESSIONS', v:'Elsewhere · Bushwick', d:'SAT 12 JUL', p:'28', g:'INDIE', img:'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?q=80&w=600', tag:'', tc:'' },
+  ];
+  document.getElementById('m-feed').innerHTML = feed.map(e=>`
+    <div class="relative overflow-hidden active:scale-[0.99] transition-transform">
+      <div class="relative h-52">
+        <img src="${e.img}" class="xerox w-full h-full object-cover" alt="" />
+        <div class="absolute inset-0 bg-gradient-to-t from-[#050505] via-[#050505]/15 to-transparent"></div>
+        ${e.tag?`<span class="stamp text-${e.tc} absolute top-3 right-3 rotate-[-6deg] bg-black/50 text-sm">${e.tag}</span>`:''}
+        <span class="disp bg-brand-primary text-black px-2 text-[13px] absolute top-3 left-3">${e.g}</span>
+        <div class="absolute bottom-3 left-3 right-3">
+          <p class="type text-brand-primary text-[11px] uppercase tracking-widest mb-1">${e.d}</p>
+          <h3 class="disp text-2xl leading-[0.88] tracking-tight mb-1">${e.t}</h3>
+          <div class="flex items-center justify-between">
+            <p class="type text-white/60 text-[12px]">${e.v}</p>
+            <p class="disp text-lg neon">$${e.p}</p>
+          </div>
+        </div>
+      </div>
+    </div>`).join('');
+
+  // QR — dependency-free SVG pseudo-QR (matches TicketDetail)
+  (function(){
+    const n=25, svg=document.getElementById('qr'); let out='';
+    const g=[]; for(let y=0;y<n;y++){g[y]=[];for(let x=0;x<n;x++)g[y][x]=Math.random()>0.52;}
+    function finder(ox,oy){ for(let y=-1;y<8;y++)for(let x=-1;x<8;x++){ const gy=oy+y,gx=ox+x; if(gy<0||gx<0||gy>=n||gx>=n)continue; const border=(x===0||x===6||y===0||y===6); const core=(x>=2&&x<=4&&y>=2&&y<=4); const sep=(x===-1||x===7||y===-1||y===7); g[gy][gx]= sep?false:(border||core); } }
+    finder(0,0);finder(n-7,0);finder(0,n-7);
+    for(let y=0;y<n;y++)for(let x=0;x<n;x++) if(g[y][x]) out+=`<rect x="${x}" y="${y}" width="1" height="1" fill="#000"/>`;
+    svg.innerHTML=out;
+  })();
+</script>
+</body>
+</html>
