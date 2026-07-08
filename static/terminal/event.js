@@ -717,10 +717,14 @@
       // module-level cache populated by loadSgZonesSplits (parallel fetch);
       // each panel re-renders whenever either side updates.
       safe('splits',     () => setSplitsTevo(data.splits));
-      // ZONE METRICS: feed the TEvo/curated side from the /zones payload; the SG
-      // side merges in via loadSgZonesSplits. Re-added 2026-07-07 as the "Zone
-      // Metrics" panel (per-zone event-shaped metrics off zone_metrics).
-      safe('zoneMetrics', () => setZonesTevo(zones));
+      // ZONE METRICS: the consolidated page RPC (v3) has NO zones key (only
+      // zone_deltas), so `data.zones` is empty on the live path — show "loading"
+      // and populate from the dedicated get_event_zones RPC below (fresh curated
+      // rollup, decoupled from the heavy/timeout-prone v3). Legacy REST path
+      // still provides zones inline, so honor those immediately when present.
+      const _payloadZones = (zones && Array.isArray(zones.zones)) ? zones : undefined;
+      safe('zoneMetrics', () => setZonesTevo(_payloadZones));
+      loadZonesTevo(eventId).catch(e => console.error('[zones]', e));
       safe('salesTape',  () => renderSalesTape(data.sales_tape, bridge));
       safe('espn',       () => renderEspn(data.espn));
       // MMA/UFC events have no team-snapshot ESPN data, so renderEspn() hides the
@@ -6287,6 +6291,18 @@
     }
     setZonesSg(sgZones);
     setSplitsSg(sgSplits);
+  }
+
+  // ---------- TEvo/curated zones (mig 20260708180000 / get_event_zones) ----------
+  // The consolidated page RPC (v3) carries NO zones key — only zone_deltas — so
+  // the Zone Metrics panel's TEvo side is fed from this dedicated live-rollup RPC
+  // instead. Decoupled from the heavy/timeout-prone v3 and always fresh (curated
+  // rollup off the latest listings, not the lagging zone_metrics cron). Race-safe
+  // with the page payload: setZonesTevo re-renders whenever this lands.
+  async function loadZonesTevo(eventId) {
+    const res = await rpcOrNull('get_event_zones', { p_event_id: eventId });
+    if (res.error) return;   // not deployed / forbidden → keep payload zones or loading state
+    setZonesTevo(res.data || { zones: [] });
   }
 
   // ---------- Chart Extended (mig 20260519150000 / get_event_chart_extended) ----------
