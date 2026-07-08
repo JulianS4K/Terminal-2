@@ -80,7 +80,7 @@ JOIN LATERAL (
   LIMIT 1
 ) dv ON true
 ON CONFLICT (performer_id) DO UPDATE SET
-  performer_name = COALESCE(EXCLUDED.performer_name, public.performer_home_venues.performer_name),
+  performer_name = COALESCE(EXCLUDED.performer_name, performer_home_venues.performer_name),
   venue_id       = EXCLUDED.venue_id,
   venue_name     = EXCLUDED.venue_name,
   venue_location = EXCLUDED.venue_location,
