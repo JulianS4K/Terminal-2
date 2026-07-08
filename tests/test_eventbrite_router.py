@@ -129,3 +129,45 @@ def test_num_coercion():
     assert _num("abc") is None
     assert _num(37.24) == 37.24
     assert _num("42") == 42.0
+
+
+def test_eventbrite_single_event_detail(client, monkeypatch):
+    row = {
+        "td_event_id": "1712180019529",
+        "event_url": "https://www.eventbrite.com/e/anna-1712180019529",
+        "event_name": "Elsewhere Presents: Anna von Hausswolff",
+        "event_date": "2027-01-22",
+        "venue_name": "Knockdown Center", "city": "Queens",
+        "matched_tevo_event_id": None,
+        "discovered_at": "2026-07-08T00:00:00Z",
+        "raw": {
+            "venue": {"region": "NY", "address_display": "52-19 Flushing Avenue, Queens, NY 11378",
+                      "postal_code": "11378", "latitude": "40.7157764", "longitude": "-73.9144982"},
+            "currency": "USD", "min_ticket_price": 37.24, "max_ticket_price": 37.24,
+            "is_sold_out": True, "has_available_tickets": False, "waitlist_available": True,
+            "sales_status": "sales_ended", "age_restriction": "16+",
+            "start_date": "2027-01-22 19:00", "end_date": "2027-01-22 22:00",
+            "summary": "Anna von Hausswolff @ Knockdown Center! Tickets start at $22 • 7pm • 16+ | Genre: Alternative",
+            "image_original_url": "https://img.evbuc.com/original.jpg",
+            "refund_policy": {"description": "No Refunds"},
+            "venue_url": "https://www.eventbrite.com/o/105655500371",
+        },
+    }
+    _db(monkeypatch, [row])
+    ev = client.get("/api/eventbrite/event/1712180019529").json()
+    assert ev["td_event_id"] == "1712180019529"
+    assert ev["linked"] is False and ev["region"] == "NY"
+    assert ev["price_min"] == 37.24 and ev["price_max"] == 37.24
+    assert ev["sold_out"] is True and ev["waitlist"] is True
+    assert ev["genre"] == "Alternative"                      # parsed from summary tail
+    assert ev["latitude"] == 40.7157764 and ev["longitude"] == -73.9144982
+    assert ev["venue_address"].startswith("52-19 Flushing")
+    assert ev["refund_policy"] == "No Refunds"
+    assert ev["image_url"] == "https://img.evbuc.com/original.jpg"
+    assert ev["start_date"] == "2027-01-22 19:00"
+
+
+def test_eventbrite_single_event_not_found(client, monkeypatch):
+    _db(monkeypatch, [])
+    res = client.get("/api/eventbrite/event/does-not-exist")
+    assert res.status_code == 404

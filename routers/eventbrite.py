@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 
 def _num(v):
@@ -85,6 +85,68 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
             "on_sale": sum(1 for e in out if e["has_tickets"] and not e["sold_out"]),
             "sold_out": sum(1 for e in out if e["sold_out"]),
             "events": out,
+        }
+
+    @router.get("/api/eventbrite/event/{td_event_id}")
+    def eventbrite_event(td_event_id: str, _=Depends(require_auth)):
+        """Single discovered Eventbrite event (primary-face detail) backing the
+        source-native event page (event.html?eb=<td_event_id>). Returns the same
+        face fields as the list route plus the full venue geo/address, image,
+        summary/genre, on-sale window and refund policy from the stored raw item.
+        These are PRIMARY-ONLY events (no TEvo/secondary market), so there is no
+        seat-level data — the page renders a primary-face card, not a market."""
+        db = get_require_sb()()
+        rows = (
+            db.table("td_discovered_events")
+            .select("td_event_id,event_url,event_name,event_date,venue_name,city,"
+                    "performer_label,matched_tevo_event_id,raw,discovered_at")
+            .eq("platform", "eventbrite")
+            .eq("td_event_id", str(td_event_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="eventbrite event not found")
+
+        r = rows[0]
+        raw = r.get("raw") or {}
+        venue = raw.get("venue") if isinstance(raw.get("venue"), dict) else {}
+        refund = raw.get("refund_policy") if isinstance(raw.get("refund_policy"), dict) else {}
+        summary = raw.get("summary") or ""
+        # Eventbrite folds the genre into the summary tail as "... | Genre: X".
+        genre = summary.split("Genre:", 1)[1].strip() or None if "Genre:" in summary else None
+        return {
+            "td_event_id": r.get("td_event_id"),
+            "event_url": r.get("event_url"),
+            "event_name": r.get("event_name"),
+            "event_date": r.get("event_date"),
+            "start_date": raw.get("start_date"),
+            "end_date": raw.get("end_date"),
+            "venue_name": r.get("venue_name"),
+            "city": r.get("city"),
+            "region": venue.get("region"),
+            "venue_address": venue.get("address_display"),
+            "postal_code": venue.get("postal_code"),
+            "latitude": _num(venue.get("latitude")),
+            "longitude": _num(venue.get("longitude")),
+            "tevo_event_id": r.get("matched_tevo_event_id"),
+            "linked": r.get("matched_tevo_event_id") is not None,
+            "currency": raw.get("currency"),
+            "price_min": _num(raw.get("min_ticket_price")),
+            "price_max": _num(raw.get("max_ticket_price")),
+            "is_free": bool(raw.get("is_free")),
+            "sold_out": bool(raw.get("is_sold_out")),
+            "has_tickets": bool(raw.get("has_available_tickets")),
+            "waitlist": bool(raw.get("waitlist_available")),
+            "sales_status": raw.get("sales_status"),
+            "event_status": raw.get("event_status"),
+            "age_restriction": raw.get("age_restriction"),
+            "genre": genre,
+            "summary": summary or None,
+            "image_url": raw.get("image_original_url") or raw.get("image_url"),
+            "refund_policy": refund.get("description"),
+            "organizer_url": raw.get("venue_url"),
+            "discovered_at": r.get("discovered_at"),
         }
 
     return router
