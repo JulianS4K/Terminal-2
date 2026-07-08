@@ -52,10 +52,15 @@ SUPPORTED_PLATFORMS = frozenset({
 # is the cross-market comparison, which legitimately includes SeatGeek.)
 NATIVE_PLATFORMS = frozenset({"seatgeek"})
 
-# Operator-disabled markets (directive 2026-06-09): not pulled on any source
-# sweep. /fetch rejects them; /match callers should filter them from the
-# comparison via OPERATOR_DISABLED_PLATFORMS.
-OPERATOR_DISABLED_PLATFORMS = frozenset({"dice", "eventbrite"})
+# Operator-disabled markets: not pulled on any source sweep. /fetch rejects
+# them; /match callers should filter them from the comparison via
+# OPERATOR_DISABLED_PLATFORMS.
+#   - dice: disabled 2026-06-09.
+#   - eventbrite: RE-ENABLED 2026-07-08 (operator directive) — wiring in the
+#     Eventbrite organizer feed via /events + /fetch, starting with organizer
+#     https://www.eventbrite.com/o/105655500371 (see migration
+#     20260708180000_td_eventbrite_organizer_discovery.sql).
+OPERATOR_DISABLED_PLATFORMS = frozenset({"dice"})
 
 EXCLUDED_PLATFORMS = NATIVE_PLATFORMS | OPERATOR_DISABLED_PLATFORMS
 

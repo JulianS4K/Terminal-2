@@ -1146,6 +1146,13 @@ from routers.axs import build_axs_router  # noqa: E402
 
 app.include_router(build_axs_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
+# routers/eventbrite.py — Eventbrite organizer discovered events (TicketsData
+# /events feed). Service-role read of td_discovered_events (RLS service-only),
+# mirroring the AXS route. Wired 2026-07-08.
+from routers.eventbrite import build_eventbrite_router  # noqa: E402
+
+app.include_router(build_eventbrite_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+
 
 # Bands in Town artist tour-tracking read route (#693). Read-only GET client +
 # Instagram share-card generator wired into a broker endpoint. Auth:
