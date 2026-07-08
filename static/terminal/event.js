@@ -446,7 +446,9 @@
     const trk = document.getElementById('trackBtn');
     if (trk) { trk.hidden = true; trk.style.display = 'none'; }
     const mode = document.getElementById('eventMode');
-    if (mode) mode.textContent = 'Eventbrite · primary inventory (no TEvo market)';
+    if (mode) mode.textContent = (ev && ev.stubhub)
+      ? 'Eventbrite · primary inventory + StubHub resale'
+      : 'Eventbrite · primary inventory (no TEvo market)';
 
     // Hero badges: genre / age / availability from the feed's live flags.
     const badges = document.getElementById('evBadges');
@@ -457,6 +459,7 @@
       if (ev && ev.sold_out) b.push('<span class="badge muted">sold out</span>' + (ev.waitlist ? ' <span class="badge">waitlist</span>' : ''));
       else if (ev && ev.has_tickets) b.push('<span class="badge pos">on sale</span>');
       else if (ev && ev.sales_status === 'sales_ended') b.push('<span class="badge muted">sales ended</span>');
+      if (ev && ev.stubhub) b.push('<span class="badge pos">on StubHub</span>');
       badges.innerHTML = b.join(' ');
     }
 
@@ -496,6 +499,13 @@
       ['AGE', ev.age_restriction || '—', 'restriction'],
       ['GENRE', ev.genre || '—', ''],
     ];
+    // StubHub resale KPI — only when we have a persisted secondary-market mapping.
+    if (ev.stubhub && ev.stubhub.min_price != null) {
+      const shSub = ev.stubhub.listings != null
+        ? ev.stubhub.listings + (ev.stubhub.listings === 1 ? ' listing' : ' listings')
+        : 'secondary market';
+      kpis.push(['STUBHUB · RESALE', cur + T.fmtNum(Math.round(ev.stubhub.min_price)) + '+', shSub]);
+    }
     const kpiHtml = kpis.map(([l, v, s]) =>
       `<div class="kpi-cell"><span class="kpi-lbl">${escapeHtml(l)}</span>` +
       `<span class="kpi-val">${escapeHtml(String(v))}</span>` +
@@ -517,6 +527,38 @@
     const ebHref = /^https?:\/\//i.test(ev.event_url || '') ? ev.event_url : null;
     const img = /^https:\/\//i.test(ev.image_url || '') ? ev.image_url : null;
 
+    // Secondary market: when a StubHub mapping is persisted, render a resale card
+    // (snapshot price/availability + link out); otherwise the "not mapped" note.
+    const sh = ev.stubhub;
+    let secondaryHtml;
+    if (sh) {
+      const shHref = /^https?:\/\//i.test(sh.url || '') ? sh.url : null;
+      const shRows = [
+        ['From', sh.min_price != null ? cur + T.fmtNum(Math.round(sh.min_price)) : null],
+        ['High', sh.max_price != null ? cur + T.fmtNum(Math.round(sh.max_price)) : null],
+        ['Listings', sh.listings != null ? String(sh.listings) : null],
+        ['Tickets', sh.total_tickets != null ? String(sh.total_tickets) : null],
+        ['StubHub event id', sh.entity_id],
+        ['Snapshot', sh.snapshot_at ? T.fmtDate(sh.snapshot_at) : null],
+      ].filter(([, v]) => v != null && v !== '')
+        .map(([l, v]) => `<tr><td class="muted">${escapeHtml(l)}</td><td>${escapeHtml(String(v))}</td></tr>`).join('');
+      secondaryHtml =
+        '<section id="eb-secondary" style="margin-top:12px">' +
+          '<div class="panel-title row"><span>STUBHUB — SECONDARY MARKET</span>' +
+          (shHref ? `<a href="${escapeHtml(shHref)}" target="_blank" rel="noopener">StubHub ↗</a>` : '') +
+          '</div>' +
+          `<table class="kv"><tbody>${shRows}</tbody></table>` +
+          '<div class="muted small" style="margin-top:8px">Resale snapshot from StubHub (not the Eventbrite ' +
+          'face). Full live listings open on StubHub.</div>' +
+        '</section>';
+    } else {
+      secondaryHtml =
+        '<div class="muted small" style="margin-top:8px">No secondary market mapped: this event ' +
+        'isn\'t linked to a TEvo / StubHub / SeatGeek listing in our data (some Eventbrite shows ' +
+        'do resell on StubHub — those just aren\'t auto-mapped yet). Prices are the organizer\'s ' +
+        'face band from the Eventbrite feed (discovery only — no seat-level pull).</div>';
+    }
+
     pane.innerHTML =
       `<section id="kpi-grid">${kpiHtml}</section>` +
       '<section id="eb-primary">' +
@@ -526,11 +568,8 @@
         (img ? `<img src="${escapeHtml(img)}" alt="" class="eb-hero-img" style="max-width:100%;border-radius:8px;margin-bottom:10px" />` : '') +
         (ev.summary ? `<p class="muted">${escapeHtml(ev.summary)}</p>` : '') +
         `<table class="kv"><tbody>${detail}</tbody></table>` +
-        '<div class="muted small" style="margin-top:8px">No secondary market mapped: this event ' +
-        'isn\'t linked to a TEvo / StubHub / SeatGeek listing in our data (some Eventbrite shows ' +
-        'do resell on StubHub — those just aren\'t auto-mapped yet). Prices are the organizer\'s ' +
-        'face band from the Eventbrite feed (discovery only — no seat-level pull).</div>' +
-      '</section>';
+      '</section>' +
+      secondaryHtml;
     activateTab('overview');
   }
 

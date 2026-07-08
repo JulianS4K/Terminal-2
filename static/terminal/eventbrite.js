@@ -5,11 +5,13 @@
 // /api/eventbrite/events route:
 //
 //   GET /api/eventbrite/events?upcoming=<true|false>
-//     -> { count, linked, on_sale, sold_out, events: [ {td_event_id, event_url,
-//          event_name, event_date, venue_name, city, region, tevo_event_id,
-//          linked, currency, price_min, price_max, is_free, sold_out,
-//          has_tickets, waitlist, sales_status, event_status, age_restriction,
-//          image_url, discovered_at} ] }
+//     -> { count, linked, on_stubhub, on_sale, sold_out, events: [ {td_event_id,
+//          event_url, event_name, event_date, venue_name, city, region,
+//          tevo_event_id, linked, currency, price_min, price_max, is_free,
+//          sold_out, has_tickets, waitlist, sales_status, event_status,
+//          age_restriction, image_url, discovered_at,
+//          stubhub: {entity_id, url, min_price, max_price, listings,
+//                    total_tickets, source, snapshot_at} | null} ] }
 //
 // td_discovered_events is RLS service-role-only, so — like the AXS panel — this
 // page goes through the backend (T.api) which holds the service-role client.
@@ -89,7 +91,8 @@
         ? `<span class="badge">${data.count} discovered</span> ` +
           `<span class="badge pos">${data.on_sale || 0} on sale</span> ` +
           `<span class="badge muted">${data.sold_out || 0} sold out</span> ` +
-          `<span class="badge">${data.linked || 0} mapped → TEvo</span>`
+          `<span class="badge">${data.linked || 0} mapped → TEvo</span> ` +
+          `<span class="badge pos">${data.on_stubhub || 0} on StubHub</span>`
         : '';
     }
     renderTable();
@@ -175,7 +178,19 @@
       const nameCell = r.tevo_event_id
         ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(name)}</a>`
         : (ebPage ? `<a href="${escapeHtml(ebPage)}">${escapeHtml(name)}</a>` : escapeHtml(name));
-      const unmapped = r.tevo_event_id ? '' : ' <span class="badge muted" title="No secondary market mapped to this event — opens the Eventbrite-source page. (Some of these do resell on StubHub; they just aren\'t auto-mapped yet.)">unmapped</span>';
+      // Market badge: TEvo-mapped rows carry the standard event link (no badge);
+      // rows mapped to a StubHub resale listing get a positive "StubHub · from $X"
+      // badge (opens the EB page, which now shows the resale card); the rest are
+      // genuinely unmapped in our data.
+      let mktBadge = '';
+      if (!r.tevo_event_id) {
+        if (r.stubhub) {
+          const from = r.stubhub.min_price != null ? ` · from ${cur}${T.fmtNum(Math.round(r.stubhub.min_price))}` : '';
+          mktBadge = ` <span class="badge pos" title="Mapped to a StubHub resale listing (event ${escapeHtml(String(r.stubhub.entity_id || ''))})">StubHub${from}</span>`;
+        } else {
+          mktBadge = ' <span class="badge muted" title="No secondary market mapped to this event — opens the Eventbrite-source page. (Some of these do resell on StubHub; they just aren\'t auto-mapped yet.)">unmapped</span>';
+        }
+      }
 
       // Price band. Free events flagged explicitly; otherwise min–max face.
       let band;
@@ -211,7 +226,7 @@
       else if (ebPage) links.push(`<a href="${escapeHtml(ebPage)}">EVENT</a>`);
 
       tr.innerHTML = `
-        <td>${nameCell}${unmapped}</td>
+        <td>${nameCell}${mktBadge}</td>
         <td>${escapeHtml(r.venue_name || '—')}</td>
         <td class="small">${escapeHtml([r.city, r.region].filter(Boolean).join(', ') || '—')}</td>
         <td class="num">${r.event_date ? T.temporalChipHtml(r.event_date) : '<span class="muted small">—</span>'}</td>

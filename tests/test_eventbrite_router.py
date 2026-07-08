@@ -33,8 +33,9 @@ TestClient = starlette_testclient.TestClient
 
 
 class _Q:
-    def __init__(self, data):
+    def __init__(self, data, sb=None):
         self._data = data
+        self._sb = sb
         self.gte_called = False
 
     def select(self, *a, **k):
@@ -45,6 +46,8 @@ class _Q:
 
     def gte(self, *a, **k):
         self.gte_called = True
+        if self._sb is not None:
+            self._sb.gte_called = True   # aggregate across queries (route makes >1)
         return self
 
     def order(self, *a, **k):
@@ -61,9 +64,10 @@ class _Sb:
     def __init__(self, rows):
         self._rows = rows
         self.last_q = None
+        self.gte_called = False
 
     def table(self, name):
-        self.last_q = _Q(self._rows)
+        self.last_q = _Q(self._rows, self)
         return self.last_q
 
 
@@ -120,7 +124,7 @@ def test_eventbrite_events_upcoming_filter(client, monkeypatch):
     sb = _db(monkeypatch, [])
     body = client.get("/api/eventbrite/events?upcoming=true").json()
     assert body["count"] == 0 and body["events"] == []
-    assert sb.last_q.gte_called is True     # upcoming=true applies the date gate
+    assert sb.gte_called is True     # upcoming=true applies the date gate
 
 
 def test_num_coercion():
@@ -171,6 +175,116 @@ def test_eventbrite_single_event_not_found(client, monkeypatch):
     _db(monkeypatch, [])
     res = client.get("/api/eventbrite/event/does-not-exist")
     assert res.status_code == 404
+
+
+# --- StubHub secondary-market mapping ---------------------------------------
+# A platform-aware mock: the route queries td_discovered_events twice (EB events,
+# then the platform='stubhub' index), so the mock must return the right subset per
+# .eq("platform", ...) filter. Rows carry a "platform" key.
+class _QF:
+    def __init__(self, rows):
+        self._rows = rows
+        self._filters = {}
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, col=None, val=None, *a, **k):
+        if col is not None:
+            self._filters[col] = val
+        return self
+
+    def gte(self, *a, **k):
+        return self
+
+    def order(self, *a, **k):
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def execute(self):
+        data = self._rows
+        for col, val in self._filters.items():
+            data = [r for r in data if str(r.get(col)) == str(val)]
+        return type("_R", (), {"data": data})()
+
+
+class _SbF:
+    def table(self, name):
+        self.last_q = _QF(self._rows)
+        return self.last_q
+
+
+def _dbf(monkeypatch, rows):
+    sb = _SbF()
+    sb._rows = rows
+    monkeypatch.setattr(app_module, "require_sb", lambda: sb)
+    return sb
+
+
+def _rows_with_stubhub():
+    return [
+        {"platform": "eventbrite", "td_event_id": "E_CONN",
+         "event_url": "https://www.eventbrite.com/e/wu-lyf",
+         "event_name": "WU LYF", "event_date": "2026-07-16",
+         "venue_name": "Elsewhere - The Hall", "city": "Brooklyn",
+         "matched_tevo_event_id": None, "raw": {"currency": "USD"}},
+        {"platform": "eventbrite", "td_event_id": "E_FETCH",
+         "event_url": "https://www.eventbrite.com/e/no-cure",
+         "event_name": "No Cure", "event_date": "2026-07-10",
+         "venue_name": "Elsewhere - The Hall", "city": "Brooklyn",
+         "matched_tevo_event_id": None, "raw": {"currency": "USD"}},
+        {"platform": "eventbrite", "td_event_id": "E_NONE",
+         "event_url": "https://www.eventbrite.com/e/witch",
+         "event_name": "Witch Project", "event_date": "2026-07-11",
+         "venue_name": "Elsewhere", "city": "Brooklyn",
+         "matched_tevo_event_id": None, "raw": {"currency": "USD"}},
+        # connector-discovered SH row: min price under raw.sh, no listing detail
+        {"platform": "stubhub", "td_event_id": "161118309",
+         "event_url": "https://www.stubhub.com/event/161118309/",
+         "raw": {"source": "stubhub_connector_search",
+                 "eb_match": {"td_event_id": "E_CONN"},
+                 "sh": {"entity_id": "161118309", "min_price": 69.0}}},
+        # manual /fetch SH row: full inventory snapshot
+        {"platform": "stubhub", "td_event_id": "161120445",
+         "event_url": "https://www.stubhub.com/event/161120445/",
+         "raw": {"source": "manual_url_fetch",
+                 "eb_match": {"td_event_id": "E_FETCH"},
+                 "inventory": {"listings": 8, "total_tickets": 42,
+                               "min_price": 55.81, "max_price": 1050.75}}},
+    ]
+
+
+def test_eventbrite_list_attaches_stubhub(client, monkeypatch):
+    _dbf(monkeypatch, _rows_with_stubhub())
+    body = client.get("/api/eventbrite/events").json()
+    assert body["count"] == 3
+    assert body["on_stubhub"] == 2
+
+    conn = next(e for e in body["events"] if e["td_event_id"] == "E_CONN")
+    assert conn["stubhub"]["entity_id"] == "161118309"
+    assert conn["stubhub"]["min_price"] == 69.0
+    assert conn["stubhub"]["listings"] is None      # connector search has no seat detail
+
+    fetch = next(e for e in body["events"] if e["td_event_id"] == "E_FETCH")
+    assert fetch["stubhub"]["min_price"] == 55.81
+    assert fetch["stubhub"]["max_price"] == 1050.75
+    assert fetch["stubhub"]["listings"] == 8 and fetch["stubhub"]["total_tickets"] == 42
+
+    none = next(e for e in body["events"] if e["td_event_id"] == "E_NONE")
+    assert none["stubhub"] is None
+
+
+def test_eventbrite_single_event_attaches_stubhub(client, monkeypatch):
+    _dbf(monkeypatch, _rows_with_stubhub())
+    ev = client.get("/api/eventbrite/event/E_CONN").json()
+    assert ev["stubhub"]["entity_id"] == "161118309"
+    assert ev["stubhub"]["min_price"] == 69.0
+    assert ev["stubhub"]["url"] == "https://www.stubhub.com/event/161118309/"
+
+    ev2 = client.get("/api/eventbrite/event/E_NONE").json()
+    assert ev2["stubhub"] is None
 
 
 def _detail_with_summary(client, monkeypatch, summary):

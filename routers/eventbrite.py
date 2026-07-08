@@ -33,6 +33,50 @@ def _num(v):
         return None
 
 
+def _stubhub_info(r: dict) -> dict:
+    """Normalize a persisted platform='stubhub' row (td_discovered_events) into a
+    compact secondary-market summary for the terminal. The row's own td_event_id IS
+    the StubHub event id and event_url its page. Price/availability is a snapshot:
+    manual /fetch rows carry a full raw.inventory (listings/tickets/min/max); rows
+    discovered via the StubHub connector search carry raw.sh.min_price only."""
+    raw = r.get("raw") or {}
+    inv = raw.get("inventory") if isinstance(raw.get("inventory"), dict) else {}
+    sh = raw.get("sh") if isinstance(raw.get("sh"), dict) else {}
+    min_price = _num(inv.get("min_price"))
+    if min_price is None:
+        min_price = _num(sh.get("min_price"))
+    return {
+        "entity_id": r.get("td_event_id"),
+        "url": r.get("event_url"),
+        "min_price": min_price,
+        "max_price": _num(inv.get("max_price")),
+        "listings": inv.get("listings"),
+        "total_tickets": inv.get("total_tickets"),
+        "source": raw.get("source"),
+        "snapshot_at": raw.get("snapshot_at"),
+    }
+
+
+def _stubhub_index(db) -> dict:
+    """Load every persisted StubHub↔Eventbrite mapping keyed by the Eventbrite
+    td_event_id it was matched to (raw.eb_match.td_event_id). Small set (one row per
+    mapped event), read in a single service-role query."""
+    rows = (
+        db.table("td_discovered_events")
+        .select("td_event_id,event_url,raw")
+        .eq("platform", "stubhub")
+        .execute()
+    ).data or []
+    idx = {}
+    for r in rows:
+        raw = r.get("raw") or {}
+        match = raw.get("eb_match") if isinstance(raw.get("eb_match"), dict) else {}
+        eb_id = match.get("td_event_id")
+        if eb_id:
+            idx[str(eb_id)] = _stubhub_info(r)
+    return idx
+
+
 def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth: Callable) -> APIRouter:
     router = APIRouter()
 
@@ -55,6 +99,7 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
             from datetime import datetime, timezone
             q = q.gte("event_date", datetime.now(timezone.utc).date().isoformat())
         rows = (q.order("event_date", desc=False).limit(limit).execute()).data or []
+        sh_idx = _stubhub_index(db)
 
         out = []
         for r in rows:
@@ -63,6 +108,7 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
             pmin = _num(raw.get("min_ticket_price"))
             pmax = _num(raw.get("max_ticket_price"))
             out.append({
+                "stubhub": sh_idx.get(str(r.get("td_event_id"))),
                 "td_event_id": r.get("td_event_id"),
                 "event_url": r.get("event_url"),
                 "event_name": r.get("event_name"),
@@ -88,6 +134,7 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
         return {
             "count": len(out),
             "linked": sum(1 for e in out if e["linked"]),
+            "on_stubhub": sum(1 for e in out if e.get("stubhub")),
             "on_sale": sum(1 for e in out if e["has_tickets"] and not e["sold_out"]),
             "sold_out": sum(1 for e in out if e["sold_out"]),
             "events": out,
@@ -99,8 +146,8 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
         source-native event page (event.html?eb=<td_event_id>). Returns the same
         face fields as the list route plus the full venue geo/address, image,
         summary/genre, on-sale window and refund policy from the stored raw item.
-        These are PRIMARY-ONLY events (no TEvo/secondary market), so there is no
-        seat-level data — the page renders a primary-face card, not a market."""
+        Includes a `stubhub` object when we have a persisted secondary-market
+        mapping for this event (entity id + price snapshot); otherwise null."""
         db = get_require_sb()()
         rows = (
             db.table("td_discovered_events")
@@ -153,6 +200,7 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
             "refund_policy": refund.get("description"),
             "organizer_url": raw.get("venue_url"),
             "discovered_at": r.get("discovered_at"),
+            "stubhub": _stubhub_index(db).get(str(td_event_id)),
         }
 
     return router
