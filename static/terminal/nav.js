@@ -22,6 +22,14 @@
     ? 'https://vibepass-storefront-test.onrender.com/home/'
     : '/home/';
 
+  // FANTASY moved to its own D5 surface (served only by the FastAPI storefront
+  // shell, not this static CDN). Same topology rule as HUB: from the terminal-
+  // test CDN, deep-link cross-origin to the always-on shell; same-origin
+  // `/fantasy/` everywhere else (shell + localhost).
+  const FANTASY_HREF = location.hostname.includes('terminal-test')
+    ? 'https://vibepass-storefront-test.onrender.com/fantasy/'
+    : '/fantasy/';
+
   const PAGES = [
     // HOME below remains the terminal's mark-to-market dashboard (broker desk).
     { id: 'hub',       label: '← HUB',     href: HUB_HREF },
@@ -272,7 +280,7 @@
       if (fan.length) {
         parts.push('<div class="ts-section"><div class="ts-section-lbl">FANTASY</div>');
         fan.forEach(f => {
-          const href = `/fantasy/?league=${encodeURIComponent(f.id)}`;
+          const href = `${FANTASY_HREF}?league=${encodeURIComponent(f.id)}`;
           const meta = [f.espn_league, (f.team_count != null ? f.team_count + ' teams' : '')].filter(Boolean).join(' · ');
           flat.push({ href, label: f.name, kind: 'fantasy' });
           parts.push(`<a class="ts-row" href="${href}" data-kind="fantasy">
