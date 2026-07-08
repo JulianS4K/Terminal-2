@@ -39,6 +39,10 @@ def read_storefront_html(name: str, *, static_dir: str, version: str, base_url: 
         f'/static/store/store.js?v={v}"',
     )
     html = html.replace(
+        '/static/store/theme.js"',
+        f'/static/store/theme.js?v={v}"',
+    )
+    html = html.replace(
         '/static/store/style.css"',
         f'/static/store/style.css?v={v}"',
     )

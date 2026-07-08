@@ -38,6 +38,36 @@ def test_store_service_worker_served_from_root():
     assert "javascript" in r.headers["content-type"].lower()
 
 
+# ---- Ivory Editorial theme (default light theme + dark toggle) ----
+
+@pytest.mark.parametrize("path", [
+    "/store", "/store/event/123", "/store/discover", "/store/tour",
+    "/store/chat", "/store/about", "/store/privacy", "/store/terms",
+])
+def test_storefront_pages_default_to_ivory_theme(path):
+    """Every storefront page ships with the Ivory default applied pre-paint:
+    a static data-theme="ivory" on <html>, the render-blocking theme.js, and a
+    header toggle. theme.js must load before style.css to avoid a flash."""
+    body = client.get(path).text
+    assert 'data-theme="ivory"' in body
+    assert "/static/store/theme.js" in body
+    assert 'class="theme-toggle"' in body
+    # Blocking theme.js must precede the stylesheet so the attribute resolves
+    # before the first paint.
+    assert body.index("theme.js") < body.index("style.css")
+
+
+def test_theme_js_served_and_cache_busted():
+    """theme.js is a real static asset, and the page reference is version-
+    stamped so a deploy never serves a stale copy (same treatment as store.js)."""
+    r = client.get("/static/store/theme.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"].lower()
+    assert "vp-theme" in r.text  # the localStorage key — proves it's our file
+    # The page reference carries the ?v= cache-bust.
+    assert "/static/store/theme.js?v=" in client.get("/store").text
+
+
 # ---- Branded storefront error page (site-level 404 / 5xx) ----
 
 def test_unknown_storefront_route_renders_branded_404_html():
