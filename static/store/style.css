@@ -23,6 +23,89 @@
   color-scheme: dark;
 }
 
+/* ===== Ivory Editorial — the storefront's DEFAULT (light) theme =====
+   :root above holds the dark palette (the base); this is the opt-out theme
+   toggled by the header switch (theme.js), persisted in localStorage. Pages
+   ship with a static `data-theme="ivory"` on <html>, so this scope is the
+   look by default and dark is the alternate. Because the whole stylesheet is
+   authored against var(--*), overriding the tokens re-skins everything; the
+   rules below are the handful of per-component treatments the editorial look
+   needs on top of the palette (serif display type, calmer hovers, accent
+   colors tuned for a light ground). Ported from the D1 design mockup's
+   `.iv` direction. Cormorant Garamond is a progressive enhancement — it
+   falls back to the same system serif stack as dark (no remote font; CSP
+   blocks font-src). */
+:root[data-theme="ivory"] {
+  --bg: #f4f1ea;
+  --panel: #fbf9f4;
+  --panel-2: #efe9dd;
+  --line: #dcd5c6;
+  --text: #171310;
+  --muted: #6f675c;
+  --accent: #9c7a3c;
+  --accent-2: #b8935a;
+  --gold: #9c7a3c;
+  --gold-soft: rgba(156,122,60,0.13);
+  --good: #4f7a52;
+  --warn: #8a6d1e;
+  --bad: #b23b3b;
+  --radius: 4px;
+  --shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 34px rgba(60,45,20,0.08);
+  --display: "Cormorant Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+  color-scheme: light;
+}
+[data-theme="ivory"] .card .name,
+[data-theme="ivory"] .mover-title { font-family: var(--display); font-weight: 600; font-size: 20px; letter-spacing: -.2px; }
+[data-theme="ivory"] .chat-hero h1,
+[data-theme="ivory"] h1 { font-family: var(--display); }
+[data-theme="ivory"] .grid-heading,
+[data-theme="ivory"] .movers-section-title { font-family: var(--display); font-weight: 600; font-size: 22px; letter-spacing: 0; text-transform: none; color: var(--text); }
+[data-theme="ivory"] .movers-section.movers-featured .movers-section-title { color: var(--accent); }
+[data-theme="ivory"] .movers-concierge .movers-section-title::before { color: var(--gold); }
+[data-theme="ivory"] .brand { font-family: var(--display); font-weight: 600; letter-spacing: 2px; text-transform: uppercase; }
+[data-theme="ivory"] .brand::before { content: ""; margin: 0; }
+[data-theme="ivory"] .card:hover { transform: none; box-shadow: none; border-color: var(--accent); }
+[data-theme="ivory"] .mover-card:hover { transform: none; }
+[data-theme="ivory"] .badge.mvp { background: var(--gold-soft); color: var(--accent); border-color: rgba(156,122,60,0.35); }
+[data-theme="ivory"] .filter-chip.on { background: rgba(156,122,60,0.14); border-color: var(--accent); color: #7a5f28; }
+[data-theme="ivory"] .btn.ghost:hover { background: rgba(156,122,60,0.08); }
+[data-theme="ivory"] .disclaimer { background: rgba(156,122,60,0.08); border-color: rgba(156,122,60,0.32); color: #7a5f28; }
+[data-theme="ivory"] .banner:not([hidden]) { background: rgba(156,122,60,0.10); border-color: rgba(156,122,60,0.32); color: #7a5f28; }
+[data-theme="ivory"] .receipt .total,
+[data-theme="ivory"] .banner-link,
+[data-theme="ivory"] .share-url { color: var(--accent); }
+[data-theme="ivory"] .map-placeholder { background: var(--panel-2); color: var(--muted); }
+[data-theme="ivory"] .map img { background: var(--panel-2); }
+[data-theme="ivory"] #storeChat { --rchat-bg: #fbf9f4; --rchat-panel: #efe9dd; --rchat-line: #dcd5c6; --rchat-text: #171310; --rchat-muted: #6f675c; --rchat-accent: #9c7a3c; }
+[data-theme="ivory"] .movers-moving-fast .mover-accent { color: #9a2f2f; }
+[data-theme="ivory"] .movers-price-drops .mover-accent { color: #2f6b3d; }
+[data-theme="ivory"] .movers-climbing .mover-accent { color: #7a5a10; }
+[data-theme="ivory"] .movers-specials .mover-accent { color: #5b3a8a; }
+[data-theme="ivory"] .err-big { font-family: var(--display); font-weight: 600; font-size: 88px; line-height: 1; color: var(--accent); margin-bottom: 10px; letter-spacing: 1px; }
+[data-theme="ivory"] .error-title { font-family: var(--display); font-weight: 600; font-size: 26px; }
+
+/* ----- Header theme toggle (ivory ⇄ dark) ----- */
+.theme-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color .15s ease, color .15s ease;
+}
+.theme-toggle:hover { border-color: var(--accent); color: var(--text); }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
