@@ -1,4 +1,4 @@
--- Migration 20260708180000 · level:2 · lane:A1 · operator-directed (2026-07-08)
+-- Migration 20260708180040 · level:2 · lane:A1 · operator-directed (2026-07-08)
 -- ============================================================================
 -- FINAL-WEEK PRICE-DECAY CURVE + EVENT-PREDICTIONS RPC (read-only, display).
 --
@@ -40,7 +40,7 @@ GRANT SELECT ON public.clearing_dte_curve TO authenticated, service_role;
 COMMENT ON TABLE public.clearing_dte_curve IS
   'Clearing-level curve by category × days-to-event, per-event-normalized to the 22-60d '
   'bucket. Projects clearing price to a future day (removes the final-week over-prediction). '
-  'Rebuilt weekly from venue_section_price_daily. A1 mig 20260708180000.';
+  'Rebuilt weekly from venue_section_price_daily. A1 mig 20260708180040.';
 
 -- Builder: per-event level by (category, dte_bucket), normalized to the event's 22-60d, medianed.
 CREATE OR REPLACE FUNCTION public.rebuild_clearing_dte_curve(p_window interval DEFAULT '45 days'::interval)
@@ -91,7 +91,7 @@ END $body$;
 $cron$);
 INSERT INTO public.cron_policy (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min, daily_max_fires, enabled, notes)
 VALUES ('clearing_dte_curve_weekly', ARRAY[]::int[], 10080, 10080, 1, true,
-        'Clearing-level dte curve rebuild. Weekly Sun 08:25 UTC. A1 mig 20260708180000.')
+        'Clearing-level dte curve rebuild. Weekly Sun 08:25 UTC. A1 mig 20260708180040.')
 ON CONFLICT (jobname) DO NOTHING;
 
 -- ── 2. Curve level lookup (default 1.0 when curve empty/thin → no projection) ─
@@ -144,7 +144,7 @@ REVOKE ALL ON FUNCTION public.project_event_clearing_price(bigint,text,integer) 
 GRANT EXECUTE ON FUNCTION public.project_event_clearing_price(bigint,text,integer) TO authenticated, service_role;
 COMMENT ON FUNCTION public.project_event_clearing_price(bigint,text,integer) IS
   'Clearing price projected to p_target_dte = predict_event_clearing_price(now) × '
-  'clearing_dte_curve[target]/[now]. Read-only, @s4kent.com-gated. A1 mig 20260708180000.';
+  'clearing_dte_curve[target]/[now]. Read-only, @s4kent.com-gated. A1 mig 20260708180040.';
 
 -- ── 4. Event predictions for our EVO-owned sections (powers the Predictions tab) ─
 CREATE OR REPLACE FUNCTION public.get_event_predictions(p_event_id bigint)
@@ -222,4 +222,4 @@ GRANT EXECUTE ON FUNCTION public.get_event_predictions(bigint) TO authenticated,
 COMMENT ON FUNCTION public.get_event_predictions(bigint) IS
   'Per EVO-owned section: clearing at now/rolling(+4d)/event-day + sell-by frontier + '
   'own-book gap. Powers the event-page Predictions tab. Read-only, @s4kent.com-gated. '
-  'A1 mig 20260708180000.';
+  'A1 mig 20260708180040.';
