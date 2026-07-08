@@ -1,4 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__Supabase__list_projects"
+    ]
+  },
   "extraKnownMarketplaces": {
     "terminal2": {
       "source": {
