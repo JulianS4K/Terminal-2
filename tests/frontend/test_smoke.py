@@ -110,6 +110,33 @@ def _smoke(browser, base_url, path, data_page):
     return status, shell_ok, diag
 
 
+def test_event_face_kpi_scaffold(live_server, browser):
+    """Primary-face KPI ships on the event page (feature #842).
+
+    The FACE·PRIMARY cell is populated + revealed by renderFaceKpi() only when
+    an event has an AXS/Ticketmaster listing (needs credentials), so we can't
+    assert its value in this credential-less env — but the static scaffolding
+    (#kpiFace / #kpiFaceVal) must always be present, and the render path must not
+    throw a pageerror. This guards the HTML hook against removal/rename.
+    """
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    pageerrors = []
+    page.on("pageerror", lambda exc: pageerrors.append(str(exc)))
+    page.goto(live_server + "/terminal/event.html?id=1", wait_until="domcontentloaded", timeout=20000)
+    try:
+        page.wait_for_selector("body[data-page='event']", timeout=5000)
+    except Exception:
+        pass
+    page.wait_for_timeout(1000)
+    assert page.locator("#kpiFace").count() > 0, "event page missing #kpiFace primary-face KPI cell"
+    assert page.locator("#kpiFaceVal").count() > 0, "event page missing #kpiFaceVal"
+    # Cell hidden by default (no primary listing without credentials).
+    assert page.locator("#kpiFace").get_attribute("hidden") is not None, "#kpiFace should start hidden"
+    assert not pageerrors, f"face-KPI render threw: {pageerrors}"
+    ctx.close()
+
+
 @pytest.mark.parametrize("path,data_page", PAGES, ids=[p[0] for p in PAGES])
 def test_page_smoke(live_server, browser, path, data_page):
     status, shell_ok, diag = _smoke(browser, live_server, path, data_page)
