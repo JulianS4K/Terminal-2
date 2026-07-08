@@ -389,7 +389,15 @@ export default function EventDetails() {
     // Share the event POSTER image to the OS share sheet (→ Instagram Story),
     // with the URL copied for the link sticker. Shared impl in lib/poster.ts.
     await shareEventToStory(
-      { title: event.title, url: publicUrl(`event/${event.id}`), imageUrl: event.image },
+      {
+        title: event.title,
+        url: publicUrl(`event/${event.id}`),
+        imageUrl: event.image,
+        dateLabel: event.date
+          ? formatInTz(event.date.toDate(), event.timezone, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+          : undefined,
+        venue: event.location,
+      },
       toast,
     );
   };

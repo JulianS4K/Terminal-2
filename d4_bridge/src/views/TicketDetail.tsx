@@ -173,7 +173,15 @@ export default function TicketDetail() {
   const qrUnlocked = isWithinHoursBefore(event.date?.toDate?.(), 24);
   const handleInstagramStory = async () => {
     await shareEventToStory(
-      { title: event.title, url: publicUrl(`event/${event.id}`), imageUrl: event.image },
+      {
+        title: event.title,
+        url: publicUrl(`event/${event.id}`),
+        imageUrl: event.image,
+        dateLabel: event.date
+          ? formatInTz(event.date.toDate(), event.timezone, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+          : undefined,
+        venue: event.location,
+      },
       toast,
     );
   };
