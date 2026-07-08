@@ -1,4 +1,7 @@
-// D0 Terminal — Fantasy page (FANTASY nav tab).
+// D5 Fantasy — standalone surface (spun off from the D0 terminal FANTASY tab).
+// Served at /fantasy/ under the hub shell; reuses the terminal's shared libs
+// (supabase/render/app/auth) but not nav.js. Roster links point back to the
+// terminal player page (/terminal/player.html) — connections kept intact.
 //
 // A read-first browser over the fantasy engine (migs 070000/130000/150000):
 //   get_fantasy_leagues()                 -> league selector
@@ -130,7 +133,7 @@
       const managing = t.id === manageTeamId;
       const roster = (t.roster || []).map(p => {
         const id = p.espn_athlete_id;
-        const href = `player.html?player=${encodeURIComponent(id)}&league=${encodeURIComponent(lg)}`;
+        const href = `/terminal/player.html?player=${encodeURIComponent(id)}&league=${encodeURIComponent(lg)}`;
         const starter = p.slot !== 'bench';
         const slotLabel = starter ? p.slot : 'BN';
         let ctrls = '';

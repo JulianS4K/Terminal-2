@@ -178,6 +178,18 @@
         summary: summary,
       };
 
+      // Primary "face" (AXS / Ticketmaster) for the listed events — merged into
+      // the table by event_id. Optional: the RPC only returns events that have a
+      // primary listing, and any error just leaves the Face column blank.
+      v2State.faceMap = {};
+      try {
+        const ids = [...new Set(events.map(r => Number(r.event_id)).filter(Boolean))];
+        if (ids.length) {
+          const fr = await Auth.client.rpc('get_event_face', { p_event_ids: ids });
+          if (!fr.error) (fr.data || []).forEach(f => { v2State.faceMap[f.event_id] = f; });
+        }
+      } catch (e) { /* face is an optional overlay */ }
+
       T.setStatus('Loaded', 'ok');
       v2State.data = data;
       if (countEl) countEl.textContent = data.event_count ? `${data.event_count} events` : '';
@@ -245,6 +257,7 @@
         <th class="num">#</th>
         <th>Event</th>
         <th class="num">T</th>
+        <th class="num" title="primary face — AXS / Ticketmaster; green when resale trades below face">Face</th>
         <th class="num">EVO</th>
         <th class="num">SG</th>
         <th class="num">SH</th>
@@ -266,10 +279,20 @@
       tr.classList.add('clickable');
       tr.addEventListener('click', () => { window.location.href = 'event.html?event=' + r.event_id; });
       const ownedTix = +r.cur_owned || 0;
+      const f = (v2State.faceMap || {})[r.event_id];
+      let faceTd = '<td class="num muted">—</td>';
+      if (f && f.face_getin != null) {
+        const sec = f.secondary_getin != null ? +f.secondary_getin
+                  : (r.cur_price != null ? +r.cur_price : null);
+        const below = sec != null && sec < +f.face_getin;
+        faceTd = `<td class="num" title="primary face · ${escapeHtml(f.face_source || 'AXS')}${below ? ' · resale below face' : ''}"`
+               + (below ? ' style="color:var(--pos,#34d399);font-weight:700"' : '') + `>${$p(f.face_getin)}</td>`;
+      }
       tr.innerHTML = `
         <td class="num muted small">${r.rank}</td>
         <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a></td>
         <td class="num">${r.days_to_event != null ? r.days_to_event : '—'}</td>
+        ${faceTd}
         <td class="num">${$p(r.evo_median)}</td>
         <td class="num">${$p(r.sg_median)}</td>
         <td class="num">${$p(r.td_sh_median)}</td>

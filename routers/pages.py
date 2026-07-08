@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from typing import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 
 
@@ -85,7 +85,7 @@ def build_pages_router(
 
 
     @router.get("/terminal/{page:path}")
-    def terminal_static_proxy(page: str):
+    def terminal_static_proxy(page: str, request: Request):
         """Proxy /terminal/<anything> → static/terminal/<anything> so the unified
         shell (PR #168 testing-unified architecture) keeps nav.js relative-path
         navigation working without a separate URL scheme.
@@ -101,6 +101,12 @@ def build_pages_router(
         extensions so the proxy can't be turned into an arbitrary-file reader."""
         if not page or page in ("", "/"):  # pragma: no cover - shadowed by the explicit /terminal/ index route
             return FileResponse(os.path.join(static_dir, "terminal", "index.html"))
+        # Fantasy was spun off from the terminal into the D5 /fantasy/ surface
+        # (no longer a terminal tab). Redirect the old page URL so bookmarks +
+        # any stale deep-links (…/terminal/fantasy.html?league=5) keep resolving.
+        if page == "fantasy.html":
+            qs = ("?" + request.url.query) if request.url.query else ""
+            return RedirectResponse(url="/fantasy/" + qs, status_code=308)
         if ".." in page or page.startswith("/") or "\\" in page:
             raise HTTPException(404, "not found")
         # Whitelist extensions — proxy serves UI bundle pieces only, never
@@ -110,6 +116,47 @@ def build_pages_router(
                                        ".ico", ".woff", ".woff2", ".webp")):
             raise HTTPException(404, "not found")
         full_path = os.path.join(static_dir, "terminal", page)
+        if not os.path.isfile(full_path):
+            raise HTTPException(404, "not found")
+        return FileResponse(full_path)
+
+
+    # --- D5 / Fantasy ----------------------------------------------------------
+    # Fantasy was promoted out of the D0 terminal into its own hub surface
+    # (operator directive 2026-07-08 — "make it d5 … put it in the hub"). Served
+    # from static/fantasy/ under the same shell as the terminal, mirroring the
+    # /terminal proxy pattern (landing redirect + index + extension-whitelisted,
+    # traversal-guarded asset proxy). Reuses the terminal's shared libs via
+    # absolute /static/terminal/ refs, so no assets are duplicated.
+
+    @router.get("/fantasy")
+    def fantasy_landing():
+        """Bounce bare /fantasy → /fantasy/ so the surface resolves under its
+        directory prefix (same reasoning as /terminal)."""
+        return RedirectResponse(url="/fantasy/", status_code=308)
+
+
+    @router.get("/fantasy/")
+    def fantasy_index():
+        """Serve the D5 fantasy surface shell (static/fantasy/index.html)."""
+        return FileResponse(os.path.join(static_dir, "fantasy", "index.html"))
+
+
+    @router.get("/fantasy/{page:path}")
+    def fantasy_static_proxy(page: str):
+        """Proxy /fantasy/<anything> → static/fantasy/<anything> (boot.js, etc.).
+        Path-traversal guarded + extension-whitelisted, matching the /terminal
+        proxy. Shared libs load from /static/terminal/ via the StaticFiles mount,
+        so only fantasy-owned assets live under this dir."""
+        if not page or page in ("", "/"):  # pragma: no cover - shadowed by the explicit /fantasy/ index route
+            return FileResponse(os.path.join(static_dir, "fantasy", "index.html"))
+        if ".." in page or page.startswith("/") or "\\" in page:
+            raise HTTPException(404, "not found")
+        if not page.lower().endswith((".html", ".css", ".js", ".map",
+                                       ".svg", ".png", ".jpg", ".jpeg",
+                                       ".ico", ".woff", ".woff2", ".webp")):
+            raise HTTPException(404, "not found")
+        full_path = os.path.join(static_dir, "fantasy", page)
         if not os.path.isfile(full_path):
             raise HTTPException(404, "not found")
         return FileResponse(full_path)
