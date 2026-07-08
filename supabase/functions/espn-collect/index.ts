@@ -1,4 +1,14 @@
-// Supabase Edge Function: espn-collect (v8 — stable injury dedup key)
+// Supabase Edge Function: espn-collect (v9 — standings rank + soccer/hockey form)
+//
+// v9 (2026-07-08): team standings ingest was leaving conference_rank/division_rank
+// null for EVERY league (it read stats.divisionRanking/conferenceRanking, which the
+// ESPN /standings payload does not carry). ESPN pre-sorts each standings group, so
+// rank is now derived from the entry's position: division_rank = position in the
+// leaf group (division), conference_rank = position across the conference (flatten
+// divisions, sort by win_pct → points → wins). Also win_pct is now derived from the
+// record for soccer/hockey (ESPN gives no winPercent there), so MLS/NHL "form" is no
+// longer blank. Forward-only: historical snapshots can't be back-ranked (we never
+// stored the raw standings payloads); the daily team_daily cron fills it going forward.
 //
 // v8 (2026-07-02): injury dedup keys on STABLE identity (team_id + slugified
 // athlete name) instead of the churning ESPN athlete id — the Layer-2 ingest
@@ -159,19 +169,35 @@ async function collectTeams(db: any, state: CollectorState, opts: { standings: b
     const ld = leagueData[t.espn_slug];
     if (!ld) continue;
     if (opts.standings) {
-    const entry = findStandingsEntry(ld.standings, t.espn_team_id);
-    if (entry) {
+    const found = findStandingsEntry(ld.standings, t.espn_team_id);
+    if (found) {
+      const entry = found.entry;
       const stats = Object.fromEntries((entry.stats ?? []).map((s: any) => [s.name, s]));
+      const wins = num(stats.wins?.value), losses = num(stats.losses?.value), ties = num(stats.ties?.value);
+      const gp = (wins ?? 0) + (losses ?? 0) + (ties ?? 0);
+      // Rank: ESPN pre-sorts every standings group, so the entry's POSITION is its
+      // rank. The divisionRanking/conferenceRanking stats are absent from the payload
+      // (that's why conference_rank/division_rank read 0% for every league), so derive
+      // rank from position instead. Leaf group is a division when nested >=2 deep
+      // (root > conference > division); at depth 1 it's a single conference/table
+      // (soccer, WNBA). conference_rank = position across the whole conference
+      // (flatten its divisions, sort by the standing metric).
+      const leafRank = found.leafIndex + 1;
+      const depth = found.ancestors.length;
+      const division_rank = depth >= 2 ? leafRank : null;
+      const conference_rank = (depth >= 2
+        ? confRank(found.ancestors[found.ancestors.length - 1], t.espn_team_id)
+        : leafRank) ?? (num(stats.conferenceRanking?.value) || null);
+      // win_pct is absent from ESPN soccer/hockey standings (points-based), so derive
+      // it from the record — otherwise MLS/NHL "form" is blank in the win_pct column.
+      const wpRaw = num(stats.winPercent?.value);
+      const win_pct = wpRaw != null ? wpRaw : (gp > 0 ? Number(((wins ?? 0) / gp).toFixed(4)) : null);
       const row = {
-        wins:           num(stats.wins?.value),
-        losses:         num(stats.losses?.value),
-        ties:           num(stats.ties?.value),
-        win_pct:        num(stats.winPercent?.value),
+        wins, losses, ties, win_pct,
         games_back:     num(stats.gamesBehind?.value),
-        playoff_seed:   num(stats.playoffSeed?.value),
-        conference_rank:num(stats.divisionRanking?.value) || num(stats.conferenceRanking?.value),
-        division_rank:  num(stats.divisionRanking?.value),
-        record_summary:    stats.overall?.displayValue || `${num(stats.wins?.value) ?? '?'}-${num(stats.losses?.value) ?? '?'}`,
+        playoff_seed:   num(stats.playoffSeed?.value) ?? num(stats.rank?.value),
+        conference_rank, division_rank,
+        record_summary:    stats.overall?.displayValue || `${wins ?? '?'}-${losses ?? '?'}`,
         standing_summary:  entry.team?.standingSummary,
         streak:            stats.streak?.displayValue,
       };
@@ -244,20 +270,47 @@ async function collectTeams(db: any, state: CollectorState, opts: { standings: b
   }
 }
 
-function findStandingsEntry(standings: any, espnTeamId: string): any | null {
+// Returns the matching standings entry plus its position context so the caller
+// can derive division_rank (position in the leaf group) and conference_rank.
+function findStandingsEntry(
+  standings: any, espnTeamId: string,
+): { entry: any; leafEntries: any[]; leafIndex: number; ancestors: any[] } | null {
   if (!standings) return null;
   // standings has nested children for conferences/divisions
-  function walk(node: any): any | null {
-    for (const e of node.standings?.entries ?? []) {
-      if (String(e.team?.id) === String(espnTeamId)) return e;
+  function walk(node: any, ancestors: any[]): any | null {
+    const entries = node.standings?.entries ?? [];
+    for (let i = 0; i < entries.length; i++) {
+      if (String(entries[i].team?.id) === String(espnTeamId)) {
+        return { entry: entries[i], leafEntries: entries, leafIndex: i, ancestors };
+      }
     }
     for (const c of node.children ?? []) {
-      const found = walk(c);
+      const found = walk(c, [...ancestors, node]);
       if (found) return found;
     }
     return null;
   }
-  return walk(standings);
+  return walk(standings, []);
+}
+
+// All standings entries under a node's subtree (flattens child divisions).
+function collectEntries(node: any, acc: any[] = []): any[] {
+  for (const e of node.standings?.entries ?? []) acc.push(e);
+  for (const c of node.children ?? []) collectEntries(c, acc);
+  return acc;
+}
+// Standing metric, higher = better: win_pct, else points (soccer/NHL), else wins.
+function standMetric(entry: any): number {
+  const st = Object.fromEntries((entry.stats ?? []).map((s: any) => [s.name, s]));
+  const wp = num(st.winPercent?.value); if (wp != null) return wp;
+  const pts = num(st.points?.value);    if (pts != null) return pts;
+  return num(st.wins?.value) ?? -1;
+}
+// Team's 1-based position within its conference (flatten divisions, sort by metric).
+function confRank(confNode: any, teamId: string): number | null {
+  const all = collectEntries(confNode).sort((a: any, b: any) => standMetric(b) - standMetric(a));
+  const idx = all.findIndex((e: any) => String(e.team?.id) === String(teamId));
+  return idx >= 0 ? idx + 1 : null;
 }
 
 const num = (v: any) => v == null || v === "" ? null : Number(v);
