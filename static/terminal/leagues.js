@@ -132,6 +132,62 @@
                `<span class="kpi-lbl">${escapeHtml(c.l)}</span></div>`).join('');
   }
 
+  // Per-league GAME SLATE — upcoming games (get_league_slate, mig 20260708130000),
+  // each row deep-linking to the event page (EVO data). Fire-and-forget; guards
+  // against a stale render if the operator switches leagues mid-flight.
+  const SLATE_DAYS = 30;
+  async function loadSlate(key) {
+    const sec = $('lgSlate');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) { sec.hidden = true; return; }
+    sec.hidden = false;
+    $('lgSlateTitle').textContent = 'GAME SLATE — NEXT 30 DAYS';
+    $('lgSlateMeta').textContent = '';
+    $('lgSlateBody').innerHTML = '<div class="empty">loading…</div>';
+    const res = await Auth.client.rpc('get_league_slate',
+      { p_league: key, p_days: SLATE_DAYS, p_limit: 200 });
+    if (_curLeague !== key) return;                 // switched away mid-fetch
+    if (res.error) { sec.hidden = true; return; }   // 42883 / forbidden → hide honestly
+    const rows = res.data || [];
+    if (!rows.length) {
+      $('lgSlateBody').innerHTML = '<div class="empty">no upcoming games in the next 30 days</div>';
+      return;
+    }
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const blind = r => (+r.tickets_count || 0) > 0 && (+r.owned_tickets_count || 0) === 0;
+    $('lgSlateMeta').textContent = `${rows.length} games · ${rows.filter(blind).length} we own 0`;
+    const trs = rows.slice(0, 80).map(r => {
+      const d = T.daysUntil(r.occurs_at_local);
+      const owned = +r.owned_tickets_count || 0;
+      const divTag = r.division
+        ? `<span class="slate-div">${escapeHtml(confAbbr(r.conference))} ${escapeHtml(r.division)}</span>`
+        : (r.conference ? `<span class="slate-div">${escapeHtml(r.conference)}</span>` : '');
+      const blindBadge = blind(r) ? '<span class="slate-blind" title="open market, we own 0">BLIND</span>' : '';
+      const ownPct = r.owned_share != null ? T.fmtPct(+r.owned_share * 100, 0) : '—';
+      return `<tr class="slate-row" data-event="${r.event_id}">
+        <td class="muted small">${r.occurs_at_local ? escapeHtml(T.fmtDate(r.occurs_at_local)) : '—'}</td>
+        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a>${blindBadge}${divTag}
+            ${r.venue_name ? `<div class="muted small">${escapeHtml(r.venue_name)}</div>` : ''}</td>
+        <td class="num">${d === null ? '—' : d}</td>
+        <td class="num">${r.tickets_count ? T.fmtNum(r.tickets_count) : '—'}</td>
+        <td class="num">${money(r.getin_price)}</td>
+        <td class="num ${owned ? 'ours' : ''}">${owned ? T.fmtNum(owned) : '—'}</td>
+        <td class="num ${owned ? 'ours' : ''}">${ownPct}</td>
+      </tr>`;
+    }).join('');
+    $('lgSlateBody').innerHTML =
+      `<div style="overflow-x:auto"><table class="espn-recent">
+        <thead><tr><th>Date</th><th>Game</th><th class="num">T-days</th>
+        <th class="num" title="market tickets available">Mkt qty</th>
+        <th class="num" title="cheapest listing (get-in)">Get-in</th>
+        <th class="num" title="tickets we own">Owned</th>
+        <th class="num" title="our share of the market">Own%</th></tr></thead>
+        <tbody>${trs}</tbody></table></div>` +
+      (rows.length > 80 ? `<div class="lg-note">showing the soonest 80 of ${rows.length} games.</div>` : '');
+    $('lgSlateBody').querySelectorAll('tr.slate-row').forEach(tr =>
+      tr.addEventListener('click', () => { window.location.href = 'event.html?event=' + tr.dataset.event; }));
+  }
+
   function pickInitial(want) {
     if (want) {
       if (isRacing(want)) return want;
@@ -199,6 +255,7 @@
   async function loadTeamLeague(key) {
     _curLeague = key;
     renderSalesStrip(key);           // paint from cache if KPIs already loaded
+    loadSlate(key).catch(e => console.error('[slate]', e));   // per-game slate, parallel
     const isExtra = EXTRA_KEYS.has(key);
     const label = displayLeagueLabel(key);
     setHero(shortCode(key), leagueLongName(key, label),
@@ -288,7 +345,7 @@
         </div>`;
       }).join('') +
         '<div class="lg-note">market/owned tickets aggregate this team’s home + road events. Bar = share of the league’s top team by market tickets. ' +
-        'Per-game slate pending a league-slate RPC — click a team for its event-level view.</div>';
+        'Per-game detail is in the GAME SLATE above; click a team for its full event history.</div>';
     }
 
     // Secondary — blind spots (demand, zero owned): the actionable gaps.
@@ -400,6 +457,7 @@
     _curLeague = null;
     $('lgPerformers').hidden = true;
     $('lgSales').hidden = true;
+    $('lgSlate').hidden = true;      // racing uses the SCHEDULE panel below instead
     $('lgPrimaryTitle').textContent = 'SCHEDULE';
     $('lgSecondaryTitle').textContent = 'DRIVER STANDINGS';
     $('lgPrimaryMeta').textContent = '';

@@ -90,6 +90,14 @@
     .perf-chip.plain { color:var(--muted, #8a8a8a); cursor:default; }
     .perf-chip.plain:hover { border-color:var(--line, #2a2a2a); color:var(--muted, #8a8a8a); }
 
+    /* Game slate — upcoming league games (per-game, event-linked) */
+    .lg-slate { background:var(--panel, #141414); border:1px solid var(--line, #2a2a2a);
+      border-radius:8px; padding:12px 14px; }
+    #lgSlateBody table tr.slate-row { cursor:pointer; }
+    #lgSlateBody table tr.slate-row:hover td { background:var(--panel-2, #1a1a1a); }
+    .slate-blind { color:var(--warn, #f59e0b); font-size:10px; font-weight:600; margin-left:6px; }
+    .slate-div { color:var(--dim, #4a4a4a); font-size:10px; margin-left:6px; }
+
     /* Two-pane grid: ranking/schedule (wide) + teams/standings */
     .lg-grid { display:grid; grid-template-columns:1.4fr 1fr; gap:14px; align-items:start; }
     @media (max-width: 900px) { .lg-grid { grid-template-columns:1fr; } }
@@ -155,6 +163,16 @@
       <div id="lgPerformersBody"><div class="empty">loading…</div></div>
     </section>
 
+    <!-- Game slate — upcoming games in the league, event-linked. Team leagues
+         only; racing uses the SCHEDULE panel below instead. -->
+    <section class="lg-slate" id="lgSlate" hidden>
+      <div class="panel-title row">
+        <span id="lgSlateTitle">GAME SLATE</span>
+        <span class="muted small" id="lgSlateMeta"></span>
+      </div>
+      <div id="lgSlateBody"><div class="empty">loading…</div></div>
+    </section>
+
     <!-- Primary (ranking / schedule) + secondary (blind spots / standings) -->
     <div class="lg-grid">
       <section id="lgPrimary">
@@ -190,6 +208,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260708lg"></script>
-  <script src="leagues.js?v=20260708lg3"></script>
+  <script src="leagues.js?v=20260708lg4"></script>
 </body>
 </html>
