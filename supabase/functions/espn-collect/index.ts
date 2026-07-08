@@ -1,4 +1,12 @@
-// Supabase Edge Function: espn-collect (v9 — standings rank + soccer/hockey form)
+// Supabase Edge Function: espn-collect (v10 — division-nested standings)
+//
+// v10 (2026-07-08): standings are now fetched with ?level=3 so the payload nests
+// root > conference > division > team for MLB/NBA/NFL/NHL (the default only
+// returned conference > team, so division_rank was always null). The v9 position
+// logic already handles depth-2 (division_rank = position in the division;
+// conference_rank flattens the conference), so this one-param change lights up
+// division_rank without touching the derivation. Leagues without divisions
+// (MLS/NWSL/college conferences) still return depth-1 and are unaffected.
 //
 // v9 (2026-07-08): team standings ingest was leaving conference_rank/division_rank
 // null for EVERY league (it read stats.divisionRanking/conferenceRanking, which the
@@ -152,7 +160,7 @@ async function collectTeams(db: any, state: CollectorState, opts: { standings: b
     if (leagueData[t.espn_slug]) continue;
     try {
       const fetches: Promise<any>[] = [];
-      fetches.push(opts.standings ? get(`/apis/v2/sports/${t.espn_slug}/standings`).catch(() => null) : Promise.resolve(null));
+      fetches.push(opts.standings ? get(`/apis/v2/sports/${t.espn_slug}/standings?level=3`).catch(() => null) : Promise.resolve(null));
       fetches.push(opts.injuries  ? get(`/apis/site/v2/sports/${t.espn_slug}/injuries`).catch(() => null) : Promise.resolve(null));
       const [s, i] = await Promise.all(fetches);
       leagueData[t.espn_slug] = { standings: s, injuries: i };
