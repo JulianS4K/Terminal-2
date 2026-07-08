@@ -719,6 +719,21 @@ def build_broker_router(
             }
             for r in rows
         ]
+        # Division/conference split — merge the seeded league_team_divisions
+        # reference (RLS-locked; read here via the service client) onto each
+        # performer so the Leagues hub can group teams by division. Missing rows
+        # (WNBA single-table, racing, or an unmapped team) → nulls → FE ungrouped.
+        try:
+            div_rows = (db.table("league_team_divisions")
+                        .select("tevo_performer_id,conference,division")
+                        .eq("league", league).execute().data) or []
+            div_by_id = {d["tevo_performer_id"]: d for d in div_rows}
+        except Exception:
+            div_by_id = {}
+        for p in performers:
+            d = div_by_id.get(p["performer_id"]) or {}
+            p["conference"] = d.get("conference")
+            p["division"] = d.get("division")
         return {
             "league": league,
             "count": len(performers),

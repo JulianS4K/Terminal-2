@@ -34,6 +34,7 @@ PAGES = [
     ("/terminal/orders.html", "orders"),
     ("/terminal/performer.html", "performer"),
     ("/terminal/venue.html", "venue"),
+    ("/terminal/leagues.html", "leagues"),
     ("/terminal/discovery.html", "discovery"),
     ("/terminal/event.html?id=1", "event"),
     ("/store", "catalog"),

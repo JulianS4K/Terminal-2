@@ -30,9 +30,11 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import render_webhook
@@ -103,6 +105,64 @@ def _render_storefront_page(name: str) -> HTMLResponse:
         content=_read_storefront_html(name),
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
+
+
+# Branded storefront error page (site-level 404 / 5xx). Copy per status; the
+# actions differ (a 404 is a calm dead-end -> back link only; a retryable 5xx
+# offers a reload). Fills the error.html shell's tokens. See _render_storefront_error.
+_STOREFRONT_ERROR_SPECS = {
+    404: {
+        "big": "404",
+        "title": "This page took a wrong turn.",
+        "msg": "The page you’re looking for isn’t here — it may have moved, "
+               "or the link is out of date.",
+        "actions": '<a class="btn ghost" href="/store">← Back to all events</a>',
+        "code": "error 404 · page not found",
+    },
+    500: {
+        "big": "500",
+        "title": "Something went wrong on our end.",
+        "msg": "Our team has been notified. Please try again shortly — "
+               "your search wasn’t lost.",
+        "actions": '<a class="btn" href="">Try again</a>'
+                   '<a class="btn ghost" href="/store">← Back to all events</a>',
+        "code": "error 500 · internal error",
+    },
+}
+
+
+def _render_storefront_error(code: int) -> HTMLResponse:
+    """Render the branded storefront error shell (static/store/error.html) for a
+    site-level 404 / 5xx, filling the per-status copy tokens. Non-404 codes reuse
+    the 500 spec. Reads through _read_storefront_html so the asset URLs stay
+    cache-busted; the token swap is per-request on the cached shell."""
+    spec = _STOREFRONT_ERROR_SPECS.get(code, _STOREFRONT_ERROR_SPECS[500])
+    html = _read_storefront_html("error.html")
+    html = (
+        html.replace("{{ERR_BIG}}", spec["big"])
+        .replace("{{ERR_TITLE}}", spec["title"])
+        .replace("{{ERR_MSG}}", spec["msg"])
+        .replace("{{ERR_ACTIONS}}", spec["actions"])
+        .replace("{{ERR_CODE}}", spec["code"])
+    )
+    return HTMLResponse(
+        content=html,
+        status_code=code,
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+def _is_storefront_html_nav(request) -> bool:
+    """True for a browser HTML navigation under the storefront prefixes
+    (/store, /store/*, /s/*) — the surfaces that should render the branded
+    error page. Excludes the /api/store/* JSON surface (store.js parses those
+    status codes via describeFetchError) and any non-HTML client."""
+    p = request.url.path
+    if p.startswith("/api/"):
+        return False
+    if not (p == "/store" or p.startswith("/store/") or p.startswith("/s/")):
+        return False
+    return "text/html" in request.headers.get("accept", "")
 
 
 # ---------- Bootstrap ----------
@@ -622,6 +682,18 @@ app.add_middleware(_RateLimitMiddleware)
 @app.exception_handler(RuntimeError)
 async def _runtime_error_handler(request, exc: RuntimeError):
     return JSONResponse(status_code=502, content={"error": str(exc)})
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _storefront_http_exception_handler(request, exc: StarletteHTTPException):
+    """Render the branded storefront error page for a site-level 404 / 5xx on a
+    storefront HTML navigation (unknown /store route, storefront outage) instead
+    of the default JSON body. Every other case — the /api/* JSON surface, non-HTML
+    clients — delegates to FastAPI's default handler unchanged, so store.js keeps
+    receiving parseable JSON status codes."""
+    if _is_storefront_html_nav(request) and exc.status_code in (404, 500, 502, 503, 504):
+        return _render_storefront_error(404 if exc.status_code == 404 else 500)
+    return await http_exception_handler(request, exc)
 
 
 # ---------- Public routes (no auth) ----------

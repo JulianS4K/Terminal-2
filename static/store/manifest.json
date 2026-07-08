@@ -6,8 +6,8 @@
   "scope": "/store",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0a0b0e",
-  "theme_color": "#0a0b0e",
+  "background_color": "#f4f1ea",
+  "theme_color": "#f4f1ea",
   "icons": [
     { "src": "/static/store/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/static/store/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
