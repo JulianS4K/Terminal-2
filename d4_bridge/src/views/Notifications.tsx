@@ -7,7 +7,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Ticket, ArrowLeftRight, Bell, Zap, DollarSign, ChevronRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { listNotifications, NotificationItem, NotificationIcon } from '../lib/notifications';
+import {
+  listNotifications,
+  listReadNotificationIds,
+  markNotificationsRead,
+  NotificationItem,
+  NotificationIcon,
+} from '../lib/notifications';
 import { applyMeta } from '../lib/meta';
 
 const ICONS: Record<NotificationIcon, typeof Ticket> = {
@@ -55,9 +61,14 @@ export default function Notifications() {
       return undefined;
     }
     setLoading(true);
-    listNotifications()
-      .then((list) => {
-        if (!cancelled) setItems(list);
+    // Load the feed and the server-side read-state in parallel. The read-state
+    // is best-effort (empty Set until mig 20260709120000 is applied) and is
+    // unioned with any read ids the user cleared locally this session.
+    Promise.all([listNotifications(), listReadNotificationIds()])
+      .then(([list, serverRead]) => {
+        if (cancelled) return;
+        setItems(list);
+        setReadIds((prev) => new Set([...prev, ...serverRead]));
       })
       .catch((err) => console.error('Failed to load notifications', err))
       .finally(() => {
@@ -75,7 +86,11 @@ export default function Notifications() {
     [items, tab],
   );
 
-  const markAll = () => setReadIds(new Set(items.map((n) => n.id)));
+  const markAll = () => {
+    const ids = items.map((n) => n.id);
+    setReadIds(new Set(ids));
+    markNotificationsRead(ids);
+  };
 
   if (!user) {
     return (
@@ -159,7 +174,10 @@ export default function Notifications() {
                 <Link
                   key={n.id}
                   to={n.to}
-                  onClick={() => setReadIds((prev) => new Set(prev).add(n.id))}
+                  onClick={() => {
+                    setReadIds((prev) => new Set(prev).add(n.id));
+                    markNotificationsRead([n.id]);
+                  }}
                   className={`flex gap-4 p-4 border transition-colors group ${
                     unread ? 'border-white/15 bg-[#0d0d0d]' : 'border-white/5 bg-transparent'
                   } hover:border-white/30`}

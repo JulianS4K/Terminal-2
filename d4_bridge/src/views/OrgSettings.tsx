@@ -34,6 +34,26 @@ const FLD =
 const CARD = 'bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8';
 const SECTION = 'text-sm font-black text-slate-900 uppercase tracking-widest';
 
+// Short country + currency lists for the General settings selects (mig
+// 20260709120100). Country = ISO 3166-1 alpha-2, currency = ISO 4217.
+const COUNTRIES: readonly [string, string][] = [
+  ['US', 'United States'],
+  ['CA', 'Canada'],
+  ['GB', 'United Kingdom'],
+  ['AU', 'Australia'],
+  ['DE', 'Germany'],
+  ['FR', 'France'],
+  ['NL', 'Netherlands'],
+  ['IE', 'Ireland'],
+];
+const CURRENCIES: readonly [string, string][] = [
+  ['USD', 'USD — US Dollar'],
+  ['CAD', 'CAD — Canadian Dollar'],
+  ['GBP', 'GBP — British Pound'],
+  ['AUD', 'AUD — Australian Dollar'],
+  ['EUR', 'EUR — Euro'],
+];
+
 export default function OrgSettings() {
   const { orgId } = useParams<{ orgId: string }>();
   const { user, isAdmin } = useAuth();
@@ -43,6 +63,8 @@ export default function OrgSettings() {
 
   const [org, setOrg] = useState<Organization | null>(null);
   const [name, setName] = useState('');
+  const [country, setCountry] = useState('US');
+  const [currency, setCurrency] = useState('USD');
   const [primaryColor, setPrimaryColor] = useState('');
   const [accentColor, setAccentColor] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -63,6 +85,8 @@ export default function OrgSettings() {
         if (cancelled) return;
         setOrg(o);
         setName(o?.name ?? '');
+        setCountry(o?.country ?? 'US');
+        setCurrency(o?.currency ?? 'USD');
         setPrimaryColor(o?.theme?.primaryColor ?? '');
         setAccentColor(o?.theme?.accentColor ?? '');
         setLogoUrl(o?.theme?.logoUrl ?? null);
@@ -160,6 +184,8 @@ export default function OrgSettings() {
       if (logoUrl) theme.logoUrl = logoUrl;
       await updateOrganization(org.id, {
         name: name.trim(),
+        country,
+        currency,
         theme,
         marketing,
       });
@@ -292,6 +318,40 @@ window.addEventListener('message', function(e) {
                   maxLength={100}
                   className={FLD}
                 />
+              </div>
+
+              {/* Country + currency — default 'US'/'USD' (mig 20260709120100).
+                  Saved through the same handleSave → updateOrganization patch
+                  as name/theme. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-6">
+                <div>
+                  <label htmlFor="org-country" className={LBL}>Country</label>
+                  <select
+                    id="org-country"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    disabled={!canEdit}
+                    className={FLD}
+                  >
+                    {COUNTRIES.map(([code, label]) => (
+                      <option key={code} value={code}>{code} — {label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="org-currency" className={LBL}>Currency</label>
+                  <select
+                    id="org-currency"
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    disabled={!canEdit}
+                    className={FLD}
+                  >
+                    {CURRENCIES.map(([code, label]) => (
+                      <option key={code} value={code}>{label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 

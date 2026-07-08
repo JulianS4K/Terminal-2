@@ -50,6 +50,8 @@ function mapOrg(row: any, secrets?: any): Organization {
     updatedAt: row.updated_at ? toTs(row.updated_at) : undefined,
     description: row.description ?? undefined,
     followersCount: row.followers_count ?? 0,
+    country: row.country ?? undefined,
+    currency: row.currency ?? undefined,
     theme: row.theme ?? undefined,
     marketing: row.marketing ?? undefined,
     // payments/distribution live in exos_org_secrets (owner/finance RLS); absent
@@ -247,6 +249,8 @@ export async function enableOrgMember(orgId: string, uid: string): Promise<void>
 
 export interface OrgUpdatePatch {
   name?: string;
+  country?: string;
+  currency?: string;
   theme?: Organization['theme'];
   marketing?: Organization['marketing'];
   payments?: Organization['payments'];
@@ -256,6 +260,8 @@ export interface OrgUpdatePatch {
 export async function updateOrganization(orgId: string, patch: OrgUpdatePatch): Promise<void> {
   const orgFields: Record<string, unknown> = {};
   if (patch.name !== undefined) orgFields.name = patch.name;
+  if (patch.country !== undefined) orgFields.country = patch.country;
+  if (patch.currency !== undefined) orgFields.currency = patch.currency;
   if (patch.theme !== undefined) orgFields.theme = stripUndefined(patch.theme);
   if (patch.marketing !== undefined) orgFields.marketing = stripUndefined(patch.marketing);
   if (Object.keys(orgFields).length > 0) {

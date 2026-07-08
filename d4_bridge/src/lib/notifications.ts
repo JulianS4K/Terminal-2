@@ -13,6 +13,7 @@
 // -read is therefore a client-only affordance in the view.
 
 import { listInboundTransfers, listOutboundTransfers } from './tickets';
+import { supabase } from './supabase';
 import { Transfer } from '../types';
 
 export type NotificationCategory = 'tickets' | 'events';
@@ -114,6 +115,42 @@ function outboundToItem(t: Transfer): NotificationItem {
     unread: false,
     to: '/my-tickets',
   };
+}
+
+// --- Server-side read-state (mig 20260709120000_exos_notification_reads) ----
+// Persists which notification ids the viewer has opened/cleared. Until the
+// migration is applied to prod these degrade to a no-op: listReadNotificationIds
+// returns an empty Set and markNotificationsRead swallows the error, so the
+// feed keeps working with client-only read-state in the meantime.
+
+/**
+ * Read the set of notification ids the current viewer has marked read.
+ * Best-effort: returns an empty Set on ANY error (e.g. table not yet migrated),
+ * so callers can safely union it with local state.
+ */
+export async function listReadNotificationIds(): Promise<Set<string>> {
+  try {
+    const { data, error } = await supabase.from('exos_notification_reads').select('notif_id');
+    if (error) return new Set();
+    return new Set((data ?? []).map((r: { notif_id: string }) => r.notif_id));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Mark the given notification ids read for the current viewer. No-op on empty
+ * input. Errors are swallowed (console.warn only) so a missing table / RPC
+ * never breaks the optimistic UI.
+ */
+export async function markNotificationsRead(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    const { error } = await supabase.rpc('exos_mark_notifications_read', { p_ids: ids });
+    if (error) console.warn('markNotificationsRead failed', error);
+  } catch (err) {
+    console.warn('markNotificationsRead failed', err);
+  }
 }
 
 /**

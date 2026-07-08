@@ -28,25 +28,25 @@ export default function Footer() {
             <ul className="space-y-3">
               <li><Link to="/" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Discover Events</Link></li>
               <li><Link to="/my-tickets" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">My Tickets</Link></li>
+              <li><Link to="/alerts" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Alerts</Link></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4">Organizers</h4>
+            <ul className="space-y-3">
               <li><Link to="/dashboard" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Organizer Dashboard</Link></li>
+              <li><Link to="/create-event" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Create an Event</Link></li>
+              <li><Link to="/onboarding" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Get Started</Link></li>
             </ul>
           </div>
 
           <div>
             <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4">Trust &amp; Safety</h4>
             <ul className="space-y-3">
-              <li><a href="#" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Security</a></li>
-              <li><a href="#" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Transfers</a></li>
-              <li><a href="#" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Safety</a></li>
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4">Support</h4>
-            <ul className="space-y-3">
-              <li><a href="#" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Help Center</a></li>
-              <li><a href="#" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Contact Us</a></li>
-              <li><a href="#" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">API Docs</a></li>
+              <li><Link to="/privacy" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Privacy Policy</Link></li>
+              <li><Link to="/terms" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">Terms of Service</Link></li>
+              <li><Link to="/status" className="text-slate-500 text-sm font-medium hover:text-slate-900 transition-colors">System Status</Link></li>
             </ul>
           </div>
         </div>
@@ -58,7 +58,6 @@ export default function Footer() {
           <div className="flex gap-6">
             <Link to="/privacy" className="text-[10px] text-slate-300 font-bold uppercase tracking-widest hover:text-slate-900 transition-colors">Privacy</Link>
             <Link to="/terms" className="text-[10px] text-slate-300 font-bold uppercase tracking-widest hover:text-slate-900 transition-colors">Terms</Link>
-            <Link to="/status" className="text-[10px] text-slate-300 font-bold uppercase tracking-widest hover:text-slate-900 transition-colors">System Status</Link>
           </div>
         </div>
       </div>
