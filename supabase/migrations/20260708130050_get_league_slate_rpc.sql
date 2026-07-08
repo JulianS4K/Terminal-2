@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260708130000 — get_league_slate(): per-league upcoming game slate
+-- Migration 20260708130050 — get_league_slate(): per-league upcoming game slate
 --
 -- Lane:     A1 data plane (SECDEF read RPC; consumed by the D0 Leagues hub)
 -- Touches:  get_league_slate (W/function)
