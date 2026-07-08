@@ -149,6 +149,15 @@ BEGIN
          ) / 30.0) * (1 + 1.0*greatest(0,(21 - v_dte))/21.0)
     INTO v_lambda;
 
+  -- v1.1 cross-channel uplift: SG selling-pressure velocity (v_sg_blindspot_movers).
+  -- coalesce→0 keeps λ unchanged when the view is empty (SG-listings feed dark since
+  -- 2026-06-26 → 0 rows now); auto-activates when that feed returns.
+  v_lambda := v_lambda * (1 + coalesce((
+      SELECT greatest(0, b.sales_velocity_pct) / 100.0 * 0.5
+      FROM public.v_sg_blindspot_movers b
+      JOIN public.seatgeek_event_xref x ON x.sg_event_id = b.sg_event_id
+      WHERE x.tevo_event_id = p_event_id LIMIT 1), 0));
+
   -- Fair clearing from the price model (well-calibrated on realized PRICES). We anchor
   -- the recommended ask here, NOT on EV-max: λ excludes the broker/TicketNetwork channel,
   -- so an EV-max over SG+SeatData-only absorption would recommend an unrealistically low ask.

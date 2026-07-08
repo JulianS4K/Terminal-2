@@ -82,7 +82,11 @@ INSERT INTO public.feature_weights (feature_group, event_category, weight, confi
   ('roster',               'ALL', 0.45, 21),
   ('venue_section_prior',  'ALL', 0.40, 120),
   ('demand_rank',          'ALL', 0.35, 3),
-  ('news_buzz',            'ALL', 0.15, 2)
+  ('news_buzz',            'ALL', 0.15, 2),
+  -- v1.1 signal expansion (distributed event-level price anchors; self-degrade when dark)
+  ('seatdata_market',      'ALL', 0.55, 3),
+  ('performer_history',    'ALL', 0.45, 180),
+  ('matchup_history',      'ALL', 0.40, 180)
 ON CONFLICT (feature_group, event_category) DO NOTHING;
 
 -- ── 2. venue × performer value (roll up the section aggs to one row per combo) ─
@@ -195,6 +199,8 @@ DECLARE
   v_home jsonb; v_away jsonb; v_rank jsonb; v_buzz jsonb;
   v_home_out int := 0; v_away_out int := 0;
   v_mult numeric := 1.0; v_rank_now int; v_rank_prev int;
+  v_ownbook jsonb; v_attend jsonb; v_weather jsonb; v_stakes int := 0;
+  v_att_pct numeric; v_wx_sev text;
 BEGIN
   SELECT e.primary_performer_id, lower(btrim(split_part(e.name,' at ',1)))
     INTO v_home_pid, v_away_name
@@ -269,16 +275,47 @@ BEGIN
                 AND xn.created_utc >= now()-interval '7 days'))
     INTO v_buzz;
 
-  -- demand_mult: forward signals only (avoid double-counting form/road-draw already
-  -- in realized sales + cast_price_ref). Injuries down; rank momentum up/down. Tight clamp.
+  -- OWN-BOOK GAP (v_sg_blindspot_evo_tracking): where SG is clearing vs OUR EVO ask.
+  -- gap_pct < 0 = our ask sits ABOVE SG clearing (repricing-down opportunity). Live signal
+  -- (SG sold re-lit + EVO live). Display-only — it's about our pricing, not market demand.
+  SELECT jsonb_build_object('sg_sold_median', sg_sold_median, 'evo_median', evo_median,
+           'evo_getin', evo_getin, 'owned_share', evo_owned_share,
+           'gap_pct', round((100*(sg_sold_median - evo_median)/NULLIF(evo_median,0))::numeric,1))
+    INTO v_ownbook
+  FROM public.v_sg_blindspot_evo_tracking WHERE tevo_event_id = p_event_id LIMIT 1;
+
+  -- Attendance / capacity (home team): near-sellout buildings lift demand.
+  SELECT jsonb_build_object('home_pct', a.home_pct, 'home_avg', round(a.home_avg)::int, 'rank', a.rank),
+         a.home_pct
+    INTO v_attend, v_att_pct
+  FROM public.espn_attendance_latest a
+  JOIN public.performer_espn_team_xref xr
+    ON xr.espn_team_id = a.espn_team_id AND xr.espn_league = a.espn_league
+  WHERE xr.tevo_performer_id = v_home_pid LIMIT 1;
+
+  -- Active severe-weather alert (outdoor events) — suppresses late/walk-up demand.
+  SELECT jsonb_build_object('severity', severity, 'impact_tier', impact_tier, 'event', event),
+         severity
+    INTO v_weather, v_wx_sev
+  FROM public.v_event_active_weather_alerts WHERE tevo_event_id = p_event_id
+  ORDER BY expires_at DESC NULLS LAST LIMIT 1;
+
+  -- Per-event game markets present (stakes/competitiveness). Empty for uncovered leagues.
+  SELECT jsonb_array_length(coalesce(public.get_event_prediction_markets(p_event_id)->'game_markets','[]'::jsonb))
+    INTO v_stakes;
+
+  -- demand_mult: forward signals only (form/road-draw are display-only — already in the
+  -- price anchor). Injuries + rank momentum + attendance + severe-weather. Tight clamp.
+  -- Every term null-guards to 0, so a dark/absent feed simply drops out.
   v_mult := 1.0
             - least(v_away_out,3) * 0.04     -- away star(s) out hurts a road-draw game most
             - least(v_home_out,3) * 0.01
             + CASE WHEN v_rank_now IS NOT NULL AND v_rank_prev IS NOT NULL
                         AND v_rank_now < v_rank_prev AND v_rank_now <= 100 THEN 0.05
                    WHEN v_rank_now IS NOT NULL AND v_rank_prev IS NOT NULL
-                        AND v_rank_now > v_rank_prev THEN -0.03
-                   ELSE 0 END;
+                        AND v_rank_now > v_rank_prev THEN -0.03 ELSE 0 END
+            + CASE WHEN v_att_pct >= 95 THEN 0.03 WHEN v_att_pct >= 85 THEN 0.015 ELSE 0 END
+            - CASE WHEN v_wx_sev IS NOT NULL THEN 0.05 ELSE 0 END;
   v_mult := greatest(0.90, least(1.15, v_mult));
 
   RETURN jsonb_build_object(
@@ -287,9 +324,15 @@ BEGIN
     'away', coalesce(v_away, jsonb_build_object('performer_id', v_away_pid, 'applicable', false)),
     'injuries_out', jsonb_build_object('home', v_home_out, 'away', v_away_out),
     'demand_rank', coalesce(v_rank, '{}'::jsonb),
+    'attendance', v_attend,
+    'weather_alert', v_weather,
+    'game_markets', v_stakes,
+    'own_book_gap', v_ownbook,
     'buzz', v_buzz,
     'demand_mult', round(v_mult, 4),
-    'note', 'form/road-draw are display-only (already in price anchor); demand_mult uses injuries + rank momentum only'
+    'note', 'form/road-draw/own_book are display-only (already in price anchor or about our own pricing); '
+            'demand_mult uses injuries + rank momentum + attendance + severe-weather. Null-guarded: '
+            'absent/dark feeds (SG-listings movers, dormant SeatData, stale ESPN, uncovered leagues) drop out.'
   );
 END; $function$;
 REVOKE ALL ON FUNCTION public.get_event_demand_context(bigint) FROM PUBLIC, anon;
@@ -405,12 +448,22 @@ BEGIN
     WHERE lower(cr.entity_name) = ev.away_name
     ORDER BY cr.away_events DESC NULLS LAST LIMIT 1
   ),
+  sdstat AS (  -- SeatData secondary event median (3rd market); dormant→drops out
+    SELECT median_price FROM public.seatdata_event_stats
+    WHERE tevo_event_id = p_event_id ORDER BY snapshot_ts DESC LIMIT 1
+  ),
+  phist AS (  -- performer season price median (SG historic); sparse for niche leagues→drops out
+    SELECT hp.median_price FROM public.v_sg_historic_per_performer hp, ev
+    WHERE hp.tevo_performer_id = ev.primary_performer_id ORDER BY hp.latest DESC LIMIT 1
+  ),
   w AS (  -- per-data-type weights (tunable via feature_weights; event_category='ALL' in v1)
     SELECT
       coalesce(max(weight) FILTER (WHERE feature_group='realized_sale'),1.0)      AS w_real,
       coalesce(max(weight) FILTER (WHERE feature_group='amalgam_ask'),0.7)        AS w_ask,
       coalesce(max(weight) FILTER (WHERE feature_group='venue_performer'),0.6)    AS w_vp,
-      coalesce(max(weight) FILTER (WHERE feature_group='venue_section_prior'),0.4) AS w_opp
+      coalesce(max(weight) FILTER (WHERE feature_group='venue_section_prior'),0.4) AS w_opp,
+      coalesce(max(weight) FILTER (WHERE feature_group='seatdata_market'),0.55)   AS w_sd,
+      coalesce(max(weight) FILTER (WHERE feature_group='performer_history'),0.45) AS w_hist
     FROM public.feature_weights WHERE event_category = 'ALL'
   ),
   base AS (
@@ -425,7 +478,8 @@ BEGIN
       pp.median_price AS perf_prior_med, pp.events_seen AS perf_events,
       op.median_price AS opp_prior_med,  op.events_seen AS opp_events,
       rd.mult AS road_mult,
-      w.w_real, w.w_ask, w.w_vp, w.w_opp
+      sdstat.median_price AS sd_med, phist.median_price AS hist_med,
+      w.w_real, w.w_ask, w.w_vp, w.w_opp, w.w_sd, w.w_hist
     FROM ev
     LEFT JOIN sec_ask sa ON true
     LEFT JOIN ev_ask  ea ON true
@@ -435,6 +489,8 @@ BEGIN
     LEFT JOIN perf_prior pp ON true
     LEFT JOIN opp_prior  op ON true
     LEFT JOIN road       rd ON true
+    LEFT JOIN sdstat ON true
+    LEFT JOIN phist  ON true
     CROSS JOIN w
   ),
   sig AS (
@@ -453,18 +509,28 @@ BEGIN
       w_real * (realized_n::numeric / (realized_n + 4))                                    AS ew_realized,
       CASE WHEN base_ask IS NOT NULL AND ratio IS NOT NULL THEN w_ask * 0.8 ELSE 0 END     AS ew_ask,
       CASE WHEN opp_prior_med IS NOT NULL THEN w_opp * (opp_events::numeric/(opp_events+6)) ELSE 0 END       AS ew_opp,
-      CASE WHEN perf_prior_med IS NOT NULL THEN w_vp * (perf_events::numeric/(perf_events+8)) * 0.5 ELSE 0 END AS ew_awayadj
+      CASE WHEN perf_prior_med IS NOT NULL THEN w_vp * (perf_events::numeric/(perf_events+8)) * 0.5 ELSE 0 END AS ew_awayadj,
+      -- v1.1: event-level anchors distributed to section by section_ask/event_ask (null→drop)
+      CASE WHEN sd_med IS NOT NULL AND section_ask IS NOT NULL AND event_ask IS NOT NULL
+           THEN sd_med * (section_ask / NULLIF(event_ask,0)) END AS s_sd,
+      CASE WHEN hist_med IS NOT NULL AND section_ask IS NOT NULL AND event_ask IS NOT NULL
+           THEN hist_med * (section_ask / NULLIF(event_ask,0)) END AS s_hist,
+      CASE WHEN sd_med IS NOT NULL AND section_ask IS NOT NULL AND event_ask IS NOT NULL THEN w_sd * 0.7 ELSE 0 END AS ew_sd,
+      CASE WHEN hist_med IS NOT NULL AND section_ask IS NOT NULL AND event_ask IS NOT NULL THEN w_hist * 0.5 ELSE 0 END AS ew_hist
     FROM base
   ),
   est AS (
     -- WEIGHTED BLEND: Σ(signal × effective_weight) / Σ(effective_weight over present signals).
     SELECT sig.*,
       ( coalesce(s_realized,0)*ew_realized + coalesce(s_ask,0)*ew_ask
-        + coalesce(s_opp,0)*ew_opp + coalesce(s_awayadj,0)*ew_awayadj )
+        + coalesce(s_opp,0)*ew_opp + coalesce(s_awayadj,0)*ew_awayadj
+        + coalesce(s_sd,0)*ew_sd + coalesce(s_hist,0)*ew_hist )
       / NULLIF( (CASE WHEN s_realized IS NOT NULL THEN ew_realized ELSE 0 END)
               + (CASE WHEN s_ask      IS NOT NULL THEN ew_ask      ELSE 0 END)
               + (CASE WHEN s_opp      IS NOT NULL THEN ew_opp      ELSE 0 END)
-              + (CASE WHEN s_awayadj  IS NOT NULL THEN ew_awayadj  ELSE 0 END), 0) AS clearing_blend,
+              + (CASE WHEN s_awayadj  IS NOT NULL THEN ew_awayadj  ELSE 0 END)
+              + (CASE WHEN s_sd       IS NOT NULL THEN ew_sd       ELSE 0 END)
+              + (CASE WHEN s_hist     IS NOT NULL THEN ew_hist     ELSE 0 END), 0) AS clearing_blend,
       public.get_event_demand_context(p_event_id) AS demand_ctx
     FROM sig
   ),
@@ -500,9 +566,12 @@ BEGIN
       'realized_sale',    jsonb_build_object('value', round(s_realized::numeric,2), 'eff_weight', round(ew_realized::numeric,3)),
       'ask_x_ratio',      jsonb_build_object('value', round(s_ask::numeric,2),      'eff_weight', round(ew_ask::numeric,3)),
       'opponent_section', jsonb_build_object('value', round(s_opp::numeric,2),      'eff_weight', round(ew_opp::numeric,3)),
-      'away_adj_prior',   jsonb_build_object('value', round(s_awayadj::numeric,2),  'eff_weight', round(ew_awayadj::numeric,3))
+      'away_adj_prior',   jsonb_build_object('value', round(s_awayadj::numeric,2),  'eff_weight', round(ew_awayadj::numeric,3)),
+      'seatdata_market',  jsonb_build_object('value', round(s_sd::numeric,2),       'eff_weight', round(ew_sd::numeric,3)),
+      'performer_history',jsonb_build_object('value', round(s_hist::numeric,2),     'eff_weight', round(ew_hist::numeric,3))
     ),
     'road_draw_mult', round(road_mult::numeric, 3),
+    'price_heading_24h', (public.predict_event_median_24h(p_event_id) -> 'predicted_median_24h'),
     -- attribution (operator-directed: weight to performer / roster / venue×performer)
     'venue_performer_median', round(venue_performer_median::numeric, 2),
     'road_draw_away_median',  round(road_draw_away_median::numeric, 2),
