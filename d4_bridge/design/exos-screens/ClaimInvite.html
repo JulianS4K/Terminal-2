@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Team Invite</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-secondary:#FF00FF; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+  .disp{ font-family:"Anton",sans-serif; }
+  .type{ font-family:"Special Elite",monospace; }
+</style>
+</head>
+<body class="bg-black text-white min-h-screen">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+</div></div></nav>
+
+<div class="max-w-lg mx-auto px-4 py-16 md:py-24">
+  <div class="border border-white/10 bg-[#0c0c0c]">
+    <div class="p-8 md:p-10 text-center border-b border-white/10">
+      <p class="type text-brand-primary text-xs tracking-[0.3em] uppercase mb-6">// you're invited</p>
+      <div class="w-20 h-20 mx-auto flex items-center justify-center font-black text-black text-3xl mb-6" style="background:#00FF00">K</div>
+      <h1 class="disp text-4xl md:text-5xl leading-none mb-3" style="transform:skewX(-4deg)">JOIN <span class="text-brand-primary">KNOCKDOWN<br>PRESENTS</span></h1>
+      <p class="text-white/60 text-sm">Maya invited you to help run events on Exos.</p>
+    </div>
+    <div class="p-8 md:p-10">
+      <div class="flex items-center justify-between py-3 border-b border-white/5"><span class="type text-xs uppercase tracking-widest text-white/40">Invited as</span><span class="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest bg-white/10 border border-white/15">Scanner</span></div>
+      <div class="flex items-center justify-between py-3 border-b border-white/5"><span class="type text-xs uppercase tracking-widest text-white/40">Your email</span><span class="text-sm font-semibold">you@venue.com</span></div>
+      <div class="flex items-center justify-between py-3"><span class="type text-xs uppercase tracking-widest text-white/40">Can</span><span class="text-sm text-white/70">Scan tickets at the door</span></div>
+
+      <a href="OrganizerDashboard.html" class="mt-8 block w-full text-center bg-brand-primary text-black font-black uppercase italic tracking-tighter text-lg py-4 hover:scale-[1.01] active:scale-[0.99] transition-transform">Accept invite</a>
+      <button class="mt-3 w-full text-center text-white/40 hover:text-white text-sm font-bold py-2">Decline</button>
+      <p class="type text-[11px] text-white/30 text-center mt-4">This invite expires in 6 days.</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

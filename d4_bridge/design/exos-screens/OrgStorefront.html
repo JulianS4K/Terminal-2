@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Knockdown Presents — Exos Storefront</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-secondary:#FF00FF; --color-brand-accent:#FF2A2A;
+    --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; --font-display:"Anton",sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.06), transparent 42%), #050505; }
+  .neon{ color:#00FF00; text-shadow:0 0 16px rgba(0,255,0,.45); } .xerox{ filter:grayscale(1) contrast(1.35) brightness(1.04); } .group:hover .xerox{ filter:none; }
+  .stamp{ font-family:"Anton",sans-serif; border:2.5px solid currentColor; padding:0 7px 2px; display:inline-block; line-height:1.15; }
+</style>
+</head>
+<body class="wall text-white">
+<!-- org-branded nav (white-label) -->
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10"><div class="max-w-6xl mx-auto px-4 sm:px-6"><div class="flex justify-between h-20 items-center">
+  <div class="flex items-center gap-3"><div class="w-11 h-11 bg-brand-primary flex items-center justify-center disp text-2xl text-black">K</div><span class="disp text-3xl tracking-tight leading-none pt-1" style="transform:skewX(-5deg)">KNOCKDOWN</span></div>
+  <div class="flex items-center gap-6"><a href="#" class="type text-[11px] uppercase tracking-widest text-white/60 hover:text-brand-primary">events</a><button class="disp bg-brand-primary text-black px-5 py-1 text-lg tracking-wide">FOLLOW</button></div>
+</div></div></nav>
+
+<!-- hero banner -->
+<header class="relative h-72 overflow-hidden flex items-end border-b border-white/10">
+  <img src="https://images.unsplash.com/photo-1574391884720-bbc3740c59d1?q=80&w=1400" class="xerox absolute inset-0 w-full h-full object-cover opacity-40" alt="" />
+  <div class="absolute inset-0 bg-gradient-to-t from-black to-transparent"></div>
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 w-full relative z-10 pb-8">
+    <span class="type text-[11px] uppercase tracking-widest text-brand-primary">powered by exos · 4,208 followers</span>
+    <h1 class="disp text-6xl md:text-8xl tracking-tight leading-[0.82] mt-2" style="transform:skewX(-4deg)">KNOCKDOWN <span class="neon">PRESENTS</span></h1>
+    <p class="type text-white/55 text-sm mt-3 max-w-lg">Maspeth's biggest room. Warehouse techno, all-night bookings, no phones on the floor.</p>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 sm:px-6 py-12">
+  <div class="flex items-end justify-between mb-8"><h2 class="disp text-3xl tracking-tight" style="transform:skewX(-4deg)">UPCOMING</h2><span class="marker text-white/35 text-lg rotate-[-3deg]">6 nights</span></div>
+  <div class="grid grid-cols-2 lg:grid-cols-3 gap-4" id="grid"></div>
+</main>
+
+<footer class="border-t border-white/10 py-8 text-center"><p class="type text-[10px] uppercase tracking-[0.3em] text-white/30">powered by ▲ exos · secure ticketing</p></footer>
+
+<script>
+  const ev=[
+    {t:'BASEMENT: SHDW B2B KALTAR',d:'FRI 11 JUL',p:'30',g:'TECHNO',img:'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=600'},
+    {t:'WAREHOUSE 88 — OPEN FORMAT',d:'SAT 12 JUL',p:'38',g:'WAREHOUSE',img:'https://images.unsplash.com/photo-1574391884720-bbc3740c59d1?q=80&w=600'},
+    {t:'DAWN PATROL ALL-NIGHTER',d:'SAT 12 JUL',p:'40',g:'TECHNO',img:'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?q=80&w=600'},
+    {t:'NOCTURNE: AMBIENT ROOMS',d:'THU 17 JUL',p:'25',g:'AMBIENT',img:'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?q=80&w=600'},
+    {t:'HOUSE OF YES: DISCO BALL',d:'FRI 18 JUL',p:'35',g:'DISCO',img:'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?q=80&w=600'},
+    {t:'ROOFTOP SUNDOWN SESSIONS',d:'SAT 19 JUL',p:'20',g:'HOUSE',img:'https://images.unsplash.com/photo-1485872299829-c673f5194813?q=80&w=600'},
+  ];
+  document.getElementById('grid').innerHTML = ev.map(e=>`
+    <a href="EventDetails.html" class="group flex flex-col bg-[#111] border border-white/10 hover:border-brand-primary/60 transition-all">
+      <div class="relative aspect-[3/4] overflow-hidden">
+        <img src="${e.img}" class="xerox w-full h-full object-cover transition-all duration-700" alt="" />
+        <div class="absolute inset-0 bg-gradient-to-t from-[#111] via-transparent to-transparent"></div>
+        <span class="disp absolute top-2 left-2 bg-brand-primary text-black px-2 text-sm tracking-wide">${e.g}</span>
+        <div class="absolute bottom-3 left-3 right-3"><p class="type text-[10px] uppercase tracking-widest text-brand-primary mb-0.5">${e.d}</p><h3 class="disp text-2xl leading-[0.9] tracking-tight">${e.t}</h3></div>
+      </div>
+      <div class="p-3 flex items-center justify-between"><span class="type text-[11px] uppercase text-white/50">Knockdown Center</span><span class="stamp neon text-base">$${e.p}+</span></div>
+    </a>`).join('');
+</script>
+</body>
+</html>

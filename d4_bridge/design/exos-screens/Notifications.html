@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Notifications</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-secondary:#FF00FF; --color-brand-accent:#FF3B3B; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+</style>
+</head>
+<body class="wall grain text-white min-h-screen">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <div class="flex items-center gap-6 text-sm font-bold"><a href="Home.html" class="text-white/50 hover:text-white">Discover</a><a href="MyTickets.html" class="text-white/50 hover:text-white">My Tickets</a><a href="#" class="text-brand-primary">Alerts</a></div>
+</div></div></nav>
+
+<div class="max-w-2xl mx-auto px-4 py-10">
+  <div class="flex items-end justify-between mb-8">
+    <div>
+      <p class="type text-brand-primary text-xs tracking-[0.3em] uppercase mb-2">// what you missed</p>
+      <h1 class="disp text-5xl md:text-6xl leading-none" style="transform:skewX(-4deg)">ALERTS</h1>
+    </div>
+    <button class="type text-[11px] uppercase tracking-widest text-white/40 hover:text-brand-primary" onclick="markAll()">Mark all read</button>
+  </div>
+
+  <div class="flex gap-2 mb-6" id="tabs"></div>
+  <div class="space-y-2" id="feed"></div>
+</div>
+
+<script>
+  const ICONS={
+    ticket:'<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/>',
+    drop:'<circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>',
+    price:'<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+    transfer:'<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+    reminder:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>'
+  };
+  const N=[
+    {t:'transfer',c:'#00FF00',title:'Sam sent you a ticket',body:'1 × GA to Palm Wine Sound System · tap to add to your vault',time:'2m',unread:true,cat:'tickets',cta:'ClaimTicket.html'},
+    {t:'reminder',c:'#FF00FF',title:'Tonight: Restless Nights',body:'Doors 10PM · Nowadays · your QR is ready in the wallet',time:'3h',unread:true,cat:'events',cta:'TicketDetail.html'},
+    {t:'drop',c:'#FFE714',title:'Tickets just dropped',body:'Overmono all-night-long — you follow Knockdown Presents',time:'6h',unread:true,cat:'events',cta:'EventDetails.html'},
+    {t:'price',c:'#00FF00',title:'Price step ended',body:'Early Bird for Palm Wine is gone — GA now $35',time:'1d',unread:false,cat:'events',cta:'EventDetails.html'},
+    {t:'ticket',c:'#00FF00',title:'You\'re going to Floating Points',body:'2 tickets confirmed · order #EXO-4471',time:'2d',unread:false,cat:'tickets',cta:'MyTickets.html'},
+    {t:'transfer',c:'#FF3B3B',title:'Transfer expired',body:'The ticket you sent to alex@ wasn\'t claimed — it\'s back in your vault',time:'3d',unread:false,cat:'tickets',cta:'MyTickets.html'},
+  ];
+  let tab='all';
+  const TABS=[['all','All'],['tickets','Tickets'],['events','Events']];
+
+  function renderTabs(){
+    document.getElementById('tabs').innerHTML=TABS.map(([k,l])=>{
+      const on=k===tab; const unread=N.filter(n=>n.unread&&(k==='all'||n.cat===k)).length;
+      return `<button onclick="setTab('${k}')" class="type text-[11px] uppercase tracking-widest px-3.5 py-2 border ${on?'border-brand-primary text-brand-primary':'border-white/12 text-white/40 hover:text-white'}">${l}${unread?` <span class="text-brand-secondary">${unread}</span>`:''}</button>`;
+    }).join('');
+  }
+  function renderFeed(){
+    const list=N.filter(n=>tab==='all'||n.cat===tab);
+    document.getElementById('feed').innerHTML=list.map((n,i)=>`
+      <a href="${n.cta}" class="flex gap-4 p-4 border ${n.unread?'border-white/15 bg-[#0d0d0d]':'border-white/5 bg-transparent'} hover:border-white/30 transition-colors group">
+        ${n.unread?'<span class="w-1.5 h-1.5 rounded-full bg-brand-primary mt-2.5 shrink-0"></span>':'<span class="w-1.5 shrink-0"></span>'}
+        <div class="w-10 h-10 flex items-center justify-center shrink-0" style="background:${n.c}1a;border:1px solid ${n.c}40"><svg class="w-5 h-5" style="color:${n.c}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${ICONS[n.t]}</svg></div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-baseline gap-2"><p class="font-bold text-[15px] ${n.unread?'text-white':'text-white/70'}">${n.title}</p><span class="type text-[10px] text-white/30 ml-auto shrink-0">${n.time}</span></div>
+          <p class="text-white/50 text-sm mt-0.5">${n.body}</p>
+        </div>
+        <svg class="w-4 h-4 text-white/20 self-center group-hover:text-brand-primary shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+      </a>`).join('');
+  }
+  function setTab(k){ tab=k; renderTabs(); renderFeed(); }
+  function markAll(){ N.forEach(n=>n.unread=false); renderTabs(); renderFeed(); }
+  renderTabs(); renderFeed();
+</script>
+</body>
+</html>

@@ -83,39 +83,41 @@ export default function OrgPromote() {
   };
 
   if (!user) {
-    return <div className="max-w-3xl mx-auto p-20 text-center text-slate-500">Sign in to promote your venue.</div>;
+    return <div className="max-w-3xl mx-auto p-20 text-center type text-white/50 uppercase tracking-widest text-xs">Sign in to promote your venue.</div>;
   }
   if (loading) {
-    return <div className="max-w-3xl mx-auto p-20 text-center text-slate-300 font-bold uppercase tracking-widest text-xs">Loading…</div>;
+    return <div className="max-w-3xl mx-auto p-20 text-center type text-white/40 uppercase tracking-widest text-xs">Loading…</div>;
   }
   if (!org) {
     return (
       <div className="max-w-3xl mx-auto p-20 text-center">
-        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] mb-4">Venue not found</p>
-        <Link to="/orgs" className="text-[#026cdf] font-bold text-sm">Back to organizations</Link>
+        <p className="type text-white/40 uppercase tracking-widest text-[10px] mb-4">Venue not found</p>
+        <Link to="/orgs" className="text-brand-primary font-bold text-sm">Back to organizations</Link>
       </div>
     );
   }
 
   return (
-    <div className="bg-[#f2f4f7] min-h-screen">
+    <div className="min-h-screen">
       <div className="max-w-3xl mx-auto px-4 py-12">
-        <Link to="/dashboard" className="flex items-center text-slate-400 hover:text-slate-900 mb-8 transition-colors font-bold uppercase tracking-widest text-[10px]">
+        <Link to="/dashboard" className="type flex items-center text-white/40 hover:text-brand-primary mb-8 transition-colors uppercase tracking-widest text-[10px]">
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to Dashboard
         </Link>
 
-        <div className="flex items-center gap-3 mb-2">
-          <Megaphone className="w-6 h-6 text-[#026cdf]" />
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Promote {org.name}</h1>
+        <p className="type text-[10px] text-white/40 uppercase tracking-widest mb-2">Promote Venue</p>
+        <div className="flex items-center gap-3 mb-2 flex-wrap">
+          <Megaphone className="w-6 h-6 text-brand-primary" />
+          <h1 className="disp text-4xl md:text-5xl uppercase tracking-wide text-white">Promote {org.name}</h1>
+          <span className="marker text-brand-secondary text-lg -rotate-3 leading-none whitespace-nowrap">spread it ✦</span>
         </div>
-        <p className="text-slate-500 text-sm mb-8">
+        <p className="type text-white/50 text-xs uppercase tracking-widest mb-8">
           Your venue storefront lists every published event in one branded page.
         </p>
 
         {/* Storefront link */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-            <Share2 className="w-4 h-4 text-[#026cdf]" /> Your storefront
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-4 flex items-center gap-2">
+            <Share2 className="w-4 h-4 text-brand-primary" /> Your storefront
           </h2>
           <div className="flex items-center gap-2 mb-4">
             <input
@@ -123,32 +125,32 @@ export default function OrgPromote() {
               value={storefrontUrl}
               aria-label="Storefront link"
               onFocus={(e) => e.currentTarget.select()}
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono text-slate-700 truncate"
+              className="flex-1 bg-black border border-white/20 px-4 py-3 text-sm font-mono text-white/70 truncate"
             />
-            <button onClick={() => copy(storefrontUrl, 'Storefront link copied.')} className="px-4 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors flex items-center gap-2">
+            <button onClick={() => copy(storefrontUrl, 'Storefront link copied.')} className="px-4 py-3 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors flex items-center gap-2">
               <Copy className="w-3.5 h-3.5" /> Copy
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setShareOpen(true)} className="flex items-center gap-2 px-4 py-2.5 bg-[#026cdf] text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-[#015bbd] transition-colors">
+            <button onClick={() => setShareOpen(true)} className="flex items-center gap-2 px-4 py-2.5 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors">
               <Share2 className="w-3.5 h-3.5" /> Share…
             </button>
-            <a href={storefrontUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors">
+            <a href={storefrontUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-transparent border border-white/20 text-white/70 text-[10px] font-black uppercase tracking-widest hover:border-brand-primary transition-colors">
               <ExternalLink className="w-3.5 h-3.5" /> Preview
             </a>
           </div>
         </section>
 
         {/* QR */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-4">Storefront QR</h2>
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-4">Storefront QR</h2>
           <div className="flex items-center gap-6 flex-wrap">
-            <div ref={qrWrapRef} className="p-4 bg-white border border-slate-200 rounded-2xl">
+            <div ref={qrWrapRef} className="p-4 bg-white border border-white/10">
               <QRCodeCanvas value={storefrontUrl || org.slug} size={160} level="M" includeMargin />
             </div>
             <div className="flex-1 min-w-[200px]">
-              <p className="text-sm text-slate-600 mb-4">Put it on posters at the door or around town — it opens your full event list.</p>
-              <button onClick={downloadQr} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors">
+              <p className="text-sm text-white/60 mb-4">Put it on posters at the door or around town — it opens your full event list.</p>
+              <button onClick={downloadQr} className="flex items-center gap-2 px-4 py-2.5 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors">
                 <Download className="w-3.5 h-3.5" /> Download PNG
               </button>
             </div>
@@ -156,47 +158,47 @@ export default function OrgPromote() {
         </section>
 
         {/* Socials + pixels */}
-        <section className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl p-6 mb-6">
-          <h2 className="text-[11px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2 flex items-center gap-2">
+        <section className="bg-gradient-to-r from-brand-primary/10 to-brand-secondary/10 border border-white/10 p-6 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-2 flex items-center gap-2">
             <Sparkles className="w-4 h-4" /> Socials &amp; pixels
           </h2>
           {org.marketing?.socials && Object.values(org.marketing.socials).some(Boolean) ? (
             <div className="mb-3">
-              <p className="text-xs text-indigo-700 mb-2">Showing on your storefront:</p>
+              <p className="text-xs text-white/60 mb-2">Showing on your storefront:</p>
               <SocialLinks socials={org.marketing.socials} className="flex items-center gap-4" />
             </div>
           ) : (
-            <p className="text-sm text-indigo-700 mb-4">Add your social handles and ad pixels so your storefront links out and paid promotion is measurable.</p>
+            <p className="text-sm text-white/60 mb-4">Add your social handles and ad pixels so your storefront links out and paid promotion is measurable.</p>
           )}
-          <Link to={`/orgs/${org.id}/settings`} className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-700 transition-colors">
+          <Link to={`/orgs/${org.id}/settings`} className="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors">
             <Settings className="w-3.5 h-3.5" /> Marketing &amp; socials
           </Link>
         </section>
 
         {/* Per-event promote */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-[#026cdf]" /> Promote a specific event
+        <section className="bg-[#111] p-6 border border-white/10">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-4 flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-brand-primary" /> Promote a specific event
           </h2>
           {events.length === 0 ? (
-            <p className="text-sm text-slate-500">No events yet. <Link to="/create-event" className="text-[#026cdf] font-bold">Create one</Link> to start promoting.</p>
+            <p className="text-sm text-white/50">No events yet. <Link to="/create-event" className="text-brand-primary font-bold">Create one</Link> to start promoting.</p>
           ) : (
             <>
-              <p className="text-sm text-slate-600 mb-4">{publishedCount} published · {events.length} total. Open an event's promote kit for campaign links, QR, embed, and captions.</p>
+              <p className="text-sm text-white/60 mb-4">{publishedCount} published · {events.length} total. Open an event's promote kit for campaign links, QR, embed, and captions.</p>
               <div className="space-y-2">
                 {events.map((ev) => (
                   <Link
                     key={ev.id}
                     to={`/dashboard/event/${ev.id}/promote`}
-                    className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 hover:border-[#026cdf] transition-colors group"
+                    className="flex items-center justify-between bg-black/40 border border-white/10 px-4 py-3 hover:border-brand-primary transition-colors group"
                   >
                     <div className="min-w-0">
-                      <p className="font-bold text-slate-900 text-sm truncate">{ev.title}</p>
-                      <p className="text-[10px] text-slate-400 uppercase tracking-widest">
+                      <p className="font-bold text-white text-sm truncate">{ev.title}</p>
+                      <p className="type text-[10px] text-white/40 uppercase tracking-widest">
                         {ev.date ? formatInTz(ev.date.toDate(), ev.timezone, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                       </p>
                     </div>
-                    <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-[#026cdf] shrink-0">
+                    <span className="flex items-center gap-1 type text-[10px] uppercase tracking-widest text-white/40 group-hover:text-brand-primary shrink-0">
                       <Megaphone className="w-3.5 h-3.5" /> Promote
                     </span>
                   </Link>

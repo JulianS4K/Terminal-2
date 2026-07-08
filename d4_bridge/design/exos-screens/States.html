@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Edge States</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-secondary:#FF00FF; --color-brand-accent:#FF3B3B; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  @keyframes shimmer { 0%{ background-position:-400px 0 } 100%{ background-position:400px 0 } }
+  .skel{ background:linear-gradient(90deg,#141414 0px,#222 200px,#141414 400px); background-size:800px 100%; animation:shimmer 1.4s infinite linear; }
+</style>
+</head>
+<body class="wall grain text-white min-h-screen">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <span class="type text-white/40 text-xs tracking-[0.3em] uppercase">// edge states</span>
+</div></div></nav>
+
+<div class="max-w-6xl mx-auto px-4 py-12">
+  <p class="type text-brand-primary text-xs tracking-[0.3em] uppercase mb-3">// the moments the happy path skips</p>
+  <h1 class="disp text-5xl md:text-6xl leading-none mb-10" style="transform:skewX(-4deg)">EDGE <span class="text-brand-primary">STATES</span></h1>
+
+  <div class="grid md:grid-cols-2 gap-6">
+
+    <!-- empty wallet -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Empty · my tickets</p>
+      <div class="border border-white/10 bg-[#0c0c0c] p-10 text-center">
+        <div class="w-16 h-16 mx-auto mb-5 border-2 border-dashed border-white/15 flex items-center justify-center"><svg class="w-7 h-7 text-white/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div>
+        <h3 class="disp text-2xl mb-2">NOTHING IN THE VAULT</h3>
+        <p class="text-white/50 text-sm mb-6 max-w-xs mx-auto">Your tickets show up here the second you buy or get one transferred to you.</p>
+        <a href="Home.html" class="inline-block bg-brand-primary text-black font-black uppercase italic tracking-tighter px-6 py-3">Find something tonight</a>
+      </div>
+    </div>
+
+    <!-- loading skeleton -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Loading · discover grid</p>
+      <div class="border border-white/10 bg-[#0c0c0c] p-5">
+        <div class="grid grid-cols-2 gap-4">
+          <div><div class="skel aspect-[3/4] mb-2"></div><div class="skel h-3 w-3/4 mb-1.5"></div><div class="skel h-3 w-1/2"></div></div>
+          <div><div class="skel aspect-[3/4] mb-2"></div><div class="skel h-3 w-2/3 mb-1.5"></div><div class="skel h-3 w-1/2"></div></div>
+        </div>
+        <p class="type text-white/30 text-[11px] mt-4 text-center">loading events near you<span class="text-brand-primary">▮</span></p>
+      </div>
+    </div>
+
+    <!-- sold out -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Sold out · event detail</p>
+      <div class="border border-white/10 bg-[#0c0c0c] p-8">
+        <div class="flex items-center justify-between mb-1"><h3 class="disp text-2xl">GA STANDING</h3><span class="text-white/40 line-through text-sm">$35</span></div>
+        <p class="text-white/50 text-sm mb-5">Doors 8PM · Knockdown Center</p>
+        <div class="border border-brand-accent/40 bg-brand-accent/10 px-4 py-3 mb-4 flex items-center gap-3">
+          <span class="w-2.5 h-2.5 rounded-full bg-brand-accent"></span>
+          <span class="disp text-brand-accent text-xl tracking-wide">SOLD OUT</span>
+        </div>
+        <button class="w-full border border-white/20 text-white font-black uppercase italic tracking-tighter py-3.5 hover:border-brand-primary hover:text-brand-primary transition-colors">Join the waitlist</button>
+        <p class="type text-white/30 text-[11px] mt-3 text-center">142 fans waiting · you'll be #143</p>
+      </div>
+    </div>
+
+    <!-- network error -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Error · inline retry</p>
+      <div class="border border-white/10 bg-[#0c0c0c] p-10 text-center">
+        <div class="marker text-brand-secondary text-5xl mb-3" style="transform:rotate(-5deg)">ugh.</div>
+        <h3 class="disp text-2xl mb-2">COULDN'T LOAD THAT</h3>
+        <p class="text-white/50 text-sm mb-2 max-w-xs mx-auto">Network hiccup. Your connection dropped mid-request — nothing was charged.</p>
+        <p class="type text-white/30 text-[11px] mb-6">ERR_NETWORK · request id 8f2a-c41</p>
+        <button class="inline-flex items-center gap-2 bg-brand-primary text-black font-black uppercase italic tracking-tighter px-6 py-3"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg> Try again</button>
+      </div>
+    </div>
+
+    <!-- transfer expired -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Expired · claim link</p>
+      <div class="border border-white/10 bg-[#0c0c0c] p-10 text-center">
+        <div class="w-16 h-16 mx-auto mb-5 border border-white/15 flex items-center justify-center"><svg class="w-7 h-7 text-white/40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3 class="disp text-2xl mb-2">THIS LINK EXPIRED</h3>
+        <p class="text-white/50 text-sm mb-6 max-w-xs mx-auto">Transfer links are good for 72 hours. Ask the sender to fire off a fresh one.</p>
+        <a href="Home.html" class="inline-block border border-white/20 text-white font-black uppercase italic tracking-tighter px-6 py-3 hover:border-brand-primary hover:text-brand-primary transition-colors">Back to events</a>
+      </div>
+    </div>
+
+    <!-- no search results -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Empty · no results</p>
+      <div class="border border-white/10 bg-[#0c0c0c] p-10 text-center">
+        <div class="disp text-6xl text-white/15 mb-3">0</div>
+        <h3 class="disp text-2xl mb-2">NOTHING MATCHED</h3>
+        <p class="text-white/50 text-sm mb-6 max-w-xs mx-auto">No events for <span class="text-white">"techno in Cleveland"</span> this week. Try a wider date range or a nearby city.</p>
+        <button class="inline-block text-brand-primary font-bold text-sm hover:underline">Clear filters</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ STRESS TESTS ============ -->
+  <p class="type text-brand-secondary text-xs tracking-[0.3em] uppercase mt-16 mb-3">// where punk layouts usually crack</p>
+  <h2 class="disp text-4xl md:text-5xl leading-none mb-8" style="transform:skewX(-4deg)">STRESS <span class="text-brand-secondary">TESTS</span></h2>
+
+  <div class="grid md:grid-cols-2 gap-6">
+
+    <!-- long title — ransom headline wrap -->
+    <div class="md:col-span-2">
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Overflow · 90-character event title in the hero card</p>
+      <div class="relative border border-white/10 bg-[#0c0c0c] overflow-hidden">
+        <div class="absolute inset-0 opacity-40" style="background:linear-gradient(135deg,#1a0033,#000)"></div>
+        <div class="relative p-8">
+          <span class="disp bg-brand-primary text-black px-3 text-base tracking-wide inline-block mb-3">TECHNO · WAREHOUSE · ALL-NIGHTER</span>
+          <h3 class="disp text-3xl md:text-5xl leading-[0.85] tracking-tight text-balance">DÉJÀ VU PRESENTS: A 14-HOUR B2B2B MARATHON WITH SHDW, KALTAR, ANSTAM &amp; VERY SPECIAL GUESTS — NO PHONES ON THE FLOOR</h3>
+          <p class="type text-white/50 text-sm mt-4">Fri 11 Jul · Knockdown Center, Maspeth · doors 10PM 'til the sun</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- zero-sales dashboard tile -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Zero-state · organizer before first sale</p>
+      <div class="border border-white/10 bg-white text-slate-900 p-6 rounded">
+        <div class="flex items-center justify-between mb-5">
+          <div class="flex items-baseline gap-3"><h3 class="text-lg font-bold tracking-tight">Palm Wine Sound System</h3><span class="marker text-[#FF00FF] text-base rotate-[-3deg] leading-none">day one ✦</span></div>
+          <span class="text-[10px] font-black uppercase tracking-widest text-slate-400 border border-slate-200 px-2 py-1 rounded">Draft</span>
+        </div>
+        <div class="grid grid-cols-3 gap-4 mb-5">
+          <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Sold</p><p class="disp text-4xl tracking-tight text-slate-300" style="transform:skewX(-3deg)">0</p></div>
+          <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Revenue</p><p class="disp text-4xl tracking-tight text-slate-300" style="transform:skewX(-3deg)">$0</p></div>
+          <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Views</p><p class="disp text-4xl tracking-tight text-slate-300" style="transform:skewX(-3deg)">0</p></div>
+        </div>
+        <div class="border-2 border-dashed border-slate-200 rounded p-4 text-center">
+          <p class="text-sm font-bold text-slate-700 mb-1">No sales yet — that's normal.</p>
+          <p class="text-xs text-slate-500 mb-3">Publish the event and share your link to get the first ticket out the door.</p>
+          <button class="bg-tm-blue text-white px-5 py-2.5 rounded font-bold text-xs">Publish &amp; get link</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- long check-in list -->
+    <div>
+      <p class="type text-white/40 text-[11px] uppercase tracking-widest mb-2">Density · 200-name door list, scrolling</p>
+      <div class="border border-white/10 bg-[#0c0c0c]">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
+          <span class="disp text-xl">DOOR LIST</span>
+          <span class="type text-brand-primary text-[11px] uppercase tracking-widest">142 / 200 in</span>
+        </div>
+        <div class="max-h-[248px] overflow-y-auto divide-y divide-white/5" id="doorlist"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const first=['Maya','Jordan','Riley','Sam','Devon','Casey','Noor','Alex','Kai','Reese','Ivy','Zane','Luca','Priya','Theo','Nadia','Omar','Sloane','Beck','Юля'];
+  const last=['Okafor','Nguyen','Torres','Haddad','Silva','Kim','Rossi','Adeyemi','Ferrante','Osei','Castellano','Batbayar','Devereaux-Whitmore','Li','Andersson'];
+  const dl=document.getElementById('doorlist');
+  for(let i=0;i<200;i++){
+    const inYet=i<142;
+    const nm=first[i%first.length]+' '+last[(i*7)%last.length];
+    const tier=['GA','Early Entry + Bar','VIP Table','Comp / Guest'][i%4];
+    const el=document.createElement('div');
+    el.className='flex items-center gap-3 px-4 py-2.5';
+    el.innerHTML=`<span class="w-6 text-right type text-white/25 text-[11px]">${i+1}</span>
+      <span class="w-1.5 h-1.5 rounded-full ${inYet?'bg-brand-primary':'bg-white/15'} shrink-0"></span>
+      <span class="flex-1 text-sm font-semibold truncate ${inYet?'text-white':'text-white/45'}">${nm}</span>
+      <span class="type text-[10px] uppercase tracking-widest text-white/30 shrink-0 hidden sm:inline">${tier}</span>
+      <span class="type text-[10px] uppercase tracking-widest shrink-0 ${inYet?'text-brand-primary':'text-white/20'}">${inYet?'in':'—'}</span>`;
+    dl.appendChild(el);
+  }
+</script>
+</body>
+</html>

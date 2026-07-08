@@ -153,8 +153,10 @@ export default function ClaimInvite() {
 
   if (state.kind === 'loading' || state.kind === 'claiming') {
     return (
-      <div className="max-w-xl mx-auto p-24 text-center text-slate-300 font-bold uppercase tracking-[0.3em] animate-pulse">
-        {state.kind === 'claiming' ? 'Accepting…' : 'Loading invite…'}
+      <div className="wall min-h-screen flex items-center justify-center">
+        <p className="disp text-3xl tracking-tight text-white/20 animate-pulse" style={{ transform: 'skewX(-4deg)' }}>
+          {state.kind === 'claiming' ? 'ACCEPTING…' : 'LOADING INVITE…'}
+        </p>
       </div>
     );
   }
@@ -164,21 +166,23 @@ export default function ClaimInvite() {
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="max-w-xl mx-auto p-12 text-center"
+        className="wall min-h-screen"
       >
-        <div className="w-12 h-12 mx-auto mb-4 bg-red-500/20 text-red-400 flex items-center justify-center">
-          <X size={20} />
+        <div className="max-w-xl mx-auto p-12 text-center">
+          <div className="w-12 h-12 mx-auto mb-4 bg-brand-accent/20 text-brand-accent flex items-center justify-center">
+            <X size={20} />
+          </div>
+          <h2 className="disp text-4xl tracking-tight leading-none text-white mb-3" style={{ transform: 'skewX(-4deg)' }}>
+            INVITE UNAVAILABLE
+          </h2>
+          <p className="type text-white/60 text-sm mb-8">{state.reason}</p>
+          <button
+            onClick={() => navigate('/')}
+            className="disp px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 text-lg tracking-wide transition-all"
+          >
+            GO HOME
+          </button>
         </div>
-        <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white mb-3">
-          Invite Unavailable
-        </h2>
-        <p className="text-white/60 mb-8">{state.reason}</p>
-        <button
-          onClick={() => navigate('/')}
-          className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/60 font-black uppercase tracking-tighter italic transition-all"
-        >
-          Go home
-        </button>
       </motion.div>
     );
   }
@@ -188,21 +192,23 @@ export default function ClaimInvite() {
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="max-w-xl mx-auto p-12 text-center"
+        className="wall min-h-screen"
       >
-        <div className="w-12 h-12 mx-auto mb-4 bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-          <Check size={20} />
+        <div className="max-w-xl mx-auto p-12 text-center">
+          <div className="w-12 h-12 mx-auto mb-4 bg-brand-primary/20 text-brand-primary flex items-center justify-center">
+            <Check size={20} />
+          </div>
+          <h2 className="disp text-4xl tracking-tight leading-none text-white mb-3" style={{ transform: 'skewX(-4deg)' }}>
+            YOU'RE IN
+          </h2>
+          <p className="type text-white/60 text-sm mb-8">You've joined {state.orgName}.</p>
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="disp px-6 py-3 bg-brand-primary text-black text-lg tracking-wide hover:bg-white transition-all"
+          >
+            GO TO DASHBOARD
+          </button>
         </div>
-        <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white mb-3">
-          You're In
-        </h2>
-        <p className="text-white/60 mb-8">You've joined {state.orgName}.</p>
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="px-6 py-3 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all"
-        >
-          Go to Dashboard
-        </button>
       </motion.div>
     );
   }
@@ -216,44 +222,59 @@ export default function ClaimInvite() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="max-w-xl mx-auto p-6 md:p-12"
+      className="wall min-h-screen"
     >
-      <p className="text-[10px] text-brand-primary font-black uppercase tracking-widest mb-3">
-        Invitation
-      </p>
-      <h1 className="text-3xl md:text-4xl font-black uppercase italic tracking-tighter text-white mb-3">
-        Join {org?.name ?? 'an organization'}
-      </h1>
-      <p className="text-white/60 mb-6">
-        You've been invited as <strong>{invite.role}</strong>. This invite is for{' '}
-        <strong className="text-white">{invite.email}</strong>.
-      </p>
+      <div className="max-w-lg mx-auto px-4 py-16 md:py-24">
+        <div className="border border-white/10 bg-[#0c0c0c]">
+          <div className="p-8 md:p-10 text-center border-b border-white/10">
+            <p className="type text-brand-primary text-xs tracking-[0.3em] uppercase mb-6">// you're invited</p>
+            <div className="w-20 h-20 mx-auto flex items-center justify-center disp text-black text-3xl mb-6 bg-brand-primary">
+              {(org?.name ?? 'O').charAt(0).toUpperCase()}
+            </div>
+            <h1 className="disp text-4xl md:text-5xl leading-none mb-3" style={{ transform: 'skewX(-4deg)' }}>
+              JOIN <span className="text-brand-primary">{org?.name ?? 'AN ORGANIZATION'}</span>
+            </h1>
+            <p className="type text-white/60 text-sm">You've been invited to help run events on Exos.</p>
+          </div>
 
-      {!user ? (
-        <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 text-xs text-yellow-400 font-bold uppercase tracking-widest mb-6">
-          Sign in with {invite.email} to accept.
-        </div>
-      ) : !signedInWithRightEmail ? (
-        <div className="bg-red-500/10 border border-red-500/30 p-4 text-xs text-red-400 font-bold uppercase tracking-widest mb-6">
-          You're signed in as {user.email}. Sign out and sign in with {invite.email} to accept.
-        </div>
-      ) : !user.emailVerified ? (
-        <div className="bg-yellow-500/10 border border-yellow-500/30 p-4 text-xs text-yellow-400 font-bold uppercase tracking-widest mb-6">
-          Verify your email first — check your inbox for a verification link.
-        </div>
-      ) : null}
+          <div className="p-8 md:p-10">
+            <div className="flex items-center justify-between py-3 border-b border-white/5">
+              <span className="type text-xs uppercase tracking-widest text-white/40">Invited as</span>
+              <span className="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest bg-white/10 border border-white/15">{invite.role}</span>
+            </div>
+            <div className="flex items-center justify-between py-3 gap-4">
+              <span className="type text-xs uppercase tracking-widest text-white/40 shrink-0">Your email</span>
+              <span className="text-sm font-semibold break-all text-right">{invite.email}</span>
+            </div>
 
-      <button
-        onClick={handleAccept}
-        disabled={!user || !signedInWithRightEmail || !user.emailVerified}
-        className="w-full px-6 py-4 bg-brand-primary text-black font-black uppercase tracking-tighter italic hover:bg-white transition-all disabled:opacity-50"
-      >
-        Accept Invitation
-      </button>
+            {!user ? (
+              <div className="mt-6 bg-yellow-500/10 border border-yellow-500/30 p-4 text-xs text-yellow-400 font-bold uppercase tracking-widest">
+                Sign in with {invite.email} to accept.
+              </div>
+            ) : !signedInWithRightEmail ? (
+              <div className="mt-6 bg-red-500/10 border border-red-500/30 p-4 text-xs text-red-400 font-bold uppercase tracking-widest">
+                You're signed in as {user.email}. Sign out and sign in with {invite.email} to accept.
+              </div>
+            ) : !user.emailVerified ? (
+              <div className="mt-6 bg-yellow-500/10 border border-yellow-500/30 p-4 text-xs text-yellow-400 font-bold uppercase tracking-widest">
+                Verify your email first — check your inbox for a verification link.
+              </div>
+            ) : null}
 
-      <p className="text-[10px] text-white/30 uppercase tracking-widest mt-4 text-center">
-        By accepting you'll be added to the org with the {invite.role} role.
-      </p>
+            <button
+              onClick={handleAccept}
+              disabled={!user || !signedInWithRightEmail || !user.emailVerified}
+              className="mt-8 block w-full text-center bg-brand-primary text-black disp uppercase tracking-wide text-xl py-4 hover:scale-[1.01] active:scale-[0.99] transition-transform disabled:opacity-50"
+            >
+              Accept Invitation
+            </button>
+
+            <p className="type text-[11px] text-white/30 text-center mt-4">
+              By accepting you'll be added to the org with the {invite.role} role.
+            </p>
+          </div>
+        </div>
+      </div>
     </motion.div>
   );
 }

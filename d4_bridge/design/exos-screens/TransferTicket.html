@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Transfer Ticket</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme {
+    --color-brand-primary: #00FF00; --color-brand-secondary: #FF00FF; --color-brand-accent: #FF2A2A;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif; --font-display: "Anton", sans-serif;
+    --font-type: "Special Elite", monospace; --font-marker: "Permanent Marker", cursive;
+  }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); } .xerox{ filter:grayscale(1) contrast(1.35) brightness(1.04); }
+</style>
+</head>
+<body class="wall grain text-white">
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+    <a href="Home.html" class="flex items-center gap-3 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg></div><span class="disp text-4xl tracking-tight text-white leading-none pt-1" style="transform:skewX(-6deg)">EXOS</span></a>
+    <a href="MyTickets.html" class="type text-[12px] uppercase tracking-widest text-brand-primary">my tickets</a>
+  </div></div>
+</nav>
+
+<div class="max-w-2xl mx-auto px-4 py-16 relative z-10">
+  <div class="flex items-center justify-between mb-14">
+    <div>
+      <p class="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">// transfer ticket</p>
+      <h1 class="disp text-5xl tracking-tight leading-none" style="transform:skewX(-4deg)">SEND TICKET</h1>
+    </div>
+    <div class="w-14 h-14 bg-white flex items-center justify-center"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></div>
+  </div>
+
+  <div class="bg-[#111] border border-white/10 p-9">
+    <div class="flex items-center gap-6 mb-10">
+      <div class="w-24 h-32 bg-white/5 border border-white/10 overflow-hidden shrink-0"><img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=300" class="xerox w-full h-full object-cover" alt="" /></div>
+      <div>
+        <p class="type text-[10px] text-white/30 uppercase tracking-widest mb-1">ticket details</p>
+        <h2 class="disp text-3xl tracking-tight leading-none mb-2">BASEMENT: SHDW B2B KALTAR</h2>
+        <p class="type text-[11px] text-brand-primary uppercase tracking-widest">tier: general admission</p>
+      </div>
+    </div>
+
+    <div class="space-y-8">
+      <div class="space-y-3">
+        <label class="type text-[10px] text-white/30 uppercase tracking-widest ml-1">recipient email</label>
+        <div class="relative">
+          <svg class="absolute left-5 top-1/2 -translate-y-1/2 text-brand-primary w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 21a8 8 0 0 1 13.292-6"/><circle cx="10" cy="8" r="5"/><path d="M19 16v6"/><path d="M22 19h-6"/></svg>
+          <input type="email" placeholder="enter recipient email address" class="type w-full bg-white/5 border border-white/10 py-5 pl-14 pr-6 text-white placeholder-white/35 focus:outline-none focus:border-brand-primary transition-all text-base tracking-wide" />
+        </div>
+      </div>
+      <div class="p-6 bg-black border border-white/5 flex items-start gap-4">
+        <svg class="w-6 h-6 text-brand-accent shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.6 3H5.4L2 8.5 12 21 22 8.5 18.6 3Z"/><path d="M12 21V8.5"/></svg>
+        <p class="type text-[12px] text-white/45 leading-relaxed">Warning: Sending this ticket permanently removes it from your account. The recipient receives it instantly once you authorize. This cannot be undone.</p>
+      </div>
+      <button class="disp w-full bg-brand-primary text-black py-4 text-xl tracking-wide hover:scale-[1.01] transition-transform">SEND TICKET</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

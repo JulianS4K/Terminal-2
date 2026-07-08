@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Claim Ticket</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme {
+    --color-brand-primary: #00FF00; --color-brand-secondary: #FF00FF; --color-brand-accent: #FF2A2A;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif; --font-display: "Anton", sans-serif;
+    --font-type: "Special Elite", monospace; --font-marker: "Permanent Marker", cursive;
+  }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); } .xerox{ filter:grayscale(1) contrast(1.35) brightness(1.04); }
+</style>
+</head>
+<body class="wall grain text-white">
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+    <a href="Home.html" class="flex items-center gap-3 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg></div><span class="disp text-4xl tracking-tight text-white leading-none pt-1" style="transform:skewX(-6deg)">EXOS</span></a>
+    <button class="disp text-lg bg-brand-primary text-black px-5 py-1 tracking-wide">SIGN IN</button>
+  </div></div>
+</nav>
+
+<div class="max-w-2xl mx-auto px-4 py-16 relative z-10">
+  <div class="text-center mb-12">
+    <div class="inline-flex items-center justify-center w-16 h-16 bg-brand-primary mb-6"><svg class="text-black w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></div>
+    <h1 class="disp text-5xl tracking-tight leading-none mb-2" style="transform:skewX(-4deg)">CLAIM YOUR TICKET</h1>
+    <p class="type text-[11px] text-white/40 uppercase tracking-[0.25em]">secure exchange · verification</p>
+  </div>
+
+  <div class="bg-[#111] border border-white/10 overflow-hidden mb-8">
+    <div class="p-8 border-b border-white/5 flex items-center gap-6">
+      <div class="w-24 h-24 bg-white/5 overflow-hidden shrink-0"><img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=300" class="xerox w-full h-full object-cover" alt="" /></div>
+      <div>
+        <p class="type text-[10px] text-white/30 uppercase tracking-widest mb-1">invitation for</p>
+        <h2 class="disp text-3xl tracking-tight leading-none mb-3">BASEMENT: SHDW B2B KALTAR</h2>
+        <div class="flex items-center gap-3">
+          <span class="type text-[9px] text-white/60 bg-white/5 border border-white/10 px-3 py-1 uppercase tracking-widest">general admission</span>
+          <span class="type text-[9px] text-brand-primary bg-brand-primary/10 border border-brand-primary/30 px-3 py-1 uppercase tracking-widest">verified</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="p-8 bg-black/40">
+      <div class="bg-white/5 border border-white/10 p-7 mb-8">
+        <div class="flex items-center justify-between mb-6">
+          <div><p class="type text-[9px] text-white/30 uppercase tracking-widest mb-1">from</p><p class="disp text-lg tracking-tight">SECURE SENDER</p></div>
+          <svg class="w-6 h-6 text-brand-primary mx-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          <div class="text-right min-w-0"><p class="type text-[9px] text-white/30 uppercase tracking-widest mb-1">target account</p><p class="disp text-lg tracking-tight truncate">RILEY OKAFOR</p></div>
+        </div>
+        <div class="pt-5 border-t border-white/5 flex items-center justify-center gap-2">
+          <svg class="w-4 h-4 text-brand-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>
+          <span class="type text-[10px] text-white/40 uppercase tracking-widest">ready to claim</span>
+        </div>
+      </div>
+      <button class="disp w-full bg-brand-primary text-black py-4 text-xl tracking-wide hover:scale-[1.01] transition-transform">CLAIM TICKET</button>
+    </div>
+  </div>
+  <p class="text-center type text-[9px] text-white/25 uppercase tracking-[0.35em]">exos secure exchange protocol v1.0.4</p>
+</div>
+</body>
+</html>

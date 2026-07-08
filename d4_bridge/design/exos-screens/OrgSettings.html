@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Org Settings</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&Anton&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-tm-blue:#026cdf; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-[#f2f4f7] text-slate-900; } }
+  .lbl{ @apply block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2; }
+  .fld{ @apply w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-tm-blue; }
+  .card{ @apply bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8; }
+</style>
+<style>/*punk-stitch*/ .marker{font-family:"Permanent Marker",cursive;} .disp{font-family:"Anton",sans-serif;}</style>
+</head>
+<body class="bg-[#f2f4f7] text-slate-900">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <div class="flex items-center gap-3 bg-white/5 p-1 pr-4 border border-white/10"><div class="w-9 h-9 bg-brand-primary text-black font-black italic flex items-center justify-center">K</div></div>
+</div></div></nav>
+
+<div class="max-w-5xl mx-auto px-4 py-10">
+  <a href="Orgs.html" class="flex items-center gap-2 text-slate-500 hover:text-slate-900 text-[10px] font-black uppercase tracking-widest mb-6"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg> All organizations</a>
+  <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+    <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Organization</p><span class="inline-flex items-baseline gap-3 flex-wrap"><h1 class="text-3xl md:text-4xl font-bold tracking-tight">Knockdown Presents</h1><span class="marker text-[#FF00FF] text-lg rotate-[-3deg] leading-none whitespace-nowrap">white-label ✦</span></span></div>
+    <button class="bg-tm-blue text-white px-6 py-3 rounded font-bold text-sm hover:bg-[#015bbd] shadow-sm">Save changes</button>
+  </div>
+
+  <!-- tabs -->
+  <div class="flex gap-6 border-b border-slate-200 mb-8">
+    <button class="pb-3 text-sm font-bold text-slate-900 border-b-2 border-tm-blue -mb-px">General</button>
+    <a href="OrgMembers.html" class="pb-3 text-sm font-bold text-slate-400 hover:text-slate-600">Members</a>
+    <button class="pb-3 text-sm font-bold text-slate-400 hover:text-slate-600">Billing</button>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2 space-y-6">
+      <div class="card">
+        <h2 class="text-sm font-black text-slate-900 uppercase tracking-widest mb-6">Profile</h2>
+        <div class="space-y-5">
+          <div><label class="lbl">Name</label><input class="fld" value="Knockdown Presents" /></div>
+          <div><label class="lbl">Handle</label><div class="flex items-center bg-white border border-slate-200 rounded-lg px-4 focus-within:border-tm-blue"><span class="text-sm text-slate-400">exos.live/o/</span><input class="flex-1 py-3 text-sm focus:outline-none" value="knockdown" /></div></div>
+          <div><label class="lbl">Description</label><textarea rows="2" class="fld resize-none">Maspeth's biggest room. Warehouse techno, all-night bookings.</textarea></div>
+        </div>
+      </div>
+
+      <!-- white-label theming -->
+      <div class="card">
+        <h2 class="text-sm font-black text-slate-900 uppercase tracking-widest mb-2">White-label theme</h2>
+        <p class="text-xs text-slate-400 mb-6">Applied to your storefront (/o/knockdown) and event pages hosted by this org.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div>
+            <label class="lbl">Primary color</label>
+            <div class="flex gap-2">
+              <button class="w-9 h-9 rounded-full ring-2 ring-offset-2 ring-slate-900" style="background:#00FF00"></button>
+              <button class="w-9 h-9 rounded-full" style="background:#FF00FF"></button>
+              <button class="w-9 h-9 rounded-full" style="background:#FFE714"></button>
+              <button class="w-9 h-9 rounded-full" style="background:#026cdf"></button>
+              <button class="w-9 h-9 rounded-full border border-slate-200 flex items-center justify-center text-slate-400"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button>
+            </div>
+          </div>
+          <div>
+            <label class="lbl">Logo</label>
+            <div class="flex items-center gap-3"><div class="w-12 h-12 bg-slate-900 rounded-lg flex items-center justify-center text-white font-black italic text-xl">K</div><button class="text-tm-blue text-xs font-bold uppercase tracking-widest hover:underline">Upload</button></div>
+          </div>
+        </div>
+        <!-- live preview -->
+        <div class="mt-6">
+          <p class="lbl">Storefront preview</p>
+          <div class="rounded-xl overflow-hidden border border-slate-200">
+            <div class="bg-black px-5 py-4 flex items-center justify-between"><span class="text-white font-black italic text-lg">K · KNOCKDOWN</span><span class="text-[10px] font-black uppercase tracking-widest" style="color:#00FF00">Events</span></div>
+            <div class="bg-[#0a0a0a] p-5 grid grid-cols-3 gap-3">
+              <div class="aspect-[3/4] bg-[#1a1a1a] relative"><span class="absolute bottom-1 left-1 text-white text-[9px] font-black">EVENT</span><span class="absolute top-1 right-1 text-[9px] font-black" style="color:#00FF00">$30</span></div>
+              <div class="aspect-[3/4] bg-[#1a1a1a]"></div><div class="aspect-[3/4] bg-[#1a1a1a]"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="space-y-6">
+      <div class="card">
+        <h2 class="text-sm font-black text-slate-900 uppercase tracking-widest mb-4">Custom domain</h2>
+        <input class="fld mb-2" value="tickets.knockdown.nyc" /><p class="text-[11px] text-green-600 font-bold flex items-center gap-1"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6 9 17l-5-5"/></svg> DNS verified</p>
+      </div>
+      <div class="card border-rose-200">
+        <h2 class="text-sm font-black text-rose-600 uppercase tracking-widest mb-3">Danger zone</h2>
+        <button class="w-full border border-rose-200 text-rose-600 py-2.5 rounded font-bold text-xs uppercase tracking-widest hover:bg-rose-50">Delete organization</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

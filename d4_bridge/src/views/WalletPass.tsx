@@ -153,8 +153,8 @@ export default function WalletPass() {
 
   if (!ticket) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-slate-400 font-bold uppercase tracking-widest text-xs">
-        Loading pass…
+      <div className="wall min-h-screen flex items-center justify-center text-center">
+        <p className="type text-white/50 uppercase tracking-[0.3em] text-[12px] animate-pulse">// loading pass…</p>
       </div>
     );
   }
@@ -164,15 +164,15 @@ export default function WalletPass() {
   // but the UI guards against rendering a stale-cached pass.
   if (!user || user.uid !== ticket.ownerId) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-8 text-center">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">
-          Pass not available
+      <div className="wall min-h-screen text-white flex flex-col items-center justify-center p-8 text-center">
+        <p className="type text-[11px] uppercase tracking-widest text-brand-accent mb-4">
+          // pass not available
         </p>
-        <p className="text-slate-200 max-w-md">
+        <p className="type text-white/60 text-sm max-w-md leading-relaxed">
           You need to be signed in as the ticket holder to display this pass at the door.
         </p>
-        <Link to="/my-tickets" className="mt-8 px-6 py-3 bg-white text-slate-900 rounded-2xl text-xs font-bold uppercase tracking-widest">
-          Go to My Tickets
+        <Link to="/my-tickets" className="disp mt-8 px-6 py-3 bg-brand-primary text-black text-lg tracking-wide hover:bg-white transition-colors">
+          GO TO MY TICKETS
         </Link>
       </div>
     );
@@ -216,32 +216,37 @@ export default function WalletPass() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="min-h-screen bg-black text-white flex flex-col"
+      className="wall grain min-h-screen text-white flex flex-col"
     >
+      {/* Bare-route grain overlay. This screen renders without the shared
+          ChromeLayout, so the photocopier-noise texture (defined globally in
+          the mockups, not in index.css) is reproduced locally here. */}
+      <style>{`.grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }`}</style>
+
       {/* Top chrome — minimal back link + tiny "max brightness"
           reminder. Deliberately no navbar — we want every pixel for
           the QR. */}
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between px-6 py-4 relative z-10">
         <button
           onClick={() => navigate(-1)}
-          className="text-[10px] font-bold uppercase tracking-widest text-white/60 hover:text-white flex items-center gap-2"
+          className="type text-[11px] uppercase tracking-widest text-white/60 hover:text-white flex items-center gap-2"
         >
-          <ArrowLeft size={14} aria-hidden="true" /> Back
+          <ArrowLeft size={14} aria-hidden="true" /> back
         </button>
-        <div className="text-[9px] font-bold uppercase tracking-widest text-white/30 flex items-center gap-2">
-          <Sun size={12} aria-hidden="true" /> Max screen brightness for best scan
+        <div className="type text-[10px] uppercase tracking-widest text-white/30 flex items-center gap-2">
+          <Sun size={12} aria-hidden="true" /> max brightness for best scan
         </div>
       </div>
 
       {/* Main pass surface — centered QR with event + tier metadata. */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-12">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-12 relative z-10">
         <div className="bg-white text-black rounded-[2rem] p-8 shadow-2xl max-w-md w-full relative overflow-hidden">
-          <div className="text-center mb-4">
-            <p className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">
+          <div className="text-center mb-5">
+            <p className="disp text-2xl tracking-tight leading-none">
               {event?.title || 'Event'}
             </p>
             {event?.date ? (
-              <p className="text-[10px] font-medium text-black/50 uppercase tracking-widest">
+              <p className="type text-[11px] uppercase tracking-widest text-black/50 mt-1">
                 {formatInTz(event.date.toDate(), event.timezone, {
                   weekday: 'short',
                   month: 'short',
@@ -254,14 +259,14 @@ export default function WalletPass() {
           </div>
 
           <div className="relative flex flex-col items-center">
-            <div className={`p-4 bg-white border-2 border-black rounded-2xl ${muted ? 'opacity-20 grayscale' : ''}`}>
+            <div className={`p-4 bg-white border-[3px] border-black rounded-2xl ${muted ? 'opacity-20 grayscale' : ''}`}>
               {qrUnlocked ? (
                 <QRCodeSVG value={barcode || ticket.id} size={260} level="H" includeMargin={false} fgColor="#000000" />
               ) : (
                 <div className="w-[260px] h-[260px] flex flex-col items-center justify-center text-center px-6">
                   <Lock className="w-10 h-10 text-black/30 mb-4" aria-hidden="true" />
-                  <p className="text-[11px] font-black uppercase tracking-widest text-black/50">Entry code locked</p>
-                  <p className="text-[11px] font-medium text-black/40 mt-1">
+                  <p className="type text-[11px] uppercase tracking-widest text-black/50">Entry code locked</p>
+                  <p className="type text-[11px] text-black/40 mt-1">
                     Unlocks 24h before{event?.date ? ` · ${formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ' the event'}
                   </p>
                 </div>
@@ -284,24 +289,24 @@ export default function WalletPass() {
 
           <div className="mt-6 pt-6 border-t border-dashed border-black/20 flex justify-between items-end">
             <div className="text-left">
-              <p className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">Holder</p>
-              <p className="text-sm font-black uppercase tracking-tighter">
+              <p className="type text-[9px] uppercase tracking-widest text-black/40 mb-1">holder</p>
+              <p className="disp text-lg tracking-tight leading-none">
                 {user.displayName || user.email || 'Guest'}
               </p>
             </div>
             <div className="text-right">
-              <p className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">Tier</p>
-              <p className="text-sm font-black uppercase tracking-tighter">{ticket.tierName || 'GA'}</p>
+              <p className="type text-[9px] uppercase tracking-widest text-black/40 mb-1">tier</p>
+              <p className="disp text-lg tracking-tight leading-none">{ticket.tierName || 'GA'}</p>
             </div>
           </div>
 
           {!muted && qrUnlocked ? (
             <div className="mt-6 flex flex-col items-center">
-              <p className="text-[9px] text-black/40 font-black uppercase tracking-tighter">Code refreshes in</p>
-              <p className="text-2xl font-black text-black italic tracking-tighter leading-none mt-1">
+              <p className="type text-[9px] text-black/40 uppercase tracking-widest">code refreshes in</p>
+              <p className="disp text-3xl text-black tracking-tight leading-none mt-1">
                 00:{timeLeft.toString().padStart(2, '0')}
               </p>
-              <div className="w-32 h-[2px] bg-black/5 mt-3">
+              <div className="w-32 h-[3px] bg-black/10 mt-3">
                 <div
                   className="h-full bg-brand-primary transition-all duration-1000"
                   style={{ width: `${(timeLeft / 30) * 100}%` }}
@@ -311,13 +316,13 @@ export default function WalletPass() {
           ) : null}
 
           <div className="mt-6 text-center">
-            <p className="text-[9px] text-black/30 font-mono break-all">{ticket.id}</p>
+            <p className="type text-[9px] text-black/30 break-all">{ticket.id}</p>
           </div>
         </div>
       </div>
 
-      <div className="px-6 pb-6 text-center">
-        <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-white/20">
+      <div className="px-6 pb-6 text-center relative z-10">
+        <p className="type text-[9px] uppercase tracking-[0.3em] text-white/20">
           Exos · Scan-Only Pass
         </p>
       </div>

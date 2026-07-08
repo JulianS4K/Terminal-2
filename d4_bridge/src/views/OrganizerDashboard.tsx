@@ -3,6 +3,7 @@ import { Event } from '../types';
 import { listOrgEvents } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
+import AccessDenied from '../components/AccessDenied';
 import { Link } from 'react-router-dom';
 import { Plus, Settings, Users, BarChart3, ChevronRight, Music, MapPin, Calendar, CheckCircle2, Download, Megaphone, Search, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -83,7 +84,13 @@ export default function OrganizerDashboard() {
   const showOnboardingNudge =
     user && !isAdmin && orgs.length === 0 && !onboardingDismissed;
 
-  if (!user) return <div className="max-w-7xl mx-auto p-20 text-center text-gray-500">Sign in to manage your events.</div>;
+  if (!user)
+    return (
+      <AccessDenied
+        scrawl="crew access only"
+        message="Sign in with your organizer account to manage your events, or head back to the public floor."
+      />
+    );
 
   return (
     <div className="bg-[#f2f4f7] min-h-screen">
@@ -100,9 +107,16 @@ export default function OrganizerDashboard() {
         )}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight mb-1 text-slate-900">
-              {isAdmin ? 'All Events (admin)' : 'My Events'}
-            </h1>
+            <div className="flex items-baseline gap-3 flex-wrap mb-1">
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+                {isAdmin ? 'All Events (admin)' : 'My Events'}
+              </h1>
+              {events.length > 0 && (
+                <span className="marker text-brand-secondary text-lg rotate-[-3deg] leading-none whitespace-nowrap">
+                  {events.length} live ✦
+                </span>
+              )}
+            </div>
             <p className="text-slate-500 text-sm">
               {isAdmin
                 ? 'Every event on the platform. You can edit any of them in support mode.'
@@ -151,7 +165,7 @@ export default function OrganizerDashboard() {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">{stat.label}</p>
                 <stat.icon className={`w-4 h-4 text-slate-400`} />
               </div>
-              <p className={`text-2xl font-bold ${stat.color} tracking-tight`}>{stat.value}</p>
+              <p className={`disp text-4xl ${stat.color} tracking-tight`} style={{ transform: 'skewX(-3deg)' }}>{stat.value}</p>
             </motion.div>
           ))}
         </div>

@@ -41,6 +41,8 @@ const ClaimInvite = lazy(() => import('./views/ClaimInvite'));
 const OrganizerEventReport = lazy(() => import('./views/OrganizerEventReport'));
 const PromoteEvent = lazy(() => import('./views/PromoteEvent'));
 const OrgPromote = lazy(() => import('./views/OrgPromote'));
+const NotFound = lazy(() => import('./views/NotFound'));
+const Notifications = lazy(() => import('./views/Notifications'));
 
 /**
  * @license
@@ -65,7 +67,10 @@ function ChromeLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
   const isBare =
     location.pathname.startsWith('/embed/') ||
-    location.pathname.startsWith('/wallet/pass/');
+    location.pathname.startsWith('/wallet/pass/') ||
+    // White-label org storefront (/o/:slug) supplies its own org-branded
+    // nav + footer, so the platform chrome is suppressed here too.
+    location.pathname.startsWith('/o/');
   if (isBare) {
     // Bare layout — no navbar, no footer, no PwaShell. The embed
     // host site provides its own chrome.
@@ -103,6 +108,7 @@ export default function App() {
                     <Route path="/organizer/:id" element={<OrganizerProfile />} />
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/my-tickets" element={<MyTickets />} />
+                    <Route path="/alerts" element={<Notifications />} />
                     <Route path="/ticket/:id" element={<TicketDetail />} />
                     <Route path="/wallet/pass/:ticketId" element={<WalletPass />} />
                     <Route path="/transfer/:id" element={<TransferTicket />} />
@@ -132,6 +138,8 @@ export default function App() {
                     <Route path="/privacy" element={<Privacy />} />
                     <Route path="/terms" element={<Terms />} />
                     <Route path="/status" element={<Status />} />
+                    {/* 404 catch-all — punk "off the door list" screen. */}
+                    <Route path="*" element={<NotFound />} />
                   </Routes>
                 </Suspense>
               </ChromeLayout>

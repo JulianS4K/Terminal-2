@@ -1,16 +1,28 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Bebas+Neue&family=Archivo+Black&family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap');
 @import "tailwindcss";
 
+/*
+  Exos design language — "Brooklyn nightlife-punk": ransom/condensed display
+  type (Anton), typewriter body accents (Special Elite), marker scrawl
+  (Permanent Marker), xerox halftone imagery, neon-green-on-black.
+  Foundation tokens + utilities mirror the design set in the D4 HTML mockups
+  so every screen inherits the same vocabulary (.disp/.type/.marker/.wall/
+  .neon/.xerox/.stamp/.glitch). Screen-specific effects live with the screen.
+*/
 @theme {
   --color-brand-primary: #00FF00; /* Neon Green */
   --color-brand-secondary: #FF00FF; /* Neon Magenta */
-  --color-brand-accent: #FF3B3B; /* Pure Red */
-  
+  --color-brand-accent: #FF2A2A; /* Ransom Red */
+
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Outfit", sans-serif;
+  /* Display = Anton (condensed ransom caps). Outfit stays available for the
+     handful of surfaces still on the prior weight-graded display. */
+  --font-display: "Anton", "Outfit", sans-serif;
+  --font-type: "Special Elite", ui-monospace, monospace;
+  --font-marker: "Permanent Marker", cursive;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  
-  /* Ticketmaster Colors */
+
+  /* Ticketmaster comparison palette (side-by-side demo screens) */
   --color-tm-blue: #026cdf;
   --color-tm-gray: #f2f4f7;
 }
@@ -21,6 +33,53 @@
   }
 }
 
+/* ---- Core punk/xerox vocabulary (shared across all screens) ---- */
+
+/* Display / typewriter / marker font shorthands, matching the mockups. */
+.disp { font-family: var(--font-display); }
+.type { font-family: var(--font-type); }
+.marker { font-family: var(--font-marker); }
+
+/* Neon-on-black "wall" backdrop with green + magenta corner glows. */
+.wall {
+  background:
+    radial-gradient(circle at 85% -5%, rgba(0, 255, 0, 0.05), transparent 42%),
+    radial-gradient(circle at 0% 100%, rgba(255, 0, 255, 0.045), transparent 45%),
+    #050505;
+}
+
+/* Neon green text glow. */
+.neon {
+  color: #00ff00;
+  text-shadow: 0 0 16px rgba(0, 255, 0, 0.45);
+}
+
+/* Xerox halftone: harsh grayscale by default, resolves to color on hover
+   (photocopied-flyer feel). Pair with a .group parent on cards. */
+.xerox {
+  filter: grayscale(1) contrast(1.55) brightness(1.05);
+  transition: filter 0.5s ease;
+}
+.group:hover .xerox { filter: none; }
+
+/* Ransom "stamp" chip — double-ruled border box. */
+.stamp {
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+  border: 3px double currentColor;
+  padding: 1px 9px 3px;
+  display: inline-block;
+  line-height: 1;
+}
+
+/* RGB-split glitch text (green/magenta fringe). */
+.glitch {
+  position: relative;
+  color: #fff;
+  text-shadow: 4px 0 rgba(255, 0, 255, 0.75), -4px 0 rgba(0, 255, 0, 0.75);
+}
+
+/* ---- Existing component classes (retained) ---- */
 .primary-card {
   @apply bg-[#111111] border border-white/10 hover:border-white/30 transition-all duration-300;
 }

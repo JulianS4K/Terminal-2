@@ -57,29 +57,38 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (!this.state.hasError) return this.props.children;
     if (this.props.fallback) return this.props.fallback;
 
+    // Punk "500 / something broke" treatment from the Exos design set —
+    // glitch numerals, marker scrawl, neon headline.
     return (
       <div
         role="alert"
-        className="min-h-screen bg-[#000] text-white flex items-center justify-center px-6"
+        className="wall min-h-screen text-white flex flex-col items-center justify-center px-6 text-center"
       >
-        <div className="max-w-md text-center">
-          <p className="text-brand-primary text-xs font-black uppercase tracking-widest italic mb-4">
-            Something went wrong
-          </p>
-          <h1 className="text-3xl font-black uppercase italic tracking-tighter leading-none mb-6">
-            We couldn&apos;t load this view.
-          </h1>
-          <p className="text-white/60 text-sm font-medium mb-10 leading-relaxed">
-            The error has been logged. Reloading the page usually clears
-            transient issues — if not, please come back in a moment.
-          </p>
-          <button
-            onClick={this.handleReload}
-            className="bg-brand-primary text-black px-8 py-4 font-black uppercase tracking-widest text-xs hover:bg-white transition-all"
-          >
-            Reload
-          </button>
-        </div>
+        <p
+          className="disp glitch text-[24vw] md:text-[180px] leading-[0.8] tracking-tight"
+          style={{ transform: 'skewX(-4deg)' }}
+        >
+          500
+        </p>
+        <span
+          className="marker text-brand-secondary text-2xl md:text-3xl -mt-2 mb-6"
+          style={{ transform: 'rotate(5deg)' }}
+        >
+          the sound guy blew a fuse
+        </span>
+        <h1 className="disp text-3xl md:text-5xl tracking-tight mb-4" style={{ transform: 'skewX(-4deg)' }}>
+          SOMETHING <span className="neon">BROKE</span>
+        </h1>
+        <p className="type text-white/55 text-base max-w-md mb-9 leading-relaxed">
+          That&apos;s on us, not you. The error has been logged and our crew&apos;s already on it —
+          give it a second and try again.
+        </p>
+        <button
+          onClick={this.handleReload}
+          className="disp bg-brand-primary text-black px-7 py-3 text-lg tracking-wide hover:scale-[1.02] transition-transform"
+        >
+          RELOAD
+        </button>
       </div>
     );
   }

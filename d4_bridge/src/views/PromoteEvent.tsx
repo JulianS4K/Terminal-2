@@ -151,44 +151,46 @@ window.addEventListener('message', function(e) {
   const facebookHref = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`;
 
   if (!user) {
-    return <div className="max-w-3xl mx-auto p-20 text-center text-slate-500">Sign in to promote your events.</div>;
+    return <div className="max-w-3xl mx-auto p-20 text-center type text-white/50 uppercase tracking-widest text-xs">Sign in to promote your events.</div>;
   }
   if (loading) {
-    return <div className="max-w-3xl mx-auto p-20 text-center text-slate-300 font-bold uppercase tracking-widest text-xs">Loading…</div>;
+    return <div className="max-w-3xl mx-auto p-20 text-center type text-white/40 uppercase tracking-widest text-xs">Loading…</div>;
   }
   if (!event) {
     return (
       <div className="max-w-3xl mx-auto p-20 text-center">
-        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] mb-4">Event not found</p>
-        <Link to="/dashboard" className="text-[#026cdf] font-bold text-sm">Back to dashboard</Link>
+        <p className="type text-white/40 uppercase tracking-widest text-[10px] mb-4">Event not found</p>
+        <Link to="/dashboard" className="text-brand-primary font-bold text-sm">Back to dashboard</Link>
       </div>
     );
   }
 
   return (
-    <div className="bg-[#f2f4f7] min-h-screen">
+    <div className="min-h-screen">
       <div className="max-w-3xl mx-auto px-4 py-12">
-        <Link to="/dashboard" className="flex items-center text-slate-400 hover:text-slate-900 mb-8 transition-colors font-bold uppercase tracking-widest text-[10px]">
+        <Link to="/dashboard" className="type flex items-center text-white/40 hover:text-brand-primary mb-8 transition-colors uppercase tracking-widest text-[10px]">
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to Dashboard
         </Link>
 
-        <div className="flex items-center gap-3 mb-2">
-          <Megaphone className="w-6 h-6 text-[#026cdf]" />
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Promote</h1>
+        <p className="type text-[10px] text-white/40 uppercase tracking-widest mb-2">Promote</p>
+        <div className="flex items-center gap-3 mb-2 flex-wrap">
+          <Megaphone className="w-6 h-6 text-brand-primary" />
+          <h1 className="disp text-4xl md:text-5xl uppercase tracking-wide text-white">Promote</h1>
+          <span className="marker text-brand-secondary text-lg -rotate-3 leading-none whitespace-nowrap">spread it ✦</span>
         </div>
-        <p className="text-slate-500 text-sm mb-2">{event.title}{dateLabel ? ` · ${dateLabel}` : ''}</p>
+        <p className="type text-white/50 text-xs uppercase tracking-widest mb-2">{event.title}{dateLabel ? ` · ${dateLabel}` : ''}</p>
 
         {!published && (
-          <div className="mb-8 p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-xs font-bold">
+          <div className="mb-8 p-4 border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-bold">
             This event is a {event.status || 'draft'}. The public link below won't work until you publish it
             (only published events are visible to buyers).
           </div>
         )}
 
         {/* Share the link */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-            <Share2 className="w-4 h-4 text-[#026cdf]" /> Share the link
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-4 flex items-center gap-2">
+            <Share2 className="w-4 h-4 text-brand-primary" /> Share the link
           </h2>
           <div className="flex items-center gap-2 mb-4">
             <input
@@ -196,39 +198,39 @@ window.addEventListener('message', function(e) {
               value={url}
               aria-label="Public event link"
               onFocus={(e) => e.currentTarget.select()}
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-mono text-slate-700 truncate"
+              className="flex-1 bg-black border border-white/20 px-4 py-3 text-sm font-mono text-white/70 truncate"
             />
             <button
               onClick={() => copy(url, 'Link copied.')}
-              className="px-4 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors flex items-center gap-2"
+              className="px-4 py-3 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors flex items-center gap-2"
             >
               <Copy className="w-3.5 h-3.5" /> Copy
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setShareOpen(true)} className="flex items-center gap-2 px-4 py-2.5 bg-[#026cdf] text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-[#015bbd] transition-colors">
+            <button onClick={() => setShareOpen(true)} className="flex items-center gap-2 px-4 py-2.5 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors">
               <Share2 className="w-3.5 h-3.5" /> Share…
             </button>
-            <a href={twitterHref} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors">
+            <a href={twitterHref} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-transparent border border-white/20 text-white/70 text-[10px] font-black uppercase tracking-widest hover:border-brand-primary transition-colors">
               <Twitter className="w-3.5 h-3.5" /> X / Twitter
             </a>
-            <a href={facebookHref} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors">
+            <a href={facebookHref} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-transparent border border-white/20 text-white/70 text-[10px] font-black uppercase tracking-widest hover:border-brand-primary transition-colors">
               <Facebook className="w-3.5 h-3.5" /> Facebook
             </a>
-            <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-50 transition-colors">
+            <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2.5 bg-transparent border border-white/20 text-white/70 text-[10px] font-black uppercase tracking-widest hover:border-brand-primary transition-colors">
               <ExternalLink className="w-3.5 h-3.5" /> Preview
             </a>
           </div>
         </section>
 
         {/* Campaign links — create + track */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-1 flex items-center gap-2">
-            <Tag className="w-4 h-4 text-[#026cdf]" /> Campaign links
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-1 flex items-center gap-2">
+            <Tag className="w-4 h-4 text-brand-primary" /> Campaign links
           </h2>
-          <p className="text-sm text-slate-600 mb-4">
+          <p className="text-sm text-white/60 mb-4">
             Name a campaign and share its per-channel link. Sales attributed to it appear in this event's{' '}
-            <Link to={`/dashboard/event/${eventId}`} className="text-[#026cdf] font-bold">Sales report</Link>;
+            <Link to={`/dashboard/event/${eventId}`} className="text-brand-primary font-bold">Sales report</Link>;
             paid reach &amp; ROAS show in your Meta / GA4 / TikTok dashboards (configure pixels below).
           </p>
           <input
@@ -236,40 +238,40 @@ window.addEventListener('message', function(e) {
             onChange={(e) => setCampaignName(e.target.value)}
             placeholder="Campaign name — e.g. spring-launch, radio-spot, influencer-jane"
             aria-label="Campaign name"
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:outline-none focus:border-[#026cdf] mb-4"
+            className="w-full bg-black border border-white/20 px-4 py-3 text-sm font-bold text-white placeholder:font-normal placeholder:text-white/30 focus:outline-none focus:border-brand-primary mb-4"
           />
           {campaignSlug ? (
             <div className="space-y-2">
               {CHANNELS.map((ch) => {
                 const link = buildCampaignUrl(ch);
                 return (
-                  <div key={ch.key} className="flex items-center gap-2 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 w-28 shrink-0">{ch.label}</span>
-                    <span className="flex-1 text-[11px] font-mono text-slate-600 truncate">{link}</span>
-                    <button onClick={() => copy(link, `${ch.label} link copied.`)} aria-label={`Copy ${ch.label} link`} className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors shrink-0"><Copy className="w-4 h-4" /></button>
+                  <div key={ch.key} className="flex items-center gap-2 bg-black/40 border border-white/10 px-3 py-2">
+                    <span className="type text-[10px] uppercase tracking-widest text-white/50 w-28 shrink-0">{ch.label}</span>
+                    <span className="flex-1 text-[11px] font-mono text-white/60 truncate">{link}</span>
+                    <button onClick={() => copy(link, `${ch.label} link copied.`)} aria-label={`Copy ${ch.label} link`} className="p-2 text-white/40 hover:text-brand-primary transition-colors shrink-0"><Copy className="w-4 h-4" /></button>
                   </div>
                 );
               })}
             </div>
           ) : (
-            <p className="text-[11px] text-slate-400 italic">Enter a campaign name to generate per-channel tracked links.</p>
+            <p className="text-[11px] text-white/40 italic">Enter a campaign name to generate per-channel tracked links.</p>
           )}
         </section>
 
         {/* QR code */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-            <QrCode className="w-4 h-4 text-[#026cdf]" /> Poster QR code
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-4 flex items-center gap-2">
+            <QrCode className="w-4 h-4 text-brand-primary" /> Poster QR code
           </h2>
           <div className="flex items-center gap-6 flex-wrap">
-            <div ref={qrWrapRef} className="p-4 bg-white border border-slate-200 rounded-2xl">
+            <div ref={qrWrapRef} className="p-4 bg-white border border-white/10">
               <QRCodeCanvas value={url} size={160} level="M" includeMargin />
             </div>
             <div className="flex-1 min-w-[200px]">
-              <p className="text-sm text-slate-600 mb-4">
+              <p className="text-sm text-white/60 mb-4">
                 Print this on flyers, posters, or the door. It points straight to the ticket page.
               </p>
-              <button onClick={downloadQr} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors">
+              <button onClick={downloadQr} className="flex items-center gap-2 px-4 py-2.5 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors">
                 <Download className="w-3.5 h-3.5" /> Download PNG
               </button>
             </div>
@@ -277,30 +279,30 @@ window.addEventListener('message', function(e) {
         </section>
 
         {/* Embed */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-            <Code2 className="w-4 h-4 text-[#026cdf]" /> Embed on your site
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-4 flex items-center gap-2">
+            <Code2 className="w-4 h-4 text-brand-primary" /> Embed on your site
           </h2>
-          <p className="text-sm text-slate-600 mb-3">
+          <p className="text-sm text-white/60 mb-3">
             Paste this into your own website (WordPress, Wix, Squarespace, or hand-written HTML). It self-resizes.
           </p>
-          <pre className="bg-slate-900 text-slate-100 text-[11px] rounded-xl p-4 overflow-x-auto font-mono whitespace-pre-wrap break-all">{embedSnippet}</pre>
-          <button onClick={() => copy(embedSnippet, 'Embed snippet copied.')} className="mt-3 flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors">
+          <pre className="bg-black border border-white/10 text-brand-primary text-[11px] p-4 overflow-x-auto font-mono whitespace-pre-wrap break-all">{embedSnippet}</pre>
+          <button onClick={() => copy(embedSnippet, 'Embed snippet copied.')} className="mt-3 flex items-center gap-2 px-4 py-2.5 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors">
             <Copy className="w-3.5 h-3.5" /> Copy embed code
           </button>
         </section>
 
         {/* Caption templates */}
-        <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-6">
-          <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#026cdf]" /> Caption templates
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-4 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-brand-primary" /> Caption templates
           </h2>
-          <p className="text-sm text-slate-600 mb-4">Copy-and-post for Instagram, TikTok, or X.</p>
+          <p className="text-sm text-white/60 mb-4">Copy-and-post for Instagram, TikTok, or X.</p>
           <div className="space-y-3">
             {captions.map((c, i) => (
-              <div key={i} className="flex items-start gap-2 bg-slate-50 border border-slate-100 rounded-xl p-3">
-                <p className="flex-1 text-sm text-slate-700">{c}</p>
-                <button onClick={() => copy(c, 'Caption copied.')} aria-label="Copy caption" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors shrink-0">
+              <div key={i} className="flex items-start gap-2 bg-black/40 border border-white/10 p-3">
+                <p className="flex-1 text-sm text-white/70">{c}</p>
+                <button onClick={() => copy(c, 'Caption copied.')} aria-label="Copy caption" className="p-2 text-white/40 hover:text-brand-primary transition-colors shrink-0">
                   <Copy className="w-4 h-4" />
                 </button>
               </div>
@@ -309,20 +311,20 @@ window.addEventListener('message', function(e) {
         </section>
 
         {/* Amplify: pixels + socials */}
-        <section className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-2xl p-6">
-          <h2 className="text-[11px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2">Amplify &amp; measure</h2>
+        <section className="bg-gradient-to-r from-brand-primary/10 to-brand-secondary/10 border border-white/10 p-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-2">Amplify &amp; measure</h2>
           {org?.marketing?.socials && Object.values(org.marketing.socials).some(Boolean) ? (
             <div className="mb-3">
-              <p className="text-xs text-indigo-700 mb-2">Your storefront socials:</p>
+              <p className="text-xs text-white/60 mb-2">Your storefront socials:</p>
               <SocialLinks socials={org.marketing.socials} className="flex items-center gap-4" />
             </div>
           ) : null}
-          <p className="text-sm text-indigo-700 mb-4">
+          <p className="text-sm text-white/60 mb-4">
             Add your Meta / GA4 / TikTok pixel and social handles so paid promotion is tracked and your
             storefront links out to your channels.
           </p>
           {org ? (
-            <Link to={`/orgs/${org.id}/settings`} className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-700 transition-colors">
+            <Link to={`/orgs/${org.id}/settings`} className="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors">
               <Settings className="w-3.5 h-3.5" /> Marketing &amp; socials
             </Link>
           ) : null}

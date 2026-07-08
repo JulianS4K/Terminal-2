@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — My Tickets</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme {
+    --color-brand-primary: #00FF00;
+    --color-brand-secondary: #FF00FF;
+    --color-brand-accent: #FF2A2A;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-display: "Anton", sans-serif;
+    --font-type: "Special Elite", monospace;
+    --font-marker: "Permanent Marker", cursive;
+  }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); }
+  .xerox{ filter:grayscale(1) contrast(1.35) brightness(1.04); } .group:hover .xerox{ filter:none; }
+  .stamp{ font-family:"Anton",sans-serif; border:2.5px solid currentColor; padding:0 7px 2px; display:inline-block; line-height:1.15; }
+  ::-webkit-scrollbar{ width:7px; } ::-webkit-scrollbar-track{ background:#050505; } ::-webkit-scrollbar-thumb{ background:#222; }
+</style>
+</head>
+<body class="wall grain text-white">
+
+<!-- NAVBAR -->
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex justify-between h-20 items-center">
+      <a href="Home.html" class="flex items-center gap-3 group">
+        <div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors">
+          <svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+        </div>
+        <span class="disp text-4xl tracking-tight text-white leading-none pt-1" style="transform:skewX(-6deg)">EXOS</span>
+      </a>
+      <div class="flex items-center gap-5 sm:gap-8">
+        <a href="#" class="type text-[12px] uppercase tracking-widest text-brand-primary">my tickets</a>
+        <a href="#" class="type text-[12px] uppercase tracking-widest text-white/60 hover:text-brand-primary transition-colors hidden sm:inline">dashboard</a>
+        <div class="flex items-center gap-3 bg-white/5 p-1 pr-4 border border-white/10">
+          <div class="w-9 h-9 bg-brand-primary text-black disp text-lg flex items-center justify-center">R</div>
+          <span class="type text-[11px] uppercase tracking-widest text-white hidden sm:inline">0x7f3a</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 relative z-10">
+  <!-- HEADER -->
+  <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-14 gap-6">
+    <div class="relative">
+      <p class="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">// secure vault</p>
+      <h1 class="disp text-6xl md:text-7xl tracking-tight leading-none" style="transform:skewX(-4deg)">MY <span class="neon">TICKETS</span></h1>
+      <span class="marker absolute -right-6 -top-3 text-brand-secondary text-lg rotate-[6deg] hidden md:block">3 live ✦</span>
+    </div>
+    <div class="flex border border-white/10 bg-white/5">
+      <button class="disp px-8 py-2.5 text-lg tracking-wide bg-brand-primary text-black">ACTIVE</button>
+      <button class="disp px-8 py-2.5 text-lg tracking-wide text-white/40 hover:text-white transition-colors">ARCHIVE</button>
+    </div>
+  </div>
+
+  <!-- INCOMING + OUTBOUND TRANSFERS -->
+  <div class="mb-16 space-y-12">
+    <div>
+      <h2 class="type text-[12px] text-brand-primary uppercase tracking-widest mb-6 flex items-center gap-3">
+        <span class="w-2 h-2 bg-brand-primary rounded-full animate-ping"></span> incoming tickets (1)
+      </h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="bg-brand-primary p-7 relative overflow-hidden">
+          <div class="flex items-center gap-5 mb-7">
+            <div class="w-14 h-14 bg-black flex items-center justify-center shrink-0">
+              <svg class="text-brand-primary w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+            </div>
+            <div class="min-w-0">
+              <p class="type text-[10px] text-black/70 uppercase tracking-widest leading-none mb-1">ref id: a1f9c2</p>
+              <h3 class="disp text-2xl text-black leading-none tracking-tight truncate">DAWN PATROL ALL-NIGHTER</h3>
+            </div>
+          </div>
+          <a href="ClaimTicket.html" class="disp block w-full bg-black text-white text-center py-3 text-lg tracking-wide hover:bg-white hover:text-black transition-colors">CLAIM TICKET</a>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h2 class="type text-[12px] text-white/40 uppercase tracking-widest mb-6 flex items-center gap-3">
+        <span class="w-2 h-2 bg-white/30 rounded-full animate-pulse"></span> pending outbound transfers (1)
+      </h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="bg-[#111] border border-white/10 p-7 group">
+          <div class="flex items-center gap-5 mb-7">
+            <div class="w-14 h-14 bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+              <svg class="text-white/25 w-6 h-6 group-hover:text-brand-primary transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+            </div>
+            <div class="min-w-0">
+              <p class="type text-[10px] text-white/30 uppercase tracking-widest leading-none mb-1">transfer id: 6b2e11</p>
+              <h3 class="disp text-2xl text-white leading-none tracking-tight truncate">MARLOWE FIELDS — LIVE</h3>
+              <p class="type text-[10px] text-brand-primary uppercase tracking-widest mt-1">to: jordan...</p>
+            </div>
+          </div>
+          <button class="disp w-full bg-white/5 border border-white/10 text-white/50 py-3 text-lg tracking-wide hover:bg-white hover:text-black transition-colors">CANCEL TRANSFER</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TICKET CLUSTER GRID -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-white/10 border border-white/10" id="clusters"></div>
+
+  <!-- SAVED EVENTS -->
+  <div class="mt-20">
+    <h2 class="type text-[12px] text-brand-primary uppercase tracking-widest mb-6 flex items-center gap-3">
+      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+      saved events (2)
+    </h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-white/10 border border-white/10" id="saved"></div>
+  </div>
+</div>
+
+<!-- FOOTER (light) -->
+<footer class="bg-white text-slate-900 border-t border-slate-100 pt-16 pb-10 mt-20 relative z-10">
+  <div class="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4">
+    <div class="flex items-center gap-2">
+      <div class="w-9 h-9 bg-slate-900 rounded-xl flex items-center justify-center">
+        <svg class="text-white w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 11v2"/><path d="M13 17v2"/></svg>
+      </div>
+      <span class="disp text-2xl leading-none pt-1 text-slate-900">EXOS</span>
+    </div>
+    <p class="text-[10px] text-slate-300 font-bold uppercase tracking-widest">© 2026 EXOS TECHNOLOGIES • SECURE TICKETING</p>
+  </div>
+</footer>
+
+<script>
+  const clusters = [
+    { t:'BASEMENT: SHDW B2B KALTAR', date:'JUL 11, 2026', passes:2, id:'evt_8f2a91cd', img:'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=600' },
+    { t:'HOUSE OF YES: DISCO BALL', date:'JUL 11, 2026', passes:4, id:'evt_3d17bb0e', img:'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?q=80&w=600' },
+    { t:'NOCTURNE: AMBIENT ROOMS', date:'JUL 10, 2026', passes:1, id:'evt_a90c4f22', img:'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?q=80&w=600' },
+  ];
+  document.getElementById('clusters').innerHTML = clusters.map(e=>`
+    <div class="bg-[#111] group relative">
+      <a href="TicketDetail.html" class="block h-56 relative overflow-hidden">
+        <img src="${e.img}" class="xerox w-full h-full object-cover transition-all duration-700" alt="" />
+        <div class="absolute inset-0 bg-gradient-to-t from-[#111] via-transparent to-transparent"></div>
+        <span class="disp absolute top-4 right-4 bg-brand-primary text-black px-2.5 py-0.5 text-base tracking-wide">${e.passes} ${e.passes===1?'PASS':'PASSES'}</span>
+        <h3 class="disp absolute bottom-5 left-6 right-6 text-3xl text-white uppercase tracking-tight leading-[0.9] group-hover:neon transition-all">${e.t}</h3>
+      </a>
+      <div class="p-6">
+        <div class="flex justify-between items-end mb-7">
+          <div>
+            <p class="type text-[10px] text-white/30 uppercase tracking-widest mb-1">date</p>
+            <p class="disp text-lg text-white tracking-wide">${e.date}</p>
+          </div>
+          <div class="text-right">
+            <p class="type text-[10px] text-white/30 uppercase tracking-widest mb-1">passes</p>
+            <span class="stamp neon text-base">${e.passes} ACTIVE</span>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <a href="TicketDetail.html" class="disp flex-1 text-center bg-white text-black py-3 text-base tracking-wide hover:bg-brand-primary transition-colors">OPEN PASSES</a>
+          <button class="disp flex-1 border border-white/20 text-white/60 py-3 text-base tracking-wide hover:border-white hover:text-white transition-colors">RECEIPTS</button>
+        </div>
+      </div>
+      <div class="px-6 pb-5 flex items-center justify-between type text-[9px] text-white/15 uppercase tracking-widest">
+        <span>cluster id: ${e.id}</span>
+        <div class="flex gap-1">${[1,2,3,4,5].map(()=>'<span class=\"w-1 h-1 bg-white/10 rounded-full\"></span>').join('')}</div>
+      </div>
+    </div>`).join('');
+
+  const saved = [
+    { t:'DAWN PATROL ALL-NIGHTER', date:'JUL 12, 2026', img:'https://images.unsplash.com/photo-1459749411175-04bf5292ceea?q=80&w=600' },
+    { t:'WAREHOUSE 88 — OPEN FORMAT', date:'JUL 12, 2026', img:'https://images.unsplash.com/photo-1574391884720-bbc3740c59d1?q=80&w=600' },
+  ];
+  document.getElementById('saved').innerHTML = saved.map(e=>`
+    <div class="bg-[#111] group relative">
+      <a href="#" class="block h-44 relative overflow-hidden">
+        <img src="${e.img}" class="xerox w-full h-full object-cover transition-all duration-700" alt="" />
+        <div class="absolute inset-0 bg-gradient-to-t from-[#111] via-transparent to-transparent"></div>
+        <h3 class="disp absolute bottom-5 left-6 right-6 text-2xl text-white uppercase tracking-tight leading-[0.9] group-hover:neon transition-all">${e.t}</h3>
+      </a>
+      <div class="p-6 flex items-center justify-between">
+        <div>
+          <p class="type text-[10px] text-white/30 uppercase tracking-widest mb-1">date</p>
+          <p class="disp text-lg text-white tracking-wide">${e.date}</p>
+        </div>
+        <button class="w-11 h-11 bg-brand-primary/10 border border-brand-primary/40 flex items-center justify-center text-brand-primary hover:bg-brand-primary/20 transition-colors">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+        </button>
+      </div>
+    </div>`).join('');
+</script>
+</body>
+</html>

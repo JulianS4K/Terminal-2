@@ -586,22 +586,26 @@ export default function EditEvent() {
     }
   };
 
-  if (loading) return <div className="max-w-4xl mx-auto p-20 text-center text-slate-300 font-bold uppercase tracking-[0.3em]">Opening production manifest...</div>;
+  if (loading) return <div className="max-w-4xl mx-auto p-20 text-center type text-white/40 uppercase tracking-[0.3em]">Opening production manifest...</div>;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-12 text-left">
-      <button onClick={() => navigate('/dashboard')} className="flex items-center text-slate-400 hover:text-slate-900 mb-10 transition-colors font-bold uppercase tracking-widest text-[10px]">
+      <button onClick={() => navigate('/dashboard')} className="type flex items-center text-white/40 hover:text-brand-primary mb-10 transition-colors uppercase tracking-widest text-[10px]">
         <ArrowLeft className="w-4 h-4 mr-2" />
         Back to control center
       </button>
 
-      <div className="flex items-center justify-between mb-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 mb-2">Re-engineer Production</h1>
-          <p className="text-slate-500 font-medium tracking-wide">Update event logistics and branding logic.</p>
+          <p className="type text-[10px] text-white/40 uppercase tracking-widest mb-2">Edit Event</p>
+          <span className="inline-flex items-baseline gap-3 flex-wrap">
+            <h1 className="disp text-4xl md:text-5xl uppercase tracking-wide text-white">Re-engineer Production</h1>
+            <span className="marker text-brand-secondary text-lg -rotate-3 leading-none whitespace-nowrap">editing live ✦</span>
+          </span>
+          <p className="type text-white/50 uppercase tracking-widest text-xs mt-2">Update event logistics and branding logic.</p>
         </div>
-        <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center shadow-xl">
-           <Save className="text-white w-5 h-5" />
+        <div className="w-12 h-12 bg-brand-primary flex items-center justify-center">
+           <Save className="text-black w-5 h-5" />
         </div>
       </div>
 
@@ -611,7 +615,7 @@ export default function EditEvent() {
           event. The banner uses an indigo tone distinct from the
           draft/published lifecycle colours below. */}
       {isAdmin && eventData.organizerId && eventData.organizerId !== user?.uid && (
-        <div className="flex items-center justify-between p-4 rounded-2xl border border-indigo-300 bg-indigo-50 text-indigo-800 mb-4">
+        <div className="flex items-center justify-between p-4 border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 mb-4">
           <p className="text-[10px] font-black uppercase tracking-widest">
             Editing as ADMIN — owned by {eventData.organizerId}
           </p>
@@ -626,10 +630,10 @@ export default function EditEvent() {
         const status = (eventData.status as Event['status']) ?? 'published';
         const tone =
           status === 'draft'
-            ? 'bg-amber-50 border-amber-200 text-amber-700'
+            ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
             : status === 'cancelled'
-              ? 'bg-red-50 border-red-200 text-red-700'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+              ? 'bg-red-500/10 border-red-500/30 text-red-300'
+              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
         const label =
           status === 'draft'
             ? 'DRAFT — only visible to you until you publish.'
@@ -639,7 +643,7 @@ export default function EditEvent() {
         const next = status === 'published' ? 'draft' : 'published';
         return (
           <div
-            className={`flex items-center justify-between p-4 rounded-2xl border mb-8 ${tone}`}
+            className={`flex items-center justify-between p-4 border mb-8 ${tone}`}
           >
             <p className="text-[10px] font-black uppercase tracking-widest">{label}</p>
             <button
@@ -657,26 +661,26 @@ export default function EditEvent() {
 
       <form onSubmit={handleSubmit} className="space-y-12">
         {/* Core Identity */}
-        <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-8">
+        <section className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <Type className="text-brand-primary w-5 h-5" />
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">Core Identity</h2>
+              <h2 className="disp text-lg uppercase tracking-wide text-white leading-none">Core Identity</h2>
            </div>
            
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Event Title</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Event Title</label>
                 <input 
                   required
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors"
                   value={eventData.title}
                   onChange={(e) => setEventData({ ...eventData, title: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Category</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Category</label>
                 <select 
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all appearance-none"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors appearance-none"
                   value={eventData.category}
                   onChange={(e) => setEventData({ ...eventData, category: e.target.value })}
                 >
@@ -687,7 +691,7 @@ export default function EditEvent() {
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
               <div className="space-y-4 col-span-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Genres for {eventData.category}</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Genres for {eventData.category}</label>
                 <div className="flex flex-wrap gap-2">
                   {genresFor(eventData.category || 'Music').map(genre => (
                     <button
@@ -697,7 +701,7 @@ export default function EditEvent() {
                       className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
                         (eventData.genres || []).includes(genre)
                           ? 'bg-brand-primary text-black border-black'
-                          : 'bg-slate-50 text-slate-400 border-transparent hover:border-slate-200'
+                          : 'bg-white/5 text-white/40 border-white/10 hover:border-white/30'
                       }`}
                     >
                       {genre}
@@ -707,11 +711,11 @@ export default function EditEvent() {
               </div>
 
               <div className="space-y-2 col-span-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Custom Subgenres</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Custom Subgenres</label>
                 <input
                   type="text"
                   placeholder="e.g. Ambient, Techno, Deep House (Comma separated)"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                  className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={(eventData.subgenres || []).join(', ')}
                   onChange={(e) => {
                     const val = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -726,11 +730,11 @@ export default function EditEvent() {
                   validated client-side and by the firestore rule's
                   list-size cap on isValidEvent. */}
               <div className="space-y-2 col-span-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Performers</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Performers</label>
                 <input
                   type="text"
                   placeholder="e.g. Skrillex, Boys Noize, Boombox Cartel (max 10, comma-separated)"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                  className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                   value={(eventData.performers || []).join(', ')}
                   onChange={(e) => {
                     const val = e.target.value
@@ -741,7 +745,7 @@ export default function EditEvent() {
                     setEventData({ ...eventData, performers: val });
                   }}
                 />
-                <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest leading-relaxed ml-1">
+                <p className="type text-[9px] text-white/30 uppercase tracking-widest leading-relaxed ml-1">
                   Order matters — first name is treated as the headliner in emails and the event page.
                 </p>
               </div>
@@ -750,7 +754,7 @@ export default function EditEvent() {
                   social destinations per performer, rendered next to each
                   artist on the public event page. */}
               <div className="space-y-2 col-span-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Artist links (optional)</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Artist links (optional)</label>
                 <ArtistLinksEditor
                   performers={eventData.performers || []}
                   value={eventData.artistLinks || []}
@@ -760,10 +764,10 @@ export default function EditEvent() {
            </div>
 
            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Narrative Description</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Narrative Description</label>
               <textarea 
                 rows={4}
-                className="w-full bg-slate-50 border-2 border-transparent rounded-3xl py-4 px-6 font-medium text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                className="w-full bg-black border border-white/20 py-4 px-6 font-medium text-white focus:outline-none focus:border-brand-primary transition-colors"
                 value={eventData.description}
                 onChange={(e) => setEventData({ ...eventData, description: e.target.value })}
               />
@@ -771,10 +775,10 @@ export default function EditEvent() {
         </section>
 
         {/* Seating and Logistics Section */}
-        <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-8">
+        <section className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <MapPin className="text-brand-primary w-5 h-5" />
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">Logistics & Seating Manifest</h2>
+              <h2 className="disp text-lg uppercase tracking-wide text-white leading-none">Logistics & Seating Manifest</h2>
            </div>
 
            {/* Timing controls — Date / Doors / Show Start / Show End.
@@ -791,12 +795,12 @@ export default function EditEvent() {
                read the top-level field. */}
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Event Date</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Event Date</label>
                 <div className="relative">
-                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" aria-hidden="true" />
+                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4 pointer-events-none" aria-hidden="true" />
                   <input
                     type="datetime-local"
-                    className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner cursor-pointer"
+                    className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                     value={timestampToLocalInput(eventData.date as Timestamp | undefined, eventData.timezone)}
                     onClick={(e) => {
                       const el = e.currentTarget as HTMLInputElement;
@@ -812,12 +816,12 @@ export default function EditEvent() {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Doors Open</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Doors Open</label>
                 <div className="relative">
-                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" aria-hidden="true" />
+                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4 pointer-events-none" aria-hidden="true" />
                   <input
                     type="datetime-local"
-                    className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner cursor-pointer"
+                    className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                     value={timestampToLocalInput(eventData.timing?.doorsOpen, eventData.timezone)}
                     onClick={(e) => {
                       const el = e.currentTarget as HTMLInputElement;
@@ -839,12 +843,12 @@ export default function EditEvent() {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Show Start</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Show Start</label>
                 <div className="relative">
-                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" aria-hidden="true" />
+                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4 pointer-events-none" aria-hidden="true" />
                   <input
                     type="datetime-local"
-                    className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner cursor-pointer"
+                    className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                     value={timestampToLocalInput(eventData.timing?.startTime, eventData.timezone)}
                     onClick={(e) => {
                       const el = e.currentTarget as HTMLInputElement;
@@ -867,12 +871,12 @@ export default function EditEvent() {
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Show End</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Show End</label>
                 <div className="relative">
-                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" aria-hidden="true" />
+                  <CalendarIcon className="absolute left-6 top-1/2 -translate-y-1/2 text-white/30 w-4 h-4 pointer-events-none" aria-hidden="true" />
                   <input
                     type="datetime-local"
-                    className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-14 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary focus:bg-white transition-all shadow-inner cursor-pointer"
+                    className="w-full bg-black border border-white/20 py-4 pl-14 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                     value={timestampToLocalInput(eventData.timing?.endTime, eventData.timezone)}
                     onClick={(e) => {
                       const el = e.currentTarget as HTMLInputElement;
@@ -897,14 +901,14 @@ export default function EditEvent() {
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Venue Destination</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Venue Destination</label>
                 <input
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors"
                   value={eventData.location || ''}
                   onChange={(e) => setEventData({ ...eventData, location: e.target.value })}
                 />
                 <details className="mt-2" open={!!eventData.address}>
-                  <summary className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer hover:text-slate-700">
+                  <summary className="type text-[9px] text-white/40 uppercase tracking-widest cursor-pointer hover:text-white">
                     Address details
                   </summary>
                   <div className="grid grid-cols-1 md:grid-cols-6 gap-3 mt-3">
@@ -915,7 +919,7 @@ export default function EditEvent() {
                         placeholder={key.charAt(0).toUpperCase() + key.slice(1)}
                         aria-label={key}
                         maxLength={key === 'postal' ? 20 : key === 'street' || key === 'country' ? 120 : 80}
-                        className={`bg-white border border-slate-200 rounded-xl py-3 px-4 text-slate-900 text-sm font-medium focus:outline-none focus:border-brand-primary ${
+                        className={`bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary ${
                           key === 'street' || key === 'country' ? 'md:col-span-6' :
                           key === 'city' ? 'md:col-span-3' :
                           key === 'region' ? 'md:col-span-2' : 'md:col-span-1'
@@ -936,10 +940,10 @@ export default function EditEvent() {
                 </details>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Total Venue Capacity</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Total Venue Capacity</label>
                 <input
                   type="number"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors"
                   value={eventData.totalTickets}
                   onChange={(e) => setEventData({ ...eventData, totalTickets: parseInt(e.target.value) })}
                 />
@@ -950,10 +954,10 @@ export default function EditEvent() {
                   absent. The Stripe session reads this via the
                   request body; see server.ts. */}
               <div className="space-y-2">
-                <label htmlFor="edit-event-currency" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Currency</label>
+                <label htmlFor="edit-event-currency" className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Currency</label>
                 <select
                   id="edit-event-currency"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all appearance-none"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors appearance-none"
                   value={eventData.currency || 'USD'}
                   onChange={(e) => setEventData({ ...eventData, currency: e.target.value })}
                 >
@@ -973,10 +977,10 @@ export default function EditEvent() {
               {/* Per-event timezone picker. Required for the
                   buyer-side time renders to be honest across regions. */}
               <div className="space-y-2">
-                <label htmlFor="edit-event-timezone" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Timezone</label>
+                <label htmlFor="edit-event-timezone" className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Timezone</label>
                 <select
                   id="edit-event-timezone"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all appearance-none"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors appearance-none"
                   value={eventData.timezone || getBrowserTimezone()}
                   onChange={(e) => setEventData({ ...eventData, timezone: e.target.value })}
                 >
@@ -991,10 +995,10 @@ export default function EditEvent() {
            </div>
 
            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Seating Structure</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Seating Structure</label>
               <textarea 
                 placeholder="Section A: Row 1-10 (VIP), Section B: Row 1-20 (GA)..."
-                className="w-full bg-slate-50 border-2 border-transparent rounded-3xl py-4 px-6 font-medium text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                className="w-full bg-black border border-white/20 py-4 px-6 font-medium text-white focus:outline-none focus:border-brand-primary transition-colors"
                 value={eventData.seatingManifest || ''}
                 onChange={(e) => setEventData({ ...eventData, seatingManifest: e.target.value })}
               />
@@ -1002,18 +1006,18 @@ export default function EditEvent() {
         </section>
 
         {/* Purchase Controls Section */}
-        <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-8">
+        <section className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <ShieldCheck className="text-brand-primary w-5 h-5" />
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">Purchase Controls</h2>
+              <h2 className="disp text-lg uppercase tracking-wide text-white leading-none">Purchase Controls</h2>
            </div>
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Max per transaction</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Max per transaction</label>
                 <input 
                   type="number"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors"
                   value={eventData.purchaseLimits?.maxPerOrder || 8}
                   onChange={(e) => setEventData({ 
                     ...eventData, 
@@ -1022,10 +1026,10 @@ export default function EditEvent() {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Max per user account</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Max per user account</label>
                 <input 
                   type="number"
-                  className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-bold text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                  className="w-full bg-black border border-white/20 py-4 px-6 font-bold text-white focus:outline-none focus:border-brand-primary transition-colors"
                   value={eventData.purchaseLimits?.maxPerAccount || 8}
                   onChange={(e) => setEventData({ 
                     ...eventData, 
@@ -1037,11 +1041,11 @@ export default function EditEvent() {
         </section>
 
         {/* Inventory Tiers Section */}
-        <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-8">
+        <section className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-3">
                  <ListOrdered className="text-brand-primary w-5 h-5" />
-                 <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">Inventory Configuration</h2>
+                 <h2 className="disp text-lg uppercase tracking-wide text-white leading-none">Inventory Configuration</h2>
               </div>
               <button 
                 type="button" 
@@ -1055,56 +1059,56 @@ export default function EditEvent() {
            
            <div className="space-y-6">
               {(eventData.ticketTiers || []).map((tier, index) => (
-                <div key={tier.id} className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 relative group/tier">
+                <div key={tier.id} className="p-8 bg-black/40 border border-white/10 relative group/tier">
                    <button 
                      type="button"
                      onClick={() => removeTier(tier.id)}
-                     className="absolute top-6 right-6 text-slate-300 hover:text-red-500 transition-colors"
+                     className="absolute top-6 right-6 text-white/30 hover:text-brand-accent transition-colors"
                    >
                      <XCircle className="w-5 h-5" />
                    </button>
                    
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       <div className="space-y-2 col-span-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Tier Designation (e.g. Platinum, VIP, Parking)</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Tier Designation (e.g. Platinum, VIP, Parking)</label>
                          <input 
                            required 
                            type="text"
                            placeholder="Enter tier name..."
-                           className="w-full bg-white border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.name}
                            onChange={(e) => updateTier(tier.id, 'name', e.target.value)}
                          />
                       </div>
                       <div className="space-y-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Price (USD)</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Price (USD)</label>
                          <input 
                            required 
                            type="number"
                            min="0"
                            step="0.01"
-                           className="w-full bg-white border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.price}
                            onChange={(e) => updateTier(tier.id, 'price', e.target.value)}
                          />
                       </div>
                       <div className="space-y-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Inventory Allocation</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Inventory Allocation</label>
                          <input 
                            required 
                            type="number"
                            min="1"
-                           className="w-full bg-white border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-4 px-6 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.capacity}
                            onChange={(e) => updateTier(tier.id, 'capacity', e.target.value)}
                          />
                       </div>
                       <div className="space-y-2 col-span-2">
-                         <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Tier Benefits & Access Rights</label>
+                         <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Tier Benefits & Access Rights</label>
                          <textarea
                            required
                            placeholder="Describe the exclusivity of this tier..."
-                           className="w-full bg-white border-2 border-transparent rounded-2xl py-4 px-6 text-slate-900 font-medium focus:outline-none focus:border-brand-primary transition-all"
+                           className="w-full bg-black border border-white/20 py-4 px-6 text-white font-medium focus:outline-none focus:border-brand-primary transition-colors"
                            value={tier.description}
                            onChange={(e) => updateTier(tier.id, 'description', e.target.value)}
                          />
@@ -1120,14 +1124,14 @@ export default function EditEvent() {
                         ((tier as any).visibility && (tier as any).visibility !== 'public') ||
                         ((tier as any).ticketType && (tier as any).ticketType !== 'paid')
                       }>
-                        <summary className="text-[9px] font-bold text-slate-400 uppercase tracking-widest cursor-pointer hover:text-slate-700">
+                        <summary className="type text-[9px] text-white/40 uppercase tracking-widest cursor-pointer hover:text-white">
                           Advanced (sale window, visibility, type)
                         </summary>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/10">
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Type</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Type</label>
                             <select
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                               value={(tier as any).ticketType ?? 'paid'}
                               onChange={(e) => updateTier(tier.id, 'ticketType', e.target.value)}
                             >
@@ -1137,9 +1141,9 @@ export default function EditEvent() {
                             </select>
                           </div>
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Visibility</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Visibility</label>
                             <select
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors"
                               value={(tier as any).visibility ?? 'public'}
                               onChange={(e) => updateTier(tier.id, 'visibility', e.target.value)}
                             >
@@ -1148,10 +1152,10 @@ export default function EditEvent() {
                             </select>
                           </div>
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Sales Open</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Sales Open</label>
                             <input
                               type="datetime-local"
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all cursor-pointer"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                               value={timestampToLocalInput((tier as any).salesStart, eventData.timezone)}
                               onClick={(e) => {
                                 const el = e.currentTarget as HTMLInputElement;
@@ -1169,10 +1173,10 @@ export default function EditEvent() {
                             />
                           </div>
                           <div className="space-y-2">
-                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest ml-1">Sales Close</label>
+                            <label className="type text-[9px] text-white/40 uppercase tracking-widest ml-1">Sales Close</label>
                             <input
                               type="datetime-local"
-                              className="w-full bg-white border-2 border-transparent rounded-xl py-3 px-5 text-slate-900 font-bold focus:outline-none focus:border-brand-primary transition-all cursor-pointer"
+                              className="w-full bg-black border border-white/20 py-3 px-5 text-white font-bold focus:outline-none focus:border-brand-primary transition-colors cursor-pointer"
                               value={timestampToLocalInput((tier as any).salesEnd, eventData.timezone)}
                               onClick={(e) => {
                                 const el = e.currentTarget as HTMLInputElement;
@@ -1189,7 +1193,7 @@ export default function EditEvent() {
                               }
                             />
                           </div>
-                          <p className="md:col-span-2 text-[9px] text-slate-300 font-medium uppercase tracking-widest leading-relaxed">
+                          <p className="md:col-span-2 type text-[9px] text-white/30 uppercase tracking-widest leading-relaxed">
                             Times above are interpreted in the event's
                             timezone ({eventData.timezone || '(viewer-local)'}).
                           </p>
@@ -1199,8 +1203,8 @@ export default function EditEvent() {
                 </div>
               ))}
               {(eventData.ticketTiers || []).length === 0 && (
-                <div className="text-center py-10 border-2 border-dashed border-slate-100 rounded-[2.5rem]">
-                   <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">No custom tiers defined. Primary price will be used.</p>
+                <div className="text-center py-10 border border-dashed border-white/10">
+                   <p className="type text-white/40 text-xs uppercase tracking-widest">No custom tiers defined. Primary price will be used.</p>
                 </div>
               )}
            </div>
@@ -1216,21 +1220,21 @@ export default function EditEvent() {
         {eventId && <TaxRulesEditor eventId={eventId} />}
 
         {/* Commercial Logic Section */}
-        <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-10">
+        <section className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-10">
            <div className="flex items-center space-x-3 mb-2">
               <Globe className="text-brand-primary w-5 h-5" />
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">Commercial Exclusivity</h2>
+              <h2 className="disp text-lg uppercase tracking-wide text-white leading-none">Commercial Exclusivity</h2>
            </div>
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl border border-transparent hover:border-indigo-100 transition-all">
+              <div className="flex items-center justify-between p-6 bg-black/40 border border-white/10 hover:border-brand-primary/40 transition-all">
                  <div>
-                    <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1">Primary Market Only</p>
-                    <p className="text-[9px] text-slate-400 font-medium">Bypass all secondary distribution networks</p>
+                    <p className="type text-[10px] text-white uppercase tracking-widest mb-1">Primary Market Only</p>
+                    <p className="type text-[9px] text-white/40">Bypass all secondary distribution networks</p>
                  </div>
                  <input 
                     type="checkbox" 
-                    className="w-5 h-5 accent-indigo-500"
+                    className="w-5 h-5 accent-[#00FF00]"
                     checked={eventData.exclusivity?.primaryMarketOnly || false}
                     onChange={(e) => setEventData({ 
                       ...eventData, 
@@ -1238,14 +1242,14 @@ export default function EditEvent() {
                     })}
                  />
               </div>
-              <div className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl border border-transparent hover:border-indigo-100 transition-all">
+              <div className="flex items-center justify-between p-6 bg-black/40 border border-white/10 hover:border-brand-primary/40 transition-all">
                  <div>
-                    <p className="text-[10px] font-bold text-slate-900 uppercase tracking-widest mb-1">Custom URL Exclusivity</p>
-                    <p className="text-[9px] text-slate-400 font-medium">Restricts visibility to private direct links</p>
+                    <p className="type text-[10px] text-white uppercase tracking-widest mb-1">Custom URL Exclusivity</p>
+                    <p className="type text-[9px] text-white/40">Restricts visibility to private direct links</p>
                  </div>
                  <input 
                     type="checkbox" 
-                    className="w-5 h-5 accent-indigo-500"
+                    className="w-5 h-5 accent-[#00FF00]"
                     checked={eventData.exclusivity?.customUrlOnly || false}
                     onChange={(e) => setEventData({ 
                       ...eventData, 
@@ -1257,7 +1261,7 @@ export default function EditEvent() {
 
            <div>
               <div className="flex items-center justify-between mb-4">
-                 <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Discount Tokens</h3>
+                 <h3 className="type text-[10px] text-white/40 uppercase tracking-widest">Active Discount Tokens</h3>
                  <button
                    type="button"
                    onClick={() => {
@@ -1304,12 +1308,12 @@ export default function EditEvent() {
                      }
                    })();
                    return (
-                    <div key={idx} className="flex flex-wrap items-center gap-3 bg-slate-50 p-4 rounded-2xl border border-indigo-50 shadow-sm">
+                    <div key={idx} className="flex flex-wrap items-center gap-3 bg-black/40 p-4 border border-white/10">
                        <input
                           aria-label={`Discount code ${idx + 1}`}
                           maxLength={32}
                           disabled={identityLocked}
-                          className="flex-grow min-w-[120px] bg-white border border-slate-100 rounded-xl px-4 py-3 text-xs font-bold uppercase tracking-widest text-slate-900 disabled:opacity-60 disabled:cursor-not-allowed font-mono"
+                          className="flex-grow min-w-[120px] bg-black border border-white/20 px-4 py-3 text-xs font-bold uppercase tracking-widest text-white disabled:opacity-60 disabled:cursor-not-allowed font-mono"
                           value={dc.code}
                           onChange={(e) => {
                              const codes = [...(eventData.discountCodes || [])];
@@ -1325,7 +1329,7 @@ export default function EditEvent() {
                        <select
                           aria-label={`Discount type for code ${codeStr || idx + 1}`}
                           disabled={identityLocked}
-                          className="bg-white border border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="bg-black border border-white/20 px-4 py-3 text-xs font-bold text-white/60 disabled:opacity-60 disabled:cursor-not-allowed"
                           value={dc.type}
                           onChange={(e) => {
                              const codes = [...(eventData.discountCodes || [])];
@@ -1343,7 +1347,7 @@ export default function EditEvent() {
                           max={dc.type === 'percentage' ? 100 : undefined}
                           step="0.01"
                           disabled={identityLocked}
-                          className="w-20 bg-white border border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-slate-900 disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="w-20 bg-black border border-white/20 px-4 py-3 text-xs font-bold text-white disabled:opacity-60 disabled:cursor-not-allowed"
                           value={dc.value}
                           onChange={(e) => {
                              const codes = [...(eventData.discountCodes || [])];
@@ -1356,7 +1360,7 @@ export default function EditEvent() {
                           type="number"
                           min={1}
                           placeholder="∞"
-                          className="w-24 bg-white border border-slate-100 rounded-xl px-4 py-3 text-xs font-bold text-slate-900"
+                          className="w-24 bg-black border border-white/20 px-4 py-3 text-xs font-bold text-white"
                           value={dc.usageLimit ?? ''}
                           onChange={(e) => {
                              const codes = [...(eventData.discountCodes || [])];
@@ -1371,7 +1375,7 @@ export default function EditEvent() {
                        <input
                           aria-label={`Expiry date for code ${codeStr || idx + 1}`}
                           type="date"
-                          className="w-36 bg-white border border-slate-100 rounded-xl px-3 py-3 text-xs font-bold text-slate-900"
+                          className="w-36 bg-black border border-white/20 px-3 py-3 text-xs font-bold text-white"
                           value={expIso}
                           onChange={(e) => {
                              const codes = [...(eventData.discountCodes || [])];
@@ -1390,7 +1394,7 @@ export default function EditEvent() {
                        {used > 0 && (
                          <span
                            title="This code has redemptions. Identity fields are locked."
-                           className="text-[9px] font-black text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-full"
+                           className="text-[9px] font-black text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-full"
                          >
                            {used} USED
                          </span>
@@ -1403,7 +1407,7 @@ export default function EditEvent() {
                             const codes = (eventData.discountCodes || []).filter((_, i) => i !== idx);
                             setEventData({ ...eventData, discountCodes: codes });
                          }}
-                         className="p-2 text-red-300 hover:text-red-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                         className="p-2 text-white/30 hover:text-brand-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                        >
                           <XCircle className="w-5 h-5" />
                        </button>
@@ -1415,8 +1419,8 @@ export default function EditEvent() {
                       {(eventData.ticketTiers || []).some(
                         (t) => (t as any).visibility === 'hidden',
                       ) && (
-                        <div className="basis-full mt-2 pt-3 border-t border-slate-100">
-                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                        <div className="basis-full mt-2 pt-3 border-t border-white/10">
+                          <p className="type text-[9px] text-white/40 uppercase tracking-widest mb-2">
                             Unlocks hidden tiers
                           </p>
                           <div className="flex flex-wrap gap-2">
@@ -1433,8 +1437,8 @@ export default function EditEvent() {
                                         : 'cursor-pointer'
                                     } ${
                                       checked
-                                        ? 'bg-slate-900 text-white border-slate-900'
-                                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                                        ? 'bg-brand-primary text-black border-brand-primary'
+                                        : 'bg-black text-white/60 border-white/20 hover:border-white/40'
                                     }`}
                                   >
                                     <input
@@ -1469,39 +1473,39 @@ export default function EditEvent() {
         </section>
 
         {/* Distribution Hub Section (Already present but refined) */}
-        <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-8">
+        <section className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <Palette className="text-brand-primary w-5 h-5" />
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">Branding Engine</h2>
+              <h2 className="disp text-lg uppercase tracking-wide text-white leading-none">Branding Engine</h2>
            </div>
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Primary Signature (HEX)</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Primary Signature (HEX)</label>
                 <div className="flex space-x-4">
                   <input 
-                    className="flex-grow bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-mono text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                    className="flex-grow bg-black border border-white/20 py-4 px-6 font-mono text-white focus:outline-none focus:border-brand-primary transition-colors"
                     value={eventData.branding?.primaryColor || ''}
                     onChange={(e) => setEventData({ 
                       ...eventData, 
                       branding: { ...(eventData.branding || {}), primaryColor: e.target.value } 
                     })}
                   />
-                  <div className="w-14 h-14 rounded-2xl shadow-inner border border-slate-100" style={{ backgroundColor: eventData.branding?.primaryColor }}></div>
+                  <div className="w-14 h-14 border border-white/10" style={{ backgroundColor: eventData.branding?.primaryColor }}></div>
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Accent Signature (HEX)</label>
+                <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Accent Signature (HEX)</label>
                 <div className="flex space-x-4">
                   <input
-                    className="flex-grow bg-slate-50 border-2 border-transparent rounded-2xl py-4 px-6 font-mono text-slate-900 focus:outline-none focus:border-brand-primary transition-all"
+                    className="flex-grow bg-black border border-white/20 py-4 px-6 font-mono text-white focus:outline-none focus:border-brand-primary transition-colors"
                     value={eventData.branding?.accentColor || ''}
                     onChange={(e) => setEventData({
                       ...eventData,
                       branding: { ...(eventData.branding || {}), accentColor: e.target.value }
                     })}
                   />
-                  <div className="w-14 h-14 rounded-2xl shadow-inner border border-slate-100" style={{ backgroundColor: eventData.branding?.accentColor }}></div>
+                  <div className="w-14 h-14 border border-white/10" style={{ backgroundColor: eventData.branding?.accentColor }}></div>
                 </div>
               </div>
 
@@ -1515,11 +1519,11 @@ export default function EditEvent() {
                 rejected an unnormalized slug.
               */}
               <div className="md:col-span-2 space-y-2">
-                <label htmlFor="edit-event-slug" className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">
+                <label htmlFor="edit-event-slug" className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">
                   Custom Vanity Slug
                 </label>
                 <div className="relative">
-                  <span className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold font-mono">
+                  <span className="absolute left-6 top-1/2 -translate-y-1/2 text-white/40 text-xs font-bold font-mono">
                     vibepass.io/e/
                   </span>
                   <input
@@ -1527,7 +1531,7 @@ export default function EditEvent() {
                     type="text"
                     maxLength={SLUG_MAX}
                     placeholder="summer-horizon-2026"
-                    className="w-full bg-slate-50 border-2 border-transparent rounded-2xl py-4 pl-32 pr-6 text-slate-900 font-bold focus:outline-none focus:border-brand-primary"
+                    className="w-full bg-black border border-white/20 py-4 pl-32 pr-6 text-white font-bold focus:outline-none focus:border-brand-primary"
                     value={eventData.branding?.customSlug || ''}
                     onChange={(e) =>
                       setEventData({
@@ -1544,7 +1548,7 @@ export default function EditEvent() {
                     }
                   />
                 </div>
-                <p className="text-[9px] text-slate-300 font-medium uppercase tracking-widest leading-relaxed">
+                <p className="type text-[9px] text-white/30 uppercase tracking-widest leading-relaxed">
                   Lowercase letters, digits, and hyphens. Renaming frees the
                   old slug atomically — clashes abort the save.
                 </p>
@@ -1552,24 +1556,24 @@ export default function EditEvent() {
            </div>
 
             <div className="md:col-span-2 space-y-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Event Artwork</label>
+              <label className="type text-[10px] text-white/40 uppercase tracking-widest ml-1">Event Artwork</label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="relative border-2 border-dashed border-slate-200 rounded-2xl p-8 flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer group">
+                <div className="relative border border-dashed border-white/20 p-8 flex flex-col items-center justify-center bg-black/40 hover:bg-black/60 transition-all cursor-pointer group">
                   <input
                     type="file"
                     accept="image/*"
                     className="absolute inset-0 opacity-0 cursor-pointer"
                     onChange={handleImageUpload}
                   />
-                  <Upload className="w-8 h-8 text-slate-400 mb-2 group-hover:text-brand-primary" />
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Change Artwork</p>
+                  <Upload className="w-8 h-8 text-white/40 mb-2 group-hover:text-brand-primary" />
+                  <p className="type text-[10px] text-white/40 uppercase tracking-widest text-center">Change Artwork</p>
                 </div>
                 {eventData.image ? (
-                  <div className="w-full h-32 rounded-2xl overflow-hidden border border-slate-200">
+                  <div className="w-full h-32 overflow-hidden border border-white/10">
                     <img src={eventData.image} alt="Preview" className="w-full h-full object-cover" />
                   </div>
                 ) : (
-                  <div className="w-full h-32 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+                  <div className="w-full h-32 bg-black/40 border border-white/10 flex items-center justify-center type text-[10px] text-white/30 uppercase tracking-widest">
                     No Art Detected
                   </div>
                 )}
@@ -1578,10 +1582,10 @@ export default function EditEvent() {
         </section>
 
         {/* Distribution Networks */}
-        <section className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-8">
+        <section className="bg-[#111] border border-white/10 p-6 md:p-8 space-y-8">
            <div className="flex items-center space-x-3 mb-2">
               <Globe className="text-brand-primary w-5 h-5" />
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest leading-none">Distribution Hub Integration</h2>
+              <h2 className="disp text-lg uppercase tracking-wide text-white leading-none">Distribution Hub Integration</h2>
            </div>
 
            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -1596,13 +1600,13 @@ export default function EditEvent() {
                 { id: 'tickpick', name: 'TickPick' },
                 { id: 'gotickets', name: 'GoTickets' }
               ].map(network => (
-                <label key={network.id} className="flex items-center space-x-3 p-4 bg-slate-50 rounded-2xl cursor-pointer hover:bg-slate-100 transition-colors border border-transparent has-[:checked]:border-brand-primary has-[:checked]:bg-indigo-50/30">
+                <label key={network.id} className="flex items-center space-x-3 p-4 bg-black/40 cursor-pointer hover:bg-black/60 transition-colors border border-white/10 has-[:checked]:border-brand-primary has-[:checked]:bg-brand-primary/10">
                    <input
                      type="checkbox"
                      className="w-4 h-4 accent-brand-primary"
                      defaultChecked={true}
                    />
-                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-600">{network.name}</span>
+                   <span className="type text-[10px] uppercase tracking-widest text-white/60">{network.name}</span>
                 </label>
               ))}
            </div>
@@ -1611,7 +1615,7 @@ export default function EditEvent() {
         <button
           type="submit"
           disabled={saving}
-          className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-bold uppercase tracking-[0.2em] text-xs hover:bg-slate-800 transition-all shadow-2xl shadow-slate-200 active:scale-[0.98] disabled:opacity-50"
+          className="w-full bg-brand-primary text-black py-6 font-black uppercase italic tracking-tighter text-xs hover:bg-brand-primary/90 transition-all active:scale-[0.98] disabled:opacity-50"
         >
           {saving ? 'Synchronizing Manifest...' : 'Commit Changes to Ledger'}
         </button>
@@ -1621,14 +1625,14 @@ export default function EditEvent() {
           auto-fired on save) so a minor edit doesn't email every holder.
         */}
         {eventData.status === 'published' && (
-          <section className="mt-8 bg-white p-8 rounded-[2.5rem] border-2 border-slate-100">
+          <section className="mt-8 bg-[#111] p-8 border border-white/10">
             <div className="flex items-start gap-3 mb-4">
-              <Send className="text-slate-500 w-5 h-5 flex-shrink-0 mt-1" />
+              <Send className="text-white/50 w-5 h-5 flex-shrink-0 mt-1" />
               <div>
-                <h3 className="text-sm font-black uppercase tracking-tighter italic text-slate-800 mb-1">
+                <h3 className="text-sm font-black uppercase tracking-tighter italic text-white mb-1">
                   Notify attendees
                 </h3>
-                <p className="text-xs text-slate-500 max-w-prose">
+                <p className="type text-xs text-white/50 max-w-prose">
                   Email every current ticket holder that this event's details
                   changed. Save your edits first, then send. Recipients are
                   derived server-side — no list to manage.
@@ -1639,7 +1643,7 @@ export default function EditEvent() {
               type="button"
               onClick={handleNotifyUpdate}
               disabled={notifying}
-              className="px-6 py-3 bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-white font-black uppercase tracking-tighter italic text-xs transition-all"
+              className="px-6 py-3 bg-brand-primary hover:bg-brand-primary/90 disabled:opacity-50 text-black font-black uppercase tracking-tighter italic text-xs transition-all"
             >
               {notifying ? 'Sending…' : 'Email ticket holders about an update'}
             </button>
@@ -1652,14 +1656,14 @@ export default function EditEvent() {
           state because cancelling a draft is just deleting it.
         */}
         {eventData.status === 'published' && (
-          <section className="mt-8 bg-white p-8 rounded-[2.5rem] border-2 border-red-200">
+          <section className="mt-8 bg-[#111] p-8 border border-brand-accent/40">
             <div className="flex items-start gap-3 mb-4">
-              <AlertOctagon className="text-red-500 w-5 h-5 flex-shrink-0 mt-1" />
+              <AlertOctagon className="text-brand-accent w-5 h-5 flex-shrink-0 mt-1" />
               <div>
-                <h3 className="text-sm font-black uppercase tracking-tighter italic text-red-600 mb-1">
+                <h3 className="text-sm font-black uppercase tracking-tighter italic text-brand-accent mb-1">
                   Cancel Event
                 </h3>
-                <p className="text-xs text-slate-500 max-w-prose">
+                <p className="type text-xs text-white/50 max-w-prose">
                   Marks the event as cancelled, notifies every ticket holder by
                   email, and stops further sales. Direct-channel buyers will be
                   refunded automatically; secondary-channel buyers (StubHub, Vivid,
@@ -1670,7 +1674,7 @@ export default function EditEvent() {
             <button
               type="button"
               onClick={() => setShowCancelModal(true)}
-              className="px-6 py-3 bg-red-50 hover:bg-red-100 text-red-700 font-black uppercase tracking-tighter italic text-xs transition-all"
+              className="px-6 py-3 bg-brand-accent/10 hover:bg-brand-accent/20 text-brand-accent font-black uppercase tracking-tighter italic text-xs transition-all"
             >
               Cancel this event
             </button>
@@ -1685,17 +1689,17 @@ export default function EditEvent() {
           onClick={() => !cancelling && setShowCancelModal(false)}
         >
           <div
-            className="w-full max-w-md bg-white p-6 rounded-2xl"
+            className="w-full max-w-md bg-[#111] border border-white/10 p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">
+            <h2 className="text-xl font-black uppercase italic tracking-tighter text-white mb-2">
               Cancel event?
             </h2>
-            <p className="text-sm text-slate-500 mb-4">
+            <p className="text-sm text-white/50 mb-4">
               All ticket holders will be notified. This can't be undone — once
               cancelled, the event stays cancelled.
             </p>
-            <label htmlFor="cancel-reason" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+            <label htmlFor="cancel-reason" className="block type text-[10px] text-white/40 uppercase tracking-widest mb-2">
               Reason (shown to buyers in their email)
             </label>
             <textarea
@@ -1705,14 +1709,14 @@ export default function EditEvent() {
               rows={3}
               maxLength={500}
               placeholder="Venue closure, artist illness, etc."
-              className="w-full bg-slate-50 border border-slate-200 px-3 py-2 text-sm rounded focus:outline-none focus:border-brand-primary"
+              className="w-full bg-black border border-white/20 px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-primary"
             />
             <div className="flex gap-2 mt-4 justify-end">
               <button
                 type="button"
                 onClick={() => setShowCancelModal(false)}
                 disabled={cancelling}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-tighter italic text-xs transition-all"
+                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-black uppercase tracking-tighter italic text-xs transition-all"
               >
                 Keep event
               </button>
@@ -1720,7 +1724,7 @@ export default function EditEvent() {
                 type="button"
                 onClick={handleCancelEvent}
                 disabled={cancelling || cancelReason.trim().length < 3}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-tighter italic text-xs transition-all disabled:opacity-50"
+                className="px-4 py-2 bg-brand-accent hover:bg-brand-accent/90 text-black font-black uppercase tracking-tighter italic text-xs transition-all disabled:opacity-50"
               >
                 {cancelling ? 'Cancelling…' : 'Cancel event'}
               </button>

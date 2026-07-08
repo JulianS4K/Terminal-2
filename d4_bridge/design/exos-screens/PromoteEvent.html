@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Promote Event</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Permanent+Marker&Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-tm-blue:#026cdf; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-[#f2f4f7] text-slate-900; } }
+  .lbl{ @apply block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2; }
+  .fld{ @apply w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-tm-blue; }
+  .card{ @apply bg-white rounded-2xl border border-slate-200 shadow-sm p-6 md:p-8; }
+</style>
+<style>/*punk-stitch*/ .marker{font-family:"Permanent Marker",cursive;} .disp{font-family:"Anton",sans-serif;}</style>
+</head>
+<body class="bg-[#f2f4f7] text-slate-900">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+    <a href="Home.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+    <div class="flex items-center gap-3 bg-white/5 p-1 pr-4 border border-white/10"><div class="w-9 h-9 bg-brand-primary text-black font-black italic flex items-center justify-center">K</div></div>
+  </div></div>
+</nav>
+
+<div class="max-w-4xl mx-auto px-4 py-10">
+  <a href="OrganizerDashboard.html" class="flex items-center gap-2 text-slate-500 hover:text-slate-900 text-[10px] font-black uppercase tracking-widest mb-6"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg> Back to dashboard</a>
+  <div class="mb-8"><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Promote</p><span class="inline-flex items-baseline gap-3 flex-wrap"><h1 class="text-3xl md:text-4xl font-bold tracking-tight">Basement: SHDW b2b Kaltar</h1><span class="marker text-[#FF00FF] text-lg rotate-[-3deg] leading-none whitespace-nowrap">spread it ✦</span></span></div>
+
+  <div class="space-y-6">
+    <!-- share + QR -->
+    <div class="card">
+      <h2 class="text-sm font-black text-slate-900 uppercase tracking-widest mb-6">Share</h2>
+      <div class="flex flex-col md:flex-row gap-6 items-start">
+        <div class="flex-1 w-full">
+          <label class="lbl">Public link</label>
+          <div class="flex gap-2 mb-4"><input class="fld font-mono text-xs" readonly value="exos.live/e/basement-shdw-kaltar" /><button class="bg-slate-900 text-white px-5 rounded font-bold text-xs uppercase tracking-widest hover:bg-slate-700">Copy</button></div>
+          <div class="flex flex-wrap gap-2">
+            <button class="inline-flex items-center gap-2 border border-slate-200 rounded px-4 py-2 text-xs font-bold text-slate-600 hover:border-tm-blue"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><rect width="20" height="20" x="2" y="2" rx="5"/></svg> Instagram</button>
+            <button class="inline-flex items-center gap-2 border border-slate-200 rounded px-4 py-2 text-xs font-bold text-slate-600 hover:border-tm-blue"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg> Post to X</button>
+            <button class="inline-flex items-center gap-2 border border-slate-200 rounded px-4 py-2 text-xs font-bold text-slate-600 hover:border-tm-blue"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg> SMS</button>
+          </div>
+        </div>
+        <div class="shrink-0 bg-white border border-slate-200 rounded-xl p-3"><svg viewBox="0 0 25 25" class="w-28 h-28" shape-rendering="crispEdges" id="qr"></svg></div>
+      </div>
+    </div>
+
+    <!-- promo codes -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-6"><h2 class="text-sm font-black text-slate-900 uppercase tracking-widest">Promo Codes</h2><button class="text-tm-blue text-[11px] font-black uppercase tracking-widest hover:underline flex items-center gap-1"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5v14"/></svg> New code</button></div>
+      <table class="w-full text-sm"><thead><tr class="text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100"><th class="py-2">Code</th><th class="py-2">Discount</th><th class="py-2">Used</th><th class="py-2">Expires</th></tr></thead><tbody>
+        <tr class="border-b border-slate-50"><td class="py-3 font-mono font-bold">EARLYBIRD</td><td class="py-3">20%</td><td class="py-3">64 / 100</td><td class="py-3 text-slate-500">Jul 9</td></tr>
+        <tr class="border-b border-slate-50"><td class="py-3 font-mono font-bold">GUESTLIST</td><td class="py-3">$10</td><td class="py-3">18 / 50</td><td class="py-3 text-slate-500">Jul 11</td></tr>
+        <tr><td class="py-3 font-mono font-bold">RA25</td><td class="py-3">25%</td><td class="py-3">120 / ∞</td><td class="py-3 text-slate-500">—</td></tr>
+      </tbody></table>
+    </div>
+
+    <!-- promoter links -->
+    <div class="card">
+      <h2 class="text-sm font-black text-slate-900 uppercase tracking-widest mb-2">Promoter Links</h2>
+      <p class="text-xs text-slate-400 mb-5">Tracked links attribute every sale to the promoter for payout + rollup in the report.</p>
+      <div class="space-y-3">
+        <div class="flex items-center gap-3 bg-slate-50 border border-slate-100 rounded-lg px-4 py-3"><span class="text-xs font-bold text-slate-700 w-24">DJ NADI</span><code class="text-[11px] font-mono text-slate-400 flex-1 truncate">exos.live/e/basement…?promoter=nadi</code><span class="text-xs font-bold text-slate-500">39 sold</span></div>
+        <div class="flex items-center gap-3 bg-slate-50 border border-slate-100 rounded-lg px-4 py-3"><span class="text-xs font-bold text-slate-700 w-24">RA feature</span><code class="text-[11px] font-mono text-slate-400 flex-1 truncate">exos.live/e/basement…?promoter=ra</code><span class="text-xs font-bold text-slate-500">14 sold</span></div>
+      </div>
+    </div>
+
+    <!-- pixels + embed -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="card">
+        <h2 class="text-sm font-black text-slate-900 uppercase tracking-widest mb-5">Tracking Pixels</h2>
+        <div class="space-y-4">
+          <div><label class="lbl">Meta Pixel ID</label><input class="fld" placeholder="1234567890" /></div>
+          <div><label class="lbl">TikTok Pixel ID</label><input class="fld" placeholder="C9XXXXXXXXXX" /></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2 class="text-sm font-black text-slate-900 uppercase tracking-widest mb-5">Embed Widget</h2>
+        <p class="text-xs text-slate-400 mb-3">Paste on your venue site — chromeless checkout card.</p>
+        <pre class="bg-slate-900 text-green-300 text-[11px] rounded-lg p-4 overflow-x-auto"><code>&lt;iframe src="exos.live/embed/event/8f2a91"
+  width="100%" height="640"&gt;&lt;/iframe&gt;</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  (function(){ const n=25,svg=document.getElementById('qr'); let out='';const g=[];for(let y=0;y<n;y++){g[y]=[];for(let x=0;x<n;x++)g[y][x]=Math.random()>0.55;}
+    function f(ox,oy){for(let y=-1;y<8;y++)for(let x=-1;x<8;x++){const gy=oy+y,gx=ox+x;if(gy<0||gx<0||gy>=n||gx>=n)continue;const b=(x===0||x===6||y===0||y===6),c=(x>=2&&x<=4&&y>=2&&y<=4),s=(x===-1||x===7||y===-1||y===7);g[gy][gx]=s?false:(b||c);}}
+    f(0,0);f(n-7,0);f(0,n-7);for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(g[y][x])out+=`<rect x="${x}" y="${y}" width="1" height="1" fill="#000"/>`;svg.innerHTML=out;})();
+</script>
+</body>
+</html>

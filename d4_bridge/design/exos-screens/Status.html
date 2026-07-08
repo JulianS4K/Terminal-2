@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — System Status</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-accent:#FF2A2A; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; --font-display:"Anton",sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+</style>
+<style>
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.06), transparent 42%), #050505; }
+  .neon{ color:#00FF00; text-shadow:0 0 14px rgba(0,255,0,.4); }
+</style>
+</head>
+<body class="wall text-white min-h-screen">
+<nav class="sticky top-0 z-50 bg-black/90 border-b border-white/10"><div class="max-w-4xl mx-auto px-4 sm:px-6"><div class="flex justify-between h-20 items-center">
+  <a href="Home.html" class="flex items-center gap-3 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="disp text-3xl tracking-tight leading-none pt-1" style="transform:skewX(-6deg)">EXOS</span></a>
+  <a href="Home.html" class="type text-[11px] uppercase tracking-widest text-white/60 hover:text-brand-primary">back to events</a>
+</div></div></nav>
+
+<div class="max-w-4xl mx-auto px-4 sm:px-6 py-14">
+  <p class="type text-brand-primary text-[12px] uppercase tracking-[0.3em] mb-3">// status</p>
+  <div class="flex items-center gap-4 mb-2">
+    <span class="w-4 h-4 bg-brand-primary rounded-full animate-pulse"></span>
+    <h1 class="disp text-5xl md:text-6xl tracking-tight" style="transform:skewX(-4deg)">ALL SYSTEMS <span class="neon">LIVE</span></h1>
+  </div>
+  <p class="type text-white/50 text-sm mb-10">Updated 30s ago · 90-day uptime 99.98%</p>
+
+  <div class="border border-white/10 divide-y divide-white/10" id="svc"></div>
+
+  <h2 class="disp text-2xl tracking-tight mt-12 mb-4" style="transform:skewX(-4deg)">RECENT INCIDENTS</h2>
+  <div class="space-y-3">
+    <div class="bg-[#0e0e0e] border border-white/10 p-5"><div class="flex items-center gap-2 mb-1"><span class="w-2 h-2 bg-brand-primary rounded-full"></span><span class="type text-[11px] uppercase tracking-widest text-brand-primary">resolved</span><span class="type text-[10px] text-white/30 ml-auto">Jul 3</span></div><p class="type text-sm text-white/70">Elevated checkout latency (EU) — mitigated by cache warmup. 22 min.</p></div>
+    <div class="bg-[#0e0e0e] border border-white/10 p-5"><div class="flex items-center gap-2 mb-1"><span class="w-2 h-2 bg-brand-primary rounded-full"></span><span class="type text-[11px] uppercase tracking-widest text-brand-primary">resolved</span><span class="type text-[10px] text-white/30 ml-auto">Jun 28</span></div><p class="type text-sm text-white/70">Email delivery delay (announcements) — Resend backlog cleared. 41 min.</p></div>
+  </div>
+</div>
+<script>
+  const svc=[
+    {n:'Ticket wallet & QR',s:'operational'},
+    {n:'Checkout (Stripe)',s:'operational'},
+    {n:'Door check-in / scanner',s:'operational'},
+    {n:'Transfers & claims',s:'operational'},
+    {n:'Email (Resend)',s:'degraded'},
+    {n:'Storefronts & embeds',s:'operational'},
+    {n:'Realtime & webhooks',s:'operational'},
+  ];
+  const map={operational:['neon','● Operational'],degraded:['text-amber-400','◐ Degraded'],down:['text-brand-accent','✕ Down']};
+  document.getElementById('svc').innerHTML = svc.map(x=>`
+    <div class="flex items-center justify-between px-5 py-4 bg-[#0a0a0a]">
+      <span class="type text-sm text-white/80 uppercase tracking-wide">${x.n}</span>
+      <span class="type text-[11px] uppercase tracking-widest ${map[x.s][0]}">${map[x.s][1]}</span>
+    </div>`).join('');
+</script>
+</body>
+</html>

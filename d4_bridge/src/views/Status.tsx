@@ -66,13 +66,13 @@ function outcomeLabel(o: ProbeOutcome): string {
 function outcomeBadge(o: ProbeOutcome): string {
   switch (o) {
     case 'up':
-      return 'bg-green-100 text-green-700';
+      return 'neon';
     case 'degraded':
-      return 'bg-amber-100 text-amber-700';
+      return 'text-amber-400';
     case 'down':
-      return 'bg-red-100 text-red-700';
+      return 'text-brand-accent';
     default:
-      return 'bg-slate-100 text-slate-500';
+      return 'text-white/40';
   }
 }
 
@@ -108,98 +108,83 @@ export default function Status() {
   );
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-20">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-14">
       <button
         onClick={() => navigate(-1)}
-        className="flex items-center text-slate-400 hover:text-slate-900 mb-12 transition-colors font-bold uppercase tracking-widest text-[10px]"
+        className="type inline-flex items-center text-white/40 hover:text-brand-primary mb-10 transition-colors uppercase tracking-[0.3em] text-[11px]"
       >
         <ArrowLeft className="w-4 h-4 mr-2" aria-hidden="true" />
         Back
       </button>
 
-      <div className="bg-white p-12 md:p-20 rounded-[3rem] border border-slate-100 shadow-xl">
-        <div className="flex items-center justify-between mb-12">
-          <div className="flex items-center space-x-4">
-            <div
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-                overallDown ? 'bg-red-50' : overallDegraded ? 'bg-amber-50' : 'bg-green-50'
-              }`}
-            >
-              <Activity
-                className={`w-6 h-6 ${
-                  overallDown ? 'text-red-500' : overallDegraded ? 'text-amber-500' : 'text-green-500'
-                }`}
-                aria-hidden="true"
-              />
-            </div>
-            <div>
-              <h1 className="text-4xl font-bold tracking-tight text-slate-900 italic">Core Systems</h1>
-              <p
-                className={`font-bold uppercase tracking-widest text-[10px] mt-1 ${
-                  overallDown ? 'text-red-500' : overallDegraded ? 'text-amber-500' : 'text-green-500'
-                }`}
-              >
-                {overallDown ? 'Outage Detected' : overallDegraded ? 'Degraded Performance' : 'All Systems Operational'}
-              </p>
-            </div>
-          </div>
-          <div className="hidden md:block text-right">
-            <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Last Checked</p>
-            <p className="text-slate-900 font-bold italic">
-              {lastChecked ? lastChecked.toLocaleTimeString() : '—'}
-            </p>
-          </div>
-        </div>
+      <p className="type text-brand-primary text-[12px] uppercase tracking-[0.3em] mb-3">// status</p>
+      <div className="flex items-center gap-4 mb-2">
+        <Activity
+          className={`w-5 h-5 animate-pulse shrink-0 ${
+            overallDown ? 'text-brand-accent' : overallDegraded ? 'text-amber-400' : 'text-brand-primary'
+          }`}
+          aria-hidden="true"
+        />
+        <h1 className="disp text-5xl md:text-6xl tracking-tight" style={{ transform: 'skewX(-4deg)' }}>
+          CORE SYSTEMS{' '}
+          <span className={overallDown ? 'text-brand-accent' : overallDegraded ? 'text-amber-400' : 'neon'}>
+            {overallDown ? 'DOWN' : overallDegraded ? 'DEGRADED' : 'LIVE'}
+          </span>
+        </h1>
+      </div>
+      <p className="type text-white/50 text-sm mb-2">
+        {overallDown ? 'Outage Detected' : overallDegraded ? 'Degraded Performance' : 'All Systems Operational'}
+      </p>
+      <p className="type text-white/40 text-sm mb-10">
+        Last checked {lastChecked ? lastChecked.toLocaleTimeString() : '—'}
+      </p>
 
-        <div className="space-y-6">
-          {SERVICES.map((service) => {
-            const res = results[service.name];
-            const outcome: ProbeOutcome = res?.outcome ?? 'unknown';
-            return (
-              <div
-                key={service.name}
-                className="flex items-center justify-between p-6 bg-slate-50 rounded-2xl border border-slate-100"
-              >
-                <div className="flex items-center space-x-4">
-                  {outcome === 'unknown' ? (
-                    <Loader2 className="w-5 h-5 text-slate-400 animate-spin" aria-hidden="true" />
-                  ) : outcome === 'down' ? (
-                    <AlertTriangle className="w-5 h-5 text-red-500" aria-hidden="true" />
-                  ) : outcome === 'degraded' ? (
-                    <AlertTriangle className="w-5 h-5 text-amber-500" aria-hidden="true" />
-                  ) : (
-                    <CheckCircle2 className="w-5 h-5 text-green-500" aria-hidden="true" />
-                  )}
-                  <div>
-                    <h3 className="font-bold text-slate-900">{service.name}</h3>
-                    <div className="flex items-center space-x-2">
-                      <Clock className="w-3 h-3 text-slate-400" aria-hidden="true" />
-                      <span className="text-[10px] text-slate-400 font-medium uppercase tracking-widest leading-none">
-                        {service.description}
-                        {res?.latencyMs !== undefined ? ` // ${res.latencyMs}ms` : ''}
-                        {res?.detail ? ` // ${res.detail}` : ''}
-                      </span>
-                    </div>
+      <div className="border border-white/10 divide-y divide-white/10">
+        {SERVICES.map((service) => {
+          const res = results[service.name];
+          const outcome: ProbeOutcome = res?.outcome ?? 'unknown';
+          return (
+            <div
+              key={service.name}
+              className="flex items-center justify-between px-5 py-4 bg-[#0a0a0a]"
+            >
+              <div className="flex items-center gap-4">
+                {outcome === 'unknown' ? (
+                  <Loader2 className="w-5 h-5 text-white/40 animate-spin shrink-0" aria-hidden="true" />
+                ) : outcome === 'down' ? (
+                  <AlertTriangle className="w-5 h-5 text-brand-accent shrink-0" aria-hidden="true" />
+                ) : outcome === 'degraded' ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" aria-hidden="true" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5 text-brand-primary shrink-0" aria-hidden="true" />
+                )}
+                <div>
+                  <h3 className="type text-sm text-white/80 uppercase tracking-wide">{service.name}</h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <Clock className="w-3 h-3 text-white/30" aria-hidden="true" />
+                    <span className="type text-[10px] text-white/40 uppercase tracking-widest leading-none">
+                      {service.description}
+                      {res?.latencyMs !== undefined ? ` // ${res.latencyMs}ms` : ''}
+                      {res?.detail ? ` // ${res.detail}` : ''}
+                    </span>
                   </div>
                 </div>
-                <span
-                  className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-lg ${outcomeBadge(outcome)}`}
-                >
-                  {outcomeLabel(outcome)}
-                </span>
               </div>
-            );
-          })}
-        </div>
-
-        <button
-          onClick={runChecks}
-          disabled={refreshing}
-          className="mt-10 w-full md:w-auto bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-all disabled:opacity-50"
-        >
-          {refreshing ? 'Checking...' : 'Re-check Now'}
-        </button>
+              <span className={`type text-[11px] uppercase tracking-widest ${outcomeBadge(outcome)}`}>
+                {outcomeLabel(outcome)}
+              </span>
+            </div>
+          );
+        })}
       </div>
+
+      <button
+        onClick={runChecks}
+        disabled={refreshing}
+        className="type mt-10 w-full md:w-auto bg-brand-primary text-black px-6 py-3 uppercase tracking-[0.2em] text-[11px] font-bold hover:bg-white transition-all disabled:opacity-50"
+      >
+        {refreshing ? 'Checking...' : 'Re-check Now'}
+      </button>
     </div>
   );
 }

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Exos — Checkout</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<style type="text/tailwindcss">
+  @theme { --color-brand-primary:#00FF00; --color-brand-secondary:#FF00FF; --color-brand-accent:#FF3B3B; --font-sans:"Inter", ui-sans-serif, system-ui, sans-serif; }
+  @layer base { body { @apply font-sans antialiased bg-black text-white; } }
+  .disp{ font-family:"Anton",sans-serif; } .type{ font-family:"Special Elite",monospace; } .marker{ font-family:"Permanent Marker",cursive; }
+  .wall{ background:radial-gradient(circle at 85% -5%, rgba(0,255,0,.05), transparent 42%), radial-gradient(circle at 0% 100%, rgba(255,0,255,.04), transparent 45%), #050505; }
+  .grain::before{ content:""; position:fixed; inset:0; z-index:1; pointer-events:none; opacity:.055; mix-blend-mode:overlay; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .inp{ @apply w-full bg-white/5 border border-white/15 px-3.5 py-3 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-brand-primary; }
+  .stamp{ @apply inline-flex items-center justify-center border-2 font-black uppercase italic tracking-tighter; }
+</style>
+</head>
+<body class="wall grain text-white min-h-screen">
+<nav class="sticky top-0 z-50 bg-black border-b border-white/5"><div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"><div class="flex justify-between h-20 items-center">
+  <a href="EventDetails.html" class="flex items-center gap-2 group"><div class="w-11 h-11 bg-white flex items-center justify-center group-hover:bg-brand-primary transition-colors"><svg class="text-black w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/></svg></div><span class="text-3xl font-black tracking-tighter text-white italic">EXOS</span></a>
+  <div class="flex items-center gap-2 text-white/50 text-xs type uppercase tracking-widest"><svg class="w-4 h-4 text-brand-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Secure checkout</div>
+</div></div></nav>
+
+<!-- step rail -->
+<div class="max-w-3xl mx-auto px-4 pt-8">
+  <div class="flex items-center gap-3" id="rail"></div>
+</div>
+
+<div class="max-w-3xl mx-auto px-4 py-8 grid lg:grid-cols-[1fr_300px] gap-8">
+  <!-- MAIN -->
+  <div>
+    <!-- STEP 1: TICKETS -->
+    <section data-step="1">
+      <h1 class="disp text-4xl md:text-5xl leading-none mb-1" style="transform:skewX(-4deg)">PICK YOUR <span class="text-brand-primary">TICKETS</span></h1>
+      <p class="type text-white/40 text-sm mb-6">Palm Wine Sound System · Fri 11 Jul · Knockdown Center</p>
+      <div class="space-y-3" id="tiers"></div>
+      <button onclick="go(2)" class="mt-6 w-full bg-brand-primary text-black font-black uppercase italic tracking-tighter text-lg py-4 hover:scale-[1.01] transition-transform disabled:opacity-30" id="toPay">Continue to payment</button>
+    </section>
+
+    <!-- STEP 2: PAYMENT -->
+    <section data-step="2" class="hidden">
+      <h1 class="disp text-4xl md:text-5xl leading-none mb-1" style="transform:skewX(-4deg)">HOW YOU <span class="text-brand-primary">PAYING</span></h1>
+      <p class="type text-white/40 text-sm mb-6">You won't be charged until you hit pay.</p>
+      <div class="space-y-4">
+        <div><label class="type text-[11px] uppercase tracking-widest text-white/40 mb-1.5 block">Email for tickets</label><input class="inp" value="you@venue.com" /></div>
+        <div><label class="type text-[11px] uppercase tracking-widest text-white/40 mb-1.5 block">Card number</label>
+          <div class="relative"><input class="inp pr-16" placeholder="1234 1234 1234 1234" value="4242 4242 4242 4242" /><div class="absolute right-3 top-1/2 -translate-y-1/2 flex gap-1"><div class="w-7 h-4 rounded-sm bg-gradient-to-r from-blue-500 to-red-500 opacity-80"></div></div></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="type text-[11px] uppercase tracking-widest text-white/40 mb-1.5 block">Expiry</label><input class="inp" placeholder="MM / YY" value="09 / 28" /></div>
+          <div><label class="type text-[11px] uppercase tracking-widest text-white/40 mb-1.5 block">CVC</label><input class="inp" placeholder="123" value="•••" /></div>
+        </div>
+        <label class="flex items-center gap-2.5 text-sm text-white/60 pt-1 cursor-pointer"><input type="checkbox" checked class="accent-[#00FF00] w-4 h-4" /> Save this card for faster checkout next time</label>
+      </div>
+      <div class="flex gap-3 mt-6">
+        <button onclick="go(1)" class="px-5 py-4 border border-white/20 font-black uppercase italic tracking-tighter hover:border-white/50">Back</button>
+        <button onclick="pay()" id="payBtn" class="flex-1 bg-brand-primary text-black font-black uppercase italic tracking-tighter text-lg py-4 hover:scale-[1.01] transition-transform">Pay $76.50</button>
+      </div>
+      <p class="type text-[11px] text-white/30 text-center mt-3 flex items-center justify-center gap-1.5"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Encrypted &amp; processed by Stripe · we never store your card</p>
+    </section>
+
+    <!-- STEP 3: DONE -->
+    <section data-step="3" class="hidden text-center py-6">
+      <div class="stamp w-24 h-24 rounded-full border-brand-primary text-brand-primary mx-auto mb-6" style="transform:rotate(-8deg)"><svg class="w-12 h-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <p class="marker text-brand-secondary text-2xl mb-2" style="transform:rotate(-3deg)">you're in ✦</p>
+      <h1 class="disp text-5xl md:text-6xl leading-none mb-3" style="transform:skewX(-4deg)">YOU'RE <span class="text-brand-primary">GOING</span></h1>
+      <p class="text-white/60 text-sm mb-1">2 tickets to Palm Wine Sound System are in your vault.</p>
+      <p class="type text-white/30 text-[11px] mb-8">Confirmation sent to you@venue.com · order #EXO-4471</p>
+      <div class="flex gap-3 justify-center">
+        <a href="MyTickets.html" class="bg-brand-primary text-black font-black uppercase italic tracking-tighter px-7 py-4">View my tickets</a>
+        <a href="Home.html" class="border border-white/20 text-white font-black uppercase italic tracking-tighter px-7 py-4 hover:border-white/50">Keep browsing</a>
+      </div>
+    </section>
+  </div>
+
+  <!-- SUMMARY -->
+  <aside class="lg:sticky lg:top-28 h-fit border border-white/10 bg-[#0c0c0c]">
+    <div class="aspect-[16/10] bg-gradient-to-br from-brand-secondary/30 to-black flex items-end p-4 border-b border-white/10"><span class="disp text-2xl leading-none">PALM WINE<br>SOUND SYSTEM</span></div>
+    <div class="p-5">
+      <p class="type text-[11px] uppercase tracking-widest text-white/40 mb-3">Order summary</p>
+      <div id="summary" class="space-y-2 text-sm"></div>
+      <div class="border-t border-white/10 mt-4 pt-4 space-y-1.5 text-sm">
+        <div class="flex justify-between text-white/50"><span>Subtotal</span><span id="sub">$70.00</span></div>
+        <div class="flex justify-between text-white/50"><span>Service fee</span><span id="fee">$6.50</span></div>
+        <div class="flex justify-between disp text-xl mt-2 pt-2 border-t border-white/10"><span>TOTAL</span><span class="text-brand-primary" id="total">$76.50</span></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+  const TIERS=[
+    {id:'ga',n:'GA Standing',p:35,note:'Selling fast',max:6},
+    {id:'early',n:'Early Bird',p:28,note:'Sold out',sold:true,max:0},
+    {id:'vip',n:'VIP + Bar Tab',p:75,note:'8 left',max:4},
+  ];
+  const qty={ga:2,early:0,vip:0};
+  let step=1;
+
+  function money(n){ return '$'+n.toFixed(2); }
+  function subtotal(){ return TIERS.reduce((s,t)=>s+t.p*qty[t.id],0); }
+  function count(){ return Object.values(qty).reduce((a,b)=>a+b,0); }
+  function fee(){ return +(subtotal()*0.10 - 0.5).toFixed(2) > 0 ? +(subtotal()*0.093).toFixed(2) : 0; }
+
+  function renderRail(){
+    const steps=['Tickets','Payment','Done'];
+    document.getElementById('rail').innerHTML=steps.map((s,i)=>{
+      const n=i+1, on=n===step, done=n<step;
+      return `<div class="flex items-center gap-3">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 flex items-center justify-center text-xs font-black ${on?'bg-brand-primary text-black':done?'bg-white/20 text-white':'border border-white/20 text-white/40'}">${done?'✓':n}</div>
+          <span class="type text-[11px] uppercase tracking-widest ${on?'text-white':'text-white/40'}">${s}</span>
+        </div>${i<2?'<div class="w-8 h-px bg-white/15"></div>':''}</div>`;
+    }).join('');
+  }
+  function renderTiers(){
+    document.getElementById('tiers').innerHTML=TIERS.map(t=>`
+      <div class="border ${t.sold?'border-white/5 opacity-50':'border-white/12'} bg-[#0c0c0c] p-4 flex items-center gap-4">
+        <div class="flex-1">
+          <div class="flex items-center gap-2"><span class="font-black text-lg">${t.n}</span>${t.sold?'<span class="stamp border-brand-accent text-brand-accent text-[10px] px-1.5 py-0.5">SOLD OUT</span>':`<span class="type text-[10px] uppercase tracking-widest ${/fast/i.test(t.note)?'text-brand-accent':'text-white/40'}">${t.note}</span>`}</div>
+          <span class="disp text-xl text-brand-primary">${money(t.p)}</span>
+        </div>
+        ${t.sold?'':`<div class="flex items-center gap-3">
+          <button onclick="bump('${t.id}',-1)" class="w-9 h-9 border border-white/20 text-xl leading-none hover:border-brand-primary hover:text-brand-primary">−</button>
+          <span class="disp text-xl w-6 text-center" id="q-${t.id}">${qty[t.id]}</span>
+          <button onclick="bump('${t.id}',1)" class="w-9 h-9 border border-white/20 text-xl leading-none hover:border-brand-primary hover:text-brand-primary">+</button>
+        </div>`}
+      </div>`).join('');
+  }
+  function renderSummary(){
+    const lines=TIERS.filter(t=>qty[t.id]>0).map(t=>`<div class="flex justify-between"><span class="text-white/70">${qty[t.id]} × ${t.n}</span><span>${money(t.p*qty[t.id])}</span></div>`).join('');
+    document.getElementById('summary').innerHTML=lines||'<p class="text-white/30 text-xs type">No tickets selected yet</p>';
+    const sub=subtotal(), f=+(sub*0.093).toFixed(2), tot=sub+f;
+    document.getElementById('sub').textContent=money(sub);
+    document.getElementById('fee').textContent=money(f);
+    document.getElementById('total').textContent=money(tot);
+    const pb=document.getElementById('payBtn'); if(pb) pb.textContent='Pay '+money(tot);
+    document.getElementById('toPay').disabled = count()===0;
+  }
+  function bump(id,d){ const t=TIERS.find(x=>x.id===id); qty[id]=Math.max(0,Math.min(t.max,qty[id]+d)); document.getElementById('q-'+id).textContent=qty[id]; renderSummary(); }
+  function go(n){ step=n; document.querySelectorAll('[data-step]').forEach(s=>s.classList.toggle('hidden',+s.dataset.step!==n)); renderRail(); window.scrollTo(0,0); }
+  function pay(){ const b=document.getElementById('payBtn'); b.textContent='Processing…'; b.disabled=true; setTimeout(()=>go(3),1100); }
+
+  renderRail(); renderTiers(); renderSummary();
+</script>
+</body>
+</html>
