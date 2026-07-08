@@ -5,27 +5,42 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0a0a0a" />
-  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
-  <link rel="apple-touch-icon" href="/favicon.svg" />
-  <link rel="manifest" href="/manifest.json" />
+  <meta name="apple-mobile-web-app-title" content="S4K Fantasy" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — Fantasy</title>
+  <title>Fantasy — D5</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260707a" />
+  <link rel="stylesheet" href="/static/terminal/style.css?v=20260708d5" />
+  <style>
+    /* D5 fantasy surface — standalone header (no terminal nav.js). Reuses the
+       terminal design tokens + style.css; only the top bar is surface-specific. */
+    .fan5-bar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .fan5-links { display:flex; gap:8px; align-items:center; margin-left:auto; }
+    .fan5-links a {
+      font-family: var(--mono); font-size: 11px; text-decoration: none;
+      color: var(--muted); border: 1px solid var(--line); border-radius: 3px;
+      padding: 4px 10px; background: var(--panel);
+    }
+    .fan5-links a:hover { color: var(--text); border-color: var(--dim); }
+    .fan5-brand-sub { font-family: var(--mono); font-size: 10px; color: var(--accent);
+      letter-spacing: .5px; margin-left: 6px; }
+  </style>
 </head>
 <body data-page="fantasy">
 
-  <header class="topbar">
-    <span class="brand">TERMINAL · D0</span>
+  <header class="topbar fan5-bar">
+    <span class="brand">FANTASY<span class="fan5-brand-sub">D5 · SPORTS</span></span>
     <span id="status" class="status">Loading…</span>
+    <span class="fan5-links">
+      <a href="/home/">← Hub</a>
+      <a href="/terminal/">Terminal ↗</a>
+      <span id="fanAuth"></span>
+    </span>
   </header>
 
-  <main class="wrap fantasy">
+  <main class="wrap fantasy" style="display:flex; flex-direction:column; gap:14px; padding:14px;">
 
     <div class="fan-bar">
       <div class="fan-leagues" id="fanLeagues" role="tablist"></div>
@@ -64,7 +79,7 @@
       </section>
     </div>
 
-    <section id="fan-freeagents" hidden style="margin-top:14px">
+    <section id="fan-freeagents" hidden>
       <div class="panel-title row">
         <span>FREE AGENTS <span class="muted small" id="fanFaTeam"></span></span>
         <input type="search" id="fanFaSearch" class="fan-fa-search" placeholder="Search available players…" autocomplete="off" />
@@ -74,12 +89,14 @@
 
   </main>
 
-  <script src="lib/supabase.js"></script>
-  <script src="lib/render.js"></script>
-  <script src="pwa.js?v=20260702"></script>
-  <script src="auth.js?v=20260608"></script>
-  <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260708lg"></script>
-  <script src="fantasy.js?v=20260704lineup"></script>
+  <!-- boot.js first: sets window.LOGIN_URL before auth.js reads it, and wires the
+       header sign-out control (nav.js — which normally provides it — is terminal-
+       only and not loaded on this standalone surface). -->
+  <script src="/static/fantasy/boot.js?v=20260708d5"></script>
+  <script src="/static/terminal/lib/supabase.js"></script>
+  <script src="/static/terminal/lib/render.js"></script>
+  <script src="/static/terminal/app.js?v=20260608"></script>
+  <script src="/static/terminal/auth.js?v=20260708d5"></script>
+  <script src="/static/fantasy/fantasy.js?v=20260708d5"></script>
 </body>
 </html>

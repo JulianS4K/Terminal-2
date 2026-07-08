@@ -10,6 +10,7 @@
   'use strict';
 
   const cardTerminal    = document.getElementById('cardTerminal');
+  const cardFantasy     = document.getElementById('cardFantasy');
   const cardBridge      = document.getElementById('cardBridge');
   const bridgeNote      = document.getElementById('bridgeNote');
   const authCtrl        = document.getElementById('auth-ctrl');
@@ -21,10 +22,17 @@
   }
 
   function lockCard(card) {
+    if (!card) return;
     card.classList.add('locked');
     card.removeAttribute('href');
     const gate = card.querySelector('.card-gate');
     if (gate) gate.hidden = false;
+  }
+
+  // Terminal + Fantasy are both @s4kent.com-gated operator surfaces.
+  function lockOperatorCards() {
+    lockCard(cardTerminal);
+    lockCard(cardFantasy);
   }
 
   function renderAuth(email) {
@@ -54,7 +62,7 @@
 
   if (!window.TerminalAuth) {
     // supabase-js or auth.js failed to load — treat as not signed in.
-    lockCard(cardTerminal);
+    lockOperatorCards();
     setBridgeNote(false);
     setFootStatus('auth offline');
     renderAuth(null);
@@ -70,14 +78,14 @@
       setBridgeNote(true);
       setFootStatus('all surfaces unlocked');
     } else {
-      lockCard(cardTerminal);
+      lockOperatorCards();
       setBridgeNote(!!email);
       renderAuth(email);
       setFootStatus(email ? 'not on @s4kent.com — operator surfaces gated' : 'sign in to unlock operator surfaces');
     }
   }).catch(err => {
     console.error('auth ready failed', err);
-    lockCard(cardTerminal);
+    lockOperatorCards();
     setBridgeNote(false);
     setFootStatus('auth init failed');
   });
