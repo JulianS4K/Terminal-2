@@ -38,6 +38,38 @@ def test_store_service_worker_served_from_root():
     assert "javascript" in r.headers["content-type"].lower()
 
 
+# ---- Branded storefront error page (site-level 404 / 5xx) ----
+
+def test_unknown_storefront_route_renders_branded_404_html():
+    """An unknown /store/* path on an HTML navigation returns the branded
+    error shell (404 status, HTML body) instead of the default JSON."""
+    r = client.get("/store/does-not-exist", headers={"accept": "text/html"})
+    assert r.status_code == 404
+    assert "text/html" in r.headers["content-type"]
+    body = r.text
+    assert "404" in body
+    assert "wrong turn" in body
+    # Tokens must be filled, never leaked to the client.
+    assert "{{ERR_" not in body
+
+
+def test_unknown_api_route_stays_json_404():
+    """The /api/* JSON surface must keep returning JSON 404s — store.js parses
+    those status codes (describeFetchError); it must never get HTML."""
+    r = client.get("/api/store/does-not-exist", headers={"accept": "text/html"})
+    assert r.status_code == 404
+    assert "application/json" in r.headers["content-type"]
+    assert "{{ERR_" not in r.text
+
+
+def test_unknown_storefront_route_non_html_client_stays_json():
+    """A non-HTML client hitting an unknown /store path gets the default JSON
+    404, not the branded page (the branded shell is for browser navigations)."""
+    r = client.get("/store/does-not-exist", headers={"accept": "application/json"})
+    assert r.status_code == 404
+    assert "application/json" in r.headers["content-type"]
+
+
 # ---- _attach_owned_metadata early returns (app.py 4120, 4147) ----
 
 def test_attach_owned_metadata_empty_candidates_returns_empty():

@@ -838,6 +838,24 @@ input, select, textarea { accent-color: var(--accent); }
   opacity: 0.6;
 }
 
+/* ----- Full-page error screen (server-rendered 404 / 500) -----
+   static/store/error.html. The event-detail .error-screen above is an inline
+   panel dropped into the event flow; a site-level dead-end (unknown /store
+   route, storefront 5xx) vertically centers it and adds a large display
+   numeral for the HTTP status. Mirrors the D1 error-state spec (site-404 /
+   500 screens); .err-big is the base-theme port of the mockup's numeral. */
+.err-main { display: flex; align-items: center; justify-content: center; min-height: 60vh; }
+.err-big {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 88px;
+  line-height: 1;
+  letter-spacing: 1px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+@media (max-width: 480px) { .err-big { font-size: 64px; } }
+
 .notes {
   font-size: 12px;
   color: var(--muted);
