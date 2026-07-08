@@ -29,9 +29,11 @@
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
-    // Sports data surfaces (ESPN pipelines). Racing = F1 + NASCAR schedule +
-    // driver standings; Fantasy = league browser over the fantasy engine.
-    { id: 'racing',    label: 'RACING',    href: 'racing.html' },
+    // Sports data surfaces (ESPN pipelines). Leagues = one hub across every
+    // ESPN-tracked league: team leagues (per-team demand + blind spots) plus
+    // the merged racing series (F1 + NASCAR schedule + driver standings +
+    // results). Fantasy = league browser over the fantasy engine.
+    { id: 'leagues',   label: 'LEAGUES',   href: 'leagues.html' },
     { id: 'fantasy',   label: 'FANTASY',   href: 'fantasy.html' },
     { id: 'transactions', label: 'TRANSACTIONS', href: 'transactions.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
@@ -247,13 +249,14 @@
         });
         parts.push('</div>');
       }
-      // RACING — drivers (espn_racing_standings). Link to the series' standings.
+      // RACING — drivers (espn_racing_standings). Link to the series' standings
+      // on the merged Leagues hub (racing folded in — was racing.html?series=).
       if (rac.length) {
         const SER = { 'nascar-cup': 'NASCAR Cup', 'nascar-xfinity': 'Xfinity',
                       'nascar-truck': 'Truck', 'f1': 'Formula 1' };
         parts.push('<div class="ts-section"><div class="ts-section-lbl">RACING</div>');
         rac.forEach(r => {
-          const href = `racing.html?series=${encodeURIComponent(r.series)}`;
+          const href = `leagues.html?league=${encodeURIComponent(r.series)}`;
           const meta = [SER[r.series] || r.series, r.rank ? 'P' + r.rank : '', r.points != null ? r.points + ' pts' : '']
             .filter(Boolean).join(' · ');
           flat.push({ href, label: r.driver_name, kind: 'racing' });
