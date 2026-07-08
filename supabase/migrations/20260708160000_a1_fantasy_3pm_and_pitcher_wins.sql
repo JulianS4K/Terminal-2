@@ -105,7 +105,15 @@ BEGIN
   LOOP
     -- skip control keys and any non-numeric rule value
     CONTINUE WHEN k LIKE '\_\_%' OR v !~ '^-?[0-9]+(\.[0-9]+)?$';
-    v_pts := v_pts + coalesce((v_stats->>k)::numeric, 0) * v::numeric;
+    -- Guard the STAT value too. Now that the brand builder feeds the FULL stats
+    -- object (not the numeric-only subset), a ruleset key can map to a
+    -- non-numeric gamelog value — e.g. NFL LST="-" (no fumble) or FG/XP="0-0"
+    -- (made-attempt string) — and a bare ::numeric would throw, aborting the
+    -- whole build_espn_athlete_brand() rebuild. Missing key or non-numeric →
+    -- contributes 0, matching fantasy_gamelog_points()'s value guard.
+    IF v_stats ? k AND (v_stats->>k) ~ '^-?[0-9]+(\.[0-9]+)?$' THEN
+      v_pts := v_pts + (v_stats->>k)::numeric * v::numeric;
+    END IF;
   END LOOP;
   RETURN round(v_pts, 2);
 END $$;
