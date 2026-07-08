@@ -21,9 +21,10 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Organization, Event } from '../types';
-import { getPublicOrgBySlug } from '../lib/orgs';
+import { getPublicOrgBySlug, followOrg, unfollowOrg, isFollowingOrg } from '../lib/orgs';
 import { listPublicEventsForOrg } from '../lib/events';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { formatInTz } from '../lib/datetime';
 import { applyMeta } from '../lib/meta';
 import { initOrgPixels } from '../lib/pixels';
@@ -54,14 +55,16 @@ const DEMO_CARD_IMAGES = [
 
 function StorefrontInner({ org }: ResolvedOrg) {
   const { theme } = useTheme();
+  const { user, signIn } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followers, setFollowers] = useState(org.followersCount ?? 0);
 
   // Org-set colour wins; otherwise fall back to the mockup's neon green so a
   // themeless storefront reads exactly like the reference design.
   const accent = org.theme?.primaryColor ? theme.primary : NEON;
   const initial = (org.name || '?').trim().charAt(0).toUpperCase();
-  const followers = org.followersCount ?? 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +87,46 @@ function StorefrontInner({ org }: ResolvedOrg) {
       cancelled = true;
     };
   }, [org.id]);
+
+  // Resolve the viewer's follow state once they're known.
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) {
+      setIsFollowing(false);
+      return undefined;
+    }
+    isFollowingOrg(org.id)
+      .then((f) => {
+        if (!cancelled) setIsFollowing(f);
+      })
+      .catch(() => {
+        /* non-fatal — default to not-following */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [org.id, user]);
+
+  // Follow/unfollow. Opens the auth modal for signed-out visitors; otherwise
+  // optimistically flips (the RPC keeps followers_count correct server-side),
+  // mirroring OrganizerProfile's toggle.
+  const toggleFollow = async () => {
+    if (!user) {
+      signIn();
+      return;
+    }
+    const next = !isFollowing;
+    setIsFollowing(next);
+    setFollowers((prev) => Math.max(0, prev + (next ? 1 : -1)));
+    try {
+      if (next) await followOrg(org.id);
+      else await unfollowOrg(org.id);
+    } catch (err) {
+      console.error('Failed to toggle follow', err);
+      setIsFollowing(!next);
+      setFollowers((prev) => Math.max(0, prev + (next ? -1 : 1)));
+    }
+  };
 
   return (
     <div className="wall min-h-screen text-white">
@@ -121,10 +164,16 @@ function StorefrontInner({ org }: ResolvedOrg) {
                 events
               </a>
               <button
-                className="disp text-black px-5 py-1 text-lg tracking-wide uppercase"
-                style={{ background: accent }}
+                onClick={toggleFollow}
+                aria-pressed={isFollowing}
+                className={`disp px-5 py-1 text-lg tracking-wide uppercase transition-colors ${
+                  isFollowing
+                    ? 'bg-transparent border border-white/30 text-white hover:border-white/60'
+                    : 'text-black'
+                }`}
+                style={isFollowing ? undefined : { background: accent }}
               >
-                Follow
+                {isFollowing ? 'Following' : 'Follow'}
               </button>
             </div>
           </div>
