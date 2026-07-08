@@ -80,6 +80,9 @@
   let _perfIndex = null;   // cached get_broker_performer_index payload (Broadway roster)
   let _leagueKpis = null;  // { LEAGUE: {total_revenue, tickets_sold, ...} } from get_d0_league_kpis
   let _curLeague = null;   // active league key (so a late KPI load can paint its strip)
+  let _curView = null;     // raw active picker key (league OR racing series) — the
+                           // stale-guard for async loaders whose panels are shared
+                           // across views (team-league roster + racing ESPN grid).
   const $ = id => document.getElementById(id);
 
   function currentLeague() {
@@ -128,7 +131,9 @@
     if (res.error) return;   // 42883 (not deployed) / forbidden → strip stays hidden
     _leagueKpis = {};
     (res.data || []).forEach(r => { _leagueKpis[r.league] = r; });
-    if (_curLeague) renderSalesStrip(_curLeague);
+    // Racing sets _curLeague to a ticket-league ('F1') but deliberately hides the
+    // sales strip; don't let a late KPI load un-hide it on the racing view.
+    if (_curLeague && !isRacing(_curView)) renderSalesStrip(_curLeague);
   }
 
   function renderSalesStrip(key) {
@@ -251,6 +256,8 @@
   }
 
   function load(key) {
+    _curView = key;   // mark the active selection so in-flight loaders for a
+                      // now-abandoned view can bail before painting stale rows.
     markActive(key);
     const url = new URL(location.href);
     url.searchParams.set('league', key);
@@ -312,6 +319,7 @@
     try {
       payload = await T.api('/api/broker/performers/by-league/' + encodeURIComponent(key));
     } catch (e) {
+      if (_curView !== key) return;   // switched leagues mid-fetch — don't paint stale
       T.setStatus(e.message, 'err');
       $('lgPrimaryBody').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
       $('lgSecondaryBody').innerHTML = '';
@@ -319,6 +327,7 @@
       renderStrip([{ n: '—', l: 'teams' }]);
       return;
     }
+    if (_curView !== key) return;     // switched leagues mid-fetch — don't paint stale
 
     // Collapse home + road into one per-team line. market_tix ranks demand;
     // owned_tix is our position; a blind spot = demand with zero owned.
@@ -567,6 +576,7 @@
       Auth.client.rpc('get_espn_racing_events', { p_series: series, p_limit: 60 }),
       Auth.client.rpc('get_espn_racing_standings', { p_series: series, p_limit: 60 }),
     ]);
+    if (_curView !== series) return;   // switched series/league mid-fetch — don't paint stale grid
     if (ev.error) { T.setStatus(ev.error.message, 'err'); $('lgPrimaryBody').innerHTML = `<div class="empty">${escapeHtml(ev.error.message)}</div>`; }
     else renderSchedule(ev.data || []);
     if (st.error) { T.setStatus(st.error.message, 'err'); $('lgSecondaryBody').innerHTML = `<div class="empty">${escapeHtml(st.error.message)}</div>`; }

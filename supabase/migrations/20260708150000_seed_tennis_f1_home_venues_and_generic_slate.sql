@@ -9,7 +9,7 @@
 -- Touches:  performer_home_venues (W/seed rows), get_league_slate (W/function)
 -- Reads:    events (dominant-venue derivation), league_team_divisions,
 --           broadway_show_ref, performer_home_venues, latest_event_metrics
--- Pre:      20260708130050 (get_league_slate), 20260508050000 (performer_home_venues)
+-- Pre-reqs: 20260708130050 (get_league_slate), 20260508050000 (performer_home_venues)
 --
 -- WHY. Tennis + racing were picker-only "ingest pending" placeholders: the hub
 -- reads performers from get_performers_by_league() ← performer_home_venues, and
