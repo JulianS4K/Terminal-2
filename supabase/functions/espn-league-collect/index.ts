@@ -292,6 +292,11 @@ const STATS_CONFIG: Record<string, { apiCategory: string; storeCategory: string 
   "baseball/mlb":   [{ apiCategory: "batting", storeCategory: "batting" }, { apiCategory: "pitching", storeCategory: "pitching" }],
   "basketball/nba":  [{ apiCategory: "", storeCategory: "general" }],
   "basketball/wnba": [{ apiCategory: "", storeCategory: "general" }],
+  // new leagues (2026-07-08). Football pulls the main offensive categories;
+  // soccer uses the default leader set. Any category that 404s is skipped.
+  "football/college-football": [{ apiCategory: "passing", storeCategory: "passing" }, { apiCategory: "rushing", storeCategory: "rushing" }, { apiCategory: "receiving", storeCategory: "receiving" }],
+  "football/cfl":              [{ apiCategory: "passing", storeCategory: "passing" }, { apiCategory: "rushing", storeCategory: "rushing" }, { apiCategory: "receiving", storeCategory: "receiving" }],
+  "soccer/usa.nwsl":           [{ apiCategory: "", storeCategory: "general" }],
 };
 const STATS_MAX_PAGES = 40;
 
@@ -367,9 +372,12 @@ async function collectStats(db: any, state: TxnState) {
 // the 4 requested leagues, so a frequent cron rotates through the full roster.
 // ---------------------------------------------------------------------------
 
-const GAMELOG_LEAGUES = ["MLB", "NBA", "NFL", "WNBA"];
+// CFL + NCAAF added 2026-07-08 (football fantasy ruleset applies to both). NWSL
+// is soccer with no fantasy ruleset and sparse per-game logs, so it stays out.
+const GAMELOG_LEAGUES = ["MLB", "NBA", "NFL", "WNBA", "CFL", "NCAAF"];
 const LEAGUE_SLUG: Record<string, string> = {
   MLB: "baseball/mlb", NBA: "basketball/nba", WNBA: "basketball/wnba", NFL: "football/nfl",
+  CFL: "football/cfl", NCAAF: "football/college-football",
 };
 
 async function collectGamelog(db: any, state: TxnState, limit: number) {
