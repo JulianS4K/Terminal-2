@@ -22,6 +22,14 @@
     ? 'https://vibepass-storefront-test.onrender.com/home/'
     : '/home/';
 
+  // FANTASY moved to its own D5 surface (served only by the FastAPI storefront
+  // shell, not this static CDN). Same topology rule as HUB: from the terminal-
+  // test CDN, deep-link cross-origin to the always-on shell; same-origin
+  // `/fantasy/` everywhere else (shell + localhost).
+  const FANTASY_HREF = location.hostname.includes('terminal-test')
+    ? 'https://vibepass-storefront-test.onrender.com/fantasy/'
+    : '/fantasy/';
+
   const PAGES = [
     // HOME below remains the terminal's mark-to-market dashboard (broker desk).
     { id: 'hub',       label: '← HUB',     href: HUB_HREF },
@@ -34,7 +42,8 @@
     // the merged racing series (F1 + NASCAR schedule + driver standings +
     // results). Fantasy = league browser over the fantasy engine.
     { id: 'leagues',   label: 'LEAGUES',   href: 'leagues.html' },
-    { id: 'fantasy',   label: 'FANTASY',   href: 'fantasy.html' },
+    // Fantasy was promoted to its own hub surface (D5, /fantasy/) — no longer a
+    // terminal tab. The global search still deep-links to it (see below).
     { id: 'transactions', label: 'TRANSACTIONS', href: 'transactions.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
@@ -271,7 +280,7 @@
       if (fan.length) {
         parts.push('<div class="ts-section"><div class="ts-section-lbl">FANTASY</div>');
         fan.forEach(f => {
-          const href = `fantasy.html?league=${encodeURIComponent(f.id)}`;
+          const href = `${FANTASY_HREF}?league=${encodeURIComponent(f.id)}`;
           const meta = [f.espn_league, (f.team_count != null ? f.team_count + ' teams' : '')].filter(Boolean).join(' · ');
           flat.push({ href, label: f.name, kind: 'fantasy' });
           parts.push(`<a class="ts-row" href="${href}" data-kind="fantasy">
