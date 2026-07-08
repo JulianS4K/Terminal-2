@@ -796,6 +796,24 @@
           .then((res) => renderMoversSections(host, res))
           .catch(() => { host.hidden = true; });
       }
+      // Group-chat concierge card (beta) — stays hidden unless the server
+      // reports the feature live + a display number to show. The number
+      // links as sms: so tapping it starts the thread on mobile.
+      const gcCard = $("#svcGroupChat");
+      if (gcCard) {
+        api("/api/public/config")
+          .then((cfg) => {
+            if (!cfg || !cfg.group_concierge_enabled || !cfg.group_concierge_phone) return;
+            const num = $("#svcGroupChatNum");
+            num.textContent = cfg.group_concierge_phone;
+            num.href = `sms:${cfg.group_concierge_phone.replace(/[^+\d]/g, "")}`;
+            if (cfg.group_concierge_handle) {
+              $("#svcGroupChatHandle").textContent = cfg.group_concierge_handle;
+            }
+            gcCard.hidden = false;
+          })
+          .catch(() => { /* card stays hidden */ });
+      }
     }
 
     // ----- Live search suggestions dropdown -----

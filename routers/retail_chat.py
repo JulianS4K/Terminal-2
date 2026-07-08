@@ -141,7 +141,11 @@ def _sanitize_chat_history(payload: dict) -> list[dict]:
     return out
 
 
-def _proxy_retail_chat(history: list[dict], scope: str, client_ip: str) -> JSONResponse:
+def _chat_edge_post(history: list[dict], scope: str, client_ip: str):
+    """POST the transcript to the deployed `chat` edge function and return the
+    raw requests response. Shared by the web retail-chat proxy below and the
+    group-chat concierge (routers/store_group_chat.py) — scope is always set
+    by the trusted server caller, never the client."""
     if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
         raise HTTPException(503, "chat service not configured")
     url = f"{SUPABASE_URL.rstrip('/')}/functions/v1/chat"
@@ -153,7 +157,7 @@ def _proxy_retail_chat(history: list[dict], scope: str, client_ip: str) -> JSONR
         "x-forwarded-for": client_ip,
     }
     try:
-        r = requests.post(
+        return requests.post(
             url,
             headers=headers,
             json={"history": history, "scope": "all" if scope == "all" else "owned"},
@@ -162,6 +166,10 @@ def _proxy_retail_chat(history: list[dict], scope: str, client_ip: str) -> JSONR
     except Exception as e:
         logging.getLogger(__name__).error("retail-chat proxy upstream error: %s", e)
         raise HTTPException(502, "chat service unreachable")
+
+
+def _proxy_retail_chat(history: list[dict], scope: str, client_ip: str) -> JSONResponse:
+    r = _chat_edge_post(history, scope, client_ip)
     try:
         body = r.json()
     except Exception:

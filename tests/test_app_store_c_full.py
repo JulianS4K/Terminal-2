@@ -897,6 +897,7 @@ def test_share_list_excludes_expired_when_active(as_user):
     "/store/test/media_test",
     "/store/test/trip",
     "/store/test/tour",
+    "/store/test/groupchat",
 ])
 def test_store_test_pages_served_in_non_prod(path):
     c = TestClient(app_module.app)

@@ -139,6 +139,15 @@
           <h3>Flexible delivery</h3>
           <p>Mobile transfer, e-delivery, or local pickup — in hand and ready well before the event.</p>
         </article>
+        <!-- Group-chat concierge (beta) — hidden unless /api/public/config
+             reports group_concierge_enabled + a display number (store.js). -->
+        <article class="svc" id="svcGroupChat" hidden>
+          <span class="svc-ic" aria-hidden="true">＠</span>
+          <h3>Drop us in the group chat</h3>
+          <p>Add <a id="svcGroupChatNum" href="#">our number</a> to the group text and mention
+            <strong id="svcGroupChatHandle">@vibe</strong> — we'll help everyone land on the
+            night out, right in the thread.</p>
+        </article>
       </div>
     </section>
 

@@ -712,6 +712,12 @@ STOREFRONT_AS_LANDING = os.environ.get("STOREFRONT_AS_LANDING", "false").lower()
 # Re-enable by setting STOREFRONT_CONCIERGE_ENABLED=true (no code change needed).
 STOREFRONT_CONCIERGE_ENABLED = os.environ.get("STOREFRONT_CONCIERGE_ENABLED", "false").lower() == "true"
 
+# Group-chat concierge (222-style beta): the VibePass number sits in a group
+# text and helps curate when @-mentioned (routers/store_group_chat.py). Same
+# default-off cost posture as the web concierge above — zero Twilio/Anthropic
+# spend until the operator sets STORE_GROUP_CONCIERGE_ENABLED=true (env-only).
+STORE_GROUP_CONCIERGE_ENABLED = os.environ.get("STORE_GROUP_CONCIERGE_ENABLED", "false").lower() == "true"
+
 
 # Static page-server routes (/, /home[/], /terminal[/...], /undelivered,
 # /bridge[/...], /version.json) live in routers/pages.py (BR-CODE-1 decomp).
@@ -858,6 +864,12 @@ def _public_config_payload():
         # first interaction. The secret never leaves the server.
         "recaptcha_site_key": RECAPTCHA_SITE_KEY or None,
         "recaptcha_enabled": RECAPTCHA_ENABLED,
+        # Group-chat concierge (beta): when live AND a display number exists,
+        # the store page unhides its "drop us in the group chat" card. The
+        # names come from routers.store_group_chat (imported at its mount).
+        "group_concierge_enabled": STORE_GROUP_CONCIERGE_ENABLED and bool(STORE_GROUP_CONCIERGE_PHONE),
+        "group_concierge_phone": STORE_GROUP_CONCIERGE_PHONE if STORE_GROUP_CONCIERGE_ENABLED else None,
+        "group_concierge_handle": GROUP_CONCIERGE_PRIMARY_HANDLE,
     }
 
 # ---------- Protected routes ----------
@@ -1645,6 +1657,28 @@ from routers.retail_chat import (  # noqa: E402,F401
 app.include_router(build_retail_chat_router(
     require_auth=require_auth,
     get_concierge_enabled=lambda: STOREFRONT_CONCIERGE_ENABLED,
+))
+
+
+# Group-chat concierge (/api/store/group-chat/inbound) -> routers/store_group_chat.py.
+# Twilio Conversations webhook: the VibePass number in a group text, @-mention
+# gated, replying via the same chat edge fn (scope hard-locked to owned). The
+# display phone + primary handle feed _public_config_payload's store-page card.
+from routers.store_group_chat import build_store_group_chat_router  # noqa: E402
+from routers.store_group_chat import (  # noqa: E402
+    STORE_GROUP_CONCIERGE_PHONE,
+    PRIMARY_HANDLE as GROUP_CONCIERGE_PRIMARY_HANDLE,
+)
+app.include_router(build_store_group_chat_router(
+    get_enabled=lambda: STORE_GROUP_CONCIERGE_ENABLED,
+    # Gates the Twilio-free /api/store/group-chat/simulate harness (404 in
+    # prod, same policy as /store/test/*). Getter resolves the live symbol so
+    # the test monkeypatch (app._is_production) binds.
+    get_is_production=lambda: _is_production(),
+    # Owned-EVO verification gate for [event:id] → link rewriting (the
+    # group-chat HARD RULE): ids are checked against listings_snapshots
+    # is_owned=true before any link is emitted; fails closed.
+    get_require_sb=lambda: require_sb,
 ))
 
 
