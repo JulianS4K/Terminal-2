@@ -2592,8 +2592,11 @@ body[data-page="login"] {
 @media (max-width: 860px) { .race-grid { grid-template-columns: 1fr; } }
 
 /* ---------- FANTASY page (FANTASY nav tab) ---------- */
-.wrap.fantasy { padding: 14px; }
-.fan-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+/* Full-width column layout — override the global `main.wrap` 12-col grid so
+   the bar + panels stack full-width instead of collapsing into 1/12 tracks
+   (matches .wrap.leagues / .movers / .performer / .venue). */
+.wrap.fantasy { display: flex; flex-direction: column; gap: 14px; padding: 14px; }
+.fan-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
 .fan-leagues { display: flex; flex-wrap: wrap; gap: 6px; }
 .fan-league-tab {
   font-family: var(--mono); font-size: 11px; padding: 5px 12px; cursor: pointer;
@@ -2660,8 +2663,11 @@ body[data-page="login"] {
 .fan-add:hover { border-color: var(--pos); background: var(--pos); color: var(--bg); }
 
 /* ---------- TRANSACTIONS page (TRANSACTIONS nav tab) ---------- */
-.wrap.transactions { padding: 14px; }
-.txn-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+/* Full-width column layout — override the global `main.wrap` 12-col grid so
+   the bar + panel stack full-width instead of collapsing into 1/12 tracks
+   (matches .wrap.leagues / .movers / .performer / .venue). */
+.wrap.transactions { display: flex; flex-direction: column; gap: 14px; padding: 14px; }
+.txn-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
 .txn-leagues { display: flex; flex-wrap: wrap; gap: 6px; }
 .txn-tab {
   font-family: var(--mono); font-size: 11px; padding: 5px 12px; cursor: pointer;
