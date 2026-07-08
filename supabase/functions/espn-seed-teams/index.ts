@@ -13,7 +13,9 @@
 // The Tevo-performer mapping (performer_espn_team_xref + performer_external_ids)
 // is done separately in SQL by name-match against the rows this function seeds.
 //
-// Body: { leagues?: [{ league, slug }] }  (defaults to the three new leagues).
+// Body: { mode?: 'seed'|'conferences', leagues?: [{ league, slug }] }.
+//   seed        -> upsert the team catalog (default; leagues defaults below)
+//   conferences -> walk FBS+FCS standings, fill NCAAF conference/conference_abbr
 // ESPN teams endpoint: site.api.espn.com/apis/site/v2/sports/{slug}/teams
 //   -> sports[0].leagues[0].teams[].team.{id, displayName}
 // College football returns a large paginated list; we page defensively and stop
@@ -66,16 +68,65 @@ async function fetchTeams(slug: string, log: string[]): Promise<Array<{ id: stri
   return Array.from(byId, ([id, name]) => ({ id, name }));
 }
 
+// Capture NCAAF conference membership from the ESPN standings hierarchy and
+// write it onto espn_teams_canonical(conference, conference_abbr).
+//
+// ESPN standings nest as: root (FBS/FCS group) > conference (isConference:true,
+// carries name+abbreviation) > [division] > standings.entries[].team. The
+// default /standings returns FBS (group 80); ?group=81 returns FCS. We walk both
+// so SWAC/MEAC/etc. teams in our inventory also get a conference.
+async function captureConferences(db: any, log: string[]): Promise<any> {
+  const groups: Array<string | null> = [null, "81"]; // FBS (default) + FCS
+  const teamConf = new Map<string, { name: string; abbr: string | null }>();
+  for (const g of groups) {
+    const url = `https://site.api.espn.com/apis/v2/sports/football/college-football/standings` +
+      (g ? `?group=${g}` : "");
+    let data: any;
+    try { data = await get(url); }
+    catch (e) { log.push(`standings ${g ?? "FBS"} FAIL: ${(e as Error).message}`); continue; }
+    // Carry the nearest enclosing conference down through divisions to the teams.
+    const walk = (node: any, conf: { name: string; abbr: string | null } | null) => {
+      let cur = conf;
+      if (node?.isConference && node?.name) cur = { name: node.name, abbr: node.abbreviation ?? null };
+      for (const e of node?.standings?.entries ?? []) {
+        const id = e?.team?.id != null ? String(e.team.id) : null;
+        if (id && cur && !teamConf.has(id)) teamConf.set(id, cur);
+      }
+      for (const c of node?.children ?? []) walk(c, cur);
+    };
+    walk(data, null);
+    log.push(`standings ${g ?? "FBS"}: ${teamConf.size} teams mapped cumulatively`);
+    await sleep(150);
+  }
+  let updated = 0, errors = 0;
+  for (const [id, conf] of teamConf) {
+    const { error } = await db.from("espn_teams_canonical")
+      .update({ conference: conf.name, conference_abbr: conf.abbr })
+      .eq("espn_league", "NCAAF").eq("espn_team_id", id);
+    if (error) { errors++; } else updated++;
+  }
+  const conferences = Array.from(new Set(Array.from(teamConf.values()).map((c) => c.name))).sort();
+  return { updated, errors, teams_seen: teamConf.size, conferences, log };
+}
+
 Deno.serve(async (req) => {
   const authErr = requireCronSecret(req);
   if (authErr) return authErr;
   const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   let leagues = DEFAULT_LEAGUES;
+  let mode = "seed";
   try {
     const body = await req.json();
+    if (body?.mode) mode = String(body.mode);
     if (Array.isArray(body?.leagues) && body.leagues.length) leagues = body.leagues;
   } catch { /* no body -> defaults */ }
+
+  if (mode === "conferences") {
+    return new Response(JSON.stringify(await captureConferences(db, []), null, 2), {
+      headers: { "content-type": "application/json" },
+    });
+  }
 
   const log: string[] = [];
   const summary: Record<string, number> = {};
