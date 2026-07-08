@@ -1,8 +1,8 @@
 # Terminal-2
 
-Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Broadway.com, ESPN, NWS. Jointly maintained by six peer bot lanes — a platform substrate (**A1** data plane · **B1** build/guards/docs governance) plus products (**D0** terminal · **D1** store · **D3** broadway · **D4** Exos/Bridge) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
+Ticket-trading intelligence + primary-market ticketing platform. FastAPI on Render + Supabase Postgres + edge functions + cron-driven ingest from TEvo, SeatGeek, TickPick, Vivid, SeatData, TicketsData, GoTickets, AXS, Eventbrite, Broadway.com, Bandsintown, ESPN, NWS, FRED, X, Wikipedia. Jointly maintained by seven peer bot lanes — a platform substrate (**A1** data plane · **B1** build/guards/docs governance) plus products (**D0** terminal · **D1** store · **D3** broadway · **D4** Exos/Bridge · **D5** fantasy) — coordinating through `public.bot_chat`, with recurring procedures encoded as executable **workflow skills** (`.claude-plugins/`).
 
-> **Doc version:** v2.10.0 (2026-07-03; retired the last "prod-DB apply stays A1-centralized" gatekeeper phrase in the reading-order intro — missed in the #785 sweep; now aligns with CLAUDE.md / PROJECT_BIBLE §2.1). · v2.9.0 (2026-07-03; merged #778 drift fixes — intro + reading-order reflect the six-lane model; repo-layout: `server.py` route list corrected, `*_client.py` count 9→10 (+`bandsintown`)) · v2.8.0 (2026-07-03; documented the repo license split — root proprietary `LICENSE` + MIT carve-out for `static/lib/`). · v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.11.0 (2026-07-08; full drift sweep — intro + reading-order now name **seven** lanes with the new **D5 · Fantasy** product (sports FE `static/fantasy/*` served at `/fantasy/` via the storefront shell); intro + architecture-diagram source lists add Eventbrite / Bandsintown / FRED / X / Wikipedia (and ESPN/NWS in the diagram); repo-layout router list adds `bandsintown`/`eventbrite`/`d0_sales`/`open_notebook` + the `/fantasy` page routes; the `static/` tree gains `fantasy/` and the hub roster is corrected to the live **4-surface** landing (Terminal/Fantasy/Store/Bridge — Undelivered+Orders folded into the Terminal)). · v2.10.0 (2026-07-03; retired the last "prod-DB apply stays A1-centralized" gatekeeper phrase in the reading-order intro — missed in the #785 sweep; now aligns with CLAUDE.md / PROJECT_BIBLE §2.1). · v2.9.0 (2026-07-03; merged #778 drift fixes — intro + reading-order reflect the six-lane model; repo-layout: `server.py` route list corrected, `*_client.py` count 9→10 (+`bandsintown`)) · v2.8.0 (2026-07-03; documented the repo license split — root proprietary `LICENSE` + MIT carve-out for `static/lib/`). · v2.7.0 (2026-07-02; added the `md-table-check` gate to *Doc-writing rules* — `scripts/check_md_tables.py` fails malformed canonical-doc tables). · v2.6.0 (2026-06-28; repo-layout: route decomposition 100%, core/ helper pass, tests/frontend Playwright net, the 5-surface hub as the Render landing). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 ---
 
@@ -15,7 +15,7 @@ A cold-started bot reads **two** docs at session start (you don't pre-know your 
 
 On-demand references (read only when relevant, not at session start): **`RESOURCES_BIBLE.md`** (what exists) · **`docs/d0_terminal_build.md`** (build the D0 terminal frontend).
 
-**Six peer lanes** (2026-07-02 consolidation): platform substrate **A1** (data plane) · **B1** (build/guards/docs governance); products **D0** (terminal) · **D1** (store) · **D3** (broadway) · **D4** (Exos/Bridge). C1 folded into B1, D2 into D0, E1 into A1 — flat lane identifiers, no hierarchy. Push to `main` is **per-task** (no sole-pusher lane; prod-DB apply is per-task by any session under operator direction — no A1 gate). D0 is the priority active lane; D1/D3/D4 paused until D0 ships. Full ownership detail → `PROJECT_BIBLE.md §2`.
+**Seven peer lanes** (D5 fantasy added 2026-07; 2026-07-02 consolidation otherwise): platform substrate **A1** (data plane) · **B1** (build/guards/docs governance); products **D0** (terminal) · **D1** (store) · **D3** (broadway) · **D4** (Exos/Bridge) · **D5** (fantasy). C1 folded into B1, D2 into D0, E1 into A1 — flat lane identifiers, no hierarchy. Push to `main` is **per-task** (no sole-pusher lane; prod-DB apply is per-task by any session under operator direction — no A1 gate). D0 is the priority active lane; D1/D3/D4 paused until D0 ships. Full ownership detail → `PROJECT_BIBLE.md §2`.
 
 Then check **[`KANBAN.md`](KANBAN.md)** for what's actionable right now (don't claim a row marked `[IN PROGRESS by <lane>]`).
 
@@ -62,8 +62,9 @@ Mirrors `CLAUDE.md §6` (loaded every session) — repeated here because this is
 Browser ─► Render (FastAPI + static) ─► Supabase (Postgres + Auth + Edge Functions)
                  │         │                        ▲
                  │         └─ same-origin session ──┘
-                 ├─► TEvo / SG / TickPick / Vivid / SeatData / TicketsData /
-                 │   GoTickets / AXS / Broadway     (read-only — no writes, CLAUDE.md §2)
+                 ├─► TEvo / SG / TickPick / Vivid / SeatData / TicketsData / GoTickets /
+                 │   AXS / Eventbrite / Broadway / Bandsintown / ESPN / NWS / FRED / X /
+                 │   Wikipedia                      (read-only — no writes, CLAUDE.md §2)
                  │
            ┌── pg_cron jobs ─► Edge Functions ─► upstream APIs ─┐
            │                                                    │
@@ -83,12 +84,13 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 │                           routers/; server.py keeps only /healthz, /webhooks/render,
 │                           /api/admin/scheduler-watchdog/status):
 │                           site_essentials · catalog · lists · broker · seatdata ·
-│                           axs · seatgeek · misc (+ /api/public/config) · shares ·
+│                           axs · seatgeek · bandsintown · eventbrite · d0_sales ·
+│                           open_notebook · misc (+ /api/public/config) · shares ·
 │                           seatmap · retail_chat · store (/api/store/*) · pages
-│                           (/, /home, /terminal[/*], /bridge[/*], /version.json) ·
-│                           store_test (/store/test/*) · admin (/api/collect, /api/admin/*) ·
-│                           storefront_pages (/store, /store/event, /store/{discover,tour},
-│                           legal, /s/{id})
+│                           (/, /home, /terminal[/*], /fantasy[/*], /bridge[/*],
+│                           /version.json) · store_test (/store/test/*) ·
+│                           admin (/api/collect, /api/admin/*) · storefront_pages
+│                           (/store, /store/event, /store/{discover,tour}, legal, /s/{id})
 ├── core/                   shared runtime imported by server.py + routers/ +
 │                           *_client.py — one-directional (core never imports
 │                           server): config · auth · helpers · broker_helpers ·
@@ -112,9 +114,12 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 ├── static/
 │   ├── terminal/           D0 — broker terminal (build manual: docs/d0_terminal_build.md)
 │   ├── store/              D1 — consumer retail storefront (store/test/ = non-prod sandbox)
-│   ├── home/ undelivered/  D0 hub (the 5-surface VibePass landing served at / —
-│   │                       Terminal/Undelivered/Orders/Store/Bridge; the Render
-│   │                       landing when STOREFRONT_AS_LANDING=false) · D2 undelivered
+│   ├── fantasy/            D5 — fantasy (sports) surface, served at /fantasy/ via the
+│   │                       storefront shell (spun off from the terminal 2026-07)
+│   ├── home/ undelivered/  D0 hub (the 4-surface VibePass landing served at / —
+│   │                       Terminal/Fantasy/Store/Bridge; the Render landing when
+│   │                       STOREFRONT_AS_LANDING=false. Undelivered+Orders folded
+│   │                       into the Terminal) · D2 undelivered
 │   ├── bridge/             D4 — Exos Bridge SPA build artifact (committed)
 │   └── _shared/            cross-surface utilities
 ├── supabase/
