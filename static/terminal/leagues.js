@@ -60,7 +60,12 @@
   ];
   const EXTRA_KEYS = new Set(EXTRA_LEAGUES.map(l => l.key));
 
+  // Broadway is a performer CATEGORY, not a home/road league — it gets a show
+  // roster + a performance slate, but not the sports-only demand/blind panels.
+  const BROADWAY_KEY = 'Broadway';
+
   let _teamLeagues = [];   // [{ key, label, teams }] from /api/broker/leagues
+  let _perfIndex = null;   // cached get_broker_performer_index payload (Broadway roster)
   let _leagueKpis = null;  // { LEAGUE: {total_revenue, tickets_sold, ...} } from get_d0_league_kpis
   let _curLeague = null;   // active league key (so a late KPI load can paint its strip)
   const $ = id => document.getElementById(id);
@@ -141,7 +146,9 @@
     const Auth = window.TerminalAuth;
     if (!Auth || !Auth.client) { sec.hidden = true; return; }
     sec.hidden = false;
-    $('lgSlateTitle').textContent = 'GAME SLATE — NEXT 30 DAYS';
+    const isBway = key === BROADWAY_KEY;
+    const unit = isBway ? 'performances' : 'games';
+    $('lgSlateTitle').textContent = (isBway ? 'UPCOMING PERFORMANCES' : 'GAME SLATE') + ' — NEXT 30 DAYS';
     $('lgSlateMeta').textContent = '';
     $('lgSlateBody').innerHTML = '<div class="empty">loading…</div>';
     const res = await Auth.client.rpc('get_league_slate',
@@ -150,12 +157,12 @@
     if (res.error) { sec.hidden = true; return; }   // 42883 / forbidden → hide honestly
     const rows = res.data || [];
     if (!rows.length) {
-      $('lgSlateBody').innerHTML = '<div class="empty">no upcoming games in the next 30 days</div>';
+      $('lgSlateBody').innerHTML = `<div class="empty">no upcoming ${unit} in the next 30 days</div>`;
       return;
     }
     const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
     const blind = r => (+r.tickets_count || 0) > 0 && (+r.owned_tickets_count || 0) === 0;
-    $('lgSlateMeta').textContent = `${rows.length} games · ${rows.filter(blind).length} we own 0`;
+    $('lgSlateMeta').textContent = `${rows.length} ${unit} · ${rows.filter(blind).length} we own 0`;
     const trs = rows.slice(0, 80).map(r => {
       const d = T.daysUntil(r.occurs_at_local);
       const owned = +r.owned_tickets_count || 0;
@@ -191,6 +198,7 @@
   function pickInitial(want) {
     if (want) {
       if (isRacing(want)) return want;
+      if (want === BROADWAY_KEY || want.toLowerCase() === 'broadway') return BROADWAY_KEY;
       const hit = _teamLeagues.find(l => String(l.key).toLowerCase() === want.toLowerCase());
       if (hit) return hit.key;
       const ex = EXTRA_LEAGUES.find(l => l.key.toLowerCase() === want.toLowerCase());
@@ -210,7 +218,8 @@
     const extras = EXTRA_LEAGUES.filter(e => !_teamLeagues.some(l => l.key === e.key));
     const teamBtns =
       _teamLeagues.map(l => btn(l.key, l.label, (l.teams ? l.teams + ' tm' : 'teams'), 'team')).join('') +
-      extras.map(l => btn(l.key, l.label, l.sub, 'team')).join('');
+      extras.map(l => btn(l.key, l.label, l.sub, 'team')).join('') +
+      btn(BROADWAY_KEY, 'BROADWAY', 'Theater', 'broadway');
     const raceBtns = RACING_SERIES.map(s => btn(s.key, s.label, s.sub, 'racing')).join('');
     picker.innerHTML = teamBtns + (teamBtns && raceBtns ? '<div class="lg-sep"></div>' : '') + raceBtns;
     picker.querySelectorAll('.lg-btn').forEach(b =>
@@ -230,6 +239,7 @@
     history.replaceState(null, '', url);
     $('lgResults').setAttribute('hidden', '');
     if (isRacing(key)) loadRacing(key);
+    else if (key === BROADWAY_KEY) loadBroadway(key);
     else loadTeamLeague(key);
   }
 
@@ -254,6 +264,7 @@
   // ------------------------------------------------------------------
   async function loadTeamLeague(key) {
     _curLeague = key;
+    $('lgGrid').hidden = false;      // restore the ranking/blind-spots grid (Broadway hides it)
     renderSalesStrip(key);           // paint from cache if KPIs already loaded
     loadSlate(key).catch(e => console.error('[slate]', e));   // per-game slate, parallel
     const isExtra = EXTRA_KEYS.has(key);
@@ -448,6 +459,59 @@
   }
 
   // ------------------------------------------------------------------
+  // Broadway — a performer category (shows), not a home/road league.
+  // Roster from the performer directory (Broadway bucket) + the shared game
+  // slate (show performances). Sports-only panels (demand/blind/sales) hidden.
+  // ------------------------------------------------------------------
+  async function getPerformerIndex() {
+    if (_perfIndex) return _perfIndex;
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_broker_performer_index');
+    if (res.error) throw new Error(res.error.message || 'performer index error');
+    _perfIndex = res.data || {};
+    return _perfIndex;
+  }
+
+  async function loadBroadway(key) {
+    _curLeague = key;
+    setHero('BWAY', 'Broadway', 'Theater · shows & upcoming performances');
+    T.setStatus('Loading Broadway…');
+    $('lgGrid').hidden = true;       // no home/road ranking or blind-spots for theater
+    $('lgSales').hidden = true;      // Broadway isn't in d0_league_summary
+    $('lgPerformers').hidden = false;
+    $('lgPerformersTitle').textContent = 'SHOWS';
+    $('lgPerformersMeta').textContent = '';
+    $('lgPerformersBody').innerHTML = '<div class="empty">loading…</div>';
+    // Upcoming performances reuse the shared slate panel + RPC (Broadway anchor).
+    loadSlate(key).catch(e => console.error('[slate]', e));
+
+    let idx;
+    try { idx = await getPerformerIndex(); }
+    catch (e) {
+      if (_curLeague !== key) return;
+      renderStrip([{ n: '—', l: 'shows' }]);
+      $('lgPerformersBody').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      T.setStatus(e.message, 'err');
+      return;
+    }
+    if (_curLeague !== key) return;
+    const bucket = (idx.leagues && idx.leagues.Broadway) || [];
+    const shows = bucket.map(b => ({
+      id: b.tevo_performer_id,
+      name: b.display_name || b.performer_name || b.name || '—',
+      events: b.events_count_next_90d || 0,
+      conf: null, div: null,
+    }));
+    const upcoming = shows.reduce((s, x) => s + (x.events || 0), 0);
+    renderStrip([
+      { n: T.fmtNum(shows.length),  l: 'shows' },
+      { n: T.fmtNum(upcoming),      l: 'perfs · next 90d' },
+    ]);
+    renderPerformers(shows, 'Broadway', false);
+    T.setStatus('Loaded', 'ok');
+  }
+
+  // ------------------------------------------------------------------
   // Racing series — the merged former Racing page (unchanged behaviour)
   // ------------------------------------------------------------------
   async function loadRacing(series) {
@@ -455,6 +519,7 @@
     T.setStatus('Loading ' + (RACING_NAME[series] || series) + '…');
     // Drivers aren't TEvo performers, and racing has no d0_sales_fact league KPIs.
     _curLeague = null;
+    $('lgGrid').hidden = false;      // racing uses the grid for SCHEDULE + STANDINGS
     $('lgPerformers').hidden = true;
     $('lgSales').hidden = true;
     $('lgSlate').hidden = true;      // racing uses the SCHEDULE panel below instead
