@@ -58,6 +58,13 @@ export interface Organization {
   // exos_follow_org/unfollow RPCs.
   description?: string;
   followersCount?: number;
+  // ISO 3166-1 alpha-2 country code (default 'US', mig 20260709120100). Drives
+  // currency defaults + tax-jurisdiction logic. Optional in the type because
+  // legacy org rows predate the column.
+  country?: string;
+  // ISO 4217 currency code (default 'USD', mig 20260709120100). Optional for
+  // the same legacy-row reason as country.
+  currency?: string;
   // Phase 2 white-label. Filled in by Sprint 2.
   theme?: {
     logoUrl?: string;
