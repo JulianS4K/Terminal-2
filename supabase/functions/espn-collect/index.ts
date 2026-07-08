@@ -1,4 +1,11 @@
-// Supabase Edge Function: espn-collect (v10 — division-nested standings)
+// Supabase Edge Function: espn-collect (v11 — broadcast/national-TV capture)
+//
+// v11 (2026-07-08): event snapshots now stash broadcast info from the ESPN
+// summary payload into meta->'broadcast' ({ networks[], national }) — no writer
+// SQL change (rides the existing meta jsonb through upsert_espn_event_snapshot).
+// Feeds zone_price_observations.is_national_tv / broadcast_networks via
+// enrich_zone_price_observations() group 8 (mig 20260708175000). Broadcast is
+// added to the change-detection hash so a flex-to-national move re-snapshots.
 //
 // v10 (2026-07-08): standings are now fetched with ?level=3 so the payload nests
 // root > conference > division > team for MLB/NBA/NFL/NHL (the default only
@@ -105,8 +112,30 @@ function injFields(r: any): string {
 }
 function eventFields(r: any): string {
   return [r.state, r.status_short, r.home_score, r.away_score, r.spread, r.over_under,
-          r.home_ml, r.away_ml, r.home_win_prob, r.attendance]
+          r.home_ml, r.away_ml, r.home_win_prob, r.attendance,
+          r.meta?.broadcast?.national, (r.meta?.broadcast?.networks ?? []).join(",")]
     .map(v => v == null ? "" : String(v)).join("|");
+}
+
+// Broadcast (national-TV demand signal) from an ESPN summary payload.
+// summary.broadcasts is [{ market, names[] }] (market: "national"|"home"|"away");
+// fall back to header competition broadcasts ({ media:{shortName}, market:{type} }).
+function extractBroadcast(summary: any): { networks: string[]; national: boolean } | null {
+  const raw: any[] = Array.isArray(summary?.broadcasts) && summary.broadcasts.length
+    ? summary.broadcasts
+    : (summary?.header?.competitions?.[0]?.broadcasts ?? []);
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const marketOf = (b: any) =>
+    String((typeof b?.market === "string" ? b.market : b?.market?.type) ?? "").toLowerCase();
+  const networks = [...new Set(
+    raw.flatMap((b: any) =>
+      Array.isArray(b?.names) ? b.names
+      : b?.media?.shortName ? [b.media.shortName]
+      : []
+    ).filter(Boolean).map((n: any) => String(n)),
+  )];
+  if (networks.length === 0) return null;
+  return { networks, national: raw.some((b: any) => marketOf(b).includes("national")) };
 }
 
 async function get(path: string, query?: Record<string, string>) {
@@ -548,6 +577,10 @@ async function collectEventSnapshots(db: any, state: CollectorState, opts: { gam
       away_ml: pc?.awayTeamOdds?.moneyLine ?? null,
       home_win_prob: last?.homeWinPercentage != null ? Number(last.homeWinPercentage) : null,
       attendance: summary.gameInfo?.attendance ?? null,
+      meta: (() => {
+        const b = extractBroadcast(summary);
+        return b ? { broadcast: b } : {};
+      })(),
     };
     const hash = await sha256short(eventFields(row));
     const { data: ret, error } = await db.rpc("upsert_espn_event_snapshot", {
