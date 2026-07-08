@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260708180000 — get_event_zones(): live per-zone metrics RPC
+-- Migration 20260708180030 — get_event_zones(): live per-zone metrics RPC
 --
 -- Lane:     A1 data plane (SECDEF read RPC; consumed by the D0 event page
 --           "Zone Metrics" panel).
