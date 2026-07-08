@@ -35,8 +35,13 @@ def _client():
 def test_operator_disabled_platform_raises():
     with pytest.raises(td.TicketsDataError, match="operator-disabled"):
         td._validate_platform("dice")
-    with pytest.raises(td.TicketsDataError, match="operator-disabled"):
-        td._validate_platform("eventbrite")
+
+
+def test_eventbrite_platform_enabled():
+    # Re-enabled 2026-07-08 (operator directive) — no longer operator-disabled.
+    assert "eventbrite" not in td.OPERATOR_DISABLED_PLATFORMS
+    assert td._validate_platform("eventbrite") == "eventbrite"
+    assert td._validate_platform(" Eventbrite ") == "eventbrite"
 
 
 # ---------- _vault_secret exception path (lines 116-118) ----------
