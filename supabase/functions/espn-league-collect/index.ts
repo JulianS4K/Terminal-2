@@ -374,10 +374,16 @@ async function collectStats(db: any, state: TxnState) {
 
 // CFL + NCAAF added 2026-07-08 (football fantasy ruleset applies to both). NWSL
 // is soccer with no fantasy ruleset and sparse per-game logs, so it stays out.
-const GAMELOG_LEAGUES = ["MLB", "NBA", "NFL", "WNBA", "CFL", "NCAAF"];
+// NHL added 2026-07-08: the hockey fantasy ruleset/profile ship in mig
+// 20260705180000; this wires the gamelog primitive so NHL athletes get scored
+// stat lines. The parser below is sport-agnostic (stores whatever ESPN `labels`
+// it returns), so no hockey-specific parsing is needed — but the NHL ruleset
+// keys in that migration are PROVISIONAL and must be reconciled against the
+// real hockey `labels` once these rows land (see PR #806's follow-up note).
+const GAMELOG_LEAGUES = ["MLB", "NBA", "NFL", "WNBA", "CFL", "NCAAF", "NHL"];
 const LEAGUE_SLUG: Record<string, string> = {
   MLB: "baseball/mlb", NBA: "basketball/nba", WNBA: "basketball/wnba", NFL: "football/nfl",
-  CFL: "football/cfl", NCAAF: "football/college-football",
+  CFL: "football/cfl", NCAAF: "football/college-football", NHL: "hockey/nhl",
 };
 
 async function collectGamelog(db: any, state: TxnState, limit: number) {
