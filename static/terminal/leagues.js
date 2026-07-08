@@ -550,8 +550,9 @@
   async function loadRacing(series) {
     setHero(series === 'f1' ? 'F1' : 'NASCAR', RACING_NAME[series] || series, RACING_SUB[series] || 'Motorsport');
     T.setStatus('Loading ' + (RACING_NAME[series] || series) + '…');
-    // Ticketed performers/venues/events exist only for series with TEvo
-    // inventory (F1's N.A. Grands Prix); NASCAR is ESPN-schedule-only.
+    // F1 gets a performer/slate overlay (its GPs are distinct TEvo performers);
+    // NASCAR instead gets tickets merged inline onto the ESPN schedule rows
+    // (all its races share one performer, matched by venue/date — see below).
     const ticketLeague = RACING_TICKET_LEAGUE[series] || null;
     // _curLeague gates loadSlate's stale-guard; set to the ticket league for F1
     // (so its slate paints), null for NASCAR. Racing has no d0_sales_fact KPIs.
@@ -572,13 +573,21 @@
     $('lgSecondaryBody').innerHTML = '<div class="empty">loading…</div>';
 
     const Auth = window.TerminalAuth;
-    const [ev, st] = await Promise.all([
+    // NASCAR races carry TEvo ticket inventory matched by (series, date) — pull
+    // it alongside the schedule so each row shows live get-in + a deep-link.
+    const isNascar = series.indexOf('nascar') === 0;
+    const [ev, st, tix] = await Promise.all([
       Auth.client.rpc('get_espn_racing_events', { p_series: series, p_limit: 60 }),
       Auth.client.rpc('get_espn_racing_standings', { p_series: series, p_limit: 60 }),
+      isNascar ? Auth.client.rpc('get_nascar_tickets', { p_series: series })
+               : Promise.resolve({ data: [] }),
     ]);
     if (_curView !== series) return;   // switched series/league mid-fetch — don't paint stale grid
+    // Map ticket rows by espn_event_id for O(1) merge onto the schedule rows.
+    const ticketsByEspn = {};
+    if (tix && !tix.error) (tix.data || []).forEach(t => { ticketsByEspn[String(t.espn_event_id)] = t; });
     if (ev.error) { T.setStatus(ev.error.message, 'err'); $('lgPrimaryBody').innerHTML = `<div class="empty">${escapeHtml(ev.error.message)}</div>`; }
-    else renderSchedule(ev.data || []);
+    else renderSchedule(ev.data || [], ticketsByEspn);
     if (st.error) { T.setStatus(st.error.message, 'err'); $('lgSecondaryBody').innerHTML = `<div class="empty">${escapeHtml(st.error.message)}</div>`; }
     else renderStandings(st.data || []);
     if (!ev.error && !st.error) T.setStatus('Loaded', 'ok');
@@ -625,8 +634,10 @@
     return '<span class="race-badge sched">SCHED</span>';
   }
 
-  function renderSchedule(races) {
+  function renderSchedule(races, ticketsByEspn) {
     const races_ = races || [];
+    const tix = ticketsByEspn || {};
+    const withTix = Object.keys(tix).length;
     const run = races_.filter(r => r.completed).length;
     const upc = races_.filter(r => !r.completed).length;
     const next = races_.filter(r => !r.completed)
@@ -637,20 +648,38 @@
       { n: T.fmtNum(upc),           l: 'upcoming' },
       { n: (next != null ? 'T-' + next + 'd' : '—'), l: 'next race' },
     ]);
-    $('lgPrimaryMeta').textContent = races_.length ? `${races_.length} races · ${run} run` : '';
+    $('lgPrimaryMeta').textContent = races_.length
+      ? `${races_.length} races · ${run} run${withTix ? ' · ' + withTix + ' ticketed' : ''}` : '';
     if (!races_.length) { $('lgPrimaryBody').innerHTML = '<div class="empty">no races on file</div>'; return; }
+    // Only show the ticket columns for series that actually have inventory (NASCAR).
+    const showTix = withTix > 0;
     const rows = races_.map(r => {
       const done = r.completed;
       const attrs = done ? ` class="race-done race-click" data-event="${escapeHtml(String(r.espn_event_id))}" data-name="${escapeHtml(r.short_name || r.name || '')}"` : '';
+      const t = tix[String(r.espn_event_id)];
+      // ESPN's venue is often null; fall back to the matched TEvo speedway name.
+      const track = r.venue || (t && t.venue_name) || '';
+      let tixCell = '';
+      if (showTix) {
+        if (t && t.event_id) {
+          const owned = +t.owned_tickets_count || 0;
+          const px = t.getin_price != null ? money(t.getin_price) : 'view';
+          const ownTag = owned ? ` <span class="ours" title="tickets we own">${T.fmtNum(owned)}◆</span>` : '';
+          tixCell = `<td class="num"><a href="event.html?event=${t.event_id}" title="open ticket page"${done ? ' onclick="event.stopPropagation()"' : ''}>${escapeHtml(px)} ▸</a>${ownTag}</td>`;
+        } else {
+          tixCell = '<td class="num muted">—</td>';
+        }
+      }
       return `<tr${attrs}>
         <td class="muted">${r.event_date ? T.fmtDate(r.event_date) : '—'}</td>
         <td>${escapeHtml(r.short_name || r.name || '—')}${done ? ' <span class="race-view">results ▸</span>' : ''}</td>
         <td>${raceStatusBadge(r)}</td>
-        <td class="muted small">${escapeHtml(r.venue || '')}</td>
+        <td class="muted small">${escapeHtml(track)}</td>
+        ${tixCell}
       </tr>`;
     }).join('');
     $('lgPrimaryBody').innerHTML = `<div style="overflow-x:auto"><table class="espn-recent race-tbl">
-      <thead><tr><th>Date</th><th>Race</th><th>Status</th><th>Track</th></tr></thead>
+      <thead><tr><th>Date</th><th>Race</th><th>Status</th><th>Track</th>${showTix ? '<th class="num" title="cheapest ticket (get-in) · ◆ = tickets we own">Tickets</th>' : ''}</tr></thead>
       <tbody>${rows}</tbody></table></div>`;
     $('lgPrimaryBody').querySelectorAll('tr.race-click').forEach(tr =>
       tr.addEventListener('click', () => loadResults(tr.dataset.event, tr.dataset.name)));
