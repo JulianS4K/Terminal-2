@@ -171,3 +171,21 @@ def test_eventbrite_single_event_not_found(client, monkeypatch):
     _db(monkeypatch, [])
     res = client.get("/api/eventbrite/event/does-not-exist")
     assert res.status_code == 404
+
+
+def _detail_with_summary(client, monkeypatch, summary):
+    _db(monkeypatch, [{"td_event_id": "1", "event_name": "x", "matched_tevo_event_id": None,
+                       "raw": {"summary": summary}}])
+    return client.get("/api/eventbrite/event/1").json()
+
+
+def test_eventbrite_genre_parse_robustness(client, monkeypatch):
+    # Real tail marker → the genre value only.
+    assert _detail_with_summary(client, monkeypatch, "7pm • 16+ | Genre: Alternative")["genre"] == "Alternative"
+    # An earlier "Genre:" mention in the blurb must not win over the tail marker.
+    assert _detail_with_summary(
+        client, monkeypatch, "A genre-bending night — Genre: bending | Genre: Electronic")["genre"] == "Electronic"
+    # A substring like "SubGenre:" (no pipe marker) must not be picked up.
+    assert _detail_with_summary(client, monkeypatch, "SubGenre: Indie vibes")["genre"] is None
+    # No marker at all → None.
+    assert _detail_with_summary(client, monkeypatch, "Just a show, no genre tag")["genre"] is None

@@ -11,9 +11,15 @@ require_auth (owned by server.py); no upstream API calls happen here.
 """
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException
+
+# Eventbrite folds the genre into the summary tail as "... | Genre: X". Anchor on
+# the pipe marker (or string start) and take the value through end-of-string, so a
+# stray "Genre:"/"SubGenre:" mention earlier in the blurb can't be mistaken for it.
+_GENRE_RE = re.compile(r"(?:^|\|)\s*Genre:\s*(.+?)\s*$")
 
 
 def _num(v):
@@ -113,8 +119,8 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
         venue = raw.get("venue") if isinstance(raw.get("venue"), dict) else {}
         refund = raw.get("refund_policy") if isinstance(raw.get("refund_policy"), dict) else {}
         summary = raw.get("summary") or ""
-        # Eventbrite folds the genre into the summary tail as "... | Genre: X".
-        genre = summary.split("Genre:", 1)[1].strip() or None if "Genre:" in summary else None
+        _gm = _GENRE_RE.search(summary)
+        genre = _gm.group(1) if _gm else None
         return {
             "td_event_id": r.get("td_event_id"),
             "event_url": r.get("event_url"),

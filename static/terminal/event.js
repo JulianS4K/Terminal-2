@@ -427,7 +427,11 @@
   function renderEbEvent(ebId, ev) {
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
     const name = (ev && ev.event_name) || ('Eventbrite event ' + ebId);
-    const dateStr = ev && (ev.start_date || ev.event_date);
+    // Eventbrite carries start_date as space-separated local time ("YYYY-MM-DD HH:MM").
+    // Normalize the space to 'T' so strict engines (Safari/WebKit) parse it instead of
+    // returning "Invalid Date"; the date-only event_date fallback already parses fine.
+    const rawDate = ev && (ev.start_date || ev.event_date);
+    const dateStr = typeof rawDate === 'string' ? rawDate.replace(' ', 'T') : rawDate;
     set('evTitle', name);
     set('evVenue', (ev && ev.venue_name) || '—');
     set('evDate', dateStr ? T.fmtDate(dateStr) : '—');
