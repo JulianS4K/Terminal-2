@@ -66,6 +66,11 @@
     // its latest snapshot get-in / price band / listing depth. Backed by
     // /api/axs/events (service-role read; axs_* tables are RLS-locked). 2026-06-20.
     { id: 'axs',       label: 'AXS',       href: 'axs.html' },
+    // Eventbrite — organizer events discovered via the TicketsData /events feed
+    // (td_discovered_events, platform=eventbrite) with face price band +
+    // sold-out / availability. Backed by /api/eventbrite/events (service-role
+    // read; td_discovered_events is RLS-locked). 2026-07-08.
+    { id: 'eventbrite', label: 'EVENTBRITE', href: 'eventbrite.html' },
     // Subs — substitution checker. Given a sold ticket (event/section/row/qty)
     // find the cheapest acceptable cover: same-section same-or-better row, then
     // a better-section fallback. Backed by /api/broker/event/{id}/substitutions.

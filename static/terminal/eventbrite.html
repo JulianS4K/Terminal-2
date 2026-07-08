@@ -14,11 +14,11 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — AXS Events</title>
+  <title>Terminal — Eventbrite Events</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
   <link rel="stylesheet" href="style.css?v=20260707a" />
 </head>
-<body data-page="axs">
+<body data-page="eventbrite">
 
   <header class="topbar">
     <span class="brand">TERMINAL · D0</span>
@@ -27,49 +27,45 @@
 
   <main class="wrap movers">
 
-    <!-- AXS tracked events — the full axs_events registry enriched with each
-         event's latest snapshot (event/venue, get-in, price band, listing /
-         section counts, primary vs resale seats). Backed by /api/axs/events
-         (service-role read; axs_* tables are RLS service-role-only, so the
-         backend is the only path the user-JWT client has to this set).
-         AXS is a PRIMARY box-office ticketer (not resale) — see CLAUDE/§3. -->
-    <section id="axs-events">
+    <!-- Eventbrite organizer events — discovered via the TicketsData /events feed
+         (platform=eventbrite) for each tracked organizer, staged in
+         td_discovered_events. Backed by /api/eventbrite/events (service-role read;
+         td_discovered_events is RLS service-role-only, so the backend is the only
+         path the user-JWT client has). Eventbrite is a PRIMARY ticketer; the feed
+         carries face price band + sold-out / availability (discovery only — no
+         /fetch seat-level inventory pull yet). -->
+    <section id="eb-events">
       <div class="panel-title row">
-        <span>AXS EVENTS — TRACKED BOX OFFICE</span>
-        <span class="muted small" id="axsEventsCount"></span>
+        <span>EVENTBRITE — ORGANIZER EVENTS</span>
+        <span class="muted small" id="ebEventsCount"></span>
       </div>
       <div class="muted small" style="margin-bottom:8px">
-        Every event in the <code>axs_events</code> registry (sourced from the
-        AXS_RESALE workbook), drained into <code>axs_event_snapshots</code> via the
-        AXS <code>/fetch</code> pull (~40s + 1 credit each — not a firehose). Prices
-        are primary box-office get-in / band; <em>resale</em> seats are the AXS
-        Marketplace subset. Click an event to open its terminal page (when mapped to
-        a canonical TEvo id) or the live AXS listing.
+        Events discovered from the TicketsData <code>/events</code> feed for the
+        tracked Eventbrite organizer(s), staged in <code>td_discovered_events</code>.
+        Prices are the organizer's face price band; <em>sold out</em> / <em>on sale</em>
+        reflect the feed's live availability. Click an event to open its terminal
+        page (when mapped to a canonical TEvo id) or the live Eventbrite listing.
       </div>
       <div class="ctrl-row">
         <div class="ctrl-group">
-          <span class="ctrl-lbl">SHOW</span>
-          <button class="ctrl-btn is-active" data-axs-active="1">Active</button>
-          <button class="ctrl-btn"           data-axs-active="0">All</button>
-        </div>
-        <div class="ctrl-group">
           <span class="ctrl-lbl">DATE</span>
-          <button class="ctrl-btn is-active" data-axs-past="0">Upcoming</button>
-          <button class="ctrl-btn"           data-axs-past="1">All</button>
+          <button class="ctrl-btn is-active" data-eb-past="0">Upcoming</button>
+          <button class="ctrl-btn"           data-eb-past="1">All</button>
         </div>
         <div class="ctrl-group">
-          <span class="ctrl-lbl">HOLDINGS</span>
-          <button class="ctrl-btn is-active" data-axs-owned="0">All</button>
-          <button class="ctrl-btn"           data-axs-owned="1">We hold</button>
+          <span class="ctrl-lbl">AVAIL</span>
+          <button class="ctrl-btn is-active" data-eb-avail="all">All</button>
+          <button class="ctrl-btn"           data-eb-avail="onsale">On sale</button>
+          <button class="ctrl-btn"           data-eb-avail="soldout">Sold out</button>
         </div>
         <div class="ctrl-group">
           <span class="ctrl-lbl">FILTER</span>
-          <input type="search" id="axsFilter" class="ctrl-input"
+          <input type="search" id="ebFilter" class="ctrl-input"
                  placeholder="event / venue…" autocomplete="off" spellcheck="false" />
         </div>
       </div>
-      <div id="axsEventsSummary" class="muted small" style="margin-bottom:6px"></div>
-      <div id="axsEventsBody"><div class="empty">loading…</div></div>
+      <div id="ebEventsSummary" class="muted small" style="margin-bottom:6px"></div>
+      <div id="ebEventsBody"><div class="empty">loading…</div></div>
     </section>
 
   </main>
@@ -80,6 +76,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260708eb"></script>
-  <script src="axs.js?v=20260623a"></script>
+  <script src="eventbrite.js?v=20260708a"></script>
 </body>
 </html>

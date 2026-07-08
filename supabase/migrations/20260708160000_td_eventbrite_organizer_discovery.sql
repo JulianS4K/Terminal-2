@@ -6,9 +6,9 @@
 --           TicketsData /events = 1 credit/call, budget-gated by td_budget_ok() ·
 --   pre: 20260609130000 (td_discover_targets + td_events_discover[_drain])
 --
--- ## NOT YET APPLIED — author-only migration file.
---    Pending A1 review + explicit operator apply (CLAUDE.md §1). Validate on a
---    Supabase branch (copy-on-write fork) before any prod apply.
+-- ## APPLIED via MCP 2026-07-08 (operator-directed). Idempotent + reversible
+--    (guarded DROP/ADD CONSTRAINT + INSERT ... WHERE NOT EXISTS); re-apply is a
+--    no-op. This file is the codification.
 --
 -- WHY ───────────────────────────────────────────────────────────────────────
 -- Wire Eventbrite into the TicketsData discovery pipeline, starting with a
