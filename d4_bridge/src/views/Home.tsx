@@ -89,7 +89,12 @@ export default function Home() {
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+
+  // Local-day key ("y-m-d") used to match an event's date against a selected
+  // date pill. Local (not UTC) so "tonight" means the viewer's tonight.
+  const dayKey = (dt: Date) => `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
 
   // Client-side fuzzy filter — hits the in-memory event set so it
   // stays sub-millisecond even with a few hundred events. We filter
@@ -99,12 +104,18 @@ export default function Home() {
   // an Algolia-style index.
   const filteredEvents = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    if (term.length === 0) return events;
     return events.filter((ev) => {
-      const haystack = `${ev.title || ''} ${ev.location || ''} ${ev.category || ''}`.toLowerCase();
-      return haystack.includes(term);
+      if (term.length > 0) {
+        const haystack = `${ev.title || ''} ${ev.location || ''} ${ev.category || ''}`.toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
+      if (selectedDay) {
+        if (!ev.date) return false;
+        if (dayKey(ev.date.toDate()) !== selectedDay) return false;
+      }
+      return true;
     });
-  }, [events, searchTerm]);
+  }, [events, searchTerm, selectedDay]);
 
   useEffect(() => {
     async function fetchEvents() {
@@ -171,8 +182,8 @@ export default function Home() {
     return groups;
   }, [filteredEvents]);
 
-  // Presentational date scroller — next four days from now. Decorative (there
-  // is no date-filter state in this view yet); the first pill reads "tonight".
+  // Date scroller — next four days from now, each a real day filter. Clicking
+  // a pill filters the page to that day; clicking the active pill clears it.
   const datePills = useMemo(() => {
     const kickers = ['tonight', 'tomorrow', 'weekend', 'sunday'];
     const now = new Date();
@@ -180,8 +191,10 @@ export default function Home() {
       const d = new Date(now);
       d.setDate(now.getDate() + i);
       const wd = d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
-      return { kicker: kickers[i], label: `${wd} ${d.getDate()}` };
+      return { kicker: kickers[i], label: `${wd} ${d.getDate()}`, key: dayKey(d) };
     });
+    // dayKey is a stable pure closure; recompute only on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const savedChip = (event: Event) => (
@@ -263,25 +276,35 @@ export default function Home() {
             />
           </div>
 
-          {/* date scroller (decorative) */}
+          {/* date scroller — real day filter */}
           <div className="flex gap-2 overflow-x-auto no-bar -mx-1 px-1">
-            {datePills.map((p, i) => (
-              <div
-                key={p.label}
-                className={`shrink-0 px-6 py-2.5 min-w-[92px] text-center ${
-                  i === 0
-                    ? 'bg-brand-primary text-black'
-                    : 'bg-white/5 border border-white/15 text-white/75'
-                }`}
+            {datePills.map((p) => {
+              const active = selectedDay === p.key;
+              return (
+                <button
+                  key={p.key}
+                  onClick={() => setSelectedDay(active ? null : p.key)}
+                  aria-pressed={active}
+                  className={`shrink-0 px-6 py-2.5 min-w-[92px] text-center transition-colors ${
+                    active
+                      ? 'bg-brand-primary text-black'
+                      : 'bg-white/5 border border-white/15 text-white/75 hover:border-brand-primary'
+                  }`}
+                >
+                  <span className="type text-[10px] uppercase tracking-widest block leading-none">{p.kicker}</span>
+                  <span className="disp text-2xl tracking-wide leading-none mt-1 block">{p.label}</span>
+                </button>
+              );
+            })}
+            {selectedDay && (
+              <button
+                onClick={() => setSelectedDay(null)}
+                className="shrink-0 flex items-center gap-2 text-white/70 px-5 py-2.5 border border-white/15 hover:border-brand-primary transition-colors"
               >
-                <span className="type text-[10px] uppercase tracking-widest block leading-none">{p.kicker}</span>
-                <span className="disp text-2xl tracking-wide leading-none mt-1 block">{p.label}</span>
-              </div>
-            ))}
-            <div className="shrink-0 flex items-center gap-2 text-white/70 px-5 py-2.5 border border-white/15">
-              <Calendar className="w-4 h-4" />
-              <span className="type text-[11px] uppercase tracking-widest">pick date</span>
-            </div>
+                <Calendar className="w-4 h-4" />
+                <span className="type text-[11px] uppercase tracking-widest">all dates</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
