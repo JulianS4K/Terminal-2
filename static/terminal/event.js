@@ -152,8 +152,10 @@
       // no TEvo event behind them) open the SAME page in a reduced "SG mode".
       const sgId = getSgEventId();
       if (sgId) return initSgEvent(sgId);
-      // Eventbrite-native events (primary-only blindspots — indie shows with no
-      // TEvo/secondary market) open the SAME page in a reduced "EB mode".
+      // Eventbrite-native events with no secondary-market listing mapped in our
+      // data (e.g. indie shows) open the SAME page in a reduced "EB mode". Note:
+      // "unmapped" ≠ "no resale exists" — some of these do resell on StubHub; we
+      // just haven't auto-mapped them (venue auto-discovery is unreliable).
       const ebId = getEbEventId();
       if (ebId) return initEbEvent(ebId);
       T.setStatus('No event id — pass ?event=<id>, ?sg=<id>, or ?eb=<id>', 'err');
@@ -377,9 +379,10 @@
     activateTab('overview');
   }
 
-  // ── Eventbrite-native event mode (primary-only blindspots) ─────────────────
+  // ── Eventbrite-native event mode (no mapped secondary market) ──────────────
   // Eventbrite events discovered via the TicketsData /events feed that have NO
-  // TEvo/secondary market behind them (e.g. Elsewhere indie shows) open the SAME
+  // secondary-market listing mapped in our data (e.g. Elsewhere indie shows —
+  // some of which DO resell on StubHub, just not auto-mapped yet) open the SAME
   // event page in a reduced "EB mode": hero + a primary-face card built from the
   // organizer's face price band / availability we already store. Gated on
   // ?eb=<td_event_id> with no ?event=, so the TEvo path above is untouched. It
@@ -523,9 +526,10 @@
         (img ? `<img src="${escapeHtml(img)}" alt="" class="eb-hero-img" style="max-width:100%;border-radius:8px;margin-bottom:10px" />` : '') +
         (ev.summary ? `<p class="muted">${escapeHtml(ev.summary)}</p>` : '') +
         `<table class="kv"><tbody>${detail}</tbody></table>` +
-        '<div class="muted small" style="margin-top:8px">Primary-only event: no TEvo / StubHub / SeatGeek ' +
-        'secondary market. Prices are the organizer\'s face band from the Eventbrite feed ' +
-        '(discovery only — no seat-level pull).</div>' +
+        '<div class="muted small" style="margin-top:8px">No secondary market mapped: this event ' +
+        'isn\'t linked to a TEvo / StubHub / SeatGeek listing in our data (some Eventbrite shows ' +
+        'do resell on StubHub — those just aren\'t auto-mapped yet). Prices are the organizer\'s ' +
+        'face band from the Eventbrite feed (discovery only — no seat-level pull).</div>' +
       '</section>';
     activateTab('overview');
   }

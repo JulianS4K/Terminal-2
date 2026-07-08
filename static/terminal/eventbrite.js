@@ -166,8 +166,8 @@
       const cur = curSymbol(r.currency);
 
       // Event name → terminal event page. Mapped rows open the canonical TEvo
-      // page; unmapped (primary-only) rows open the Eventbrite-source page
-      // (event.html?eb=<td_event_id>) — a reduced primary-face view.
+      // page; rows with no mapped secondary market open the Eventbrite-source
+      // page (event.html?eb=<td_event_id>) — a reduced primary-face view.
       const name = r.event_name || `Eventbrite ${escapeHtml(String(r.td_event_id || '?'))}`;
       // Source page only exists when we have a td_event_id to key it on; a row
       // without one (degenerate) stays plain text rather than a dead ?eb= link.
@@ -175,7 +175,7 @@
       const nameCell = r.tevo_event_id
         ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(name)}</a>`
         : (ebPage ? `<a href="${escapeHtml(ebPage)}">${escapeHtml(name)}</a>` : escapeHtml(name));
-      const unmapped = r.tevo_event_id ? '' : ' <span class="badge muted" title="Primary-only — no canonical TEvo/secondary market; opens the Eventbrite-source page">primary-only</span>';
+      const unmapped = r.tevo_event_id ? '' : ' <span class="badge muted" title="No secondary market mapped to this event — opens the Eventbrite-source page. (Some of these do resell on StubHub; they just aren\'t auto-mapped yet.)">unmapped</span>';
 
       // Price band. Free events flagged explicitly; otherwise min–max face.
       let band;
