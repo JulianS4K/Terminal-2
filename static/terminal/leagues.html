@@ -96,6 +96,10 @@
     #lgSlateBody table tr.slate-row { cursor:pointer; }
     #lgSlateBody table tr.slate-row:hover td { background:var(--panel-2, #1a1a1a); }
     .slate-blind { color:var(--warn, #f59e0b); font-size:10px; font-weight:600; margin-left:6px; }
+    /* Primary face (AXS/Ticketmaster). Highlighted green when the resale market
+       trades below the primary face price. */
+    .face-cell { color:var(--info, #60a5fa); }
+    .face-below { color:var(--pos, #34d399); font-weight:700; }
     .slate-div { color:var(--dim, #4a4a4a); font-size:10px; margin-left:6px; }
 
     /* Two-pane grid: ranking/schedule (wide) + teams/standings */
@@ -212,6 +216,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260708lg"></script>
-  <script src="leagues.js?v=20260708lg8"></script>
+  <script src="leagues.js?v=20260708lg9"></script>
 </body>
 </html>

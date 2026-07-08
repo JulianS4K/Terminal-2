@@ -186,8 +186,14 @@
     const evCol = isBway ? 'Show' : (isTourn ? 'Event' : 'Game');
     const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
     const blind = r => (+r.tickets_count || 0) > 0 && (+r.owned_tickets_count || 0) === 0;
-    $('lgSlateMeta').textContent = `${rows.length} ${unit} · ${rows.filter(blind).length} we own 0`;
-    const trs = rows.slice(0, 80).map(r => {
+    const shown = rows.slice(0, 80);
+    // Primary face (AXS/TM) for the shown events, merged by event_id.
+    const faceMap = await loadFaceMap(shown.map(r => r.event_id));
+    if (_curLeague !== key) return;                 // switched away during face fetch
+    const anyFace = Object.keys(faceMap).length > 0;
+    $('lgSlateMeta').textContent = `${rows.length} ${unit} · ${rows.filter(blind).length} we own 0`
+      + (anyFace ? ` · ${Object.keys(faceMap).length} w/ face` : '');
+    const trs = shown.map(r => {
       const d = T.daysUntil(r.occurs_at_local);
       const owned = +r.owned_tickets_count || 0;
       const divTag = r.division
@@ -202,6 +208,7 @@
         <td class="num">${d === null ? '—' : d}</td>
         <td class="num">${r.tickets_count ? T.fmtNum(r.tickets_count) : '—'}</td>
         <td class="num">${money(r.getin_price)}</td>
+        ${anyFace ? faceCell(faceMap[r.event_id], r.getin_price) : ''}
         <td class="num ${owned ? 'ours' : ''}">${owned ? T.fmtNum(owned) : '—'}</td>
         <td class="num ${owned ? 'ours' : ''}">${ownPct}</td>
       </tr>`;
@@ -211,6 +218,7 @@
         <thead><tr><th>Date</th><th>${evCol}</th><th class="num">T-days</th>
         <th class="num" title="market tickets available">Mkt qty</th>
         <th class="num" title="cheapest listing (get-in)">Get-in</th>
+        ${anyFace ? '<th class="num" title="primary face — AXS / Ticketmaster; highlighted when resale is below face">Face</th>' : ''}
         <th class="num" title="tickets we own">Owned</th>
         <th class="num" title="our share of the market">Own%</th></tr></thead>
         <tbody>${trs}</tbody></table></div>` +
@@ -284,6 +292,30 @@
   }
   const num = v => (v == null ? '0' : T.fmtNum(Math.round(+v)));
   const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+
+  // Primary-market "face" (AXS + Ticketmaster) per event — batch lookup the
+  // caller merges by event_id. Read-only RPC (get_event_face, mig 20260708170000);
+  // degrades to {} if not deployed / forbidden so callers just omit the column.
+  async function loadFaceMap(eventIds) {
+    const Auth = window.TerminalAuth;
+    const ids = [...new Set((eventIds || []).map(Number).filter(Boolean))];
+    if (!Auth || !Auth.client || !ids.length) return {};
+    try {
+      const res = await Auth.client.rpc('get_event_face', { p_event_ids: ids });
+      if (res.error) return {};
+      const map = {};
+      (res.data || []).forEach(f => { map[f.event_id] = f; });
+      return map;
+    } catch (e) { return {}; }
+  }
+  // One table cell: primary face get-in + source, flagged when the secondary
+  // market is trading BELOW face (a resale under the primary price).
+  function faceCell(f, secondary) {
+    if (!f || f.face_getin == null) return '<td class="num muted">—</td>';
+    const below = secondary != null && +secondary < +f.face_getin;
+    const tip = `primary face · ${f.face_source || 'AXS'}${below ? ' · resale below face' : ''}`;
+    return `<td class="num face-cell ${below ? 'face-below' : ''}" title="${escapeHtml(tip)}">${money(f.face_getin)}</td>`;
+  }
 
   // ------------------------------------------------------------------
   // Team leagues — /api/broker/performers/by-league/{league}
