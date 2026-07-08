@@ -705,6 +705,9 @@
       safe('hero',       () => renderHero(overview, bridge, data.performer));
       safe('eventMode',  () => renderEventMode(bridge, data));
       safe('kpiGrid',    () => renderKPIGrid(chart, data.sg_side_by_side, data.velocity));
+      // Primary "face" (AXS / Ticketmaster) — fire-and-forget; reveals its KPI
+      // only when this event actually has a primary listing to anchor on.
+      renderFaceKpi(eventId).catch(e => console.error('faceKpi', e));
       // Two independent chart sections (PR redesign v2)
       safe('chartPrice',       () => renderChartPrice(chart, data.event_alerts));
       safe('chartInventory',   () => renderChartInventory(chart));
@@ -1174,6 +1177,36 @@
       }
     }
     el.innerHTML = chips.join(' ');
+  }
+
+  // ---------- Primary face (AXS / Ticketmaster) KPI ----------
+  // Where a primary seller lists this event, that price is the face value — the
+  // anchor the secondary (TEvo/SG resale) is measured against. Batch RPC
+  // (get_event_face, mig 20260708170000) unifies AXS + TM; we pass one id.
+  // Self-hiding: the cell stays hidden for events with no primary listing.
+  async function renderFaceKpi(eventId) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    let res;
+    try { res = await Auth.client.rpc('get_event_face', { p_event_ids: [Number(eventId)] }); }
+    catch (e) { return; }
+    if (res.error) return;
+    const f = (res.data || [])[0];
+    const cell = document.getElementById('kpiFace');
+    if (!cell || !f || f.face_getin == null) return;
+    const val = document.getElementById('kpiFaceVal');
+    const sub = document.getElementById('kpiFaceSub');
+    val.textContent = '$' + T.fmtNum(Math.round(+f.face_getin));
+    const below = f.secondary_getin != null && +f.secondary_getin < +f.face_getin;
+    // Green when resale trades under face (a buy signal); default otherwise.
+    val.style.color = below ? 'var(--pos, #34d399)' : '';
+    let tail = '';
+    if (f.secondary_getin != null) {
+      const pct = Math.round((+f.secondary_getin / +f.face_getin - 1) * 100);
+      tail = below ? ' · resale below face' : ` · resale +${pct}% vs face`;
+    }
+    sub.textContent = (f.face_source || 'AXS') + tail;
+    cell.hidden = false;
   }
 
   // ---------- KPI grid (8 cells, TEvo + SG side-by-side where applicable) ----------
