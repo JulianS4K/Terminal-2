@@ -15,12 +15,22 @@
 -- kept updating. The per-zone "Zone Metrics" panel reads zone_metrics, so it went
 -- stale/blank for every starved event.
 --
--- Fix: order by the STALENESS GAP (latest listings minus last zone_metrics),
--- biggest gap first. Never-computed events (NULL) sort first via a sentinel far
--- past. This drains the tail: once an event is recomputed its gap collapses to ~0
--- and it drops to the back, so the queue self-levels and nothing can starve. The
--- `latest_ls_at >= now() - 7 days` qualifier is unchanged (only actively-listed
--- events are serviced). No signature / cadence change — pure ORDER BY fix.
+-- Fix, two parts:
+--  1. Order by the STALENESS GAP (latest listings minus last zone_metrics),
+--     biggest gap first, so the queue self-levels: a recomputed event's gap
+--     collapses to ~0 and drops to the back. Never-computed events sort first
+--     via an epoch sentinel.
+--  2. Skip events with NO zoneable (non-ancillary) inventory at their latest
+--     snapshot. compute_event_zone_metrics writes 0 zones for them, so they
+--     stay never-computed forever and — with the epoch sentinel — would
+--     permanently dominate the queue. In practice these are seatless events
+--     (Broadway/venue tours, "experiences", conferences, ancillary-only rows)
+--     that are still actively re-polled, so their fresh listings kept them
+--     pinned to the top writing nothing every run, starving real stale events.
+--     They have no zones to show, so excluding them is correct.
+--
+-- The `latest_ls_at >= now() - 7 days` qualifier and the 10-min cadence /
+-- signature are unchanged.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.backfill_stale_zone_metrics(p_max_events integer DEFAULT 3)
@@ -45,7 +55,17 @@ BEGIN
     SELECT ll.event_id, ll.latest_ls_at
     FROM latest_ls ll
     LEFT JOIN latest_zm zm ON zm.event_id = ll.event_id
-    WHERE zm.latest_zm_at IS NULL OR zm.latest_zm_at < ll.latest_ls_at
+    WHERE (zm.latest_zm_at IS NULL OR zm.latest_zm_at < ll.latest_ls_at)
+      -- Only events that actually have zoneable inventory at their latest
+      -- snapshot. Seatless events (tours/experiences/conferences, ancillary-
+      -- only) compute to 0 zones and would otherwise stay never-computed and
+      -- pin the top of the queue forever, starving real stale events.
+      AND EXISTS (
+        SELECT 1 FROM listings_snapshots l
+        WHERE l.event_id = ll.event_id
+          AND l.captured_at = ll.latest_ls_at
+          AND l.is_ancillary = false
+      )
     -- Staleness-gap-first: how far zone_metrics trails the live listings.
     -- Never-computed (NULL) sorts first via the epoch sentinel. Drains the
     -- long tail that a freshest-listings-first order would starve.
