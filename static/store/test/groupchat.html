@@ -17,6 +17,11 @@
     .bubble.me { align-self: flex-end; background: #2b4a7a; }
     .bubble.bot { align-self: flex-start; background: rgba(201,169,106,.16); border: 1px solid rgba(201,169,106,.35); }
     .bubble.hint { align-self: center; background: none; color: var(--muted); font-size: 12px; }
+    .gc-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .gc-chips .chip { padding: 6px 12px; font-size: 12px; border-radius: 999px; cursor: pointer;
+                      background: rgba(255,255,255,.06); border: 1px solid var(--line, rgba(255,255,255,.14));
+                      color: var(--text, #eee); }
+    .gc-chips .chip:hover { background: rgba(201,169,106,.16); border-color: rgba(201,169,106,.4); }
     .gc-compose { display: flex; gap: 8px; margin-top: 12px; }
     .gc-compose input[type=text] { padding: 12px 14px; font-size: 14px; }
     .gc-compose .name { width: 110px; }
@@ -50,6 +55,15 @@
         pipeline (transcript build → chat edge fn, owned inventory), just without Twilio.</p>
 
       <div id="thread" class="gc-thread" aria-live="polite"></div>
+
+      <!-- Suggested prompts — one tap sends the whole message, so the group
+           gets a fast, well-shaped ask the concierge answers in one turn. -->
+      <div id="promptChips" class="gc-chips" role="group" aria-label="Suggested prompts">
+        <button type="button" class="chip">@vibe find us something Saturday night</button>
+        <button type="button" class="chip">@vibe 4 seats together under $150 this month</button>
+        <button type="button" class="chip">@vibe best available for 6 next weekend</button>
+        <button type="button" class="chip">@vibe what Broadway do you have this week?</button>
+      </div>
 
       <form id="compose" class="gc-compose">
         <input id="who" class="name" type="text" value="Sam" aria-label="Sender name" />

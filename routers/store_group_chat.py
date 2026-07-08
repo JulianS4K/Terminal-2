@@ -88,24 +88,89 @@ _THREAD_FETCH_PAGE = 40
 # sanitization, and the v26 strict-whitelist means the model can only use ids
 # actually resolved in the conversation. We then rewrite each tag into a
 # direct D1 event-page link (STOREFRONT_BASE_URL + /store/event/{id}) before
-# the reply reaches the group.
+# the reply reaches the group — but ONLY after the owned-EVO check below.
+#
+# ---------- HARD RULE: owned EVO data only (no bypass) ----------
+#
+# The group-chat surface pulls exclusively from OUR OWNED EVO INVENTORY.
+# Enforced in three independent layers, none of which trusts the others:
+#   1. Wire scope — every edge-fn call goes through _owned_chat_edge_post,
+#      which hard-codes scope='owned' (the edge fn clamps its listing tools to
+#      owned-EVO rows; the client/group has no scope input at all).
+#   2. Prompt — the transcript instruction forbids recommending anything the
+#      model couldn't find owned seats for.
+#   3. Output gate — every [event:<id>] tag is VERIFIED against
+#      listings_snapshots.is_owned in the DB before a link is emitted; ids
+#      that don't verify (or any DB error) FAIL CLOSED and the tag is
+#      stripped, so a link to a non-owned event can never reach the group.
 _STORE_BASE = (STOREFRONT_BASE_URL or "").rstrip("/")
 _GROUP_CONTEXT_NOTE = (
     "(group-chat context: you are inside a friends' group text; each line of "
-    "mine is prefixed with the sender's name — address the whole group. When "
-    "you recommend or reference a specific event, append its tag "
-    "[event:<event_id>] at the end of that line, using only event ids from "
-    "your resolved context. No other formatting changes.)"
+    "mine is prefixed with the sender's name — address the whole group, warm "
+    "and brief. STRICT RULES: "
+    "1) Recommend ONLY events from our owned inventory — your listing tools "
+    "are already restricted to it; never name an event you could not find "
+    "owned seats for. "
+    "2) Reply format, nothing else: up to 3 numbered picks, ONE line each — "
+    "\"N. <event> <day time> — <section/row> · <qty> together · $<all-in "
+    "each> [event:<event_id>]\" — then ONE short closing question. "
+    "3) Whole reply under 6 lines; plain text, no markdown, no URLs — the "
+    "[event:...] tag is the link.)"
 )
 _EVENT_TAG_RE = re.compile(r"\s*\[event:(\d{7,10})\]")
 _EVENT_TAG_JUNK_RE = re.compile(r"\s*\[event:[^\]]*\]?")
+_OWNED_CHECK_MAX_IDS = 6  # tags per reply are ≤3 by the format rule; hard-cap the DB loop
+
+# Wired by build_store_group_chat_router (the live server require_sb). Left
+# None in isolation → _owned_event_ids fails closed and no links are emitted.
+_get_require_sb: Callable[[], Callable] | None = None
+
+
+def _owned_chat_edge_post(history: list[dict], client_key: str):
+    """The ONLY way group-chat code talks to the chat edge fn. scope='owned'
+    is hard-coded here (HARD RULE layer 1) — there is deliberately no scope
+    parameter for a caller to widen."""
+    return _chat_edge_post(history, "owned", client_key)
+
+
+def _owned_event_ids(event_ids: set[str]) -> set[str]:
+    """HARD RULE layer 3: return the subset of event_ids that have owned-EVO
+    rows in listings_snapshots (is_owned=true). Any failure — sb unwired, DB
+    down, bad id — FAILS CLOSED (id treated as not owned, tag stripped)."""
+    owned: set[str] = set()
+    if not event_ids or _get_require_sb is None:
+        return owned
+    try:
+        db = _get_require_sb()()
+        for eid in sorted(event_ids)[:_OWNED_CHECK_MAX_IDS]:
+            rows = (
+                db.table("listings_snapshots")
+                .select("event_id")
+                .eq("event_id", int(eid))
+                .eq("is_owned", True)
+                .limit(1)
+                .execute().data
+            )
+            if rows:
+                owned.add(eid)
+    except Exception as e:
+        log.warning("owned-EVO verification failed (%s) — failing closed, no links", e)
+        return set()
+    return owned
 
 
 def _linkify_events(reply: str) -> str:
-    """[event:3091462] → ' <base>/store/event/3091462'; any malformed or
-    leftover tag is stripped so raw tokens never reach the group."""
-    if _STORE_BASE:
-        reply = _EVENT_TAG_RE.sub(lambda m: f" {_STORE_BASE}/store/event/{m.group(1)}", reply)
+    """[event:3091462] → ' <base>/store/event/3091462' — but only for ids that
+    VERIFY as owned EVO (_owned_event_ids). Non-owned, malformed, or leftover
+    tags are stripped so neither raw tokens nor non-owned links ever reach the
+    group."""
+    tagged = set(_EVENT_TAG_RE.findall(reply))
+    owned = _owned_event_ids(tagged) if (tagged and _STORE_BASE) else set()
+    if owned:
+        reply = _EVENT_TAG_RE.sub(
+            lambda m: f" {_STORE_BASE}/store/event/{m.group(1)}" if m.group(1) in owned else "",
+            reply,
+        )
     return _EVENT_TAG_JUNK_RE.sub("", reply).strip()
 
 
@@ -240,11 +305,12 @@ def _handle_inbound(get_enabled: Callable[[], bool], url: str, form: dict, signa
 
 
 def _concierge_reply(history: list[dict], client_key: str) -> str:
-    """Ask the chat edge fn (scope hard-locked 'owned'); any failure — incl.
-    HTTPException — or an empty reply degrades to the friendly offline line.
-    [event:<id>] tags in the model's text become direct store-event links."""
+    """Ask the chat edge fn (scope hard-locked 'owned' via
+    _owned_chat_edge_post); any failure — incl. HTTPException — or an empty
+    reply degrades to the friendly offline line. [event:<id>] tags become
+    direct store-event links only after the owned-EVO verification gate."""
     try:
-        upstream = _chat_edge_post(history, "owned", client_key)
+        upstream = _owned_chat_edge_post(history, client_key)
         reply = (upstream.json() or {}).get("reply") or ""
     except Exception:
         reply = ""
@@ -273,7 +339,11 @@ def _simulate_messages(payload: dict) -> list[dict]:
 def build_store_group_chat_router(
     get_enabled: Callable[[], bool],
     get_is_production: Callable[[], bool],
+    get_require_sb: Callable[[], Callable],
 ) -> APIRouter:
+    # Wire the owned-EVO verifier (HARD RULE layer 3) to the live server db.
+    global _get_require_sb
+    _get_require_sb = get_require_sb
     router = APIRouter()
 
     @router.post("/api/store/group-chat/simulate")

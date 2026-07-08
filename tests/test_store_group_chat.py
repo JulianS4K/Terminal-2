@@ -118,7 +118,45 @@ def reset_budget(monkeypatch):
     monkeypatch.setattr(gc_mod, "STORE_GROUP_CONCIERGE_IDENTITY", "vibepass")
     monkeypatch.setattr(gc_mod, "_WEBHOOK_URL_OVERRIDE", "")
     monkeypatch.setattr(app_module, "STORE_GROUP_CONCIERGE_PHONE", "+1 (555) 222-0222")
+    # Owned-EVO gate defaults to UNWIRED here → fails closed (no links). Link
+    # tests that want links opt in via _owned_event_ids/_get_require_sb stubs.
+    monkeypatch.setattr(gc_mod, "_get_require_sb", None)
     yield
+
+
+class _FakeOwnedDb:
+    """Stub of the supabase query chain _owned_event_ids uses:
+    table('listings_snapshots').select().eq('event_id', id).eq('is_owned',
+    True).limit(1).execute().data — returns a row only for ids in `owned`."""
+
+    def __init__(self, owned_ids, raise_on_query=False):
+        self.owned = {int(i) for i in owned_ids}
+        self.raise_on_query = raise_on_query
+        self.tables = []
+        self.queried_ids = []
+        self.filters = []
+
+    def table(self, name):
+        self.tables.append(name)
+        if self.raise_on_query:
+            raise RuntimeError("db down")
+        return self
+
+    def select(self, *cols):
+        return self
+
+    def eq(self, col, val):
+        self.filters.append((col, val))
+        if col == "event_id":
+            self._eid = val
+        return self
+
+    def limit(self, n):
+        return self
+
+    def execute(self):
+        self.queried_ids.append(self._eid)
+        return type("R", (), {"data": [{"event_id": self._eid}] if self._eid in self.owned else []})()
 
 
 @pytest.fixture
@@ -366,25 +404,94 @@ def test_reply_post_failure_is_logged_not_raised(monkeypatch, capture_http, capl
     assert any("reply post failed" in m for m in caplog.messages)
 
 
-# ---------- Direct store-event links in replies ----------
+# ---------- Direct store-event links in replies (owned-EVO gated) ----------
 
-def test_event_tags_become_store_links(monkeypatch, capture_http):
-    """The model tags recommendations with [event:<id>]; the reply that
-    reaches the group carries direct /store/event/{id} links instead."""
-    monkeypatch.setattr(gc_mod, "_STORE_BASE", "https://vibepass.example")
-
+def _tagged_reply_post(capture_http, reply_text):
     def fake_post(url, headers=None, json=None, data=None, auth=None, timeout=None):  # noqa: A002
         if "/functions/v1/chat" in url:
-            return _FakeResp({"reply": "1. Yankees vs Red Sox Sat 7:05pm [event:3091462]\n2. Mets Sun 1:10pm [event:3091999]\nWant me to hold either?"}, 200)
+            return _FakeResp({"reply": reply_text}, 200)
         capture_http["twilio_posts"].append({"url": url, "data": data or {}})
         return _FakeResp({"sid": "IM126"}, 201)
+    return fake_post
 
-    monkeypatch.setattr(gc_mod.requests, "post", fake_post)
+
+def test_event_tags_become_store_links(monkeypatch, capture_http):
+    """The model tags recommendations with [event:<id>]; ids that VERIFY as
+    owned EVO become direct /store/event/{id} links in the group reply."""
+    monkeypatch.setattr(gc_mod, "_STORE_BASE", "https://vibepass.example")
+    db = _FakeOwnedDb({3091462, 3091999})
+    monkeypatch.setattr(gc_mod, "_get_require_sb", lambda: (lambda: db))
+    monkeypatch.setattr(gc_mod.requests, "post", _tagged_reply_post(
+        capture_http,
+        "1. Yankees vs Red Sox Sat 7:05pm [event:3091462]\n2. Mets Sun 1:10pm [event:3091999]\nWant me to hold either?",
+    ))
     _post_webhook(_mention_params())
     body = capture_http["twilio_posts"][0]["data"]["Body"]
     assert "https://vibepass.example/store/event/3091462" in body
     assert "https://vibepass.example/store/event/3091999" in body
     assert "[event:" not in body
+    # The verification really hit the owned-EVO table with the right filters.
+    assert db.tables == ["listings_snapshots", "listings_snapshots"]
+    assert ("is_owned", True) in db.filters
+    assert sorted(db.queried_ids) == [3091462, 3091999]
+
+
+def test_non_owned_event_tags_never_link(monkeypatch, capture_http):
+    """HARD RULE: an id without owned-EVO rows gets its tag stripped — a link
+    to a non-owned event can never reach the group."""
+    monkeypatch.setattr(gc_mod, "_STORE_BASE", "https://vibepass.example")
+    db = _FakeOwnedDb({3091462})  # 3091999 is NOT owned
+    monkeypatch.setattr(gc_mod, "_get_require_sb", lambda: (lambda: db))
+    monkeypatch.setattr(gc_mod.requests, "post", _tagged_reply_post(
+        capture_http, "1. Yankees Sat [event:3091462]\n2. Mets Sun [event:3091999]",
+    ))
+    _post_webhook(_mention_params())
+    body = capture_http["twilio_posts"][0]["data"]["Body"]
+    assert "https://vibepass.example/store/event/3091462" in body
+    assert "3091999" not in body
+    assert "[event:" not in body
+
+
+def test_owned_check_fails_closed_on_db_error(monkeypatch, capture_http):
+    """DB down → NO links at all (fail closed), reply text still goes out."""
+    monkeypatch.setattr(gc_mod, "_STORE_BASE", "https://vibepass.example")
+    db = _FakeOwnedDb({3091462}, raise_on_query=True)
+    monkeypatch.setattr(gc_mod, "_get_require_sb", lambda: (lambda: db))
+    monkeypatch.setattr(gc_mod.requests, "post", _tagged_reply_post(
+        capture_http, "Yankees Sat [event:3091462]",
+    ))
+    _post_webhook(_mention_params())
+    body = capture_http["twilio_posts"][0]["data"]["Body"]
+    assert body == "Yankees Sat"
+
+
+def test_owned_check_fails_closed_when_unwired(monkeypatch, capture_http):
+    """_get_require_sb unwired (isolation/misconfig) → fail closed, no links."""
+    monkeypatch.setattr(gc_mod, "_STORE_BASE", "https://vibepass.example")
+    # autouse fixture already set _get_require_sb = None
+    monkeypatch.setattr(gc_mod.requests, "post", _tagged_reply_post(
+        capture_http, "Yankees Sat [event:3091462]",
+    ))
+    _post_webhook(_mention_params())
+    assert capture_http["twilio_posts"][0]["data"]["Body"] == "Yankees Sat"
+
+
+def test_owned_check_is_capped(monkeypatch):
+    """The DB loop is bounded (_OWNED_CHECK_MAX_IDS) no matter how many tags
+    the model emits."""
+    db = _FakeOwnedDb(set())
+    monkeypatch.setattr(gc_mod, "_get_require_sb", lambda: (lambda: db))
+    ids = {str(3000000 + i) for i in range(10)}
+    assert gc_mod._owned_event_ids(ids) == set()
+    assert len(db.queried_ids) == gc_mod._OWNED_CHECK_MAX_IDS
+
+
+def test_scope_cannot_be_widened_from_group_chat_code():
+    """HARD RULE layer 1: the only edge-fn entry point for this surface
+    hard-codes scope='owned' — there is no scope parameter to widen."""
+    import inspect
+    sig = inspect.signature(gc_mod._owned_chat_edge_post)
+    assert "scope" not in sig.parameters
 
 
 def test_malformed_event_tags_are_stripped(monkeypatch, capture_http):

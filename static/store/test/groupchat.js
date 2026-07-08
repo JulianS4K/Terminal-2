@@ -80,17 +80,30 @@
     }
   }
 
-  $("#compose").addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    if (busy) return;
+  function send(body) {
+    if (busy || !body) return;
     const author = ($("#who").value || "Sam").trim() || "Sam";
-    const body = $("#msg").value.trim();
-    if (!body) return;
     thread.push({ author, body });
     render(author, body);
-    $("#msg").value = "";
     simulate();
+  }
+
+  $("#compose").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const body = $("#msg").value.trim();
+    $("#msg").value = "";
+    send(body);
   });
+
+  // Suggested-prompt chips: one tap sends the whole ask, so the concierge
+  // gets a well-shaped request it can answer in a single fast turn.
+  const chips = document.getElementById("promptChips");
+  if (chips) {
+    chips.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("button.chip");
+      if (btn) send(btn.textContent.trim());
+    });
+  }
 
   $("#reset").addEventListener("click", () => {
     thread = [];

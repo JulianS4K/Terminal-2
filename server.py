@@ -1603,6 +1603,10 @@ app.include_router(build_store_group_chat_router(
     # prod, same policy as /store/test/*). Getter resolves the live symbol so
     # the test monkeypatch (app._is_production) binds.
     get_is_production=lambda: _is_production(),
+    # Owned-EVO verification gate for [event:id] → link rewriting (the
+    # group-chat HARD RULE): ids are checked against listings_snapshots
+    # is_owned=true before any link is emitted; fails closed.
+    get_require_sb=lambda: require_sb,
 ))
 
 
