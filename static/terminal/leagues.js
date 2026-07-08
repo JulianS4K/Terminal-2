@@ -60,9 +60,29 @@
   ];
   const EXTRA_KEYS = new Set(EXTRA_LEAGUES.map(l => l.key));
 
+  // Broadway is a performer CATEGORY, not a home/road league — it gets a show
+  // roster + a performance slate, but not the sports-only demand/blind panels.
+  const BROADWAY_KEY = 'Broadway';
+
+  // Tournament/series leagues whose "performers" are events (tournaments, Grands
+  // Prix) rather than home/road teams. Their inventory is seasonal + months out,
+  // so the slate spans a year and the panels use tournament (not team) wording.
+  // Mapped into performer_home_venues by mig 20260708150000, so the same
+  // get_performers_by_league / get_league_slate seam drives them.
+  const TOURNAMENT_LEAGUES = new Set(['Tennis', 'F1']);
+  // Racing series key -> the performer_home_venues league that carries its
+  // ticketed performers + future-events slate. Only F1 has TEvo ticket
+  // inventory (N.A. Grands Prix); NASCAR series stay ESPN-schedule-only and are
+  // deliberately absent, so their ticket panels stay hidden.
+  const RACING_TICKET_LEAGUE = { 'f1': 'F1' };
+
   let _teamLeagues = [];   // [{ key, label, teams }] from /api/broker/leagues
+  let _perfIndex = null;   // cached get_broker_performer_index payload (Broadway roster)
   let _leagueKpis = null;  // { LEAGUE: {total_revenue, tickets_sold, ...} } from get_d0_league_kpis
   let _curLeague = null;   // active league key (so a late KPI load can paint its strip)
+  let _curView = null;     // raw active picker key (league OR racing series) — the
+                           // stale-guard for async loaders whose panels are shared
+                           // across views (team-league roster + racing ESPN grid).
   const $ = id => document.getElementById(id);
 
   function currentLeague() {
@@ -111,7 +131,9 @@
     if (res.error) return;   // 42883 (not deployed) / forbidden → strip stays hidden
     _leagueKpis = {};
     (res.data || []).forEach(r => { _leagueKpis[r.league] = r; });
-    if (_curLeague) renderSalesStrip(_curLeague);
+    // Racing sets _curLeague to a ticket-league ('F1') but deliberately hides the
+    // sales strip; don't let a late KPI load un-hide it on the racing view.
+    if (_curLeague && !isRacing(_curView)) renderSalesStrip(_curLeague);
   }
 
   function renderSalesStrip(key) {
@@ -132,9 +154,75 @@
                `<span class="kpi-lbl">${escapeHtml(c.l)}</span></div>`).join('');
   }
 
+  // Per-league GAME SLATE — upcoming games (get_league_slate, mig 20260708130000),
+  // each row deep-linking to the event page (EVO data). Fire-and-forget; guards
+  // against a stale render if the operator switches leagues mid-flight.
+  const SLATE_DAYS = 30;
+  async function loadSlate(key, days) {
+    const sec = $('lgSlate');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) { sec.hidden = true; return; }
+    sec.hidden = false;
+    const isBway = key === BROADWAY_KEY;
+    const isTourn = TOURNAMENT_LEAGUES.has(key);
+    // Tournament/racing inventory is months out — span a year so the GPs/majors
+    // actually appear; weekly team leagues stay at 30 days.
+    const win = days || (isTourn ? 365 : SLATE_DAYS);
+    const unit = isBway ? 'performances' : (isTourn ? 'events' : 'games');
+    const titleWord = isBway ? 'UPCOMING PERFORMANCES' : (isTourn ? 'UPCOMING EVENTS' : 'GAME SLATE');
+    const winLbl = win >= 300 ? 'NEXT 12 MONTHS' : ('NEXT ' + win + ' DAYS');
+    $('lgSlateTitle').textContent = titleWord + ' — ' + winLbl;
+    $('lgSlateMeta').textContent = '';
+    $('lgSlateBody').innerHTML = '<div class="empty">loading…</div>';
+    const res = await Auth.client.rpc('get_league_slate',
+      { p_league: key, p_days: win, p_limit: 200 });
+    if (_curLeague !== key) return;                 // switched away mid-fetch
+    if (res.error) { sec.hidden = true; return; }   // 42883 / forbidden → hide honestly
+    const rows = res.data || [];
+    if (!rows.length) {
+      $('lgSlateBody').innerHTML = `<div class="empty">no upcoming ${unit} in the ${winLbl.toLowerCase()}</div>`;
+      return;
+    }
+    const evCol = isBway ? 'Show' : (isTourn ? 'Event' : 'Game');
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const blind = r => (+r.tickets_count || 0) > 0 && (+r.owned_tickets_count || 0) === 0;
+    $('lgSlateMeta').textContent = `${rows.length} ${unit} · ${rows.filter(blind).length} we own 0`;
+    const trs = rows.slice(0, 80).map(r => {
+      const d = T.daysUntil(r.occurs_at_local);
+      const owned = +r.owned_tickets_count || 0;
+      const divTag = r.division
+        ? `<span class="slate-div">${escapeHtml(confAbbr(r.conference))} ${escapeHtml(r.division)}</span>`
+        : (r.conference ? `<span class="slate-div">${escapeHtml(r.conference)}</span>` : '');
+      const blindBadge = blind(r) ? '<span class="slate-blind" title="open market, we own 0">BLIND</span>' : '';
+      const ownPct = r.owned_share != null ? T.fmtPct(+r.owned_share * 100, 0) : '—';
+      return `<tr class="slate-row" data-event="${r.event_id}">
+        <td class="muted small">${r.occurs_at_local ? escapeHtml(T.fmtDate(r.occurs_at_local)) : '—'}</td>
+        <td><a href="event.html?event=${r.event_id}" onclick="event.stopPropagation()">${escapeHtml(r.event_name || ('Event ' + r.event_id))}</a>${blindBadge}${divTag}
+            ${r.venue_name ? `<div class="muted small">${escapeHtml(r.venue_name)}</div>` : ''}</td>
+        <td class="num">${d === null ? '—' : d}</td>
+        <td class="num">${r.tickets_count ? T.fmtNum(r.tickets_count) : '—'}</td>
+        <td class="num">${money(r.getin_price)}</td>
+        <td class="num ${owned ? 'ours' : ''}">${owned ? T.fmtNum(owned) : '—'}</td>
+        <td class="num ${owned ? 'ours' : ''}">${ownPct}</td>
+      </tr>`;
+    }).join('');
+    $('lgSlateBody').innerHTML =
+      `<div style="overflow-x:auto"><table class="espn-recent">
+        <thead><tr><th>Date</th><th>${evCol}</th><th class="num">T-days</th>
+        <th class="num" title="market tickets available">Mkt qty</th>
+        <th class="num" title="cheapest listing (get-in)">Get-in</th>
+        <th class="num" title="tickets we own">Owned</th>
+        <th class="num" title="our share of the market">Own%</th></tr></thead>
+        <tbody>${trs}</tbody></table></div>` +
+      (rows.length > 80 ? `<div class="lg-note">showing the soonest 80 of ${rows.length} ${unit}.</div>` : '');
+    $('lgSlateBody').querySelectorAll('tr.slate-row').forEach(tr =>
+      tr.addEventListener('click', () => { window.location.href = 'event.html?event=' + tr.dataset.event; }));
+  }
+
   function pickInitial(want) {
     if (want) {
       if (isRacing(want)) return want;
+      if (want === BROADWAY_KEY || want.toLowerCase() === 'broadway') return BROADWAY_KEY;
       const hit = _teamLeagues.find(l => String(l.key).toLowerCase() === want.toLowerCase());
       if (hit) return hit.key;
       const ex = EXTRA_LEAGUES.find(l => l.key.toLowerCase() === want.toLowerCase());
@@ -154,7 +242,8 @@
     const extras = EXTRA_LEAGUES.filter(e => !_teamLeagues.some(l => l.key === e.key));
     const teamBtns =
       _teamLeagues.map(l => btn(l.key, l.label, (l.teams ? l.teams + ' tm' : 'teams'), 'team')).join('') +
-      extras.map(l => btn(l.key, l.label, l.sub, 'team')).join('');
+      extras.map(l => btn(l.key, l.label, l.sub, 'team')).join('') +
+      btn(BROADWAY_KEY, 'BROADWAY', 'Theater', 'broadway');
     const raceBtns = RACING_SERIES.map(s => btn(s.key, s.label, s.sub, 'racing')).join('');
     picker.innerHTML = teamBtns + (teamBtns && raceBtns ? '<div class="lg-sep"></div>' : '') + raceBtns;
     picker.querySelectorAll('.lg-btn').forEach(b =>
@@ -167,6 +256,8 @@
   }
 
   function load(key) {
+    _curView = key;   // mark the active selection so in-flight loaders for a
+                      // now-abandoned view can bail before painting stale rows.
     markActive(key);
     const url = new URL(location.href);
     url.searchParams.set('league', key);
@@ -174,6 +265,7 @@
     history.replaceState(null, '', url);
     $('lgResults').setAttribute('hidden', '');
     if (isRacing(key)) loadRacing(key);
+    else if (key === BROADWAY_KEY) loadBroadway(key);
     else loadTeamLeague(key);
   }
 
@@ -198,19 +290,26 @@
   // ------------------------------------------------------------------
   async function loadTeamLeague(key) {
     _curLeague = key;
+    $('lgGrid').hidden = false;      // restore the ranking/blind-spots grid (Broadway hides it)
     renderSalesStrip(key);           // paint from cache if KPIs already loaded
+    loadSlate(key).catch(e => console.error('[slate]', e));   // per-game slate, parallel
     const isExtra = EXTRA_KEYS.has(key);
+    const isTourn = TOURNAMENT_LEAGUES.has(key);
+    const unitCap = isTourn ? 'TOURNAMENTS' : 'TEAMS';
     const label = displayLeagueLabel(key);
+    // Tournament leagues (Tennis) carry real performers/venues/events via
+    // performer_home_venues, so they're no longer "ingest pending".
     setHero(shortCode(key), leagueLongName(key, label),
-      isExtra ? 'ESPN league · ingest pending (no performer mapping yet)'
-              : 'Team league · per-team demand & owned position');
+      isTourn ? 'Tournament series · upcoming events, venues & market'
+              : (isExtra ? 'ESPN league · ingest pending (no performer mapping yet)'
+                         : 'Team league · per-team demand & owned position'));
     T.setStatus('Loading ' + label + '…');
     $('lgPerformers').hidden = false;
     $('lgPerformersTitle').textContent = 'PERFORMERS — ' + label;
     $('lgPerformersMeta').textContent = '';
     $('lgPerformersBody').innerHTML = '<div class="empty">loading…</div>';
-    $('lgPrimaryTitle').textContent = 'TEAMS — BY DEMAND';
-    $('lgSecondaryTitle').textContent = 'BLIND SPOTS — TEAMS WE DON’T OWN';
+    $('lgPrimaryTitle').textContent = unitCap + ' — BY DEMAND';
+    $('lgSecondaryTitle').textContent = 'BLIND SPOTS — ' + unitCap + ' WE DON’T OWN';
     $('lgPrimaryMeta').textContent = '';
     $('lgSecondaryMeta').textContent = '';
     $('lgPrimaryBody').innerHTML = '<div class="empty">loading…</div>';
@@ -220,6 +319,7 @@
     try {
       payload = await T.api('/api/broker/performers/by-league/' + encodeURIComponent(key));
     } catch (e) {
+      if (_curView !== key) return;   // switched leagues mid-fetch — don't paint stale
       T.setStatus(e.message, 'err');
       $('lgPrimaryBody').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
       $('lgSecondaryBody').innerHTML = '';
@@ -227,6 +327,7 @@
       renderStrip([{ n: '—', l: 'teams' }]);
       return;
     }
+    if (_curView !== key) return;     // switched leagues mid-fetch — don't paint stale
 
     // Collapse home + road into one per-team line. market_tix ranks demand;
     // owned_tix is our position; a blind spot = demand with zero owned.
@@ -266,7 +367,7 @@
     const pendingMsg = isExtra
       ? `${escapeHtml(label)} isn’t ingested yet — no ESPN performer mapping. The major leagues + racing are live.`
       : 'no ESPN-tracked team metrics for this league yet';
-    $('lgPrimaryMeta').textContent = teams.length ? `${teams.length} teams · ranked by market tix` : '';
+    $('lgPrimaryMeta').textContent = teams.length ? `${teams.length} ${unitCap.toLowerCase()} · ranked by market tix` : '';
     if (!teams.length) {
       $('lgPrimaryBody').innerHTML = `<div class="empty">${pendingMsg}</div>`;
     } else {
@@ -287,8 +388,8 @@
           <span class="dm-owned ${t.owned ? 'ours' : ''}" title="owned tickets (home+road)">${t.owned ? num(t.owned) : '—'}</span>
         </div>`;
       }).join('') +
-        '<div class="lg-note">market/owned tickets aggregate this team’s home + road events. Bar = share of the league’s top team by market tickets. ' +
-        'Per-game slate pending a league-slate RPC — click a team for its event-level view.</div>';
+        `<div class="lg-note">market/owned tickets aggregate this ${isTourn ? 'tournament’s' : 'team’s home + road'} events. Bar = share of the league’s top ${isTourn ? 'tournament' : 'team'} by market tickets. ` +
+        `Per-event detail is in the slate above; click a ${isTourn ? 'tournament' : 'team'} for its full event history.</div>`;
     }
 
     // Secondary — blind spots (demand, zero owned): the actionable gaps.
@@ -296,7 +397,7 @@
     if (!teams.length) {
       $('lgSecondaryBody').innerHTML = '<div class="empty">—</div>';
     } else if (!blinds.length) {
-      $('lgSecondaryBody').innerHTML = '<div class="empty">no blind spots — we hold inventory in every ranked team</div>';
+      $('lgSecondaryBody').innerHTML = `<div class="empty">no blind spots — we hold inventory in every ranked ${isTourn ? 'tournament' : 'team'}</div>`;
     } else {
       const rows = blinds.map(t => {
         const nameHtml = t.id != null
@@ -311,7 +412,7 @@
       }).join('');
       $('lgSecondaryBody').innerHTML =
         `<div style="overflow-x:auto"><table class="espn-recent">
-          <thead><tr><th>Team</th><th class="num">Events</th>
+          <thead><tr><th>${isTourn ? 'Tournament' : 'Team'}</th><th class="num">Events</th>
           <th class="num" title="market tickets, home+road">Mkt tix</th>
           <th class="num" title="market median (home)">Mkt med</th></tr></thead>
           <tbody>${rows}</tbody></table></div>`;
@@ -391,15 +492,78 @@
   }
 
   // ------------------------------------------------------------------
+  // Broadway — a performer category (shows), not a home/road league.
+  // Roster from the performer directory (Broadway bucket) + the shared game
+  // slate (show performances). Sports-only panels (demand/blind/sales) hidden.
+  // ------------------------------------------------------------------
+  async function getPerformerIndex() {
+    if (_perfIndex) return _perfIndex;
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_broker_performer_index');
+    if (res.error) throw new Error(res.error.message || 'performer index error');
+    _perfIndex = res.data || {};
+    return _perfIndex;
+  }
+
+  async function loadBroadway(key) {
+    _curLeague = key;
+    setHero('BWAY', 'Broadway', 'Theater · shows & upcoming performances');
+    T.setStatus('Loading Broadway…');
+    $('lgGrid').hidden = true;       // no home/road ranking or blind-spots for theater
+    $('lgSales').hidden = true;      // Broadway isn't in d0_league_summary
+    $('lgPerformers').hidden = false;
+    $('lgPerformersTitle').textContent = 'SHOWS';
+    $('lgPerformersMeta').textContent = '';
+    $('lgPerformersBody').innerHTML = '<div class="empty">loading…</div>';
+    // Upcoming performances reuse the shared slate panel + RPC (Broadway anchor).
+    loadSlate(key).catch(e => console.error('[slate]', e));
+
+    let idx;
+    try { idx = await getPerformerIndex(); }
+    catch (e) {
+      if (_curLeague !== key) return;
+      renderStrip([{ n: '—', l: 'shows' }]);
+      $('lgPerformersBody').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      T.setStatus(e.message, 'err');
+      return;
+    }
+    if (_curLeague !== key) return;
+    const bucket = (idx.leagues && idx.leagues.Broadway) || [];
+    const shows = bucket.map(b => ({
+      id: b.tevo_performer_id,
+      name: b.display_name || b.performer_name || b.name || '—',
+      events: b.events_count_next_90d || 0,
+      conf: null, div: null,
+    }));
+    const upcoming = shows.reduce((s, x) => s + (x.events || 0), 0);
+    renderStrip([
+      { n: T.fmtNum(shows.length),  l: 'shows' },
+      { n: T.fmtNum(upcoming),      l: 'perfs · next 90d' },
+    ]);
+    renderPerformers(shows, 'Broadway', false);
+    T.setStatus('Loaded', 'ok');
+  }
+
+  // ------------------------------------------------------------------
   // Racing series — the merged former Racing page (unchanged behaviour)
   // ------------------------------------------------------------------
   async function loadRacing(series) {
     setHero(series === 'f1' ? 'F1' : 'NASCAR', RACING_NAME[series] || series, RACING_SUB[series] || 'Motorsport');
     T.setStatus('Loading ' + (RACING_NAME[series] || series) + '…');
-    // Drivers aren't TEvo performers, and racing has no d0_sales_fact league KPIs.
-    _curLeague = null;
-    $('lgPerformers').hidden = true;
+    // Ticketed performers/venues/events exist only for series with TEvo
+    // inventory (F1's N.A. Grands Prix); NASCAR is ESPN-schedule-only.
+    const ticketLeague = RACING_TICKET_LEAGUE[series] || null;
+    // _curLeague gates loadSlate's stale-guard; set to the ticket league for F1
+    // (so its slate paints), null for NASCAR. Racing has no d0_sales_fact KPIs.
+    _curLeague = ticketLeague;
+    $('lgGrid').hidden = false;      // racing uses the grid for SCHEDULE + STANDINGS
     $('lgSales').hidden = true;
+    if (ticketLeague) {
+      loadRacingTickets(series, ticketLeague).catch(e => console.error('[racing-tix]', e));
+    } else {
+      $('lgPerformers').hidden = true;
+      $('lgSlate').hidden = true;    // NASCAR uses the SCHEDULE panel below instead
+    }
     $('lgPrimaryTitle').textContent = 'SCHEDULE';
     $('lgSecondaryTitle').textContent = 'DRIVER STANDINGS';
     $('lgPrimaryMeta').textContent = '';
@@ -412,11 +576,47 @@
       Auth.client.rpc('get_espn_racing_events', { p_series: series, p_limit: 60 }),
       Auth.client.rpc('get_espn_racing_standings', { p_series: series, p_limit: 60 }),
     ]);
+    if (_curView !== series) return;   // switched series/league mid-fetch — don't paint stale grid
     if (ev.error) { T.setStatus(ev.error.message, 'err'); $('lgPrimaryBody').innerHTML = `<div class="empty">${escapeHtml(ev.error.message)}</div>`; }
     else renderSchedule(ev.data || []);
     if (st.error) { T.setStatus(st.error.message, 'err'); $('lgSecondaryBody').innerHTML = `<div class="empty">${escapeHtml(st.error.message)}</div>`; }
     else renderStandings(st.data || []);
     if (!ev.error && !st.error) T.setStatus('Loaded', 'ok');
+  }
+
+  // Ticketed-inventory overlay for a racing series that has TEvo events (F1):
+  // the Grand Prix performers (linked chips) + a per-event future slate (venue,
+  // get-in, market/owned) — the same performer_home_venues / get_league_slate
+  // seam the team leagues use, layered above the ESPN schedule/standings grid.
+  // NASCAR series never reach here (no ticket league mapped), so their panels
+  // stay hidden. Guards on _curLeague so a mid-flight series switch can't paint
+  // stale rows.
+  async function loadRacingTickets(series, leagueKey) {
+    $('lgPerformers').hidden = false;
+    $('lgPerformersTitle').textContent = 'GRANDS PRIX — TICKETED';
+    $('lgPerformersMeta').textContent = '';
+    $('lgPerformersBody').innerHTML = '<div class="empty">loading…</div>';
+    // Future-events slate (year window — GPs are months out). Fire-and-forget.
+    loadSlate(leagueKey, 365).catch(e => console.error('[racing-slate]', e));
+
+    let payload;
+    try {
+      payload = await T.api('/api/broker/performers/by-league/' + encodeURIComponent(leagueKey));
+    } catch (e) {
+      if (_curLeague !== leagueKey) return;
+      $('lgPerformersBody').innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    if (_curLeague !== leagueKey) return;   // switched series mid-fetch
+    const races = (payload.performers || []).map(p => {
+      const h = p.home || {}, r = p.road || {};
+      return {
+        id: p.performer_id, name: p.performer_name || '—',
+        events: (+h.events || 0) + (+r.events || 0), conf: null, div: null,
+      };
+    });
+    $('lgPerformersMeta').textContent = races.length ? `${races.length} linked` : '';
+    renderPerformers(races, leagueKey, false);
   }
 
   function raceStatusBadge(r) {

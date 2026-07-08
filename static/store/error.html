@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-theme="ivory">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f1ea" />
+  <meta name="robots" content="noindex" />
+  <link rel="apple-touch-icon" href="/static/store/favicon.svg" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>{{ERR_TITLE}} — VibePass</title>
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <script src="/static/store/theme.js"></script>
+  <link rel="stylesheet" href="/static/store/style.css" />
+</head>
+<body data-page="error">
+  <header class="topbar">
+    <a class="brand" href="/store">VibePass</a>
+    <span class="badge mvp">MVP · browse only · no real purchases</span>
+    <button type="button" class="theme-toggle" aria-label="Switch to dark theme" aria-pressed="false" title="Switch to dark theme">☾</button>
+  </header>
+
+  <main class="wrap err-main">
+    <!-- Full-page, server-rendered dead-end. Reuses the event-detail
+         .error-screen panel + adds the large display numeral (.err-big) for
+         the HTTP status code. Tokens filled by server _render_storefront_error. -->
+    <section class="error-screen is-notfound" role="alert" aria-live="assertive">
+      <div class="err-big" aria-hidden="true">{{ERR_BIG}}</div>
+      <h1 class="error-title">{{ERR_TITLE}}</h1>
+      <p class="error-msg">{{ERR_MSG}}</p>
+      <div class="error-actions">{{ERR_ACTIONS}}</div>
+      <p class="error-code muted">{{ERR_CODE}}</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <nav class="foot-nav" aria-label="Footer">
+      <a href="/store/about">About</a>
+      <a href="/store/privacy">Privacy</a>
+      <a href="/store/terms">Terms</a>
+    </nav>
+    <span class="foot-meta">&copy; 2026 VibePass &middot; MVP preview</span>
+  </footer>
+</body>
+</html>
