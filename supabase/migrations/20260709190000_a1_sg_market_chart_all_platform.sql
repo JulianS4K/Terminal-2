@@ -2,10 +2,20 @@
 -- REDESIGN IN PLACE of the "TOP 50 — SG SELLING, WE'RE NOT IN" chart.
 -- writes:  ALTER TABLE sg_market_chart ADD platform_breadth; CREATE OR REPLACE
 --          rebuild_sg_market_chart() + get_sg_market_chart(int,int); reseed.
--- reads:   seatgeek_event_metrics, sg_event_priority_state, sd_sales_normalized,
---          event_listing_snapshot_daily, latest_event_metrics.
+-- reads:   seatgeek_event_metrics, sg_event_priority_state, seatdata_sales_snapshots
+--          (base table, content_hash-deduped — NOT the sd_sales_normalized view, whose
+--          per-row normalize_sd_listing() LATERAL blew the 120s rebuild budget),
+--          event_listing_snapshot_daily, latest_event_metrics, axs_events.
 -- pre-reqs: 20260606120000 (chart), 20260608220000 (blended cols), 20260702004500
 --           (evo/sh depth in the RPC). Idempotent (CREATE OR REPLACE + ADD IF NOT EXISTS).
+--
+-- ## Already applied to prod — via MCP 2026-07-09 (operator-authorized "do it when green").
+--    Re-apply is a no-op. Post-apply verified: 730 rows, breadth/median_all populated on all,
+--    35 with AXS/TM primary, tier mix {blended,sg,seatdata}. A first apply attempt hit >120s
+--    (the sd_sales_normalized VIEW's per-row normalize_sd_listing() LATERAL) + a planner
+--    nested-loop that recomputed the aggregations per outer row — cancelled (clean rollback),
+--    then fixed here: base-table + content_hash dedup for SeatData, and AS MATERIALIZED on the
+--    heavy CTEs (rebuild now ~seconds, well under the 120s daily-cron budget).
 --
 -- ============================================================
 -- WHY (operator 2026-07-09): the chart is DISCOVERY — the top US events we hold
@@ -96,7 +106,12 @@ BEGIN
       AND coalesce(sold_quantity, 0) > 0
     ORDER BY sg_event_id, (captured_at AT TIME ZONE 'UTC')::date, captured_at DESC
   ),
-  sg_ma AS (
+  -- MATERIALIZED (all three heavy aggregations): the eligibility join starts from
+  -- sg_event_priority_state and the planner underestimates its post-filter row count
+  -- to rows=1, which without materialization triggers a NESTED LOOP that recomputes
+  -- each aggregation per outer row (measured: rebuild >120s, blew the cron budget).
+  -- Materializing forces each to compute exactly once → hash/merge joins, ~seconds.
+  sg_ma AS MATERIALIZED (
     SELECT sg_event_id,
       count(*)                        AS days_with_sales,
       avg(sold_quantity)::numeric     AS ma7_volume,
@@ -104,21 +119,30 @@ BEGIN
       avg(sold_gross)::numeric        AS ma7_gross
     FROM sg_daily GROUP BY sg_event_id
   ),
-  sd_ma AS (
-    -- SeatData realized sales, 7d: tickets/day (unknown qty counts 1) + median + daily gross
-    SELECT s.tevo_event_id,
-      count(*)                                          AS sd_sales_7d,
-      count(DISTINCT s.sale_timestamp::date)            AS sd_days,
-      (sum(coalesce(NULLIF(s.quantity,0),1))::numeric
-         / greatest(count(DISTINCT s.sale_timestamp::date),1))                 AS sd_ma7_volume,
-      (percentile_cont(0.5) WITHIN GROUP (ORDER BY s.price))::numeric          AS sd_ma7_median,
-      (sum(s.price * coalesce(NULLIF(s.quantity,0),1))::numeric
-         / greatest(count(DISTINCT s.sale_timestamp::date),1))                 AS sd_ma7_gross
-    FROM public.sd_sales_normalized s
-    WHERE s.sale_timestamp > now() - interval '7 days' AND s.tevo_event_id IS NOT NULL
-    GROUP BY s.tevo_event_id
+  sd_ma AS MATERIALIZED (
+    -- SeatData realized sales, 7d: tickets/day (unknown qty counts 1) + median + daily gross.
+    -- Reads the BASE table, NOT the sd_sales_normalized view: that view runs a per-row
+    -- normalize_sd_listing() LATERAL (zone/section canonicalization) we don't need here, and
+    -- it drove the rebuild past the 120s cron budget. Dedup on content_hash — seatdata
+    -- re-inserts each poll (same overcount landmine as seatgeek_sales_snapshots, §3).
+    SELECT tevo_event_id,
+      count(*)                                    AS sd_sales_7d,
+      count(DISTINCT sale_day)                    AS sd_days,
+      (sum(coalesce(NULLIF(quantity,0),1))::numeric
+         / greatest(count(DISTINCT sale_day),1))                 AS sd_ma7_volume,
+      (percentile_cont(0.5) WITHIN GROUP (ORDER BY price))::numeric AS sd_ma7_median,
+      (sum(price * coalesce(NULLIF(quantity,0),1))::numeric
+         / greatest(count(DISTINCT sale_day),1))                 AS sd_ma7_gross
+    FROM (
+      SELECT DISTINCT ON (content_hash)
+        tevo_event_id, (sale_timestamp AT TIME ZONE 'UTC')::date AS sale_day, price, quantity
+      FROM public.seatdata_sales_snapshots
+      WHERE sale_timestamp > now() - interval '7 days' AND tevo_event_id IS NOT NULL
+      ORDER BY content_hash, pulled_at DESC
+    ) d
+    GROUP BY tevo_event_id
   ),
-  depth AS (
+  depth AS MATERIALIZED (
     -- latest cross-source listing depth + medians per event (StubHub/GT/Vivid + TM primary)
     SELECT DISTINCT ON (d.event_id) d.event_id AS tevo_event_id,
       d.td_sh_listings, d.td_gt_listings, d.td_vd_listings,
@@ -129,7 +153,7 @@ BEGIN
     ORDER BY d.event_id, d.snapshot_date DESC,
              CASE d.snapshot_slot WHEN 'evening' THEN 3 WHEN 'midday' THEN 2 ELSE 1 END DESC
   ),
-  prim_axs AS (
+  prim_axs AS MATERIALIZED (
     -- events with live AXS PRIMARY (veritix) inventory
     SELECT DISTINCT a.tevo_event_id
     FROM public.axs_events a
