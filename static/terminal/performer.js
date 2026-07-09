@@ -877,11 +877,28 @@
       </div>`;
     }
 
+    // SG SOLD — realized clearing prices from SeatGeek (median + average sale
+    // per event year). The truer value vs listing asks; blank for performers
+    // with no SG sold coverage (~2/3 of them).
+    let sgSold = '';
+    if (Array.isArray(d.sg_sold_by_year) && d.sg_sold_by_year.length) {
+      const rows = d.sg_sold_by_year.map(y =>
+        `<tr><td>${gText(y.year)}</td><td>${usd(y.sold_median)}</td><td>${usd(y.sold_mean)}</td>` +
+        `<td>${num(y.qty)}</td><td>${num(y.events)}</td></tr>`).join('');
+      sgSold = `<div class="sc-sgsold">
+        <div class="sc-te-lbl">SG SOLD · REALIZED — median / avg sale price by year</div>
+        <table class="sc-sgsold-tbl">
+          <thead><tr><th>Year</th><th>Median</th><th>Avg</th><th>Sold</th><th>Events</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    }
+
     body.innerHTML = `<div class="sc-groups">
       <div class="sc-group"><h4>Market</h4>${market}</div>
       <div class="sc-group"><h4>Position</h4>${position}</div>
       <div class="sc-group"><h4>Trend</h4>${trend}</div>
-    </div>${topEvent}${axsLine}`;
+    </div>${topEvent}${axsLine}${sgSold}`;
   }
 
   // ---------- Cross-event daily metrics (Overview) ----------
