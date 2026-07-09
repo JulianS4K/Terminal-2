@@ -2,100 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0a0a0a" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
-  <link rel="apple-touch-icon" href="/favicon.svg" />
-  <link rel="manifest" href="/manifest.json" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Terminal — Compare (moved)</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
-  <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — Compare</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260709cmp" />
-  <style>
-    /* main.wrap is a 12-col grid by default; stack our sections in a column
-       like .wrap.performer / .wrap.movers do (else each section takes one 1/12
-       track and the compare table is clipped into a sliver). */
-    .wrap.compare { display: flex; flex-direction: column; gap: 12px; }
-    .cmp-intro { color: var(--muted, #8a8a8a); font-size: 12px; margin: 4px 0 12px; }
-    .cmp-search { position: relative; max-width: 480px; }
-    .cmp-search input { width: 100%; padding: 9px 12px; background: var(--panel, #141414); color: inherit;
-      border: 1px solid rgba(255,255,255,.14); border-radius: 8px; font: inherit; }
-    .cmp-suggest { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
-      background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.14); border-radius: 8px;
-      max-height: 320px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
-    .cmp-suggest .cs-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px;
-      cursor: pointer; border-top: 1px solid rgba(255,255,255,.05); }
-    .cmp-suggest .cs-row:first-child { border-top: none; }
-    .cmp-suggest .cs-row:hover, .cmp-suggest .cs-row.active { background: rgba(255,255,255,.06); }
-    .cmp-suggest .cs-name { font-weight: 600; font-size: 13px; }
-    .cmp-suggest .cs-meta { color: var(--muted, #8a8a8a); font-size: 11px; }
-    .cmp-suggest .cs-empty { padding: 10px 12px; color: var(--muted, #8a8a8a); font-size: 12px; }
-    .cmp-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
-    .cmp-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 8px 5px 12px;
-      background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; font-size: 12px; font-weight: 600; }
-    .cmp-chip button { background: none; border: none; color: var(--muted, #8a8a8a); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
-    .cmp-chip button:hover { color: var(--neg, #f87171); }
-    /* Compare table — performers as columns, metrics as rows (stock-compare) */
-    .cmp-table-scroll { overflow-x: auto; margin-top: 14px; }
-    table.cmp-table { border-collapse: collapse; width: 100%; min-width: 520px; font-variant-numeric: tabular-nums; }
-    table.cmp-table th, table.cmp-table td { padding: 8px 14px; text-align: right; white-space: nowrap; }
-    table.cmp-table thead th { position: sticky; top: 0; background: var(--bg, #0a0a0a); z-index: 1;
-      border-bottom: 1px solid rgba(255,255,255,.14); font-size: 13px; }
-    table.cmp-table thead th.cmp-corner, table.cmp-table td.cmp-lbl { text-align: left; }
-    table.cmp-table td.cmp-lbl { color: var(--muted, #b5b5b5); font-size: 12px; font-weight: 500; }
-    table.cmp-table tr.cmp-grouphdr td { padding-top: 14px; font-size: 11px; font-weight: 700;
-      letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; text-align: left; }
-    table.cmp-table tbody tr:hover td { background: rgba(255,255,255,.03); }
-    table.cmp-table td.cmp-val { font-size: 13px; font-weight: 600; }
-    table.cmp-table td.cmp-val.txt { text-align: left; white-space: normal; font-weight: 500; font-size: 12px; max-width: 220px; }
-    table.cmp-table td.cmp-val.leader { color: var(--pos, #4ade80); }
-    table.cmp-table td .sc-delta { font-size: 11px; margin-left: 5px; font-weight: 600; }
-    .sc-delta.up { color: var(--pos, #4ade80); }
-    .sc-delta.down { color: var(--neg, #f87171); }
-    table.cmp-table thead th .th-sub { display: block; font-size: 10px; font-weight: 400; color: var(--muted, #8a8a8a); }
-    table.cmp-table thead th a { color: inherit; text-decoration: none; }
-    table.cmp-table thead th a:hover { text-decoration: underline; }
-  </style>
+  <link rel="stylesheet" href="style.css?v=20260707a" />
 </head>
 <body data-page="compare">
-
-  <header class="topbar">
-    <span class="brand">TERMINAL · D0</span>
-    <span id="status" class="status">Loading…</span>
-  </header>
-
-  <main class="wrap compare">
-    <section id="cmp-picker">
-      <div class="panel-title row">
-        <span>COMPARE PERFORMERS</span>
-        <span class="muted small" id="cmpMeta">up to 5 · Statistics side-by-side</span>
-      </div>
-      <div class="cmp-intro">
-        Add performers to line their Statistics up side-by-side — a stock-compare window for the book.
-        The leader in each row is highlighted. Metrics are the persisted daily stat-card (refreshed every 4h).
-      </div>
-      <div class="cmp-search">
-        <input id="cmpSearch" type="search" placeholder="Add a performer — search teams / performers…" autocomplete="off" spellcheck="false" />
-        <div id="cmpSuggest" class="cmp-suggest" hidden></div>
-      </div>
-      <div id="cmpChips" class="cmp-chips"></div>
-    </section>
-
-    <section id="cmp-table-wrap">
-      <div id="cmpBody"><div class="empty">add up to 5 performers above to compare</div></div>
-    </section>
-  </main>
-
-  <script src="lib/supabase.js"></script>
-  <script src="lib/render.js"></script>
-  <script src="pwa.js?v=20260702"></script>
-  <script src="auth.js?v=20260608"></script>
-  <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260709cmp"></script>
-  <script src="compare.js?v=20260709axs"></script>
+  <!-- Compare was folded into the performer stat-card gallery (2026-07-09).
+       Redirect here, preserving any ?ids=a,b,c so old deep-links still open the
+       comparison (performer.js restores the basket from ?ids). -->
+  <main class="wrap"><p class="muted" style="padding:20px">Compare moved into Performers — redirecting…</p></main>
+  <script src="redirect-compare.js?v=20260709gal"></script>
 </body>
 </html>

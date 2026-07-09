@@ -43,75 +43,249 @@
   // ============================================================
   // INDEX mode — 4-league directory
   // ============================================================
+  // Stat-card gallery + fold-in compare (redesign 2026-07-09; replaces the old
+  // league directory). Landing = searchable/sortable grid of compact stat-cards
+  // (get_performer_stat_card_gallery); pick up to 5 into the basket → the
+  // side-by-side compare table (get_performer_stat_cards) that used to be a
+  // separate compare.html.
+  const _gallery = { search: '', sort: 'notional', sportsOnly: false, cards: {} };
+  const _basket = [];   // [{id, name}]
+  const MAX_CMP = 5;
+
+  // shared formatters (gallery cards + compare table)
+  const gUsd  = v => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+  const gUsd2 = v => (v != null && isFinite(v)) ? '$' + Number(v).toFixed(2) : '—';
+  const gNum  = v => (v != null && isFinite(v)) ? T.fmtNum(v) : '—';
+  const gMult = v => (v != null && isFinite(v)) ? Number(v).toFixed(2) + '×' : '—';
+  const gPct  = v => (v != null && isFinite(v)) ? T.fmtPct(v * 100, 1) : '—';
+  const gText = v => (v != null && v !== '') ? escapeHtml(String(v)) : '—';
+  const gKnum = v => {
+    if (v == null || !isFinite(v)) return '—';
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (a >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+    return String(v);
+  };
+  const gSpct = v => {   // signed % (already a percent number)
+    if (v == null || !isFinite(v)) return '—';
+    const cls = v > 0 ? 'up' : (v < 0 ? 'down' : '');
+    const arw = v > 0 ? '▲ ' : (v < 0 ? '▼ ' : '');
+    return `<span class="sc-delta ${cls}">${arw}${Math.abs(v).toFixed(1)}%</span>`;
+  };
+
   async function showIndexMode() {
     const idx = document.getElementById('perf-index');
     if (idx) idx.removeAttribute('hidden');
-    T.setStatus('Loading performer index…');
-    const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-      document.getElementById('perfIndexBody').innerHTML =
-        '<div class="empty">index needs auth — sign in with @s4kent.com</div>';
-      T.setStatus('Auth required', 'err');
-      return;
+    // Hide all detail-mode chrome — the Overview pane (rollup/daily-metrics) is
+    // `active` by default and would otherwise render empty below the gallery.
+    // #perf-hero has an ID-level display rule that outranks [hidden], so force
+    // it off with an inline style; panes obey .tab-pane[hidden].
+    document.querySelectorAll('.tab-pane').forEach(el => el.setAttribute('hidden', ''));
+    ['perf-hero', 'perfTabs'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+    wireGalleryControls();
+    // Restore a shared comparison from ?ids=a,b,c (back-compat with compare.html links).
+    const idsRaw = new URLSearchParams(location.search).get('ids');
+    if (idsRaw) {
+      idsRaw.split(',').map(s => parseInt(s, 10)).filter(n => n > 0).slice(0, MAX_CMP)
+        .forEach(id => _basket.push({ id, name: '#' + id }));
     }
-    const res = await Auth.client.rpc('get_broker_performer_index');
-    if (res.error) {
-      T.setStatus(res.error.message, 'err');
-      document.getElementById('perfIndexBody').innerHTML =
-        `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
-      return;
-    }
-    T.setStatus('Loaded', 'ok');
-    renderIndex(res.data || {});
+    await loadGallery();
+    if (_basket.length) { syncBasket(); openCompare(); }
   }
 
-  function renderIndex(d) {
-    const body = document.getElementById('perfIndexBody');
-    const countsEl = document.getElementById('perfIndexCounts');
-    const counts = d.counts || {};
-    const leagues = d.leagues || {};
-    // Directory columns, in order. Broadway is a category whose "teams" are
-    // shows (link to the event Cast tab); WNBA joined the sports leagues.
-    const LEAGUE_ORDER = ['NFL','NBA','MLB','MLS','WNBA','Broadway'];
-    if (countsEl) {
-      const parts = LEAGUE_ORDER
-        .filter(l => counts[l])
-        .map(l => `${l} ${counts[l]}`);
-      if (counts.total) parts.push(`· ${counts.total} total`);
-      countsEl.textContent = parts.join(' · ');
-    }
-    body.innerHTML = '';
-    const grid = document.createElement('div');
-    grid.className = 'entity-index-grid';
-    LEAGUE_ORDER.forEach(league => {
-      const teams = leagues[league] || [];
-      if (!teams.length) return;
-      const col = document.createElement('div');
-      col.className = 'entity-index-col';
-      col.innerHTML = `<div class="entity-index-col-hdr">${league} <span class="muted small">(${teams.length})</span></div>`;
-      const ul = document.createElement('ul');
-      ul.className = 'entity-index-list';
-      teams.forEach(t => {
-        const li = document.createElement('li');
-        const upcoming = t.events_count_next_90d != null ? `<span class="entity-idx-count">${t.events_count_next_90d}</span>` : '';
-        // Teams link to their performer page. Broadway shows link there too, but
-        // with &venue=<nyc house> so the page scopes to NYC (the show's franchise
-        // performer also tours). Fallback to a representative event if no id.
-        let href = t.tevo_performer_id
-          ? `performer.html?performer=${t.tevo_performer_id}`
-          : (t.sample_event_id ? `event.html?event=${t.sample_event_id}` : '#');
-        if (t.tevo_performer_id && t.tevo_venue_id) href += `&venue=${t.tevo_venue_id}`;
-        li.innerHTML = `<a href="${href}">
-            <span class="entity-idx-name">${escapeHtml(t.display_name || t.performer_name || '—')}</span>
-            ${t.abbreviation ? `<span class="muted small">${escapeHtml(t.abbreviation)}</span>` : ''}
-            ${upcoming}
-          </a>`;
-        ul.appendChild(li);
-      });
-      col.appendChild(ul);
-      grid.appendChild(col);
+  function wireGalleryControls() {
+    const s = document.getElementById('pgSearch');
+    if (s) { let t = 0; s.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { _gallery.search = s.value.trim(); loadGallery(); }, 250); }); }
+    document.querySelectorAll('#pgSort [data-sort]').forEach(b => b.addEventListener('click', () => {
+      _gallery.sort = b.dataset.sort;
+      document.querySelectorAll('#pgSort [data-sort]').forEach(x => x.classList.toggle('is-active', x === b));
+      loadGallery();
+    }));
+    const so = document.getElementById('pgSportsOnly');
+    if (so) so.addEventListener('change', () => { _gallery.sportsOnly = so.checked; loadGallery(); });
+    const cmpBtn = document.getElementById('pgCompareBtn');
+    if (cmpBtn) cmpBtn.addEventListener('click', openCompare);
+    const clr = document.getElementById('pgClearBtn');
+    if (clr) clr.addEventListener('click', () => { _basket.length = 0; document.querySelectorAll('.pg-card.picked').forEach(c => c.classList.remove('picked')); syncBasket(); });
+    const cl = document.getElementById('pgCompareClose');
+    if (cl) cl.addEventListener('click', e => { e.preventDefault(); document.getElementById('pgComparePanel').setAttribute('hidden', ''); });
+  }
+
+  async function loadGallery() {
+    const grid = document.getElementById('pgGrid');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) { grid.innerHTML = '<div class="empty">gallery needs auth — sign in with @s4kent.com</div>'; T.setStatus('Auth required', 'err'); return; }
+    grid.innerHTML = '<div class="empty">loading…</div>';
+    T.setStatus('Loading performers…');
+    const res = await Auth.client.rpc('get_performer_stat_card_gallery', {
+      p_search: _gallery.search || null, p_sort: _gallery.sort, p_limit: 120, p_sports_only: _gallery.sportsOnly,
     });
-    body.appendChild(grid);
+    if (res.error) { grid.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; T.setStatus(res.error.message, 'err'); return; }
+    T.setStatus('Loaded', 'ok');
+    renderGallery(res.data || []);
+  }
+
+  function renderGallery(cards) {
+    const grid = document.getElementById('pgGrid');
+    const countEl = document.getElementById('perfIndexCounts');
+    cards.forEach(c => { _gallery.cards[c.performer_id] = c; });
+    if (countEl) countEl.textContent = cards.length ? `${cards.length} shown` : '';
+    if (!cards.length) { grid.innerHTML = '<div class="empty">no performers match</div>'; return; }
+    grid.innerHTML = cards.map(c => {
+      const picked = _basket.some(b => b.id === c.performer_id) ? ' picked' : '';
+      const te = c.top_event_name ? `<div class="pg-card-te">top: <b>${escapeHtml(c.top_event_name)}</b> · ${gUsd(c.top_event_median)}</div>` : '';
+      const axs = c.axs_event_count ? `<div class="pg-card-axs">+ AXS ${gNum(c.axs_event_count)} ev · ${gNum(c.axs_listings)} listings</div>` : '';
+      const d30 = c.price_d30_pct;
+      const d30cls = (d30 > 0) ? 'up' : (d30 < 0 ? 'down' : '');
+      const d30txt = (d30 != null && isFinite(d30)) ? (d30 > 0 ? '+' : '') + Number(d30).toFixed(1) + '%' : '—';
+      return `<div class="pg-card${picked}" data-id="${c.performer_id}">
+        <div class="pg-card-top">
+          <span class="pg-card-name">${escapeHtml(c.performer_name || '—')}${c.is_sports ? '' : ' <span class="pg-card-sub">· act</span>'}</span>
+          <button class="pg-add" data-add="${c.performer_id}" title="add to compare" aria-label="add to compare">＋</button>
+        </div>
+        <div class="pg-metrics">
+          <div><span class="v">${gUsd(c.getin_median)}</span><span class="l">get-in</span></div>
+          <div><span class="v">${gUsd(c.price_median)}</span><span class="l">median</span></div>
+          <div><span class="v">${gKnum(c.owned_tickets)}</span><span class="l">owned</span></div>
+          <div><span class="v ${d30cls}">${d30txt}</span><span class="l">30d</span></div>
+        </div>
+        ${te}${axs}
+      </div>`;
+    }).join('');
+    grid.querySelectorAll('.pg-card').forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.closest('[data-add]')) return;
+        location.href = `performer.html?performer=${card.dataset.id}`;
+      });
+    });
+    grid.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleBasket(parseInt(btn.dataset.add, 10));
+    }));
+  }
+
+  function toggleBasket(id) {
+    const i = _basket.findIndex(b => b.id === id);
+    const card = document.querySelector(`.pg-card[data-id="${id}"]`);
+    if (i >= 0) { _basket.splice(i, 1); if (card) card.classList.remove('picked'); }
+    else {
+      if (_basket.length >= MAX_CMP) { T.setStatus(`max ${MAX_CMP} to compare`, 'err'); return; }
+      const c = _gallery.cards[id];
+      _basket.push({ id, name: c ? c.performer_name : '#' + id });
+      if (card) card.classList.add('picked');
+    }
+    syncBasket();
+  }
+
+  function syncBasket() {
+    const bar = document.getElementById('pgBasket');
+    const chips = document.getElementById('pgBasketChips');
+    const panel = document.getElementById('pgComparePanel');
+    if (!_basket.length) { bar.setAttribute('hidden', ''); panel.setAttribute('hidden', ''); return; }
+    bar.removeAttribute('hidden');
+    chips.innerHTML = _basket.map(b => `<span class="chip">${escapeHtml(b.name)}<button data-rm="${b.id}" aria-label="remove">×</button></span>`).join('');
+    chips.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => toggleBasket(parseInt(x.dataset.rm, 10))));
+    document.getElementById('pgCompareBtn').textContent = `Compare (${_basket.length}) →`;
+    if (!panel.hasAttribute('hidden')) openCompare();
+  }
+
+  async function openCompare() {
+    if (!_basket.length) return;
+    const panel = document.getElementById('pgComparePanel');
+    const body = document.getElementById('pgCompareBody');
+    panel.removeAttribute('hidden');
+    body.innerHTML = '<div class="empty">loading…</div>';
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_performer_stat_cards', { p_ids: _basket.map(b => b.id) });
+    if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
+    const byId = {};
+    (res.data || []).forEach(c => { c._seasonphase = [c.top_event_season, c.top_event_phase].filter(Boolean).join(' · '); byId[c.performer_id] = c; });
+    renderCompareTable(byId);
+  }
+
+  // Compare table — performers as columns, metrics as rows (ported from compare.js).
+  const CMP_GROUPS = [
+    { title: 'Market', rows: [
+      { key: 'event_count',   label: 'Active events',      fmt: 'num',  better: 'max' },
+      { key: 'getin_min',     label: 'Get-in (min)',       fmt: 'usd2', better: 'min' },
+      { key: 'getin_median',  label: 'Get-in (median)',    fmt: 'usd',  better: 'min' },
+      { key: 'price_median',  label: 'Price median',       fmt: 'usd',  better: 'max' },
+      { key: 'price_p90',     label: 'Ceiling (p90)',      fmt: 'usd',  better: 'max' },
+      { key: 'spread_ratio',  label: 'Spread (p90÷get-in)',fmt: 'mult', better: null  },
+      { key: 'market_tickets',label: 'Market float (tix)', fmt: 'num',  better: 'max' },
+      { key: 'median_median_price', label: 'Median · all events', fmt: 'usd', better: 'max' },
+    ]},
+    { title: 'Position', rows: [
+      { key: 'owned_tickets',      label: 'Owned tickets',    fmt: 'num', better: 'max', delta: 'owned_tickets_d30', deltaFmt: 'num' },
+      { key: 'owned_book_notional',label: 'Owned notional',   fmt: 'usd', better: 'max' },
+      { key: 'owned_share',        label: 'Owned share (EVO)',fmt: 'pct', better: 'max' },
+    ]},
+    { title: 'Trend', rows: [
+      { key: 'price_d7_pct',     label: 'Price Δ 7d',   fmt: 'spct', better: 'max' },
+      { key: 'price_d30_pct',    label: 'Price Δ 30d',  fmt: 'spct', better: 'max' },
+      { key: 'getin_d7_pct',     label: 'Get-in Δ 7d',  fmt: 'spct', better: null  },
+      { key: 'home_price_median',label: 'Home price median', fmt: 'usd',  better: 'max', sportsOnly: true },
+      { key: 'away_price_median',label: 'Away price median', fmt: 'usd',  better: 'max', sportsOnly: true },
+    ]},
+    { title: 'Top event (highest median)', rows: [
+      { key: 'top_event_name',  label: 'Event',          fmt: 'text', better: null },
+      { key: 'top_event_median',label: 'Median',         fmt: 'usd',  better: 'max' },
+      { key: '_seasonphase',    label: 'Season · phase', fmt: 'text', better: null },
+    ]},
+    { title: 'AXS (merged source)', optional: true, probe: 'axs_event_count', rows: [
+      { key: 'axs_event_count', label: 'AXS events',   fmt: 'num',  better: 'max' },
+      { key: 'axs_getin_min',   label: 'AXS get-in',   fmt: 'usd2', better: 'min' },
+      { key: 'axs_listings',    label: 'AXS listings', fmt: 'num',  better: 'max' },
+    ]},
+  ];
+  const CMP_FMT = { num: gNum, usd: gUsd, usd2: gUsd2, mult: gMult, pct: gPct, spct: gSpct, text: gText };
+
+  function cmpFmtVal(row, card) {
+    let html = CMP_FMT[row.fmt](card ? card[row.key] : null);
+    if (row.delta && card) {
+      const dv = card[row.delta];
+      if (dv != null && isFinite(dv) && dv !== 0) {
+        const cls = dv > 0 ? 'up' : 'down', arw = dv > 0 ? '▲' : '▼';
+        html += ` <span class="sc-delta ${cls}">${arw} ${row.deltaFmt === 'num' ? gNum(Math.abs(dv)) : Math.abs(dv).toFixed(1) + '%'}</span>`;
+      }
+    }
+    return html;
+  }
+  function cmpLeaders(row, byId) {
+    if (!row.better) return new Set();
+    const vals = _basket.map(b => { const c = byId[b.id]; const v = c ? c[row.key] : null; return (v != null && isFinite(v)) ? Number(v) : null; });
+    const present = vals.filter(v => v != null);
+    if (present.length < 2) return new Set();
+    const best = row.better === 'max' ? Math.max(...present) : Math.min(...present);
+    const set = new Set(); vals.forEach((v, i) => { if (v === best) set.add(i); });
+    return set;
+  }
+  function renderCompareTable(byId) {
+    const body = document.getElementById('pgCompareBody');
+    const anySports = _basket.some(b => byId[b.id] && byId[b.id].is_sports);
+    const head = ['<tr><th class="cmp-corner">Metric</th>'];
+    _basket.forEach(b => {
+      const c = byId[b.id]; const asOf = c && c.as_of ? c.as_of : '';
+      head.push(`<th><a href="performer.html?performer=${b.id}">${escapeHtml(b.name)}</a>` +
+        (asOf ? `<span class="th-sub">as of ${escapeHtml(asOf)}</span>` : `<span class="th-sub">no stored card</span>`) + `</th>`);
+    });
+    head.push('</tr>');
+    const rows = [];
+    CMP_GROUPS.forEach(g => {
+      if (g.optional && !_basket.some(b => byId[b.id] && byId[b.id][g.probe] != null)) return;
+      rows.push(`<tr class="cmp-grouphdr"><td colspan="${_basket.length + 1}">${g.title}</td></tr>`);
+      g.rows.forEach(row => {
+        if (row.sportsOnly && !anySports) return;
+        const lead = cmpLeaders(row, byId);
+        const cells = _basket.map((b, i) => {
+          const c = byId[b.id];
+          const val = (row.sportsOnly && c && !c.is_sports) ? '—' : cmpFmtVal(row, c);
+          return `<td class="cmp-val${lead.has(i) ? ' leader' : ''}${row.fmt === 'text' ? ' txt' : ''}">${val}</td>`;
+        }).join('');
+        rows.push(`<tr><td class="cmp-lbl">${escapeHtml(row.label)}</td>${cells}</tr>`);
+      });
+    });
+    body.innerHTML = `<div class="cmp-table-scroll"><table class="cmp-table"><thead>${head.join('')}</thead><tbody>${rows.join('')}</tbody></table></div>`;
   }
 
   // ============================================================

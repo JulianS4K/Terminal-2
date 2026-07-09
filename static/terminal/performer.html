@@ -69,6 +69,71 @@
     .sc-topevent .sc-te-name:hover { text-decoration: underline; }
     .sc-topevent .sc-te-val { font-size: 12px; color: var(--muted, #b5b5b5); font-variant-numeric: tabular-nums; margin-left: auto; }
 
+    /* ---- Performer stat-card GALLERY (index mode) ---- */
+    .pg-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 14px; }
+    .pg-controls .ctrl-input { flex: 1 1 220px; max-width: 340px; padding: 8px 11px; background: var(--panel, #141414);
+      color: inherit; border: 1px solid rgba(255,255,255,.14); border-radius: 8px; font: inherit; }
+    .pg-sort { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .pg-sort .ctrl-lbl { font-size: 10px; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; }
+    .pg-sort .ctrl-btn { padding: 5px 10px; background: var(--panel-2, #1a1a1a); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 6px; color: var(--muted, #8a8a8a); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .pg-sort .ctrl-btn.is-active { color: var(--accent, #fbbf24); border-color: var(--accent, #fbbf24); }
+    .pg-sports { font-size: 12px; color: var(--muted, #8a8a8a); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+
+    .pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+    .pg-card { position: relative; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.09);
+      border-radius: 10px; padding: 12px 13px; cursor: pointer; transition: border-color .1s; }
+    .pg-card:hover { border-color: var(--dim, #4a4a4a); }
+    .pg-card.picked { border-color: var(--accent, #fbbf24); box-shadow: inset 0 0 0 1px var(--accent, #fbbf24); }
+    .pg-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+    .pg-card-name { font-weight: 700; font-size: 14px; line-height: 1.2; }
+    .pg-card-sub { font-size: 10px; color: var(--muted, #8a8a8a); text-transform: uppercase; letter-spacing: .04em; }
+    .pg-add { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px; border: 1px solid rgba(255,255,255,.16);
+      background: var(--panel-2, #1a1a1a); color: var(--muted, #b5b5b5); font-size: 15px; line-height: 1; cursor: pointer; }
+    .pg-add:hover { border-color: var(--accent, #fbbf24); color: var(--accent, #fbbf24); }
+    .pg-card.picked .pg-add { background: var(--accent, #fbbf24); color: #0a0a0a; border-color: var(--accent, #fbbf24); }
+    .pg-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .pg-metrics > div { display: flex; flex-direction: column; gap: 1px; }
+    .pg-metrics .v { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .pg-metrics .v.up { color: var(--pos, #4ade80); } .pg-metrics .v.down { color: var(--neg, #f87171); }
+    .pg-metrics .l { font-size: 9px; color: var(--muted, #8a8a8a); text-transform: uppercase; letter-spacing: .03em; }
+    .pg-card-te { margin-top: 9px; font-size: 11px; color: var(--muted, #8a8a8a); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; }
+    .pg-card-te b { color: var(--text, #e5e5e5); font-weight: 600; }
+    .pg-card-axs { margin-top: 5px; font-size: 10px; color: var(--info, #60a5fa); }
+
+    /* Compare basket — sticky action bar */
+    .pg-basket { position: sticky; bottom: 10px; z-index: 30; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-top: 14px; padding: 9px 12px; background: var(--panel-2, #1a1a1a);
+      border: 1px solid var(--accent, #fbbf24); border-radius: 10px; box-shadow: 0 6px 22px rgba(0,0,0,.55); }
+    .pg-basket-lbl { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--accent, #fbbf24); text-transform: uppercase; }
+    .pg-basket-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; }
+    .pg-basket-chips .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px;
+      background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .pg-basket-chips .chip button { background: none; border: none; color: var(--muted, #8a8a8a); cursor: pointer; font-size: 14px; line-height: 1; }
+    .pg-basket-chips .chip button:hover { color: var(--neg, #f87171); }
+    .pg-basket-clear { background: none; border: none; color: var(--muted, #8a8a8a); cursor: pointer; font-size: 12px; }
+
+    /* Compare table (folded in from compare.html) */
+    #pgComparePanel { margin-top: 14px; }
+    .cmp-table-scroll { overflow-x: auto; margin-top: 4px; }
+    table.cmp-table { border-collapse: collapse; width: 100%; min-width: 520px; font-variant-numeric: tabular-nums; }
+    table.cmp-table th, table.cmp-table td { padding: 8px 14px; text-align: right; white-space: nowrap; }
+    table.cmp-table thead th { position: sticky; top: 0; background: var(--bg, #0a0a0a); z-index: 1;
+      border-bottom: 1px solid rgba(255,255,255,.14); font-size: 13px; }
+    table.cmp-table thead th.cmp-corner, table.cmp-table td.cmp-lbl { text-align: left; }
+    table.cmp-table td.cmp-lbl { color: var(--muted, #b5b5b5); font-size: 12px; font-weight: 500; }
+    table.cmp-table tr.cmp-grouphdr td { padding-top: 14px; font-size: 11px; font-weight: 700;
+      letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; text-align: left; }
+    table.cmp-table tbody tr:hover td { background: rgba(255,255,255,.03); }
+    table.cmp-table td.cmp-val { font-size: 13px; font-weight: 600; }
+    table.cmp-table td.cmp-val.txt { text-align: left; white-space: normal; font-weight: 500; font-size: 12px; max-width: 220px; }
+    table.cmp-table td.cmp-val.leader { color: var(--pos, #4ade80); }
+    table.cmp-table thead th .th-sub { display: block; font-size: 10px; font-weight: 400; color: var(--muted, #8a8a8a); }
+    table.cmp-table thead th a { color: inherit; text-decoration: none; }
+    table.cmp-table thead th a:hover { text-decoration: underline; }
+    @media (max-width: 640px) { .pg-grid { grid-template-columns: 1fr 1fr; } }
+
     /* Cross-event daily metrics (Overview tab) */
     #pdmSplit { display: flex; gap: 6px; }
     .pdm-delta { font-size: 11px; margin-left: 6px; font-weight: 600; }
@@ -107,13 +172,47 @@
 
   <main class="wrap performer">
 
-    <!-- INDEX MODE: 4-league directory shown when no ?performer=<id> in URL. -->
+    <!-- INDEX MODE: stat-card GALLERY + compare basket (redesign 2026-07-09).
+         Replaces the old league directory. Shown when no ?performer=<id>. -->
     <section id="perf-index" hidden>
       <div class="panel-title row">
-        <span>PERFORMERS — directory</span>
+        <span>PERFORMERS — stat cards</span>
         <span class="muted small" id="perfIndexCounts"></span>
       </div>
-      <div id="perfIndexBody"><div class="empty">loading…</div></div>
+      <div class="muted small" style="margin-bottom:10px">
+        Every performer's Statistics card. Tap a card to open it; tap <b>＋</b> to add up to 5 to the
+        compare basket, then <b>Compare</b> for the side-by-side.
+      </div>
+      <div class="pg-controls">
+        <input id="pgSearch" type="search" class="ctrl-input" placeholder="Search performers…" autocomplete="off" spellcheck="false" />
+        <div class="pg-sort" id="pgSort" role="group" aria-label="Sort">
+          <span class="ctrl-lbl">SORT</span>
+          <button class="ctrl-btn is-active" data-sort="notional">Owned $</button>
+          <button class="ctrl-btn" data-sort="market">Market</button>
+          <button class="ctrl-btn" data-sort="owned">Owned tix</button>
+          <button class="ctrl-btn" data-sort="getin">Get-in</button>
+          <button class="ctrl-btn" data-sort="movers">Movers 30d</button>
+        </div>
+        <label class="pg-sports"><input type="checkbox" id="pgSportsOnly" /> sports only</label>
+      </div>
+      <div id="pgGrid" class="pg-grid"><div class="empty">loading…</div></div>
+    </section>
+
+    <!-- Compare basket bar — sticky footer, appears once ≥1 card is picked. -->
+    <div id="pgBasket" class="pg-basket" hidden>
+      <span class="pg-basket-lbl">COMPARE</span>
+      <span id="pgBasketChips" class="pg-basket-chips"></span>
+      <button id="pgCompareBtn" class="event-tab">Compare →</button>
+      <button id="pgClearBtn" class="pg-basket-clear">clear</button>
+    </div>
+
+    <!-- Compare panel — the folded-in side-by-side table (was compare.html). -->
+    <section id="pgComparePanel" hidden>
+      <div class="panel-title row">
+        <span>COMPARE — side by side</span>
+        <a href="#" id="pgCompareClose" class="muted small">✕ close</a>
+      </div>
+      <div id="pgCompareBody"></div>
     </section>
 
     <!-- DETAIL MODE: existing hero + rollup + tabbed sections. Shown when ?performer=<id>. -->
@@ -350,9 +449,9 @@
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260709cmp"></script>
+  <script src="nav.js?v=20260709gal"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260709axs"></script>
+  <script src="performer.js?v=20260709gal"></script>
 </body>
 </html>

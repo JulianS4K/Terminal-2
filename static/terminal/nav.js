@@ -37,9 +37,8 @@
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
-    // Compare — stock-compare window: line up to 5 performers' Statistics
-    // stat-cards side-by-side (get_performer_stat_cards over performer_stat_card).
-    { id: 'compare',   label: 'COMPARE',   href: 'compare.html' },
+    // (COMPARE folded into the performer stat-card gallery 2026-07-09 — the
+    // landing grid has a compare basket; compare.html now redirects there.)
     // Sports data surfaces (ESPN pipelines). Leagues = one hub across every
     // ESPN-tracked league: team leagues (per-team demand + blind spots) plus
     // the merged racing series (F1 + NASCAR schedule + driver standings +
