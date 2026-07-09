@@ -256,6 +256,7 @@ def _rows_with_stubhub():
                  "items": [
                      {"section": "GA Premium", "ticketClassName": "General Admission",
                       "rawPrice": 1050.75, "availableTickets": 2, "notes": []},
+                     "corrupt-non-dict-row",   # defensively skipped by the normalizer
                      {"section": "General Admission", "rawPrice": 55.81, "availableTickets": 6,
                       "notes": [{"formattedListingNoteContent": "Standing room only (SRO)"}]},
                  ]}},
