@@ -43,6 +43,11 @@
       { key: 'top_event_median',label: 'Median',        fmt: 'usd',  better: 'max' },
       { key: '_seasonphase',    label: 'Season · phase', fmt: 'text', better: null },
     ]},
+    { title: 'AXS (merged source)', optional: true, probe: 'axs_event_count', rows: [
+      { key: 'axs_event_count', label: 'AXS events',   fmt: 'num',  better: 'max' },
+      { key: 'axs_getin_min',   label: 'AXS get-in',   fmt: 'usd2', better: 'min' },
+      { key: 'axs_listings',    label: 'AXS listings', fmt: 'num',  better: 'max' },
+    ]},
   ];
 
   // selected: [{ id, name }]
@@ -126,6 +131,8 @@
 
     const rows = [];
     GROUPS.forEach(g => {
+      // optional group (e.g. AXS) — skip entirely if no selected performer has data
+      if (g.optional && !selected.some(s => cards[s.id] && cards[s.id][g.probe] != null)) return;
       rows.push(`<tr class="cmp-grouphdr"><td colspan="${selected.length + 1}">${g.title}</td></tr>`);
       g.rows.forEach(row => {
         if (row.sportsOnly && !anySports) return;

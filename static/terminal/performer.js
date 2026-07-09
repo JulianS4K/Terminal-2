@@ -645,11 +645,23 @@
       </div>`;
     }
 
+    // AXS merged source — for performers whose AXS inventory bridged in via the
+    // daily match/merge job. Shown as a labeled extra source (units not mixed
+    // into market float; get-in is a price so it stands on its own).
+    let axsLine = '';
+    if (d.axs_event_count) {
+      axsLine = `<div class="sc-topevent" style="border-left-color: var(--info, #60a5fa)">
+        <span class="sc-te-lbl">AXS · MERGED</span>
+        <span class="sc-te-name">${num(d.axs_event_count)} events · get-in ${usd2(d.axs_getin_min)}</span>
+        <span class="sc-te-val">${num(d.axs_listings)} listings${d.axs_as_of ? ` · ${escapeHtml(d.axs_as_of)}` : ''}</span>
+      </div>`;
+    }
+
     body.innerHTML = `<div class="sc-groups">
       <div class="sc-group"><h4>Market</h4>${market}</div>
       <div class="sc-group"><h4>Position</h4>${position}</div>
       <div class="sc-group"><h4>Trend</h4>${trend}</div>
-    </div>${topEvent}`;
+    </div>${topEvent}${axsLine}`;
   }
 
   // ---------- Cross-event daily metrics (Overview) ----------
