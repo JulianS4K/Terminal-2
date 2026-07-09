@@ -236,7 +236,13 @@
       const ex = EXTRA_LEAGUES.find(l => l.key.toLowerCase() === want.toLowerCase());
       if (ex) return ex.key;
     }
-    if (_teamLeagues.length) return _teamLeagues[0].key;
+    // Default to NFL when present (flagship league + the one carrying live
+    // season-ticket value data) rather than the backend list's first entry
+    // (NBA), so the landing view isn't an empty off-season league. Falls back to
+    // the first team league, then racing.
+    if (_teamLeagues.length) {
+      return (_teamLeagues.find(l => String(l.key).toUpperCase() === 'NFL') || _teamLeagues[0]).key;
+    }
     return RACING_SERIES[0].key;
   }
 
@@ -359,7 +365,7 @@
     const body = rows.map(p =>
       `<tr>` +
       `<td>${stvVerdictBadge(p.verdict)}</td>` +
-      `<td>${escapeHtml(p.team || '—')}</td>` +
+      `<td><a class="stv-link" href="season-tickets.html?event=${encodeURIComponent(p.pkg_event_id)}">${escapeHtml(p.team || '—')}</a></td>` +
       `<td class="num">${escapeHtml(String(p.home_games))}</td>` +
       `<td class="num">${money(p.pkg_ask_med)}</td>` +
       `<td class="num">${money(p.comp_getin_med)}</td>` +
