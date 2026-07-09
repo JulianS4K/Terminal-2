@@ -272,9 +272,10 @@
     url.searchParams.delete('series');
     history.replaceState(null, '', url);
     $('lgResults').setAttribute('hidden', '');
+    $('lgSeasonTix').hidden = true;   // team-league only; loadSeasonTickets un-hides if it has rows
     if (isRacing(key)) loadRacing(key);
     else if (key === BROADWAY_KEY) loadBroadway(key);
-    else loadTeamLeague(key);
+    else { loadTeamLeague(key); loadSeasonTickets(key); }
   }
 
   // ------------------------------------------------------------------
@@ -315,6 +316,74 @@
     const below = secondary != null && +secondary < +f.face_getin;
     const tip = `primary face · ${f.face_source || 'AXS'}${below ? ' · resale below face' : ''}`;
     return `<td class="num face-cell ${below ? 'face-below' : ''}" title="${escapeHtml(tip)}">${money(f.face_getin)}</td>`;
+  }
+
+  // ------------------------------------------------------------------
+  // Season-ticket package value — /api/broker/season-ticket-value
+  // Major pro leagues only. Filtered to the active league and rendered above the
+  // roster / slate / ranking tables. Degrades to hidden if the RPC isn't deployed.
+  // ------------------------------------------------------------------
+  const STV_MAJORS = new Set(['NFL', 'NBA', 'MLB', 'NHL', 'MLS']);
+  let _stvCache = null;
+
+  async function loadSeasonTickets(key) {
+    const sec = $('lgSeasonTix');
+    if (!STV_MAJORS.has(key)) { sec.hidden = true; return; }
+    sec.hidden = false;
+    $('lgSeasonTixBody').innerHTML = '<div class="empty">loading…</div>';
+    try {
+      if (!_stvCache) _stvCache = (await T.api('/api/broker/season-ticket-value')) || { packages: [] };
+    } catch (e) {
+      console.error('[seasonTix]', e);
+      sec.hidden = true;   // not deployed / forbidden → hide honestly
+      return;
+    }
+    if (_curView !== key) return;   // user switched leagues mid-flight
+    renderSeasonTickets(key, _stvCache);
+  }
+
+  function renderSeasonTickets(key, data) {
+    const sec = $('lgSeasonTix');
+    const all = (data && data.packages) || [];
+    // this league, with enough coverage to trust (full-ish schedule + >1 seat)
+    const rows = all.filter(p => p.league === key
+      && (+p.home_games || 0) >= 6 && (+p.seats_valued || 0) >= 2);
+    if (!rows.length) { sec.hidden = true; return; }
+    sec.hidden = false;
+    $('lgSeasonTixMeta').innerHTML =
+      `${rows.length} package${rows.length === 1 ? '' : 's'} · ask vs comparable seat game-by-game`
+      + (data.computed_at ? ` · ${escapeHtml(T.fmtDate(data.computed_at))}` : '');
+    const cols = ['Verdict', 'Team', 'Gms', 'Pkg ask/seat', 'Season @getin', 'Season @VWAP',
+                  'Δ/seat @VWAP', '% cheaper', 'Seats'];
+    const head = cols.map(c => `<th>${c}</th>`).join('');
+    const body = rows.map(p =>
+      `<tr>` +
+      `<td>${stvVerdictBadge(p.verdict)}</td>` +
+      `<td>${escapeHtml(p.team || '—')}</td>` +
+      `<td class="num">${escapeHtml(String(p.home_games))}</td>` +
+      `<td class="num">${money(p.pkg_ask_med)}</td>` +
+      `<td class="num">${money(p.comp_getin_med)}</td>` +
+      `<td class="num">${money(p.comp_vwap_med)}</td>` +
+      `<td class="num ${(+p.med_savings_vwap >= 0) ? 'pos' : 'neg'}">${stvSigned(p.med_savings_vwap)}</td>` +
+      `<td class="num">${p.pct_cheaper_vwap == null ? '—' : Number(p.pct_cheaper_vwap).toFixed(0) + '%'}</td>` +
+      `<td class="num muted">${escapeHtml(String(p.seats_valued))}</td>` +
+      `</tr>`).join('');
+    $('lgSeasonTixBody').innerHTML =
+      `<table class="stv-lg-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` +
+      `<div class="lg-note">Comparable = same section, row ±5, pair-sellable, across regular-season ` +
+      `home games. Verdict = qty-weighted % of package inventory that undercuts buying game-by-game (VWAP). ` +
+      `<a href="season-tickets.html">full breakdown →</a></div>`;
+  }
+
+  function stvVerdictBadge(v) {
+    const s = String(v || '').toUpperCase();
+    const cls = s === 'BUY' ? 'buy' : (s === 'SKIP' ? 'skip' : '');
+    return `<span class="badge ${cls}">${escapeHtml(s || '—')}</span>`;
+  }
+  function stvSigned(v) {
+    if (v == null || Number.isNaN(+v)) return '—';
+    const n = +v;
+    return (n >= 0 ? '+$' : '−$') + T.fmtNum(Math.abs(Math.round(n)));
   }
 
   // ------------------------------------------------------------------
