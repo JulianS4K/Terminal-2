@@ -1,5 +1,6 @@
 -- ============================================================================
--- Migration 20260709220000 — Expand Ticketmaster coverage: raise /match report cap + enqueue throughput
+-- Migration 20260709220040 — Expand Ticketmaster coverage: raise /match report cap + enqueue throughput
+-- (prefix bumped 220000 → 220040 to clear a timestamp collision with 20260709220000_sold_spread_and_trend.sql)
 --
 -- Lane:     A1 (data plane — TicketsData TM coverage)
 -- Touches:  td_reports_budget_ok() [600→1200], td_match_cron_budget_ok() [600→1200],
