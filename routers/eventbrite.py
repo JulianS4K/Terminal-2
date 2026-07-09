@@ -45,6 +45,24 @@ def _stubhub_info(r: dict) -> dict:
     min_price = _num(inv.get("min_price"))
     if min_price is None:
         min_price = _num(sh.get("min_price"))
+    # Seat-level listings (only present on manual /fetch rows that stored raw.items);
+    # normalized to the columns the standard event listings table renders.
+    listings_detail = []
+    items = raw.get("items") if isinstance(raw.get("items"), list) else []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        note = None
+        notes = it.get("notes")
+        if isinstance(notes, list) and notes and isinstance(notes[0], dict):
+            note = notes[0].get("formattedListingNoteContent")
+        listings_detail.append({
+            "section": it.get("section") or it.get("ticketClassName"),
+            "price": _num(it.get("rawPrice")),
+            "quantity": it.get("availableTickets"),
+            "note": note,
+        })
+    listings_detail.sort(key=lambda x: (x["price"] is None, x["price"] or 0))
     return {
         "entity_id": r.get("td_event_id"),
         "url": r.get("event_url"),
@@ -52,6 +70,7 @@ def _stubhub_info(r: dict) -> dict:
         "max_price": _num(inv.get("max_price")),
         "listings": inv.get("listings"),
         "total_tickets": inv.get("total_tickets"),
+        "listings_detail": listings_detail or None,
         "source": raw.get("source"),
         "snapshot_at": raw.get("snapshot_at"),
     }

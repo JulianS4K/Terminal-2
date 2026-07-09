@@ -246,13 +246,19 @@ def _rows_with_stubhub():
          "raw": {"source": "stubhub_connector_search",
                  "eb_match": {"td_event_id": "E_CONN"},
                  "sh": {"entity_id": "161118309", "min_price": 69.0}}},
-        # manual /fetch SH row: full inventory snapshot
+        # manual /fetch SH row: full inventory snapshot + seat-level items
         {"platform": "stubhub", "td_event_id": "161120445",
          "event_url": "https://www.stubhub.com/event/161120445/",
          "raw": {"source": "manual_url_fetch",
                  "eb_match": {"td_event_id": "E_FETCH"},
                  "inventory": {"listings": 8, "total_tickets": 42,
-                               "min_price": 55.81, "max_price": 1050.75}}},
+                               "min_price": 55.81, "max_price": 1050.75},
+                 "items": [
+                     {"section": "GA Premium", "ticketClassName": "General Admission",
+                      "rawPrice": 1050.75, "availableTickets": 2, "notes": []},
+                     {"section": "General Admission", "rawPrice": 55.81, "availableTickets": 6,
+                      "notes": [{"formattedListingNoteContent": "Standing room only (SRO)"}]},
+                 ]}},
     ]
 
 
@@ -282,9 +288,22 @@ def test_eventbrite_single_event_attaches_stubhub(client, monkeypatch):
     assert ev["stubhub"]["entity_id"] == "161118309"
     assert ev["stubhub"]["min_price"] == 69.0
     assert ev["stubhub"]["url"] == "https://www.stubhub.com/event/161118309/"
+    assert ev["stubhub"]["listings_detail"] is None      # connector search: no seat detail
 
     ev2 = client.get("/api/eventbrite/event/E_NONE").json()
     assert ev2["stubhub"] is None
+
+
+def test_eventbrite_stubhub_listings_detail(client, monkeypatch):
+    _dbf(monkeypatch, _rows_with_stubhub())
+    ev = client.get("/api/eventbrite/event/E_FETCH").json()
+    ld = ev["stubhub"]["listings_detail"]
+    assert ld is not None and len(ld) == 2
+    # normalized + sorted cheapest-first (the $55.81 GA row leads the $1050 row)
+    assert ld[0]["price"] == 55.81 and ld[0]["section"] == "General Admission"
+    assert ld[0]["quantity"] == 6 and ld[0]["note"] == "Standing room only (SRO)"
+    assert ld[1]["price"] == 1050.75 and ld[1]["section"] == "GA Premium"
+    assert ld[1]["note"] is None
 
 
 def _detail_with_summary(client, monkeypatch, summary):
