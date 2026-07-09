@@ -43,75 +43,327 @@
   // ============================================================
   // INDEX mode — 4-league directory
   // ============================================================
+  // Stat-card gallery + fold-in compare (redesign 2026-07-09; replaces the old
+  // league directory). Landing = searchable/sortable grid of compact stat-cards
+  // (get_performer_stat_card_gallery); pick up to 5 into the basket → the
+  // side-by-side compare table (get_performer_stat_cards) that used to be a
+  // separate compare.html.
+  const _gallery = { search: '', sort: 'notional', sportsOnly: false, cards: {} };
+  const _basket = [];   // [{id, name}]
+  const MAX_CMP = 5;
+
+  // shared formatters (gallery cards + compare table)
+  const gUsd  = v => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+  const gUsd2 = v => (v != null && isFinite(v)) ? '$' + Number(v).toFixed(2) : '—';
+  const gNum  = v => (v != null && isFinite(v)) ? T.fmtNum(v) : '—';
+  const gMult = v => (v != null && isFinite(v)) ? Number(v).toFixed(2) + '×' : '—';
+  const gPct  = v => (v != null && isFinite(v)) ? T.fmtPct(v * 100, 1) : '—';
+  const gText = v => (v != null && v !== '') ? escapeHtml(String(v)) : '—';
+  const gKnum = v => {
+    if (v == null || !isFinite(v)) return '—';
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (a >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+    return String(v);
+  };
+  const gSpct = v => {   // signed % (already a percent number)
+    if (v == null || !isFinite(v)) return '—';
+    const cls = v > 0 ? 'up' : (v < 0 ? 'down' : '');
+    const arw = v > 0 ? '▲ ' : (v < 0 ? '▼ ' : '');
+    return `<span class="sc-delta ${cls}">${arw}${Math.abs(v).toFixed(1)}%</span>`;
+  };
+
   async function showIndexMode() {
     const idx = document.getElementById('perf-index');
     if (idx) idx.removeAttribute('hidden');
-    T.setStatus('Loading performer index…');
-    const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-      document.getElementById('perfIndexBody').innerHTML =
-        '<div class="empty">index needs auth — sign in with @s4kent.com</div>';
-      T.setStatus('Auth required', 'err');
-      return;
+    // Hide all detail-mode chrome — the Overview pane (rollup/daily-metrics) is
+    // `active` by default and would otherwise render empty below the gallery.
+    // #perf-hero has an ID-level display rule that outranks [hidden], so force
+    // it off with an inline style; panes obey .tab-pane[hidden].
+    document.querySelectorAll('.tab-pane').forEach(el => el.setAttribute('hidden', ''));
+    ['perf-hero', 'perfTabs'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
+    wireGalleryControls();
+    // Restore a shared comparison from ?ids=a,b,c (back-compat with compare.html links).
+    const idsRaw = new URLSearchParams(location.search).get('ids');
+    if (idsRaw) {
+      idsRaw.split(',').map(s => parseInt(s, 10)).filter(n => n > 0).slice(0, MAX_CMP)
+        .forEach(id => _basket.push({ id, name: '#' + id }));
     }
-    const res = await Auth.client.rpc('get_broker_performer_index');
-    if (res.error) {
-      T.setStatus(res.error.message, 'err');
-      document.getElementById('perfIndexBody').innerHTML =
-        `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
-      return;
-    }
-    T.setStatus('Loaded', 'ok');
-    renderIndex(res.data || {});
+    loadTrending().catch(e => console.error('trending', e));
+    await loadGallery();
+    if (_basket.length) { syncBasket(); openCompare(); }
   }
 
-  function renderIndex(d) {
-    const body = document.getElementById('perfIndexBody');
-    const countsEl = document.getElementById('perfIndexCounts');
-    const counts = d.counts || {};
-    const leagues = d.leagues || {};
-    // Directory columns, in order. Broadway is a category whose "teams" are
-    // shows (link to the event Cast tab); WNBA joined the sports leagues.
-    const LEAGUE_ORDER = ['NFL','NBA','MLB','MLS','WNBA','Broadway'];
-    if (countsEl) {
-      const parts = LEAGUE_ORDER
-        .filter(l => counts[l])
-        .map(l => `${l} ${counts[l]}`);
-      if (counts.total) parts.push(`· ${counts.total} total`);
-      countsEl.textContent = parts.join(' · ');
-    }
-    body.innerHTML = '';
-    const grid = document.createElement('div');
-    grid.className = 'entity-index-grid';
-    LEAGUE_ORDER.forEach(league => {
-      const teams = leagues[league] || [];
-      if (!teams.length) return;
-      const col = document.createElement('div');
-      col.className = 'entity-index-col';
-      col.innerHTML = `<div class="entity-index-col-hdr">${league} <span class="muted small">(${teams.length})</span></div>`;
-      const ul = document.createElement('ul');
-      ul.className = 'entity-index-list';
-      teams.forEach(t => {
-        const li = document.createElement('li');
-        const upcoming = t.events_count_next_90d != null ? `<span class="entity-idx-count">${t.events_count_next_90d}</span>` : '';
-        // Teams link to their performer page. Broadway shows link there too, but
-        // with &venue=<nyc house> so the page scopes to NYC (the show's franchise
-        // performer also tours). Fallback to a representative event if no id.
-        let href = t.tevo_performer_id
-          ? `performer.html?performer=${t.tevo_performer_id}`
-          : (t.sample_event_id ? `event.html?event=${t.sample_event_id}` : '#');
-        if (t.tevo_performer_id && t.tevo_venue_id) href += `&venue=${t.tevo_venue_id}`;
-        li.innerHTML = `<a href="${href}">
-            <span class="entity-idx-name">${escapeHtml(t.display_name || t.performer_name || '—')}</span>
-            ${t.abbreviation ? `<span class="muted small">${escapeHtml(t.abbreviation)}</span>` : ''}
-            ${upcoming}
-          </a>`;
-        ul.appendChild(li);
+  // TRENDING — top 25 by same-event-set 30d momentum. Basis toggle: 'ask'
+  // (listing price momentum) | 'sold' (realized SG sold-price momentum).
+  let _trendBy = 'ask';
+  async function loadTrending() {
+    const body = document.getElementById('pgTrendBody');
+    const Auth = window.TerminalAuth;
+    if (!body) return;
+    // wire the Ask/Sold toggle once
+    document.querySelectorAll('#pgTrendBy [data-by]').forEach(btn => {
+      if (btn._wired) return; btn._wired = true;
+      btn.addEventListener('click', () => {
+        _trendBy = btn.dataset.by;
+        document.querySelectorAll('#pgTrendBy [data-by]').forEach(x => x.classList.toggle('is-active', x === btn));
+        loadTrending().catch(e => console.error('trending', e));
       });
-      col.appendChild(ul);
-      grid.appendChild(col);
     });
-    body.appendChild(grid);
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) { body.innerHTML = '<div class="empty">trending needs auth</div>'; return; }
+    const res = await Auth.client.rpc('get_trending_performers', { p_limit: 25, p_min_market: 1000, p_min_events: 3, p_sort: _trendBy });
+    if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
+    renderTrending(res.data || []);
+  }
+
+  function renderTrending(rows) {
+    const body = document.getElementById('pgTrendBody');
+    const meta = document.getElementById('pgTrendMeta');
+    if (!rows.length) { body.innerHTML = '<div class="empty">no trending performers</div>'; return; }
+    rows.forEach(c => { _gallery.cards[c.performer_id] = c; });   // so compare basket can name them
+    if (meta && rows[0].trend_computed_at) meta.textContent = '· as of ' + String(rows[0].trend_computed_at).slice(0, 10);
+    const sold = _trendBy === 'sold';
+    const trs = rows.map((c, i) => {
+      const t = sold ? c.trend_sold_30d : c.trend_px_30d;
+      const ev = sold ? c.trend_sold_stable_events : c.trend_stable_events;
+      const av = c.ask_over_sold_pct;   // asks vs realized clearing (− = under = buy)
+      const avHtml = (av != null && isFinite(av))
+        ? `<span class="${av > 0 ? 'ask-hi' : 'ask-lo'}">${av > 0 ? '+' : ''}${gNum(av)}%</span>` : '—';
+      const picked = _basket.some(b => b.id === c.performer_id) ? ' picked' : '';
+      return `<tr>
+        <td class="rk">${i + 1}</td>
+        <td class="l nm"><a href="performer.html?performer=${c.performer_id}">${escapeHtml(c.performer_name || '—')}</a></td>
+        <td class="trend ${t < 0 ? 'down' : ''}">${t > 0 ? '▲ +' : (t < 0 ? '▼ ' : '')}${gNum(Math.abs(t))}%</td>
+        <td>${gNum(ev)}</td>
+        <td>${gUsd(c.price_median)}</td>
+        <td>${gUsd(c.sg_sold_median)}</td>
+        <td>${avHtml}</td>
+        <td>${gNum(c.market_tickets)}</td>
+        <td>${gKnum(c.owned_tickets)}</td>
+        <td><button class="pg-trend-add${picked}" data-add="${c.performer_id}" title="add to compare" aria-label="add to compare">＋</button></td>
+      </tr>`;
+    }).join('');
+    body.innerHTML = `<div class="pg-trend-scroll"><table class="pg-trend-tbl">
+      <thead><tr>
+        <th class="rk">#</th><th class="l">Performer</th>
+        <th title="Median per-event 30d ${sold ? 'realized SOLD-price' : 'listing-price'} change, stable event set">Trend 30d${sold ? ' · sold' : ''}</th>
+        <th title="Events in the stable set">Events</th>
+        <th title="Listing/ask median">Ask med</th>
+        <th title="Realized SG sold median">Sold med</th>
+        <th title="How far asks sit above (+) or below (−) realized clearing">Ask vs sold</th>
+        <th>Market</th><th>Owned</th><th></th>
+      </tr></thead><tbody>${trs}</tbody></table></div>`;
+    body.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', () => {
+      toggleBasket(parseInt(btn.dataset.add, 10));
+      btn.classList.toggle('picked', _basket.some(b => b.id === parseInt(btn.dataset.add, 10)));
+    }));
+  }
+
+  function wireGalleryControls() {
+    const s = document.getElementById('pgSearch');
+    if (s) { let t = 0; s.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { _gallery.search = s.value.trim(); loadGallery(); }, 250); }); }
+    document.querySelectorAll('#pgSort [data-sort]').forEach(b => b.addEventListener('click', () => {
+      _gallery.sort = b.dataset.sort;
+      document.querySelectorAll('#pgSort [data-sort]').forEach(x => x.classList.toggle('is-active', x === b));
+      loadGallery();
+    }));
+    const so = document.getElementById('pgSportsOnly');
+    if (so) so.addEventListener('change', () => { _gallery.sportsOnly = so.checked; loadGallery(); });
+    const cmpBtn = document.getElementById('pgCompareBtn');
+    if (cmpBtn) cmpBtn.addEventListener('click', openCompare);
+    const clr = document.getElementById('pgClearBtn');
+    if (clr) clr.addEventListener('click', () => { _basket.length = 0; document.querySelectorAll('.pg-card.picked').forEach(c => c.classList.remove('picked')); syncBasket(); });
+    const cl = document.getElementById('pgCompareClose');
+    if (cl) cl.addEventListener('click', e => { e.preventDefault(); document.getElementById('pgComparePanel').setAttribute('hidden', ''); });
+  }
+
+  async function loadGallery() {
+    const grid = document.getElementById('pgGrid');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) { grid.innerHTML = '<div class="empty">gallery needs auth — sign in with @s4kent.com</div>'; T.setStatus('Auth required', 'err'); return; }
+    grid.innerHTML = '<div class="empty">loading…</div>';
+    T.setStatus('Loading performers…');
+    const res = await Auth.client.rpc('get_performer_stat_card_gallery', {
+      p_search: _gallery.search || null, p_sort: _gallery.sort, p_limit: 120, p_sports_only: _gallery.sportsOnly,
+    });
+    if (res.error) { grid.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; T.setStatus(res.error.message, 'err'); return; }
+    T.setStatus('Loaded', 'ok');
+    renderGallery(res.data || []);
+  }
+
+  function renderGallery(cards) {
+    const grid = document.getElementById('pgGrid');
+    const countEl = document.getElementById('perfIndexCounts');
+    cards.forEach(c => { _gallery.cards[c.performer_id] = c; });
+    if (countEl) countEl.textContent = cards.length ? `${cards.length} shown` : '';
+    if (!cards.length) { grid.innerHTML = '<div class="empty">no performers match</div>'; return; }
+    grid.innerHTML = cards.map(c => {
+      const picked = _basket.some(b => b.id === c.performer_id) ? ' picked' : '';
+      const te = c.top_event_name ? `<div class="pg-card-te">top: <b>${escapeHtml(c.top_event_name)}</b> · ${gUsd(c.top_event_median)}</div>` : '';
+      const axs = c.axs_event_count ? `<div class="pg-card-axs">+ AXS ${gNum(c.axs_event_count)} ev · ${gNum(c.axs_listings)} listings</div>` : '';
+      const d30 = c.price_d30_pct;
+      const d30cls = (d30 > 0) ? 'up' : (d30 < 0 ? 'down' : '');
+      const d30txt = (d30 != null && isFinite(d30)) ? (d30 > 0 ? '+' : '') + Number(d30).toFixed(1) + '%' : '—';
+      return `<div class="pg-card${picked}" data-id="${c.performer_id}">
+        <div class="pg-card-top">
+          <span class="pg-card-name">${escapeHtml(c.performer_name || '—')}${c.is_sports ? '' : ' <span class="pg-card-sub">· act</span>'}</span>
+          <button class="pg-add" data-add="${c.performer_id}" title="add to compare" aria-label="add to compare">＋</button>
+        </div>
+        <div class="pg-metrics">
+          <div><span class="v">${gUsd(c.getin_median)}</span><span class="l">get-in</span></div>
+          <div><span class="v">${gUsd(c.price_median)}</span><span class="l">median</span></div>
+          <div><span class="v">${gKnum(c.owned_tickets)}</span><span class="l">owned</span></div>
+          <div><span class="v ${d30cls}">${d30txt}</span><span class="l">30d</span></div>
+        </div>
+        ${te}${axs}
+      </div>`;
+    }).join('');
+    grid.querySelectorAll('.pg-card').forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.closest('[data-add]')) return;
+        location.href = `performer.html?performer=${card.dataset.id}`;
+      });
+    });
+    grid.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleBasket(parseInt(btn.dataset.add, 10));
+    }));
+  }
+
+  function toggleBasket(id) {
+    const i = _basket.findIndex(b => b.id === id);
+    const card = document.querySelector(`.pg-card[data-id="${id}"]`);
+    if (i >= 0) { _basket.splice(i, 1); if (card) card.classList.remove('picked'); }
+    else {
+      if (_basket.length >= MAX_CMP) { T.setStatus(`max ${MAX_CMP} to compare`, 'err'); return; }
+      const c = _gallery.cards[id];
+      _basket.push({ id, name: c ? c.performer_name : '#' + id });
+      if (card) card.classList.add('picked');
+    }
+    syncBasket();
+  }
+
+  function syncBasket() {
+    const bar = document.getElementById('pgBasket');
+    const chips = document.getElementById('pgBasketChips');
+    const panel = document.getElementById('pgComparePanel');
+    if (!_basket.length) { bar.setAttribute('hidden', ''); panel.setAttribute('hidden', ''); return; }
+    bar.removeAttribute('hidden');
+    chips.innerHTML = _basket.map(b => `<span class="chip">${escapeHtml(b.name)}<button data-rm="${b.id}" aria-label="remove">×</button></span>`).join('');
+    chips.querySelectorAll('[data-rm]').forEach(x => x.addEventListener('click', () => toggleBasket(parseInt(x.dataset.rm, 10))));
+    document.getElementById('pgCompareBtn').textContent = `Compare (${_basket.length}) →`;
+    if (!panel.hasAttribute('hidden')) openCompare();
+  }
+
+  async function openCompare() {
+    if (!_basket.length) return;
+    const panel = document.getElementById('pgComparePanel');
+    const body = document.getElementById('pgCompareBody');
+    panel.removeAttribute('hidden');
+    body.innerHTML = '<div class="empty">loading…</div>';
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_performer_stat_cards', { p_ids: _basket.map(b => b.id) });
+    if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
+    const byId = {};
+    (res.data || []).forEach(c => { c._seasonphase = [c.top_event_season, c.top_event_phase].filter(Boolean).join(' · '); byId[c.performer_id] = c; });
+    renderCompareTable(byId);
+  }
+
+  // Compare table — performers as columns, metrics as rows (ported from compare.js).
+  const CMP_GROUPS = [
+    { title: 'Market', rows: [
+      { key: 'event_count',   label: 'Active events',      fmt: 'num',  better: 'max' },
+      { key: 'getin_min',     label: 'Get-in (min)',       fmt: 'usd2', better: 'min' },
+      { key: 'getin_median',  label: 'Get-in (median)',    fmt: 'usd',  better: 'min' },
+      { key: 'price_median',  label: 'Price median',       fmt: 'usd',  better: 'max' },
+      { key: 'price_p90',     label: 'Ceiling (p90)',      fmt: 'usd',  better: 'max' },
+      { key: 'spread_ratio',  label: 'Spread (p90÷get-in)',fmt: 'mult', better: null  },
+      { key: 'market_tickets',label: 'Market float (tix)', fmt: 'num',  better: 'max' },
+      { key: 'median_median_price', label: 'Median · all events', fmt: 'usd', better: 'max' },
+    ]},
+    { title: 'Position', rows: [
+      { key: 'owned_tickets',      label: 'Owned tickets',    fmt: 'num', better: 'max', delta: 'owned_tickets_d30', deltaFmt: 'num' },
+      { key: 'owned_book_notional',label: 'Owned notional',   fmt: 'usd', better: 'max' },
+      { key: 'owned_share',        label: 'Owned share (EVO)',fmt: 'pct', better: 'max' },
+    ]},
+    { title: 'Trend', rows: [
+      { key: 'price_d7_pct',     label: 'Price Δ 7d',   fmt: 'spct', better: 'max' },
+      { key: 'price_d30_pct',    label: 'Price Δ 30d',  fmt: 'spct', better: 'max' },
+      { key: 'getin_d7_pct',     label: 'Get-in Δ 7d',  fmt: 'spct', better: null  },
+      { key: 'home_price_median',label: 'Home price median', fmt: 'usd',  better: 'max', sportsOnly: true },
+      { key: 'away_price_median',label: 'Away price median', fmt: 'usd',  better: 'max', sportsOnly: true },
+    ]},
+    { title: 'Top event (highest median)', rows: [
+      { key: 'top_event_name',  label: 'Event',          fmt: 'text', better: null },
+      { key: 'top_event_median',label: 'Median',         fmt: 'usd',  better: 'max' },
+      { key: '_seasonphase',    label: 'Season · phase', fmt: 'text', better: null },
+    ]},
+    { title: 'AXS (merged source)', optional: true, probe: 'axs_event_count', rows: [
+      { key: 'axs_event_count', label: 'AXS events',   fmt: 'num',  better: 'max' },
+      { key: 'axs_getin_min',   label: 'AXS get-in',   fmt: 'usd2', better: 'min' },
+      { key: 'axs_listings',    label: 'AXS listings', fmt: 'num',  better: 'max' },
+    ]},
+    { title: 'Primary (face · non-resale)', optional: true, probe: 'primary_median', rows: [
+      { key: 'primary_median',     label: 'Primary median',  fmt: 'usd', better: null  },
+      { key: 'primary_tm_median',  label: 'TM primary',      fmt: 'usd', better: null  },
+      { key: 'primary_axs_median', label: 'AXS primary',     fmt: 'usd', better: null  },
+      { key: 'primary_events',     label: 'Primary events',  fmt: 'num', better: 'max' },
+    ]},
+    { title: 'SG sold (realized)', optional: true, probe: 'sg_sold_median', rows: [
+      { key: 'sg_sold_median',    label: 'Sold median',        fmt: 'usd',  better: null  },
+      { key: 'sg_sold_qty',       label: 'Sold qty',           fmt: 'num',  better: 'max' },
+      { key: 'ask_over_sold_pct', label: 'Asks vs clearing',   fmt: 'spct', better: 'min' },
+      { key: 'trend_sold_30d',    label: 'Sold Δ 30d',         fmt: 'spct', better: 'max' },
+    ]},
+  ];
+  const CMP_FMT = { num: gNum, usd: gUsd, usd2: gUsd2, mult: gMult, pct: gPct, spct: gSpct, text: gText };
+
+  function cmpFmtVal(row, card) {
+    let html = CMP_FMT[row.fmt](card ? card[row.key] : null);
+    if (row.delta && card) {
+      const dv = card[row.delta];
+      if (dv != null && isFinite(dv) && dv !== 0) {
+        const cls = dv > 0 ? 'up' : 'down', arw = dv > 0 ? '▲' : '▼';
+        html += ` <span class="sc-delta ${cls}">${arw} ${row.deltaFmt === 'num' ? gNum(Math.abs(dv)) : Math.abs(dv).toFixed(1) + '%'}</span>`;
+      }
+    }
+    return html;
+  }
+  function cmpLeaders(row, byId) {
+    if (!row.better) return new Set();
+    const vals = _basket.map(b => { const c = byId[b.id]; const v = c ? c[row.key] : null; return (v != null && isFinite(v)) ? Number(v) : null; });
+    const present = vals.filter(v => v != null);
+    if (present.length < 2) return new Set();
+    const best = row.better === 'max' ? Math.max(...present) : Math.min(...present);
+    const set = new Set(); vals.forEach((v, i) => { if (v === best) set.add(i); });
+    return set;
+  }
+  function renderCompareTable(byId) {
+    const body = document.getElementById('pgCompareBody');
+    const anySports = _basket.some(b => byId[b.id] && byId[b.id].is_sports);
+    const head = ['<tr><th class="cmp-corner">Metric</th>'];
+    _basket.forEach(b => {
+      const c = byId[b.id]; const asOf = c && c.as_of ? c.as_of : '';
+      head.push(`<th><a href="performer.html?performer=${b.id}">${escapeHtml(b.name)}</a>` +
+        (asOf ? `<span class="th-sub">as of ${escapeHtml(asOf)}</span>` : `<span class="th-sub">no stored card</span>`) + `</th>`);
+    });
+    head.push('</tr>');
+    const rows = [];
+    CMP_GROUPS.forEach(g => {
+      if (g.optional && !_basket.some(b => byId[b.id] && byId[b.id][g.probe] != null)) return;
+      rows.push(`<tr class="cmp-grouphdr"><td colspan="${_basket.length + 1}">${g.title}</td></tr>`);
+      g.rows.forEach(row => {
+        if (row.sportsOnly && !anySports) return;
+        const lead = cmpLeaders(row, byId);
+        const cells = _basket.map((b, i) => {
+          const c = byId[b.id];
+          const val = (row.sportsOnly && c && !c.is_sports) ? '—' : cmpFmtVal(row, c);
+          return `<td class="cmp-val${lead.has(i) ? ' leader' : ''}${row.fmt === 'text' ? ' txt' : ''}">${val}</td>`;
+        }).join('');
+        rows.push(`<tr><td class="cmp-lbl">${escapeHtml(row.label)}</td>${cells}</tr>`);
+      });
+    });
+    body.innerHTML = `<div class="cmp-table-scroll"><table class="cmp-table"><thead>${head.join('')}</thead><tbody>${rows.join('')}</tbody></table></div>`;
   }
 
   // ============================================================
@@ -160,6 +412,7 @@
       _tabState.portfolio = (portfolio && !portfolio.__err) ? portfolio : null;
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
+      try { loadStatCard(performerId); }          catch (e) { console.error('statCard', e); }
       try { initDailyMetrics(performerId, portfolio); } catch (e) { console.error('dailyMetrics', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
       try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
@@ -559,6 +812,159 @@
     setText('ruOwnedShare',     ag.owned_share_weighted != null ? T.fmtPct(ag.owned_share_weighted * 100, 1) : '—');
     setText('ruRetailMedAvg',   ag.retail_median_avg_weighted ? '$' + T.fmtNum(Math.round(ag.retail_median_avg_weighted)) : '—');
     setText('ruEventsWithOwned', T.fmtNum(ag.events_with_owned));
+  }
+
+  // ---------- Statistics stat-card (Overview) ----------
+  //
+  // The Yahoo-"Statistics"-panel analog: a dense label/value block of persisted
+  // metrics from get_broker_performer_stat_card (a pure rollup over
+  // performer_metrics_daily, split='all', + trailing 7d/30d deltas + home/away
+  // split). Grouped MARKET / POSITION / TREND. Complements the live PORTFOLIO
+  // ROLLUP above (which is request-time /api/portfolio) — this is the stored
+  // snapshot + trend, so it answers even when the live portfolio call is slow.
+
+  async function loadStatCard(performerId) {
+    const sec = document.getElementById('perf-stat-card');
+    const body = document.getElementById('statCardBody');
+    if (!sec || !body) return;
+    sec.removeAttribute('hidden');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">statistics need auth — sign in with @s4kent.com</div>';
+      return;
+    }
+    const res = await Auth.client.rpc('get_broker_performer_stat_card', { p_performer_id: performerId });
+    if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
+    renderStatCard(res.data || {});
+  }
+
+  function renderStatCard(d) {
+    const body = document.getElementById('statCardBody');
+    const meta = document.getElementById('statCardMeta');
+    if (!d || d.as_of == null) { body.innerHTML = '<div class="empty">no stored metrics for this performer yet</div>'; return; }
+    if (meta) meta.textContent = 'as of ' + d.as_of + ' · stored daily';
+
+    const usd  = (v) => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+    const usd2 = (v) => (v != null && isFinite(v)) ? '$' + Number(v).toFixed(2) : '—';
+    const num  = (v) => (v != null && isFinite(v)) ? T.fmtNum(v) : '—';
+    const mult = (v) => (v != null && isFinite(v)) ? Number(v).toFixed(2) + '×' : '—';
+    const pct  = (v) => (v != null && isFinite(v)) ? T.fmtPct(v * 100, 1) : '—';
+    // signed % delta chip (value already a percent, e.g. 2.1)
+    const delta = (v) => {
+      if (v == null || !isFinite(v) || v === 0) return '';
+      const cls = v > 0 ? 'up' : 'down', arw = v > 0 ? '▲' : '▼';
+      return ` <span class="sc-delta ${cls}">${arw} ${Math.abs(v).toFixed(1)}%</span>`;
+    };
+    const deltaN = (v, fmt) => {  // signed absolute delta chip
+      if (v == null || !isFinite(v) || v === 0) return '';
+      const cls = v > 0 ? 'up' : 'down', arw = v > 0 ? '▲' : '▼';
+      return ` <span class="sc-delta ${cls}">${arw} ${fmt(Math.abs(v))}</span>`;
+    };
+    const row = (lbl, valHtml) => `<div class="sc-row"><span class="sc-lbl">${lbl}</span><span class="sc-val">${valHtml}</span></div>`;
+
+    const market = [
+      row('Active events', num(d.event_count)),
+      row('Get-in (min)', usd2(d.getin_min)),
+      row('Get-in (median)', usd(d.getin_median)),
+      row('Price median', usd(d.price_median)),
+      row('Ceiling (p90)', usd(d.price_p90)),
+      row('Spread (p90÷get-in)', mult(d.spread_ratio)),
+      row('Market float (tix)', num(d.market_tickets)),
+      row('Median · all events', usd(d.median_median_price)),
+    ].join('');
+    const position = [
+      row('Owned tickets', num(d.owned_tickets) + deltaN(d.owned_tickets_d30, num)),
+      row('Owned notional', usd(d.owned_book_notional)),
+      row('Owned share (EVO)', pct(d.owned_share)),
+    ].join('');
+    const trend = [
+      row('Price median · 7d', usd(d.price_median) + delta(d.price_d7_pct)),
+      row('Price median · 30d', usd(d.price_median) + delta(d.price_d30_pct)),
+      row('Get-in · 7d', usd(d.getin_median) + delta(d.getin_d7_pct)),
+      d.is_sports ? row('Home price median', usd(d.home_price_median)) : '',
+      d.is_sports ? row('Away price median', usd(d.away_price_median)) : '',
+    ].join('');
+
+    // Top event — the performer's highest-median real game (season packages /
+    // parking excluded), tagged with its season + phase (preseason/regular/playoff).
+    let topEvent = '';
+    if (d.top_event_id && d.top_event_name) {
+      const tag = [d.top_event_season, d.top_event_phase].filter(Boolean).join(' · ');
+      topEvent = `<div class="sc-topevent">
+        <span class="sc-te-lbl">TOP EVENT${tag ? ` · ${escapeHtml(tag)}` : ''}</span>
+        <a class="sc-te-name" href="event.html?event=${d.top_event_id}">${escapeHtml(d.top_event_name)}</a>
+        <span class="sc-te-val">${usd(d.top_event_median)} median${d.top_event_date ? ` · ${escapeHtml(d.top_event_date)}` : ''}</span>
+      </div>`;
+    }
+
+    // AXS merged source — for performers whose AXS inventory bridged in via the
+    // daily match/merge job. Shown as a labeled extra source (units not mixed
+    // into market float; get-in is a price so it stands on its own).
+    let axsLine = '';
+    if (d.axs_event_count) {
+      axsLine = `<div class="sc-topevent" style="border-left-color: var(--info, #60a5fa)">
+        <span class="sc-te-lbl">AXS · MERGED</span>
+        <span class="sc-te-name">${num(d.axs_event_count)} events · get-in ${usd2(d.axs_getin_min)}</span>
+        <span class="sc-te-val">${num(d.axs_listings)} listings${d.axs_as_of ? ` · ${escapeHtml(d.axs_as_of)}` : ''}</span>
+      </div>`;
+    }
+
+    // SG SOLD — realized clearing prices from SeatGeek (median + average sale
+    // per event year). The truer value vs listing asks; blank for performers
+    // with no SG sold coverage (~2/3 of them).
+    let sgSold = '';
+    if (Array.isArray(d.sg_sold_by_year) && d.sg_sold_by_year.length) {
+      const rows = d.sg_sold_by_year.map(y =>
+        `<tr><td>${gText(y.year)}</td><td>${usd(y.sold_median)}</td><td>${usd(y.sold_mean)}</td>` +
+        `<td>${num(y.qty)}</td><td>${num(y.events)}</td></tr>`).join('');
+      // asks-vs-clearing spread + realized-sold momentum readout
+      let note = '';
+      const av = d.ask_over_sold_pct, st = d.trend_sold_30d;
+      if (av != null && isFinite(av)) {
+        const cls = av > 0 ? 'ask-hi' : 'ask-lo';
+        note = `<div class="sc-sgsold-note">Asks <span class="${cls}">${av > 0 ? '+' : ''}${av}%</span> ` +
+          `${av > 0 ? 'over' : 'under'} clearing` +
+          (st != null && isFinite(st) ? ` · sold trend <span class="${st >= 0 ? 'ask-lo' : 'ask-hi'}">${st > 0 ? '+' : ''}${st}%</span>/30d` : '') + `</div>`;
+      }
+      sgSold = `<div class="sc-sgsold">
+        <div class="sc-te-lbl">SG SOLD · REALIZED — median / avg sale price by year</div>
+        <table class="sc-sgsold-tbl">
+          <thead><tr><th>Year</th><th>Median</th><th>Avg</th><th>Sold</th><th>Events</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>${note}
+      </div>`;
+    }
+
+    // PRIMARY · FACE — box-office median (TM non-resale + AXS non-FlashSeats).
+    // The face anchor beneath the resale ask; the gap is the resale premium.
+    // Blended across sources; per-source medians shown for transparency.
+    let primaryBlk = '';
+    if (d.primary_median != null && isFinite(d.primary_median)) {
+      const srcTag = ({ tm: 'Ticketmaster', axs: 'AXS', both: 'TM + AXS' })[d.primary_source] || '';
+      let prem = '';
+      if (d.price_median != null && isFinite(d.price_median) && d.primary_median > 0) {
+        const p = Math.round(((d.price_median - d.primary_median) / d.primary_median) * 1000) / 10;
+        const cls = p > 0 ? 'ask-hi' : 'ask-lo';
+        prem = `<div class="sc-sgsold-note">Ask <span class="${cls}">${p > 0 ? '+' : ''}${p}%</span> ${p >= 0 ? 'over' : 'under'} face</div>`;
+      }
+      const sub = [];
+      if (d.primary_tm_median != null)  sub.push(`<tr><td>Ticketmaster</td><td>${usd(d.primary_tm_median)}</td><td>${num(d.primary_tm_events)}</td></tr>`);
+      if (d.primary_axs_median != null) sub.push(`<tr><td>AXS</td><td>${usd(d.primary_axs_median)}</td><td>${num(d.primary_axs_events)}</td></tr>`);
+      primaryBlk = `<div class="sc-sgsold">
+        <div class="sc-te-lbl">PRIMARY · FACE — box-office median (non-resale)${srcTag ? ` · ${escapeHtml(srcTag)}` : ''}</div>
+        <div class="sc-row"><span class="sc-lbl">Primary median</span><span class="sc-val">${usd(d.primary_median)} <span class="sc-muted">· ${num(d.primary_events)} events</span></span></div>
+        <table class="sc-sgsold-tbl">
+          <thead><tr><th>Source</th><th>Median</th><th>Events</th></tr></thead>
+          <tbody>${sub.join('')}</tbody>
+        </table>${prem}
+      </div>`;
+    }
+
+    body.innerHTML = `<div class="sc-groups">
+      <div class="sc-group"><h4>Market</h4>${market}</div>
+      <div class="sc-group"><h4>Position</h4>${position}</div>
+      <div class="sc-group"><h4>Trend</h4>${trend}</div>
+    </div>${topEvent}${axsLine}${primaryBlk}${sgSold}`;
   }
 
   // ---------- Cross-event daily metrics (Overview) ----------
