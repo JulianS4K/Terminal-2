@@ -101,6 +101,22 @@
       <div id="sgChartBody"><div class="empty">loading…</div></div>
     </section>
 
+    <!-- Owned-inventory companion to the Top-50 above: events we DO hold
+         (EVO owned > 0) where the SG market cleared tickets on ≥2 of the
+         trailing 7 days but OUR channels (EVO/Vivid/TickPick/SG) sold nothing
+         in 7d. Backed by get_sg_owned_stall_chart RPC (mig 20260709190000). -->
+    <section id="sg-stall">
+      <div class="panel-title row">
+        <span>SG SELLING, WE'RE NOT — OWNED, NOT MOVING</span>
+        <span class="muted small" id="sgStallMeta"></span>
+      </div>
+      <div class="ctrl-group sg-chart-tabs">
+        <button class="ctrl-btn is-active" data-stall-tab="top">Top 50</button>
+        <button class="ctrl-btn" data-stall-tab="rest">The Rest</button>
+      </div>
+      <div id="sgStallBody"><div class="empty">loading…</div></div>
+    </section>
+
     <section id="movers-panel">
       <div class="panel-title row">
         <span>MOVERS · CROSS-SOURCE INDEX</span>
@@ -150,7 +166,7 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260708eb"></script>
-  <script src="home.js?v=20260702b"></script>
+  <script src="home.js?v=20260709a"></script>
   <script src="news-ticker.js?v=20260707all500"></script>
 </body>
 </html>

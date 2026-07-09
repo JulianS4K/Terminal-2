@@ -35,6 +35,7 @@
     sortDir: 'desc',
     gapMap: new Map(),        // event_id → [{ gap_type, detail, signal_score }]
     chartTab: 'top',          // 'top' (rank 1-50) | 'rest' (rank 51+)
+    stallTab: 'top',          // owned-stall chart: 'top' | 'rest'
   };
 
   async function init() {
@@ -46,6 +47,10 @@
     // Top-50 chart fires its own RPC, independent of movers — runs in parallel.
     wireChartTabs();
     renderMarketChart().catch(e => console.error('[sgChart]', e));
+    // Owned-stall chart (the "we HOLD it and it's not moving" companion) —
+    // independent RPC, runs in parallel.
+    wireStallTabs();
+    renderStallChart().catch(e => console.error('[sgStall]', e));
     // Owned-events panel ("NEXT 30 DAYS") has its OWN RPC — it must reflect the
     // whole owned book, not just whichever events happen to be in the movers
     // index for the current source/window toggle. Runs in parallel with movers.
@@ -533,6 +538,158 @@
         <td class="num" title="${evoTip}">${evoCell}</td>
         <td class="num" title="${shTip}">${shCell}</td>
         <td class="num" title="${scoreTip}"><strong>${score}</strong>${hasSd ? '' : '<sup title="SeatGeek-only basis">sg</sup>'}</td>
+        <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
+      tb.appendChild(tr);
+    });
+
+    body.innerHTML = '';
+    body.appendChild(tbl);
+  }
+
+  // ---------- SG SELLING, WE'RE NOT — OWNED, NOT MOVING ----------
+  //
+  // Owned-inventory companion to the Top-50 above (which only charts events we
+  // hold ZERO inventory in). Calls get_sg_owned_stall_chart(offset, limit) RPC
+  // (mig 20260709190000), reading the daily-rebuilt sg_owned_stall_chart table:
+  // future events with EVO-owned tickets > 0 where the SG market sold on >= 2
+  // of the trailing 7 days but OUR channels (EVO / Vivid / TickPick / SG
+  // SellerDirect) recorded ZERO sales in 7d. An event we sell on this week
+  // drops off the chart — presence on the chart IS the "we're not" signal.
+  //
+  //   stall_score = percent_rank(7d-MA market volume)     [how hot the market]
+  //               + percent_rank(owned tix × our ask $)   [how much of ours sits]
+  //
+  // Prem% = our median ask vs the market's 7d-MA SOLD median — the "why it
+  // isn't moving" column. SG-side owned listings are last-known info only (the
+  // SG listings feed has been dark since 2026-06-26) and render as a tooltip.
+
+  function wireStallTabs() {
+    document.querySelectorAll('[data-stall-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.classList.contains('is-active')) return;
+        document.querySelectorAll('[data-stall-tab]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        state.stallTab = btn.dataset.stallTab;
+        renderStallChart().catch(e => console.error('[sgStall]', e));
+      });
+    });
+  }
+
+  async function renderStallChart() {
+    const body = document.getElementById('sgStallBody');
+    const metaEl = document.getElementById('sgStallMeta');
+    if (!body) return;
+
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+
+    body.innerHTML = '<div class="empty">loading…</div>';
+
+    const isRest = state.stallTab === 'rest';
+    const args = isRest
+      ? { p_offset: CHART_PAGE, p_limit: CHART_REST_LIMIT }
+      : { p_offset: 0,          p_limit: CHART_PAGE };
+
+    let payload;
+    try {
+      const res = await Auth.client.rpc('get_sg_owned_stall_chart', args);
+      if (res.error) throw new Error(res.error.message || 'RPC error');
+      payload = res.data || {};
+    } catch (e) {
+      body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+      if (metaEl) metaEl.textContent = '';
+      return;
+    }
+
+    const rows = payload.rows || [];
+    const total = payload.total || 0;
+    const charted = payload.chart_date ? ` · ${escapeHtml(payload.chart_date)}` : '';
+    if (metaEl) {
+      metaEl.textContent = total
+        ? (isRest ? `ranks 51–${Math.min(total, CHART_PAGE + rows.length)} of ${total}${charted}`
+                  : `${total} owned events stalled while the market sells${charted}`)
+        : '';
+    }
+
+    if (!rows.length) {
+      body.innerHTML = isRest
+        ? '<div class="empty">no events beyond the top 50</div>'
+        : '<div class="empty">chart not built yet (rebuilds daily @ 11:20 UTC)</div>';
+      return;
+    }
+
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const STALE_MS = 48 * 3600 * 1000;
+
+    const tbl = document.createElement('table');
+    tbl.className = 'blind-spots-tbl chart-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th class="num">#</th>
+        <th title="Movement vs yesterday's chart">+/-</th>
+        <th>Event</th><th>Venue</th>
+        <th class="num">T-days</th>
+        <th class="num" title="SG market 7-day MA daily sold tickets — the sales we are NOT getting">Mkt vol/day</th>
+        <th class="num" title="SG market 7-day MA median SOLD price — what the market actually clears at">Mkt med</th>
+        <th class="num" title="SG market 7-day MA daily sold gross">Mkt GMV/day</th>
+        <th class="num" title="Our EVO-owned tickets on this event (latest snapshot)">Our tix</th>
+        <th class="num" title="Our median retail ask on those tickets">Our ask</th>
+        <th class="num" title="Our ask vs the market's clearing median. +50% = we ask half again what buyers actually pay — the usual reason nothing moves.">Prem%</th>
+        <th class="num" title="Our most recent own-channel sale on this event (any of EVO/Vivid/TickPick/SG), with source">Last sale</th>
+        <th class="num" title="Stall score = percentile(market volume) + percentile(our $ exposure), 0–2">Score</th>
+        <th class="num" title="Best rank achieved · days on chart">Peak·On</th>
+      </tr></thead>
+      <tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+
+    rows.forEach(r => {
+      const d = T.daysUntil(r.sg_datetime_utc);
+      const tr = document.createElement('tr');
+
+      const eventLabel = r.tevo_event_id
+        ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id))}</a>`
+        : escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id));
+
+      // owned-snapshot staleness badge (the EVO firehose usually re-polls within hours)
+      const ownedAge = r.owned_as_of ? (Date.now() - new Date(r.owned_as_of).getTime()) : null;
+      const ownedStale = ownedAge != null && ownedAge > STALE_MS;
+      const sgOwnedTip = r.sg_owned_listings != null
+        ? ` · SG-side book (last known ${escapeHtml((r.sg_owned_as_of || '').slice(0, 10))}): ${r.sg_owned_listings} listings`
+        : '';
+      const tixTip = `EVO-owned snapshot ${escapeHtml((r.owned_as_of || '').slice(0, 10))}${sgOwnedTip}`;
+
+      // premium: positive = we ask over the clearing price (red); negative = under (accent)
+      const prem = r.ask_premium_pct == null ? null : +r.ask_premium_pct;
+      const premCell = prem == null ? '—' : (prem > 0 ? '+' : '') + prem.toFixed(0) + '%';
+      const premCls = prem == null ? '' : (prem > 0 ? ' neg' : ' pos');
+
+      const lastSale = r.our_last_sale_at
+        ? `${escapeHtml(r.our_last_sale_at.slice(0, 10))} <span class="muted small">${escapeHtml(r.our_last_sale_source || '')}</span>`
+        : '<span class="muted">never</span>';
+      const salesTip = `own-channel sales last 30d: ${r.our_sales_30d ?? 0}`;
+
+      const score = r.stall_score == null ? '—' : (+r.stall_score).toFixed(2);
+      const scoreTip = `mkt-volume pct ${r.pct_volume == null ? '—' : (+r.pct_volume).toFixed(2)}`
+                     + ` · exposure pct ${r.pct_exposure == null ? '—' : (+r.pct_exposure).toFixed(2)}`;
+      const peakOn = `${r.peak_rank ?? '—'}·${r.days_on_chart ?? '—'}`;
+
+      tr.innerHTML = `
+        <td class="num chart-rank">${r.rank}</td>
+        <td>${movementCell(r)}</td>
+        <td>${eventLabel}</td>
+        <td>${escapeHtml(r.sg_venue_name || '—')}</td>
+        <td class="num">${d === null ? '—' : d}</td>
+        <td class="num">${r.ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume))}</td>
+        <td class="num">${money(r.ma7_median)}</td>
+        <td class="num">${money(r.ma7_gross)}</td>
+        <td class="num" title="${tixTip}">${r.owned_tickets == null ? '—' : T.fmtNum(r.owned_tickets)}${ownedStale ? '<sup title="owned snapshot > 48h old">*</sup>' : ''}</td>
+        <td class="num">${money(r.owned_median_ask)}</td>
+        <td class="num${premCls}">${premCell}</td>
+        <td class="num" title="${salesTip}">${lastSale}</td>
+        <td class="num" title="${scoreTip}"><strong>${score}</strong></td>
         <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
       tb.appendChild(tr);
     });
