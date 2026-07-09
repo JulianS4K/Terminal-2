@@ -31,8 +31,8 @@
 --
 -- Row/qty model + read-only validation for Cowboys/Eagles: see PR description.
 --
--- WARNING: A1 authors; validate on a Supabase preview branch; prod apply is the gated
--- Applier step (CLAUDE.md Rule 1). Not yet applied to prod.
+-- Already applied to prod · via MCP 2026-07-09 (operator-directed; idempotent —
+-- CREATE OR REPLACE / IF NOT EXISTS / ON CONFLICT, so re-apply is a no-op).
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
