@@ -126,6 +126,22 @@
     .dm-owned.ours { color:var(--accent, #fbbf24); }
     .blind-dot { color:var(--warn, #f59e0b); margin-left:4px; cursor:help; }
     .lg-note { margin-top:8px; color:var(--dim, #4a4a4a); font-size:11px; }
+
+    /* Season-ticket value — package ask vs assembling comparable seats. */
+    .lg-season-tix { background:var(--panel, #141414); border:1px solid var(--line, #2a2a2a);
+      border-radius:8px; padding:12px 14px; overflow-x:auto; }
+    .stv-lg-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .stv-lg-table th { text-align:left; color:var(--muted, #8a8a8a); font-weight:600; font-size:10px;
+      letter-spacing:.5px; text-transform:uppercase; padding:4px 8px; border-bottom:1px solid var(--line, #2a2a2a); }
+    .stv-lg-table td { padding:5px 8px; border-bottom:1px solid var(--line-2, #1f1f1f); color:var(--text, #e5e5e5); }
+    .stv-lg-table tr:last-child td { border-bottom:0; }
+    .stv-lg-table td.num { font-family:var(--mono, monospace); text-align:right; }
+    .stv-lg-table td.pos { color:var(--pos, #34d399); }
+    .stv-lg-table td.neg { color:var(--neg, #f87171); }
+    .stv-lg-table .badge { font-family:var(--mono, monospace); font-size:10px; font-weight:600;
+      padding:1px 6px; border-radius:4px; border:1px solid var(--line, #2a2a2a); color:var(--muted, #8a8a8a); }
+    .stv-lg-table .badge.buy { color:var(--pos, #34d399); border-color:var(--pos, #34d399); }
+    .stv-lg-table .badge.skip { color:var(--neg, #f87171); border-color:var(--neg, #f87171); }
   </style>
 </head>
 <body data-page="leagues">
@@ -158,6 +174,18 @@
     <section id="lgSales" hidden>
       <div class="lg-sales-lbl">SALES · SEASON TO DATE — realized comps</div>
       <div class="kpi-strip" id="lgSalesStrip"></div>
+    </section>
+
+    <!-- Season-ticket package value — is a package worth buying vs assembling
+         comparable seats game-by-game? Major pro leagues only (NFL/NBA/MLB/NHL/MLS);
+         sits above the roster / slate / ranking tables. Backed by the daily
+         season_ticket_package_value leaderboard via /api/broker/season-ticket-value. -->
+    <section class="lg-season-tix" id="lgSeasonTix" hidden>
+      <div class="panel-title row">
+        <span>SEASON-TICKET VALUE</span>
+        <span class="muted small" id="lgSeasonTixMeta"></span>
+      </div>
+      <div id="lgSeasonTixBody"><div class="empty">loading…</div></div>
     </section>
 
     <!-- Performers roster — every performer in the league, linked to its page.
@@ -215,7 +243,7 @@
   <script src="pwa.js?v=20260702"></script>
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260708eb"></script>
-  <script src="leagues.js?v=20260708lg9"></script>
+  <script src="nav.js?v=20260709st"></script>
+  <script src="leagues.js?v=20260709st"></script>
 </body>
 </html>
