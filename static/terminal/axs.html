@@ -72,6 +72,29 @@
       <div id="axsEventsBody"><div class="empty">loading…</div></div>
     </section>
 
+    <!-- AXS PERFORMERS — artists parsed from AXS event names + name-matched to a
+         canonical EVO/TEvo performer (daily match/merge job, get_axs_stat_cards
+         RPC). "AXS-only" rows are the acts EVO doesn't carry; bridged rows link
+         to the performer page (their AXS inventory is merged onto that card). -->
+    <section id="axs-performers" style="margin-top:18px">
+      <div class="panel-title row">
+        <span>AXS PERFORMERS — name-matched</span>
+        <span class="muted small" id="axsPerfCount"></span>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">
+        AXS artists rolled up from their tracked events (get-in, listings, seats). Matched to a
+        canonical EVO performer where the name bridges — <em>AXS-only</em> = no EVO match.
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SHOW</span>
+          <button class="ctrl-btn is-active" data-axsp-unmatched="0">All artists</button>
+          <button class="ctrl-btn"           data-axsp-unmatched="1">AXS-only (no EVO)</button>
+        </div>
+      </div>
+      <div id="axsPerfBody"><div class="empty">loading…</div></div>
+    </section>
+
   </main>
 
   <script src="lib/supabase.js"></script>
@@ -80,6 +103,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260709cmp"></script>
-  <script src="axs.js?v=20260623a"></script>
+  <script src="axs.js?v=20260709axsp"></script>
 </body>
 </html>

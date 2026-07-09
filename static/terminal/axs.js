@@ -21,9 +21,12 @@
   const state = { active: true, hidePast: true, ownedOnly: false, filter: '' };
   let _rows = [];  // last fetched events, for client-side filtering
 
+  let _perfUnmatched = false;  // AXS performers panel: show only no-EVO-match acts
+
   function init() {
     wireControls();
     refreshAxsEvents().catch(e => console.error('[axs]', e));
+    loadAxsPerformers().catch(e => console.error('[axs-perf]', e));
     setStatus('');
   }
 
@@ -70,6 +73,82 @@
         }, 150);
       });
     }
+    // AXS performers panel toggle (All artists / AXS-only).
+    document.querySelectorAll('[data-axsp-unmatched]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        _perfUnmatched = btn.dataset.axspUnmatched === '1';
+        document.querySelectorAll('[data-axsp-unmatched]').forEach(b => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        loadAxsPerformers().catch(e => console.error('[axs-perf]', e));
+      });
+    });
+  }
+
+  // ---------- AXS performers panel ----------
+  // Direct Path-C RPC (get_axs_stat_cards is SECDEF @s4kent-gated, granted to
+  // authenticated — so the user-JWT client can read it even though the
+  // underlying axs_performer_stat_card table is RLS-locked).
+  async function loadAxsPerformers() {
+    const body    = document.getElementById('axsPerfBody');
+    const countEl = document.getElementById('axsPerfCount');
+    if (!body) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">AXS performers need auth — sign in with @s4kent.com</div>';
+      return;
+    }
+    body.innerHTML = '<div class="empty">loading…</div>';
+    const res = await Auth.client.rpc('get_axs_stat_cards', { p_limit: 400, p_only_unmatched: _perfUnmatched });
+    if (res.error) {
+      body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`;
+      return;
+    }
+    const rows = res.data || [];
+    if (countEl) countEl.textContent = rows.length ? `${rows.length} artist${rows.length === 1 ? '' : 's'}` : '';
+    renderAxsPerformers(rows);
+  }
+
+  function renderAxsPerformers(rows) {
+    const body = document.getElementById('axsPerfBody');
+    if (!body) return;
+    if (!rows.length) {
+      body.innerHTML = `<div class="empty">${_perfUnmatched ? 'no AXS-only artists' : 'no AXS performers matched yet'}</div>`;
+      return;
+    }
+    const usd = v => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+    const trs = rows.map(r => {
+      const evo = r.tevo_performer_id
+        ? `<a href="performer.html?performer=${r.tevo_performer_id}">→ EVO ${r.tevo_performer_id}</a>`
+        : '<span class="muted">AXS-only</span>';
+      return `<tr>
+        <td>${escapeHtml(r.axs_performer || '(unknown)')}</td>
+        <td>${evo}</td>
+        <td class="num">${T.fmtNum(r.event_count || 0)}</td>
+        <td class="num">${usd(r.getin_min)}</td>
+        <td class="num">${usd(r.getin_median)}</td>
+        <td class="num">${T.fmtNum(r.listings_total || 0)}</td>
+        <td class="num">${T.fmtNum(r.seats_primary_total || 0)}</td>
+        <td class="num">${T.fmtNum(r.seats_resale_total || 0)}</td>
+      </tr>`;
+    }).join('');
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Performer</th>
+        <th title="Canonical EVO/TEvo performer this AXS artist bridges to">EVO match</th>
+        <th class="num" title="AXS events tracked for this artist">Events</th>
+        <th class="num" title="Cheapest AXS get-in across the artist's events">Get-in</th>
+        <th class="num" title="Median AXS get-in">Median</th>
+        <th class="num" title="Total live AXS listings">Listings</th>
+        <th class="num" title="Primary box-office seats">Prim</th>
+        <th class="num" title="AXS Marketplace resale seats">Resale</th>
+      </tr></thead>`;
+    const tb = document.createElement('tbody');
+    tb.innerHTML = trs;
+    tbl.appendChild(tb);
+    body.innerHTML = '';
+    body.appendChild(tbl);
   }
 
   async function refreshAxsEvents() {
