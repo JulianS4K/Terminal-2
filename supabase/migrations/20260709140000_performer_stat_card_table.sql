@@ -1,15 +1,15 @@
--- Migration 20260709140000 · lane:D0 (author) → A1 (apply) · writes:performer_stat_card,refresh_performer_stat_card,get_performer_stat_cards,get_broker_performer_stat_card,cron(performer-stat-card-refresh) · reads:performer_metrics_daily · pre:performer_metrics_daily (mig 20260605151100) + get_broker_performer_stat_card (mig 20260709130000) · auth:OPERATOR-APPROVAL REQUIRED before apply_migration (creates a table + cron + backfills; repoints an existing RPC)
+-- Migration 20260709140000 · lane:D0 (author) → A1 (apply) · writes:performer_stat_card,refresh_performer_stat_card,get_performer_stat_cards,get_broker_performer_stat_card,cron(performer-stat-card-refresh) · reads:performer_metrics_daily · pre:performer_metrics_daily (mig 20260605151100) + get_broker_performer_stat_card (mig 20260709135000) · auth:OPERATOR-APPROVAL REQUIRED before apply_migration (creates a table + cron + backfills; repoints an existing RPC)
 --
 -- D0 — materialize the performer Statistics stat-card as a TABLE.
 --
--- mig 20260709130000 computed the stat-card per call. This turns it into a
+-- mig 20260709135000 computed the stat-card per call. This turns it into a
 -- persisted table (one row per performer) refreshed on the same 4h cadence as
 -- its source (performer_metrics_daily), so:
 --   * the single-performer RPC becomes a cheap table read (repointed below), and
 --   * the NEW compare window can pull up to 5 performers in one round-trip
 --     (get_performer_stat_cards) instead of N per-performer computes.
 --
--- The refresh is the set-based form of mig 20260709130000's per-performer CTE:
+-- The refresh is the set-based form of mig 20260709135000's per-performer CTE:
 -- per-performer anchor (its own max 'all'-split day) + LATERAL nearest-on-or-
 -- before 7d/30d rows + home/away split rows. Idempotent upsert + prune.
 --

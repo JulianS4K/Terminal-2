@@ -1,4 +1,4 @@
--- Migration 20260709130000 · lane:D0 (author) → A1 (apply) · writes:get_broker_performer_stat_card · reads:performer_metrics_daily · pre:performer_metrics_daily must exist (mig 20260605151100) · auth:OPERATOR-APPROVAL REQUIRED before apply_migration (creates a SECDEF read RPC; no DML, no cron)
+-- Migration 20260709135000 · lane:D0 (author) → A1 (apply) · writes:get_broker_performer_stat_card · reads:performer_metrics_daily · pre:performer_metrics_daily must exist (mig 20260605151100) · auth:OPERATOR-APPROVAL REQUIRED before apply_migration (creates a SECDEF read RPC; no DML, no cron)
 --
 -- D0 — performer "Statistics" stat-card metric block.
 --
