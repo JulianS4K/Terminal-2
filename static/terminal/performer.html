@@ -69,6 +69,29 @@
     .sc-topevent .sc-te-name:hover { text-decoration: underline; }
     .sc-topevent .sc-te-val { font-size: 12px; color: var(--muted, #b5b5b5); font-variant-numeric: tabular-nums; margin-left: auto; }
 
+    /* ---- Trending performers table (top of index) ---- */
+    .pg-trending { margin-top: 10px; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.09);
+      border-left: 3px solid var(--warn, #f59e0b); border-radius: 10px; padding: 10px 14px 4px; }
+    .pg-trending-hd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; }
+    .pg-trending-hd > span:first-child { font-size: 12px; font-weight: 700; letter-spacing: .05em; color: var(--warn, #f59e0b); }
+    .pg-trend-scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+    table.pg-trend-tbl { border-collapse: collapse; width: 100%; min-width: 620px; font-variant-numeric: tabular-nums; }
+    table.pg-trend-tbl th, table.pg-trend-tbl td { padding: 6px 12px; text-align: right; white-space: nowrap; }
+    table.pg-trend-tbl thead th { position: sticky; top: 0; background: var(--panel, #141414); z-index: 1;
+      font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted, #8a8a8a);
+      border-bottom: 1px solid rgba(255,255,255,.12); }
+    table.pg-trend-tbl th.l, table.pg-trend-tbl td.l { text-align: left; }
+    table.pg-trend-tbl td.rk { color: var(--muted, #8a8a8a); font-size: 11px; }
+    table.pg-trend-tbl td.nm a { color: var(--text, #e5e5e5); font-weight: 600; font-size: 13px; text-decoration: none; }
+    table.pg-trend-tbl td.nm a:hover { color: var(--accent, #fbbf24); }
+    table.pg-trend-tbl tbody tr:hover td { background: rgba(255,255,255,.03); }
+    table.pg-trend-tbl td.trend { font-weight: 700; color: var(--pos, #4ade80); }
+    table.pg-trend-tbl td.trend.down { color: var(--neg, #f87171); }
+    .pg-trend-add { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(255,255,255,.16);
+      background: var(--panel-2, #1a1a1a); color: var(--muted, #b5b5b5); font-size: 14px; line-height: 1; cursor: pointer; }
+    .pg-trend-add:hover { border-color: var(--accent, #fbbf24); color: var(--accent, #fbbf24); }
+    .pg-trend-add.picked { background: var(--accent, #fbbf24); color: #0a0a0a; border-color: var(--accent, #fbbf24); }
+
     /* ---- Performer stat-card GALLERY (index mode) ---- */
     .pg-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 14px; }
     .pg-controls .ctrl-input { flex: 1 1 220px; max-width: 340px; padding: 8px 11px; background: var(--panel, #141414);
@@ -179,7 +202,19 @@
         <span>PERFORMERS — stat cards</span>
         <span class="muted small" id="perfIndexCounts"></span>
       </div>
-      <div class="muted small" style="margin-bottom:10px">
+
+      <!-- TRENDING — top 25 by same-event-set 30d price momentum (only events
+           priced in both windows, so it's repricing not slate churn), liquidity-
+           gated. get_trending_performers. Sits on top of the gallery. -->
+      <div id="perf-trending" class="pg-trending">
+        <div class="pg-trending-hd">
+          <span>🔥 TRENDING PERFORMERS</span>
+          <span class="muted small">top 25 · same-event 30d price momentum <span id="pgTrendMeta"></span></span>
+        </div>
+        <div id="pgTrendBody"><div class="empty">loading…</div></div>
+      </div>
+
+      <div class="muted small" style="margin:16px 0 10px">
         Every performer's Statistics card. Tap a card to open it; tap <b>＋</b> to add up to 5 to the
         compare basket, then <b>Compare</b> for the side-by-side.
       </div>
@@ -452,6 +487,6 @@
   <script src="nav.js?v=20260709gal"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260709gal"></script>
+  <script src="performer.js?v=20260709trend"></script>
 </body>
 </html>

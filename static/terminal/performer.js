@@ -89,8 +89,54 @@
       idsRaw.split(',').map(s => parseInt(s, 10)).filter(n => n > 0).slice(0, MAX_CMP)
         .forEach(id => _basket.push({ id, name: '#' + id }));
     }
+    loadTrending().catch(e => console.error('trending', e));
     await loadGallery();
     if (_basket.length) { syncBasket(); openCompare(); }
+  }
+
+  // TRENDING — top 25 by same-event-set 30d price momentum (get_trending_performers).
+  async function loadTrending() {
+    const body = document.getElementById('pgTrendBody');
+    const Auth = window.TerminalAuth;
+    if (!body) return;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) { body.innerHTML = '<div class="empty">trending needs auth</div>'; return; }
+    const res = await Auth.client.rpc('get_trending_performers', { p_limit: 25, p_min_market: 1000, p_min_events: 3 });
+    if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
+    renderTrending(res.data || []);
+  }
+
+  function renderTrending(rows) {
+    const body = document.getElementById('pgTrendBody');
+    const meta = document.getElementById('pgTrendMeta');
+    if (!rows.length) { body.innerHTML = '<div class="empty">no trending performers</div>'; return; }
+    rows.forEach(c => { _gallery.cards[c.performer_id] = c; });   // so compare basket can name them
+    if (meta && rows[0].trend_computed_at) meta.textContent = '· as of ' + String(rows[0].trend_computed_at).slice(0, 10);
+    const trs = rows.map((c, i) => {
+      const t = c.trend_px_30d;
+      const picked = _basket.some(b => b.id === c.performer_id) ? ' picked' : '';
+      return `<tr>
+        <td class="rk">${i + 1}</td>
+        <td class="l nm"><a href="performer.html?performer=${c.performer_id}">${escapeHtml(c.performer_name || '—')}</a></td>
+        <td class="trend ${t < 0 ? 'down' : ''}">${t > 0 ? '▲ +' : (t < 0 ? '▼ ' : '')}${gNum(Math.abs(t))}%</td>
+        <td>${gNum(c.trend_stable_events)}</td>
+        <td>${gUsd(c.price_median)}</td>
+        <td>${gNum(c.market_tickets)}</td>
+        <td>${gKnum(c.owned_tickets)}</td>
+        <td>${gUsd(c.owned_book_notional)}</td>
+        <td><button class="pg-trend-add${picked}" data-add="${c.performer_id}" title="add to compare" aria-label="add to compare">＋</button></td>
+      </tr>`;
+    }).join('');
+    body.innerHTML = `<div class="pg-trend-scroll"><table class="pg-trend-tbl">
+      <thead><tr>
+        <th class="rk">#</th><th class="l">Performer</th>
+        <th title="Median per-event 30d price change, events priced in both windows">Trend 30d</th>
+        <th title="Events priced in both windows (the stable set)">Events</th>
+        <th>Price med</th><th>Market</th><th>Owned</th><th>Owned $</th><th></th>
+      </tr></thead><tbody>${trs}</tbody></table></div>`;
+    body.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', () => {
+      toggleBasket(parseInt(btn.dataset.add, 10));
+      btn.classList.toggle('picked', _basket.some(b => b.id === parseInt(btn.dataset.add, 10)));
+    }));
   }
 
   function wireGalleryControls() {
