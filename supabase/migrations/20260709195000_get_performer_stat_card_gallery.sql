@@ -1,4 +1,4 @@
--- Migration 20260709190000 · lane:D0 (author) → A1 (apply) · writes:get_performer_stat_card_gallery · reads:performer_stat_card · pre:performer_stat_card (mig 20260709140000) · auth:OPERATOR-APPROVAL REQUIRED before apply_migration (creates a SECDEF read RPC; no DML)
+-- Migration 20260709195000 · lane:D0 (author) → A1 (apply) · writes:get_performer_stat_card_gallery · reads:performer_stat_card · pre:performer_stat_card (mig 20260709140000) · auth:OPERATOR-APPROVAL REQUIRED before apply_migration (creates a SECDEF read RPC; no DML)
 --
 -- D0 — performer stat-card GALLERY read for the redesigned performer landing.
 --
