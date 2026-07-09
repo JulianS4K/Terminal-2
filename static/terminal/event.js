@@ -152,7 +152,13 @@
       // no TEvo event behind them) open the SAME page in a reduced "SG mode".
       const sgId = getSgEventId();
       if (sgId) return initSgEvent(sgId);
-      T.setStatus('No event id — pass ?event=<id> or ?sg=<id>', 'err');
+      // Eventbrite-native events with no secondary-market listing mapped in our
+      // data (e.g. indie shows) open the SAME page in a reduced "EB mode". Note:
+      // "unmapped" ≠ "no resale exists" — some of these do resell on StubHub; we
+      // just haven't auto-mapped them (venue auto-discovery is unreliable).
+      const ebId = getEbEventId();
+      if (ebId) return initEbEvent(ebId);
+      T.setStatus('No event id — pass ?event=<id>, ?sg=<id>, or ?eb=<id>', 'err');
       return;
     }
     const Auth = window.TerminalAuth;
@@ -370,6 +376,238 @@
         }
       });
     }
+    activateTab('overview');
+  }
+
+  // ── Eventbrite-native event mode (no mapped secondary market) ──────────────
+  // Eventbrite events discovered via the TicketsData /events feed that have NO
+  // secondary-market listing mapped in our data (e.g. Elsewhere indie shows —
+  // some of which DO resell on StubHub, just not auto-mapped yet) open the SAME
+  // event page in a reduced "EB mode": hero + a primary-face card built from the
+  // organizer's face price band / availability we already store. Gated on
+  // ?eb=<td_event_id> with no ?event=, so the TEvo path above is untouched. It
+  // reads the backend /api/eventbrite/event route (td_discovered_events is RLS
+  // service-role-only), exactly like the eventbrite list page. Mirrors ?sg= mode.
+  function getEbEventId() {
+    const v = new URLSearchParams(location.search).get('eb');
+    if (!v) return null;
+    const s = String(v).trim();
+    return s.length ? s : null;   // TD/Eventbrite ids are opaque strings, not ints
+  }
+
+  function ebCurSymbol(c) {
+    if (!c || c === 'USD' || c === 'usd') return '$';
+    if (c === 'CAD') return 'C$';
+    if (c === 'GBP') return '£';
+    if (c === 'EUR') return '€';
+    return c + ' ';
+  }
+
+  async function initEbEvent(ebId) {
+    const Auth = window.TerminalAuth;
+    if (Auth && !isLocalhost() && !Auth.isAllowedEmail(Auth.getEmail())) {
+      T.setStatus('Not signed in with @s4kent.com — sign in first', 'err');
+      return;
+    }
+    T.setStatus('Loading Eventbrite event…');
+    // EB is discovery-only (no seat-level data) — hide every non-overview pane.
+    document.querySelectorAll('.tab-pane').forEach(p => { if (p.id !== 'paneOverview') p.hidden = true; });
+    let ev = null;
+    try {
+      ev = await T.api('/api/eventbrite/event/' + encodeURIComponent(ebId));
+    } catch (e) {
+      T.setStatus((e && e.message) || 'Eventbrite event not found', 'err');
+      renderEbEvent(ebId, null);
+      return;
+    }
+    T.setStatus('Loaded', 'ok');
+    renderEbEvent(ebId, ev);
+  }
+
+  // EB event page. Renders the STANDARD event look (hero + kpi-grid + standard
+  // section chrome) — like the SG-native mode — just switching the data point:
+  // the StubHub resale market (get-in / listings table when we pulled inventory)
+  // leads, with the Eventbrite primary face below. Only the TEvo-market strips
+  // (coverage / freshness / weather / track) — which have no EB equivalent — hide.
+  function renderEbEvent(ebId, ev) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    const name = (ev && ev.event_name) || ('Eventbrite event ' + ebId);
+    // Eventbrite carries start_date as space-separated local time ("YYYY-MM-DD HH:MM").
+    // Normalize the space to 'T' so strict engines (Safari/WebKit) parse it instead of
+    // returning "Invalid Date"; the date-only event_date fallback already parses fine.
+    const rawDate = ev && (ev.start_date || ev.event_date);
+    const dateStr = typeof rawDate === 'string' ? rawDate.replace(' ', 'T') : rawDate;
+    set('evTitle', name);
+    set('evVenue', (ev && ev.venue_name) || '—');
+    set('evDate', dateStr ? T.fmtDate(dateStr) : '—');
+
+    // Coverage / freshness / weather / track are TEvo-market strips — hide them.
+    ['coverage', 'freshness', 'hero-weather'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.hidden = true;
+    });
+    const trk = document.getElementById('trackBtn');
+    if (trk) { trk.hidden = true; trk.style.display = 'none'; }
+    const mode = document.getElementById('eventMode');
+    if (mode) mode.textContent = (ev && ev.stubhub)
+      ? 'Eventbrite · primary inventory + StubHub resale'
+      : 'Eventbrite · primary inventory (no TEvo market)';
+
+    // Hero badges: genre / age / availability from the feed's live flags.
+    const badges = document.getElementById('evBadges');
+    if (badges) {
+      const b = [];
+      if (ev && ev.genre) b.push(`<span class="badge">${escapeHtml(ev.genre)}</span>`);
+      if (ev && ev.age_restriction) b.push(`<span class="badge muted">${escapeHtml(ev.age_restriction)}</span>`);
+      if (ev && ev.sold_out) b.push('<span class="badge muted">sold out</span>' + (ev.waitlist ? ' <span class="badge">waitlist</span>' : ''));
+      else if (ev && ev.has_tickets) b.push('<span class="badge pos">on sale</span>');
+      else if (ev && ev.sales_status === 'sales_ended') b.push('<span class="badge muted">sales ended</span>');
+      if (ev && ev.stubhub) b.push('<span class="badge pos">on StubHub</span>');
+      badges.innerHTML = b.join(' ');
+    }
+
+    // Standard tab bar: only Overview applies (no seat-level data).
+    const nav = document.getElementById('eventTabs');
+    if (nav) {
+      nav.hidden = false; nav.style.display = '';
+      nav.querySelectorAll('.event-tab').forEach(x => { x.style.display = x.dataset.tab === 'overview' ? '' : 'none'; });
+      nav.querySelectorAll('.event-tabs-sep').forEach(s => { s.style.display = 'none'; });
+    }
+
+    const pane = document.getElementById('paneOverview');
+    if (!pane) return;
+    if (!ev) {
+      pane.innerHTML = '<section class="panel"><div class="empty">Eventbrite event not found.</div></section>';
+      activateTab('overview');
+      return;
+    }
+
+    const cur = ebCurSymbol(ev.currency);
+    const money = v => (v == null ? '—' : cur + T.fmtNum(Math.round(+v)));
+    const num = v => (v == null ? '—' : T.fmtNum(v));
+
+    // Eventbrite primary face band + availability (the primary ticketer's numbers).
+    let band;
+    if (ev.is_free) band = 'FREE';
+    else if (ev.price_min != null && ev.price_max != null) {
+      band = (Math.round(ev.price_min) === Math.round(ev.price_max))
+        ? money(ev.price_min)
+        : money(ev.price_min) + '–' + money(ev.price_max);
+    } else band = '—';
+    let avail;
+    if (ev.sold_out) avail = ev.waitlist ? 'Sold out · waitlist' : 'Sold out';
+    else if (ev.has_tickets) avail = 'On sale';
+    else if (ev.sales_status === 'sales_ended') avail = 'Sales ended';
+    else avail = '—';
+
+    const sh = ev.stubhub;
+    const hasSeats = !!(sh && sh.listings_detail && sh.listings_detail.length);
+
+    // KPI grid — the STANDARD evo look. Lead with the StubHub resale market when we
+    // have it (get-in / high / listings / tickets), then the Eventbrite face; fall
+    // back to the primary-face KPIs when there's no mapped secondary market.
+    let kpis;
+    if (hasSeats) {
+      kpis = [
+        ['GET-IN (resale)', money(sh.min_price)],
+        ['HIGH',            money(sh.max_price)],
+        ['LISTINGS',        num(sh.listings)],
+        ['TICKETS',         num(sh.total_tickets)],
+        ['FACE (EB)',       band],
+        ['AVAILABILITY',    avail],
+      ];
+    } else if (sh) {
+      kpis = [
+        ['RESALE FROM',  money(sh.min_price)],
+        ['FACE (EB)',    band],
+        ['AVAILABILITY', avail],
+        ['GENRE',        ev.genre || '—'],
+      ];
+    } else {
+      kpis = [
+        ['FACE · PRIMARY', band],
+        ['AVAILABILITY',   avail],
+        ['AGE',            ev.age_restriction || '—'],
+        ['GENRE',          ev.genre || '—'],
+      ];
+    }
+    const kpiHtml = kpis.map(([l, v]) =>
+      `<div class="kpi-cell"><span class="kpi-lbl">${escapeHtml(l)}</span>` +
+      `<span class="kpi-val">${escapeHtml(String(v))}</span></div>`).join('');
+
+    // StubHub market — standard section chrome, mirroring the evo listings table.
+    // Full seat-level table when we pulled inventory; else a compact resale summary;
+    // else the "no secondary market mapped" note.
+    const shHref = sh && /^https?:\/\//i.test(sh.url || '') ? sh.url : null;
+    let marketHtml;
+    if (hasSeats) {
+      const lrows = sh.listings_detail.map(l =>
+        '<tr>' +
+        `<td>${escapeHtml(l.section || '—')}</td>` +
+        `<td class="num">${money(l.price)}</td>` +
+        `<td class="num">${num(l.quantity)}</td>` +
+        `<td class="muted small">${escapeHtml(l.note || '')}</td>` +
+        '</tr>').join('');
+      marketHtml =
+        '<section id="eb-listings">' +
+          '<div class="panel-title row"><span>STUBHUB — CURRENT LISTINGS · cheapest first</span>' +
+          '<span class="muted small">' +
+          (sh.listings != null ? escapeHtml(String(sh.listings)) + ' listings · ' : '') +
+          (sh.snapshot_at ? 'snapshot ' + escapeHtml(T.fmtDate(sh.snapshot_at)) + ' · ' : '') +
+          (shHref ? `<a href="${escapeHtml(shHref)}" target="_blank" rel="noopener">StubHub ↗</a>` : '') +
+          '</span></div>' +
+          '<table class="wc-daily"><thead><tr><th>Section</th><th class="num">Price</th>' +
+          '<th class="num">Qty</th><th>Note</th></tr></thead>' +
+          `<tbody>${lrows}</tbody></table>` +
+          '<div class="muted small" style="margin-top:6px">Resale snapshot from StubHub (listed prices). ' +
+          'Live listings open on StubHub.</div>' +
+        '</section>';
+    } else if (sh) {
+      marketHtml =
+        '<section id="eb-secondary">' +
+          '<div class="panel-title row"><span>STUBHUB — SECONDARY MARKET</span>' +
+          (shHref ? `<a href="${escapeHtml(shHref)}" target="_blank" rel="noopener">StubHub ↗</a>` : '') +
+          '</div>' +
+          '<table class="kv"><tbody>' +
+          `<tr><td class="muted">Resale from</td><td>${money(sh.min_price)}</td></tr>` +
+          `<tr><td class="muted">StubHub event id</td><td>${escapeHtml(String(sh.entity_id || '—'))}</td></tr>` +
+          (sh.snapshot_at ? `<tr><td class="muted">Snapshot</td><td>${escapeHtml(T.fmtDate(sh.snapshot_at))}</td></tr>` : '') +
+          '</tbody></table>' +
+          '<div class="muted small" style="margin-top:6px">Snapshot get-in from StubHub; full live listings open on StubHub.</div>' +
+        '</section>';
+    } else {
+      marketHtml =
+        '<section id="eb-secondary"><div class="muted small">No secondary market mapped: this event isn\'t ' +
+        'linked to a TEvo / StubHub / SeatGeek listing in our data (some Eventbrite shows do resell on StubHub — ' +
+        'those just aren\'t auto-mapped yet). Prices are the organizer\'s face band (discovery only — no seat-level pull).</div></section>';
+    }
+
+    const loc = [ev.venue_address, [ev.city, ev.region].filter(Boolean).join(', '), ev.postal_code]
+      .filter(Boolean).join(' · ');
+    const detail = [
+      ['Venue', ev.venue_name],
+      ['Location', loc],
+      ['Date', dateStr ? T.fmtDate(dateStr) : null],
+      ['Currency', ev.currency],
+      ['Refund policy', ev.refund_policy],
+      ['Discovered', ev.discovered_at ? T.fmtDate(ev.discovered_at) : null],
+      ['TD event id', ev.td_event_id],
+    ].filter(([, v]) => v != null && v !== '')
+      .map(([l, v]) => `<tr><td class="muted">${escapeHtml(l)}</td><td>${escapeHtml(String(v))}</td></tr>`).join('');
+
+    const ebHref = /^https?:\/\//i.test(ev.event_url || '') ? ev.event_url : null;
+    const img = /^https:\/\//i.test(ev.image_url || '') ? ev.image_url : null;
+
+    pane.innerHTML =
+      `<section id="kpi-grid">${kpiHtml}</section>` +
+      marketHtml +
+      '<section id="eb-primary" style="margin-top:12px">' +
+        '<div class="panel-title row"><span>EVENTBRITE — PRIMARY LISTING</span>' +
+        (ebHref ? `<a href="${escapeHtml(ebHref)}" target="_blank" rel="noopener">Eventbrite ↗</a>` : '') +
+        '</div>' +
+        (img ? `<img src="${escapeHtml(img)}" alt="" class="eb-hero-img" style="max-width:100%;border-radius:8px;margin-bottom:10px" />` : '') +
+        (ev.summary ? `<p class="muted">${escapeHtml(ev.summary)}</p>` : '') +
+        `<table class="kv"><tbody>${detail}</tbody></table>` +
+      '</section>';
     activateTab('overview');
   }
 

@@ -11,9 +11,15 @@ require_auth (owned by server.py); no upstream API calls happen here.
 """
 from __future__ import annotations
 
+import re
 from typing import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+
+# Eventbrite folds the genre into the summary tail as "... | Genre: X". Anchor on
+# the pipe marker (or string start) and take the value through end-of-string, so a
+# stray "Genre:"/"SubGenre:" mention earlier in the blurb can't be mistaken for it.
+_GENRE_RE = re.compile(r"(?:^|\|)\s*Genre:\s*(.+?)\s*$")
 
 
 def _num(v):
@@ -25,6 +31,69 @@ def _num(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _stubhub_info(r: dict) -> dict:
+    """Normalize a persisted platform='stubhub' row (td_discovered_events) into a
+    compact secondary-market summary for the terminal. The row's own td_event_id IS
+    the StubHub event id and event_url its page. Price/availability is a snapshot:
+    manual /fetch rows carry a full raw.inventory (listings/tickets/min/max); rows
+    discovered via the StubHub connector search carry raw.sh.min_price only."""
+    raw = r.get("raw") or {}
+    inv = raw.get("inventory") if isinstance(raw.get("inventory"), dict) else {}
+    sh = raw.get("sh") if isinstance(raw.get("sh"), dict) else {}
+    min_price = _num(inv.get("min_price"))
+    if min_price is None:
+        min_price = _num(sh.get("min_price"))
+    # Seat-level listings (only present on manual /fetch rows that stored raw.items);
+    # normalized to the columns the standard event listings table renders.
+    listings_detail = []
+    items = raw.get("items") if isinstance(raw.get("items"), list) else []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        note = None
+        notes = it.get("notes")
+        if isinstance(notes, list) and notes and isinstance(notes[0], dict):
+            note = notes[0].get("formattedListingNoteContent")
+        listings_detail.append({
+            "section": it.get("section") or it.get("ticketClassName"),
+            "price": _num(it.get("rawPrice")),
+            "quantity": it.get("availableTickets"),
+            "note": note,
+        })
+    listings_detail.sort(key=lambda x: (x["price"] is None, x["price"] or 0))
+    return {
+        "entity_id": r.get("td_event_id"),
+        "url": r.get("event_url"),
+        "min_price": min_price,
+        "max_price": _num(inv.get("max_price")),
+        "listings": inv.get("listings"),
+        "total_tickets": inv.get("total_tickets"),
+        "listings_detail": listings_detail or None,
+        "source": raw.get("source"),
+        "snapshot_at": raw.get("snapshot_at"),
+    }
+
+
+def _stubhub_index(db) -> dict:
+    """Load every persisted StubHub↔Eventbrite mapping keyed by the Eventbrite
+    td_event_id it was matched to (raw.eb_match.td_event_id). Small set (one row per
+    mapped event), read in a single service-role query."""
+    rows = (
+        db.table("td_discovered_events")
+        .select("td_event_id,event_url,raw")
+        .eq("platform", "stubhub")
+        .execute()
+    ).data or []
+    idx = {}
+    for r in rows:
+        raw = r.get("raw") or {}
+        match = raw.get("eb_match") if isinstance(raw.get("eb_match"), dict) else {}
+        eb_id = match.get("td_event_id")
+        if eb_id:
+            idx[str(eb_id)] = _stubhub_info(r)
+    return idx
 
 
 def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth: Callable) -> APIRouter:
@@ -49,6 +118,7 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
             from datetime import datetime, timezone
             q = q.gte("event_date", datetime.now(timezone.utc).date().isoformat())
         rows = (q.order("event_date", desc=False).limit(limit).execute()).data or []
+        sh_idx = _stubhub_index(db)
 
         out = []
         for r in rows:
@@ -57,6 +127,7 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
             pmin = _num(raw.get("min_ticket_price"))
             pmax = _num(raw.get("max_ticket_price"))
             out.append({
+                "stubhub": sh_idx.get(str(r.get("td_event_id"))),
                 "td_event_id": r.get("td_event_id"),
                 "event_url": r.get("event_url"),
                 "event_name": r.get("event_name"),
@@ -82,9 +153,73 @@ def build_eventbrite_router(get_require_sb: Callable[[], Callable], require_auth
         return {
             "count": len(out),
             "linked": sum(1 for e in out if e["linked"]),
+            "on_stubhub": sum(1 for e in out if e.get("stubhub")),
             "on_sale": sum(1 for e in out if e["has_tickets"] and not e["sold_out"]),
             "sold_out": sum(1 for e in out if e["sold_out"]),
             "events": out,
+        }
+
+    @router.get("/api/eventbrite/event/{td_event_id}")
+    def eventbrite_event(td_event_id: str, _=Depends(require_auth)):
+        """Single discovered Eventbrite event (primary-face detail) backing the
+        source-native event page (event.html?eb=<td_event_id>). Returns the same
+        face fields as the list route plus the full venue geo/address, image,
+        summary/genre, on-sale window and refund policy from the stored raw item.
+        Includes a `stubhub` object when we have a persisted secondary-market
+        mapping for this event (entity id + price snapshot); otherwise null."""
+        db = get_require_sb()()
+        rows = (
+            db.table("td_discovered_events")
+            .select("td_event_id,event_url,event_name,event_date,venue_name,city,"
+                    "performer_label,matched_tevo_event_id,raw,discovered_at")
+            .eq("platform", "eventbrite")
+            .eq("td_event_id", str(td_event_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="eventbrite event not found")
+
+        r = rows[0]
+        raw = r.get("raw") or {}
+        venue = raw.get("venue") if isinstance(raw.get("venue"), dict) else {}
+        refund = raw.get("refund_policy") if isinstance(raw.get("refund_policy"), dict) else {}
+        summary = raw.get("summary") or ""
+        _gm = _GENRE_RE.search(summary)
+        genre = _gm.group(1) if _gm else None
+        return {
+            "td_event_id": r.get("td_event_id"),
+            "event_url": r.get("event_url"),
+            "event_name": r.get("event_name"),
+            "event_date": r.get("event_date"),
+            "start_date": raw.get("start_date"),
+            "end_date": raw.get("end_date"),
+            "venue_name": r.get("venue_name"),
+            "city": r.get("city"),
+            "region": venue.get("region"),
+            "venue_address": venue.get("address_display"),
+            "postal_code": venue.get("postal_code"),
+            "latitude": _num(venue.get("latitude")),
+            "longitude": _num(venue.get("longitude")),
+            "tevo_event_id": r.get("matched_tevo_event_id"),
+            "linked": r.get("matched_tevo_event_id") is not None,
+            "currency": raw.get("currency"),
+            "price_min": _num(raw.get("min_ticket_price")),
+            "price_max": _num(raw.get("max_ticket_price")),
+            "is_free": bool(raw.get("is_free")),
+            "sold_out": bool(raw.get("is_sold_out")),
+            "has_tickets": bool(raw.get("has_available_tickets")),
+            "waitlist": bool(raw.get("waitlist_available")),
+            "sales_status": raw.get("sales_status"),
+            "event_status": raw.get("event_status"),
+            "age_restriction": raw.get("age_restriction"),
+            "genre": genre,
+            "summary": summary or None,
+            "image_url": raw.get("image_original_url") or raw.get("image_url"),
+            "refund_policy": refund.get("description"),
+            "organizer_url": raw.get("venue_url"),
+            "discovered_at": r.get("discovered_at"),
+            "stubhub": _stubhub_index(db).get(str(td_event_id)),
         }
 
     return router
