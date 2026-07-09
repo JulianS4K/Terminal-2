@@ -160,6 +160,7 @@
       _tabState.portfolio = (portfolio && !portfolio.__err) ? portfolio : null;
       try { renderHero(assets, portfolio); }      catch (e) { console.error('hero', e); }
       try { renderRollup(portfolio); }            catch (e) { console.error('rollup', e); }
+      try { loadStatCard(performerId); }          catch (e) { console.error('statCard', e); }
       try { initDailyMetrics(performerId, portfolio); } catch (e) { console.error('dailyMetrics', e); }
       try { renderEvents(portfolio); }            catch (e) { console.error('events', e); }
       try { renderBlindSpots(portfolio); }        catch (e) { console.error('blindSpots', e); }
@@ -559,6 +560,83 @@
     setText('ruOwnedShare',     ag.owned_share_weighted != null ? T.fmtPct(ag.owned_share_weighted * 100, 1) : '—');
     setText('ruRetailMedAvg',   ag.retail_median_avg_weighted ? '$' + T.fmtNum(Math.round(ag.retail_median_avg_weighted)) : '—');
     setText('ruEventsWithOwned', T.fmtNum(ag.events_with_owned));
+  }
+
+  // ---------- Statistics stat-card (Overview) ----------
+  //
+  // The Yahoo-"Statistics"-panel analog: a dense label/value block of persisted
+  // metrics from get_broker_performer_stat_card (a pure rollup over
+  // performer_metrics_daily, split='all', + trailing 7d/30d deltas + home/away
+  // split). Grouped MARKET / POSITION / TREND. Complements the live PORTFOLIO
+  // ROLLUP above (which is request-time /api/portfolio) — this is the stored
+  // snapshot + trend, so it answers even when the live portfolio call is slow.
+
+  async function loadStatCard(performerId) {
+    const sec = document.getElementById('perf-stat-card');
+    const body = document.getElementById('statCardBody');
+    if (!sec || !body) return;
+    sec.removeAttribute('hidden');
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      body.innerHTML = '<div class="empty">statistics need auth — sign in with @s4kent.com</div>';
+      return;
+    }
+    const res = await Auth.client.rpc('get_broker_performer_stat_card', { p_performer_id: performerId });
+    if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
+    renderStatCard(res.data || {});
+  }
+
+  function renderStatCard(d) {
+    const body = document.getElementById('statCardBody');
+    const meta = document.getElementById('statCardMeta');
+    if (!d || d.as_of == null) { body.innerHTML = '<div class="empty">no stored metrics for this performer yet</div>'; return; }
+    if (meta) meta.textContent = 'as of ' + d.as_of + ' · stored daily';
+
+    const usd  = (v) => (v != null && isFinite(v)) ? '$' + T.fmtNum(Math.round(v)) : '—';
+    const usd2 = (v) => (v != null && isFinite(v)) ? '$' + Number(v).toFixed(2) : '—';
+    const num  = (v) => (v != null && isFinite(v)) ? T.fmtNum(v) : '—';
+    const mult = (v) => (v != null && isFinite(v)) ? Number(v).toFixed(2) + '×' : '—';
+    const pct  = (v) => (v != null && isFinite(v)) ? T.fmtPct(v * 100, 1) : '—';
+    // signed % delta chip (value already a percent, e.g. 2.1)
+    const delta = (v) => {
+      if (v == null || !isFinite(v) || v === 0) return '';
+      const cls = v > 0 ? 'up' : 'down', arw = v > 0 ? '▲' : '▼';
+      return ` <span class="sc-delta ${cls}">${arw} ${Math.abs(v).toFixed(1)}%</span>`;
+    };
+    const deltaN = (v, fmt) => {  // signed absolute delta chip
+      if (v == null || !isFinite(v) || v === 0) return '';
+      const cls = v > 0 ? 'up' : 'down', arw = v > 0 ? '▲' : '▼';
+      return ` <span class="sc-delta ${cls}">${arw} ${fmt(Math.abs(v))}</span>`;
+    };
+    const row = (lbl, valHtml) => `<div class="sc-row"><span class="sc-lbl">${lbl}</span><span class="sc-val">${valHtml}</span></div>`;
+
+    const market = [
+      row('Active events', num(d.event_count)),
+      row('Get-in (min)', usd2(d.getin_min)),
+      row('Get-in (median)', usd(d.getin_median)),
+      row('Price median', usd(d.price_median)),
+      row('Ceiling (p90)', usd(d.price_p90)),
+      row('Spread (p90÷get-in)', mult(d.spread_ratio)),
+      row('Market float (tix)', num(d.market_tickets)),
+    ].join('');
+    const position = [
+      row('Owned tickets', num(d.owned_tickets) + deltaN(d.owned_tickets_d30, num)),
+      row('Owned notional', usd(d.owned_book_notional)),
+      row('Owned share (EVO)', pct(d.owned_share)),
+    ].join('');
+    const trend = [
+      row('Price median · 7d', usd(d.price_median) + delta(d.price_d7_pct)),
+      row('Price median · 30d', usd(d.price_median) + delta(d.price_d30_pct)),
+      row('Get-in · 7d', usd(d.getin_median) + delta(d.getin_d7_pct)),
+      d.is_sports ? row('Home price median', usd(d.home_price_median)) : '',
+      d.is_sports ? row('Away price median', usd(d.away_price_median)) : '',
+    ].join('');
+
+    body.innerHTML = `<div class="sc-groups">
+      <div class="sc-group"><h4>Market</h4>${market}</div>
+      <div class="sc-group"><h4>Position</h4>${position}</div>
+      <div class="sc-group"><h4>Trend</h4>${trend}</div>
+    </div>`;
   }
 
   // ---------- Cross-event daily metrics (Overview) ----------
