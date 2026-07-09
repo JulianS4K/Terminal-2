@@ -27,6 +27,7 @@
 --     smallest-events-first, so the remaining backlog is the expensive tail
 --     (~30s+/event observed) — 10 events fits 840s with headroom instead of
 --     burning 15min to roll back 30.
+-- Already applied to prod · via MCP 2026-07-09 (operator-approved this session).
 -- Idempotent: cron.alter_job to fixed command text; re-apply is a no-op.
 --   The backfill alter is guarded — that job self-unschedules when the
 --   backlog drains, and a missing job means there is nothing left to fix.
