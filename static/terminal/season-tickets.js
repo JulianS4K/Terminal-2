@@ -28,6 +28,10 @@
     const board = document.getElementById('stvBoard');
     if (board) board.addEventListener('click', onBoardClick);
     loadBoard();
+    // Deep-link: ?event=<pkg_event_id> opens that package's breakdown directly
+    // (used by the per-team links on the Leagues season-ticket table).
+    const deep = parseInt(new URLSearchParams(location.search).get('event'), 10);
+    if (Number.isFinite(deep)) loadDetail(deep);
   }
 
   // ---------- leaderboard ----------

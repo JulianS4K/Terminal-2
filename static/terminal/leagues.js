@@ -365,7 +365,7 @@
     const body = rows.map(p =>
       `<tr>` +
       `<td>${stvVerdictBadge(p.verdict)}</td>` +
-      `<td>${escapeHtml(p.team || '—')}</td>` +
+      `<td><a class="stv-link" href="season-tickets.html?event=${encodeURIComponent(p.pkg_event_id)}">${escapeHtml(p.team || '—')}</a></td>` +
       `<td class="num">${escapeHtml(String(p.home_games))}</td>` +
       `<td class="num">${money(p.pkg_ask_med)}</td>` +
       `<td class="num">${money(p.comp_getin_med)}</td>` +
