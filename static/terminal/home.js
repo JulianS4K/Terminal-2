@@ -546,22 +546,25 @@
     body.appendChild(tbl);
   }
 
-  // ---------- SG SELLING, WE'RE NOT — OWNED, NOT MOVING ----------
+  // ---------- MARKET'S SELLING, WE'RE NOT — OWNED, NOT MOVING ----------
   //
   // Owned-inventory companion to the Top-50 above (which only charts events we
   // hold ZERO inventory in). Calls get_sg_owned_stall_chart(offset, limit) RPC
   // (mig 20260709190000), reading the daily-rebuilt sg_owned_stall_chart table:
-  // future events with EVO-owned tickets > 0 where the SG market sold on >= 2
-  // of the trailing 7 days but OUR channels (EVO / Vivid / TickPick / SG
-  // SellerDirect) recorded ZERO sales in 7d. An event we sell on this week
-  // drops off the chart — presence on the chart IS the "we're not" signal.
+  // future events with EVO-owned tickets > 0 where the MARKET is absorbing
+  // tickets while OUR channels (EVO / Vivid / TickPick / SG SellerDirect) sold
+  // ZERO in 7d. An event we sell on this week drops off the chart — presence
+  // on the chart IS the "we're not" signal.
   //
-  //   stall_score = percent_rank(7d-MA market volume)     [how hot the market]
-  //               + percent_rank(owned tix × our ask $)   [how much of ours sits]
-  //
-  // Prem% = our median ask vs the market's 7d-MA SOLD median — the "why it
-  // isn't moving" column. SG-side owned listings are last-known info only (the
-  // SG listings feed has been dark since 2026-06-26) and render as a tooltip.
+  // The market signal is TIERED (vel_basis): 'sales' = real SG+SeatData sales
+  // tape; 'absorption_evo' / 'absorption_sh' = day-over-day inventory drops
+  // from the cross-source daily snapshot (a labeled proxy — price_trend in the
+  // tooltip separates real demand from delist/reprice). Score = pct(heat
+  // within basis) + pct($ exposure) + pct(days-of-supply ÷ days-to-event);
+  // supply_ratio > 1 = at the market's own rate we do NOT clear by the event
+  // (Supply cell reds). Top-30 rows carry model asks (clearing-price frontier)
+  // and a click-to-expand per-section drill (get_sg_owned_stall_sections).
+  // Movers/weather/prediction-market chips are §6a color — display only.
 
   function wireStallTabs() {
     document.querySelectorAll('[data-stall-tab]').forEach(btn => {
@@ -573,6 +576,77 @@
         renderStallChart().catch(e => console.error('[sgStall]', e));
       });
     });
+  }
+
+  const stallSectionCache = new Map();   // tevo_event_id → rows[] (per page load)
+
+  // Expandable per-section drill row (top-30 events only have data).
+  async function toggleStallSections(tr, r) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains('stall-drill')) { next.remove(); return; }
+
+    const drill = document.createElement('tr');
+    drill.className = 'stall-drill';
+    const td = document.createElement('td');
+    td.colSpan = tr.children.length;
+    td.innerHTML = '<div class="empty">loading sections…</div>';
+    drill.appendChild(td);
+    tr.after(drill);
+
+    let rows = stallSectionCache.get(r.tevo_event_id);
+    if (!rows) {
+      try {
+        const res = await window.TerminalAuth.client.rpc('get_sg_owned_stall_sections',
+          { p_event_id: r.tevo_event_id });
+        if (res.error) throw new Error(res.error.message || 'RPC error');
+        rows = (res.data && res.data.rows) || [];
+        stallSectionCache.set(r.tevo_event_id, rows);
+      } catch (e) {
+        td.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+        return;
+      }
+    }
+
+    if (!rows.length) {
+      td.innerHTML = '<div class="empty">no section drill (computed for the top 30 rows daily)</div>';
+      return;
+    }
+
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const inner = document.createElement('table');
+    inner.className = 'blind-spots-tbl';
+    inner.innerHTML = `
+      <thead><tr>
+        <th>Section</th>
+        <th class="num" title="our tickets · listings held">Ours</th>
+        <th class="num">Our ask</th>
+        <th class="num" title="SG+SeatData realized sales in this section, 30d">30d sales</th>
+        <th class="num" title="realized median sold price in this section, 30d">Clr med</th>
+        <th class="num">Prem%</th>
+        <th class="num" title="model recommended ask (fair-clearing anchored)">Rec ask</th>
+        <th class="num" title="highest ask still ≥50% likely to clear before the event">Clear-by</th>
+        <th class="num" title="P(sell before event) at OUR current ask">P(sell)</th>
+        <th title="median predicted sell-by date at our ask">p50 by</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = inner.querySelector('tbody');
+    rows.forEach(s => {
+      const prem = s.sec_premium_pct == null ? null : +s.sec_premium_pct;
+      const tr2 = document.createElement('tr');
+      tr2.innerHTML = `
+        <td>${escapeHtml((s.section || '').toUpperCase())}</td>
+        <td class="num">${s.our_qty ?? '—'} · ${s.our_listings ?? '—'}</td>
+        <td class="num">${money(s.our_median_ask)}</td>
+        <td class="num">${s.sec_sales_30d ?? 0}</td>
+        <td class="num">${money(s.sec_clearing_median)}</td>
+        <td class="num${prem == null ? '' : (prem > 0 ? ' neg' : ' pos')}">${prem == null ? '—' : (prem > 0 ? '+' : '') + prem.toFixed(0) + '%'}</td>
+        <td class="num">${money(s.rec_ask)}</td>
+        <td class="num">${money(s.clear_by_event_ask)}</td>
+        <td class="num">${s.p_sell_at_ask_pct == null ? '—' : (+s.p_sell_at_ask_pct).toFixed(0) + '%'}</td>
+        <td>${escapeHtml(s.p50_sell_by || '—')}</td>`;
+      tb.appendChild(tr2);
+    });
+    td.innerHTML = '';
+    td.appendChild(inner);
   }
 
   async function renderStallChart() {
@@ -610,7 +684,7 @@
     if (metaEl) {
       metaEl.textContent = total
         ? (isRest ? `ranks 51–${Math.min(total, CHART_PAGE + rows.length)} of ${total}${charted}`
-                  : `${total} owned events stalled while the market sells${charted}`)
+                  : `${total} owned events stalled while the market moves${charted}`)
         : '';
     }
 
@@ -623,6 +697,7 @@
 
     const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
     const STALE_MS = 48 * 3600 * 1000;
+    const BASIS_TAG = { sales: 'S', absorption_evo: 'A', absorption_sh: 'SH' };
 
     const tbl = document.createElement('table');
     tbl.className = 'blind-spots-tbl chart-tbl';
@@ -630,41 +705,89 @@
       <thead><tr>
         <th class="num">#</th>
         <th title="Movement vs yesterday's chart">+/-</th>
-        <th>Event</th><th>Venue</th>
+        <th title="click a row to expand the per-section drill (top 30)">Event</th>
+        <th>Venue</th>
         <th class="num">T-days</th>
-        <th class="num" title="SG market 7-day MA daily sold tickets — the sales we are NOT getting">Mkt vol/day</th>
-        <th class="num" title="SG market 7-day MA median SOLD price — what the market actually clears at">Mkt med</th>
-        <th class="num" title="SG market 7-day MA daily sold gross">Mkt GMV/day</th>
-        <th class="num" title="Our EVO-owned tickets on this event (latest snapshot)">Our tix</th>
+        <th class="num" title="Market velocity. Basis sup: S = SG+SeatData SALES tape (tickets/day) · A = EVO inventory-absorption proxy (tickets/day) · SH = StubHub listings-absorption proxy (listings/day). Absorption is a labeled proxy — drops confound sales with delists; hover for the price-trend cross-check.">Mkt vol/day</th>
+        <th class="num" title="Blended realized SOLD median (SG+SeatData) — what buyers actually pay. '—' on absorption basis (no realized tape).">Clr med</th>
+        <th class="num" title="Our EVO-owned tickets (latest snapshot). † = our book shrank in 7d with NO order row (delist or an unrecorded channel sale — see KANBAN A1-OPS-30).">Our tix</th>
         <th class="num" title="Our median retail ask on those tickets">Our ask</th>
-        <th class="num" title="Our ask vs the market's clearing median. +50% = we ask half again what buyers actually pay — the usual reason nothing moves.">Prem%</th>
-        <th class="num" title="Our most recent own-channel sale on this event (any of EVO/Vivid/TickPick/SG), with source">Last sale</th>
-        <th class="num" title="Stall score = percentile(market volume) + percentile(our $ exposure), 0–2">Score</th>
+        <th class="num" title="Our ask vs the market's clearing median">Prem%</th>
+        <th class="num" title="Days of market supply our position represents (our qty ÷ market velocity). RED when it exceeds days-to-event: at the market's own rate we do NOT clear before the event.">Supply-d</th>
+        <th class="num" title="Model recommended ask for our largest owned section (clearing-price-frontier anchored). Hover: clear-by-event ask, P(sell) at OUR ask, p50 sell-by. Computed daily for the top 30 rows.">Rec ask</th>
+        <th class="num" title="Our most recent own-channel sale on this event (EVO/Vivid/TickPick/SG)">Last sale</th>
+        <th class="num" title="Stall score 0–3 = pct(market heat within basis) + pct(our $ exposure) + pct(supply ÷ time). Hover for the split.">Score</th>
         <th class="num" title="Best rank achieved · days on chart">Peak·On</th>
       </tr></thead>
       <tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
 
     rows.forEach(r => {
-      const d = T.daysUntil(r.sg_datetime_utc);
+      const d = T.daysUntil(r.occurs_at);
       const tr = document.createElement('tr');
 
-      const eventLabel = r.tevo_event_id
-        ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id))}</a>`
-        : escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id));
+      // color chips (§6a display-only): movers category · outdoor rain · pred-market
+      const chips = [];
+      if (r.movers_category) {
+        chips.push(`<span class="badge gap-chip">${escapeHtml(r.movers_category.replace(/_/g, ' '))}</span>`);
+      }
+      if (r.is_indoor === false && r.weather_precip_pct != null && +r.weather_precip_pct >= 40) {
+        chips.push(`<span class="badge gap-chip" title="${escapeHtml(r.weather_summary || '')} (${r.weather_precip_pct}% precip, ${escapeHtml(r.weather_kind || '')})">☔ ${Math.round(+r.weather_precip_pct)}%</span>`);
+      }
+      if (r.pm_prob_pct != null) {
+        chips.push(`<span class="badge gap-chip" title="${escapeHtml(r.pm_title || 'prediction market')}">PM ${Math.round(+r.pm_prob_pct)}%</span>`);
+      }
+      const eventLabel = (r.tevo_event_id
+        ? `<a href="event.html?event=${r.tevo_event_id}">${escapeHtml(r.event_name || ('#' + r.tevo_event_id))}</a>`
+        : escapeHtml(r.event_name || '—'))
+        + (chips.length ? ' ' + chips.join(' ') : '');
 
-      // owned-snapshot staleness badge (the EVO firehose usually re-polls within hours)
+      // velocity cell: value + basis sup; tooltip carries the full split
+      const basisTag = BASIS_TAG[r.vel_basis] || '?';
+      const velBits = [];
+      if (r.vel_basis === 'sales') {
+        velBits.push(`SG ${r.sg_ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.sg_ma7_volume))}/d`);
+        velBits.push(`SD ${r.sd_ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.sd_ma7_volume))}/d`);
+        if (r.sg_ma7_gross != null) velBits.push(`SG GMV ${money(r.sg_ma7_gross)}/d`);
+        velBits.push(`${r.days_observed ?? '—'} days w/ sales`);
+      } else {
+        if (r.absorb_evo_day != null) velBits.push(`EVO absorb ${(+r.absorb_evo_day).toFixed(1)} tix/d`);
+        if (r.absorb_sh_day != null) velBits.push(`SH absorb ${(+r.absorb_sh_day).toFixed(1)} lst/d`);
+        velBits.push(`${r.days_observed ?? '—'} day-pairs`);
+        if (r.price_trend_7d_pct != null) {
+          const t = +r.price_trend_7d_pct;
+          velBits.push(`price ${t > 0 ? '+' : ''}${t.toFixed(1)}% 7d ${t >= 0 ? '(drop + firm price = real demand)' : '(price falling — could be delist/reprice)'}`);
+        }
+      }
+      const velTip = `${escapeHtml(r.vel_basis)} · ${escapeHtml(r.vel_unit)}/day — ` + velBits.join(' · ');
+
+      // owned cell: staleness sup* + depletion sup†
       const ownedAge = r.owned_as_of ? (Date.now() - new Date(r.owned_as_of).getTime()) : null;
       const ownedStale = ownedAge != null && ownedAge > STALE_MS;
+      const dropped = r.owned_drop_7d != null && +r.owned_drop_7d > 0;
       const sgOwnedTip = r.sg_owned_listings != null
         ? ` · SG-side book (last known ${escapeHtml((r.sg_owned_as_of || '').slice(0, 10))}): ${r.sg_owned_listings} listings`
         : '';
-      const tixTip = `EVO-owned snapshot ${escapeHtml((r.owned_as_of || '').slice(0, 10))}${sgOwnedTip}`;
+      const tixTip = `EVO-owned snapshot ${escapeHtml((r.owned_as_of || '').slice(0, 10))}`
+        + (dropped ? ` · book −${r.owned_drop_7d} in 7d with no order row (delist or unrecorded channel sale)` : '')
+        + sgOwnedTip;
 
-      // premium: positive = we ask over the clearing price (red); negative = under (accent)
       const prem = r.ask_premium_pct == null ? null : +r.ask_premium_pct;
       const premCell = prem == null ? '—' : (prem > 0 ? '+' : '') + prem.toFixed(0) + '%';
       const premCls = prem == null ? '' : (prem > 0 ? ' neg' : ' pos');
+
+      // supply cell: red when we can't clear by the event at market rate
+      const wontClear = r.supply_ratio != null && +r.supply_ratio > 1;
+      const supplyCell = r.days_of_supply == null ? '—' : (+r.days_of_supply).toFixed(1);
+      const supplyTip = `days-of-supply ${supplyCell} vs T-${r.dte ?? '—'} → ratio ${r.supply_ratio ?? '—'}`
+        + (wontClear ? ' — at the market\'s own rate this does NOT clear before the event' : '');
+
+      const recCell = money(r.rec_ask);
+      const recTip = r.rec_ask == null
+        ? 'model asks computed daily for the top 30 rows'
+        : `section ${escapeHtml((r.top_owned_section || '').toUpperCase())} — clear-by-event ask ${money(r.clear_by_event_ask)}`
+          + (r.p_sell_at_ask_pct != null ? ` · P(sell)@our ask ${(+r.p_sell_at_ask_pct).toFixed(0)}%` : '')
+          + (r.p50_sell_by ? ` · p50 sell-by ${escapeHtml(r.p50_sell_by)}` : '');
 
       const lastSale = r.our_last_sale_at
         ? `${escapeHtml(r.our_last_sale_at.slice(0, 10))} <span class="muted small">${escapeHtml(r.our_last_sale_source || '')}</span>`
@@ -672,25 +795,34 @@
       const salesTip = `own-channel sales last 30d: ${r.our_sales_30d ?? 0}`;
 
       const score = r.stall_score == null ? '—' : (+r.stall_score).toFixed(2);
-      const scoreTip = `mkt-volume pct ${r.pct_volume == null ? '—' : (+r.pct_volume).toFixed(2)}`
-                     + ` · exposure pct ${r.pct_exposure == null ? '—' : (+r.pct_exposure).toFixed(2)}`;
+      const scoreTip = `heat ${r.pct_heat == null ? '—' : (+r.pct_heat).toFixed(2)}`
+                     + ` · exposure ${r.pct_exposure == null ? '—' : (+r.pct_exposure).toFixed(2)}`
+                     + ` · supply ${r.pct_supply == null ? '—' : (+r.pct_supply).toFixed(2)}`;
       const peakOn = `${r.peak_rank ?? '—'}·${r.days_on_chart ?? '—'}`;
 
       tr.innerHTML = `
         <td class="num chart-rank">${r.rank}</td>
         <td>${movementCell(r)}</td>
         <td>${eventLabel}</td>
-        <td>${escapeHtml(r.sg_venue_name || '—')}</td>
+        <td>${escapeHtml(r.venue_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="num">${r.ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume))}</td>
-        <td class="num">${money(r.ma7_median)}</td>
-        <td class="num">${money(r.ma7_gross)}</td>
-        <td class="num" title="${tixTip}">${r.owned_tickets == null ? '—' : T.fmtNum(r.owned_tickets)}${ownedStale ? '<sup title="owned snapshot > 48h old">*</sup>' : ''}</td>
+        <td class="num" title="${velTip}">${r.vel_per_day == null ? '—' : T.fmtNum(Math.round(+r.vel_per_day))}<sup>${basisTag}</sup></td>
+        <td class="num">${money(r.clearing_median)}</td>
+        <td class="num" title="${tixTip}">${r.owned_tickets == null ? '—' : T.fmtNum(r.owned_tickets)}${ownedStale ? '<sup title="owned snapshot > 48h old">*</sup>' : ''}${dropped ? '<sup title="book shrank with no order row — see tooltip">†</sup>' : ''}</td>
         <td class="num">${money(r.owned_median_ask)}</td>
         <td class="num${premCls}">${premCell}</td>
+        <td class="num${wontClear ? ' neg' : ''}" title="${supplyTip}">${supplyCell}</td>
+        <td class="num" title="${recTip}">${recCell}</td>
         <td class="num" title="${salesTip}">${lastSale}</td>
         <td class="num" title="${scoreTip}"><strong>${score}</strong></td>
         <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
+
+      // whole row toggles the section drill, except real links
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', ev => {
+        if (ev.target.closest('a')) return;
+        toggleStallSections(tr, r).catch(e => console.error('[sgStallDrill]', e));
+      });
       tb.appendChild(tr);
     });
 
