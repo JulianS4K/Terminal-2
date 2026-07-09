@@ -76,12 +76,21 @@
     table.sc-sgsold-tbl th:first-child, table.sc-sgsold-tbl td:first-child { text-align: left; }
     table.sc-sgsold-tbl th { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #8a8a8a); font-weight: 600; border-bottom: 1px solid rgba(255,255,255,.08); }
     table.sc-sgsold-tbl td:nth-child(2), table.sc-sgsold-tbl td:nth-child(3) { color: var(--pos, #4ade80); font-weight: 600; }
+    .sc-sgsold-note { margin-top: 8px; font-size: 12px; color: var(--muted, #b5b5b5); }
+    /* asks vs realized clearing: over = expensive asks (amber); under = underpriced/buy (green) */
+    .ask-hi { color: var(--warn, #f59e0b); font-weight: 700; }
+    .ask-lo { color: var(--pos, #4ade80); font-weight: 700; }
+    table.pg-trend-tbl td .ask-hi, table.pg-trend-tbl td .ask-lo { font-weight: 600; }
 
     /* ---- Trending performers table (top of index) ---- */
     .pg-trending { margin-top: 10px; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.09);
       border-left: 3px solid var(--warn, #f59e0b); border-radius: 10px; padding: 10px 14px 4px; }
     .pg-trending-hd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; }
     .pg-trending-hd > span:first-child { font-size: 12px; font-weight: 700; letter-spacing: .05em; color: var(--warn, #f59e0b); }
+    .pg-trend-by { display: inline-flex; gap: 4px; margin-left: auto; }
+    .pg-trend-by .ctrl-btn { padding: 3px 10px; background: var(--panel-2, #1a1a1a); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 6px; color: var(--muted, #8a8a8a); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .pg-trend-by .ctrl-btn.is-active { color: var(--warn, #f59e0b); border-color: var(--warn, #f59e0b); }
     .pg-trend-scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; }
     table.pg-trend-tbl { border-collapse: collapse; width: 100%; min-width: 620px; font-variant-numeric: tabular-nums; }
     table.pg-trend-tbl th, table.pg-trend-tbl td { padding: 6px 12px; text-align: right; white-space: nowrap; }
@@ -217,7 +226,11 @@
       <div id="perf-trending" class="pg-trending">
         <div class="pg-trending-hd">
           <span>🔥 TRENDING PERFORMERS</span>
-          <span class="muted small">top 25 · same-event 30d price momentum <span id="pgTrendMeta"></span></span>
+          <span class="muted small">top 25 · same-event 30d momentum <span id="pgTrendMeta"></span></span>
+          <span class="pg-trend-by" id="pgTrendBy" role="group" aria-label="Trend basis">
+            <button class="ctrl-btn is-active" data-by="ask" title="listing/ask price momentum">Ask</button>
+            <button class="ctrl-btn" data-by="sold" title="realized SG sold-price momentum">Sold</button>
+          </span>
         </div>
         <div id="pgTrendBody"><div class="empty">loading…</div></div>
       </div>
@@ -495,6 +508,6 @@
   <script src="nav.js?v=20260709gal"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260709sgsold"></script>
+  <script src="performer.js?v=20260709spread"></script>
 </body>
 </html>

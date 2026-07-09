@@ -94,13 +94,24 @@
     if (_basket.length) { syncBasket(); openCompare(); }
   }
 
-  // TRENDING — top 25 by same-event-set 30d price momentum (get_trending_performers).
+  // TRENDING — top 25 by same-event-set 30d momentum. Basis toggle: 'ask'
+  // (listing price momentum) | 'sold' (realized SG sold-price momentum).
+  let _trendBy = 'ask';
   async function loadTrending() {
     const body = document.getElementById('pgTrendBody');
     const Auth = window.TerminalAuth;
     if (!body) return;
+    // wire the Ask/Sold toggle once
+    document.querySelectorAll('#pgTrendBy [data-by]').forEach(btn => {
+      if (btn._wired) return; btn._wired = true;
+      btn.addEventListener('click', () => {
+        _trendBy = btn.dataset.by;
+        document.querySelectorAll('#pgTrendBy [data-by]').forEach(x => x.classList.toggle('is-active', x === btn));
+        loadTrending().catch(e => console.error('trending', e));
+      });
+    });
     if (!Auth || !Auth.client || !Auth.getAccessToken()) { body.innerHTML = '<div class="empty">trending needs auth</div>'; return; }
-    const res = await Auth.client.rpc('get_trending_performers', { p_limit: 25, p_min_market: 1000, p_min_events: 3 });
+    const res = await Auth.client.rpc('get_trending_performers', { p_limit: 25, p_min_market: 1000, p_min_events: 3, p_sort: _trendBy });
     if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
     renderTrending(res.data || []);
   }
@@ -111,27 +122,36 @@
     if (!rows.length) { body.innerHTML = '<div class="empty">no trending performers</div>'; return; }
     rows.forEach(c => { _gallery.cards[c.performer_id] = c; });   // so compare basket can name them
     if (meta && rows[0].trend_computed_at) meta.textContent = '· as of ' + String(rows[0].trend_computed_at).slice(0, 10);
+    const sold = _trendBy === 'sold';
     const trs = rows.map((c, i) => {
-      const t = c.trend_px_30d;
+      const t = sold ? c.trend_sold_30d : c.trend_px_30d;
+      const ev = sold ? c.trend_sold_stable_events : c.trend_stable_events;
+      const av = c.ask_over_sold_pct;   // asks vs realized clearing (− = under = buy)
+      const avHtml = (av != null && isFinite(av))
+        ? `<span class="${av > 0 ? 'ask-hi' : 'ask-lo'}">${av > 0 ? '+' : ''}${gNum(av)}%</span>` : '—';
       const picked = _basket.some(b => b.id === c.performer_id) ? ' picked' : '';
       return `<tr>
         <td class="rk">${i + 1}</td>
         <td class="l nm"><a href="performer.html?performer=${c.performer_id}">${escapeHtml(c.performer_name || '—')}</a></td>
         <td class="trend ${t < 0 ? 'down' : ''}">${t > 0 ? '▲ +' : (t < 0 ? '▼ ' : '')}${gNum(Math.abs(t))}%</td>
-        <td>${gNum(c.trend_stable_events)}</td>
+        <td>${gNum(ev)}</td>
         <td>${gUsd(c.price_median)}</td>
+        <td>${gUsd(c.sg_sold_median)}</td>
+        <td>${avHtml}</td>
         <td>${gNum(c.market_tickets)}</td>
         <td>${gKnum(c.owned_tickets)}</td>
-        <td>${gUsd(c.owned_book_notional)}</td>
         <td><button class="pg-trend-add${picked}" data-add="${c.performer_id}" title="add to compare" aria-label="add to compare">＋</button></td>
       </tr>`;
     }).join('');
     body.innerHTML = `<div class="pg-trend-scroll"><table class="pg-trend-tbl">
       <thead><tr>
         <th class="rk">#</th><th class="l">Performer</th>
-        <th title="Median per-event 30d price change, events priced in both windows">Trend 30d</th>
-        <th title="Events priced in both windows (the stable set)">Events</th>
-        <th>Price med</th><th>Market</th><th>Owned</th><th>Owned $</th><th></th>
+        <th title="Median per-event 30d ${sold ? 'realized SOLD-price' : 'listing-price'} change, stable event set">Trend 30d${sold ? ' · sold' : ''}</th>
+        <th title="Events in the stable set">Events</th>
+        <th title="Listing/ask median">Ask med</th>
+        <th title="Realized SG sold median">Sold med</th>
+        <th title="How far asks sit above (+) or below (−) realized clearing">Ask vs sold</th>
+        <th>Market</th><th>Owned</th><th></th>
       </tr></thead><tbody>${trs}</tbody></table></div>`;
     body.querySelectorAll('[data-add]').forEach(btn => btn.addEventListener('click', () => {
       toggleBasket(parseInt(btn.dataset.add, 10));
@@ -282,6 +302,12 @@
       { key: 'axs_event_count', label: 'AXS events',   fmt: 'num',  better: 'max' },
       { key: 'axs_getin_min',   label: 'AXS get-in',   fmt: 'usd2', better: 'min' },
       { key: 'axs_listings',    label: 'AXS listings', fmt: 'num',  better: 'max' },
+    ]},
+    { title: 'SG sold (realized)', optional: true, probe: 'sg_sold_median', rows: [
+      { key: 'sg_sold_median',    label: 'Sold median',        fmt: 'usd',  better: null  },
+      { key: 'sg_sold_qty',       label: 'Sold qty',           fmt: 'num',  better: 'max' },
+      { key: 'ask_over_sold_pct', label: 'Asks vs clearing',   fmt: 'spct', better: 'min' },
+      { key: 'trend_sold_30d',    label: 'Sold Δ 30d',         fmt: 'spct', better: 'max' },
     ]},
   ];
   const CMP_FMT = { num: gNum, usd: gUsd, usd2: gUsd2, mult: gMult, pct: gPct, spct: gSpct, text: gText };
@@ -885,12 +911,21 @@
       const rows = d.sg_sold_by_year.map(y =>
         `<tr><td>${gText(y.year)}</td><td>${usd(y.sold_median)}</td><td>${usd(y.sold_mean)}</td>` +
         `<td>${num(y.qty)}</td><td>${num(y.events)}</td></tr>`).join('');
+      // asks-vs-clearing spread + realized-sold momentum readout
+      let note = '';
+      const av = d.ask_over_sold_pct, st = d.trend_sold_30d;
+      if (av != null && isFinite(av)) {
+        const cls = av > 0 ? 'ask-hi' : 'ask-lo';
+        note = `<div class="sc-sgsold-note">Asks <span class="${cls}">${av > 0 ? '+' : ''}${av}%</span> ` +
+          `${av > 0 ? 'over' : 'under'} clearing` +
+          (st != null && isFinite(st) ? ` · sold trend <span class="${st >= 0 ? 'ask-lo' : 'ask-hi'}">${st > 0 ? '+' : ''}${st}%</span>/30d` : '') + `</div>`;
+      }
       sgSold = `<div class="sc-sgsold">
         <div class="sc-te-lbl">SG SOLD · REALIZED — median / avg sale price by year</div>
         <table class="sc-sgsold-tbl">
           <thead><tr><th>Year</th><th>Median</th><th>Avg</th><th>Sold</th><th>Events</th></tr></thead>
           <tbody>${rows}</tbody>
-        </table>
+        </table>${note}
       </div>`;
     }
 
