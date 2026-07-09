@@ -43,7 +43,8 @@
     // Watchlist is the first table — the user's own tracked events. Independent
     // RPC, runs in parallel with movers/blind-spots.
     loadWatchlist().catch(e => console.error('[watchlist]', e));
-    // Top-50 chart fires its own RPC, independent of movers — runs in parallel.
+    // Discovery chart (top US events we hold no position in, ranked all-platform)
+    // fires its own RPC, independent of movers — runs in parallel.
     wireChartTabs();
     renderMarketChart().catch(e => console.error('[sgChart]', e));
     // Owned-events panel ("NEXT 30 DAYS") has its OWN RPC — it must reflect the
@@ -373,29 +374,25 @@
     setText('cvToday', T.fmtNum(today));
   }
 
-  // ---------- TOP 50 — SG SELLING, WE'RE NOT IN ----------
+  // ---------- TOP 50 — MARKET SELLING, WE'RE NOT IN ----------
   //
-  // Billboard-style daily chart of SG market events we hold ZERO owned
-  // inventory in, ranked by sales ACTIVITY. Calls get_sg_market_chart(offset,
-  // limit) RPC (mig 20260606120000), which reads the daily-rebuilt
-  // sg_market_chart table.
+  // Billboard-style daily DISCOVERY chart: the top US events we hold ZERO
+  // position in, ranked by ALL-PLATFORM demand. Calls get_sg_market_chart(
+  // offset, limit) RPC — redesigned in place (mig 20260709190000).
   //
-  //   chart_score = percent_rank(7d-MA daily volume)
-  //               + percent_rank(7d-MA sales median)        (0..2)
+  //   chart_score = pct(blended SG+SeatData volume)      -- how fast it sells
+  //               + pct(median-of-medians, all platforms) -- cross-platform price
+  //               + 0.5 · pct(platform breadth)           -- how many live markets
   //
-  // High on EITHER axis charts; high on BOTH tops it. Eligibility:
-  // ZERO owned inventory on BOTH sides — SeatGeek (owned_count_last_7d = 0)
-  // AND EVO/TEvo (latest event_metrics.owned_tickets_count = 0); future event;
-  // >= 2 days of sales in trailing 7d. The dual-source ownership gate (mig
-  // 20260702140030) keeps events where SG is turned off under a sales deal but
-  // we still sell via EVO from wrongly charting as "we're not in".
-  //
-  // Each row also surfaces the open cross-source market depth we're NOT in:
-  // EVO inv (evo_tickets · evo_getin, via latest_event_metrics) + SH inv
-  // (sh_listings · sh_median, via the daily TicketsData snapshot) — both
-  // returned by get_sg_market_chart.
-  // Each row carries prev_rank / peak_rank / days_on_chart for movement.
-  // Two tabs: "Top 50" (rank 1-50) and "The Rest" (rank 51+, capped server-side).
+  // SeatData sales BOOST when available (blended volume + breadth + the median-
+  // of-medians); no penalty when absent. Eligibility: ZERO position on BOTH
+  // sides (SG owned=0 AND EVO owned=0), future, and a real market on ANY sales
+  // platform (SG or SeatData ≥2 sale-days — SeatData can now surface an event
+  // SeatGeek's tape missed). Each row surfaces open cross-source depth (EVO/SH)
+  // + PRIMARY (face-value) availability — AXS (veritix) and TM primary listings.
+  // NOTE: SeatGeek primary is NOT observable (our broker feed is resale-only,
+  // verified vs the SG-primary Austin FC event) so "Face" reflects AXS/TM only.
+  // Each row carries prev/peak/days_on for movement. Two tabs: Top 50 / The Rest.
 
   const CHART_PAGE = 50;        // tab 1 size = top 50
   const CHART_REST_LIMIT = 200; // tab 2: ranks 51..250
@@ -457,7 +454,7 @@
     if (metaEl) {
       metaEl.textContent = total
         ? (isRest ? `ranks 51–${Math.min(total, CHART_PAGE + rows.length)} of ${total}${charted}`
-                  : `${total} non-owned events charting${charted}`)
+                  : `${total} US events we hold no position in${charted}`)
         : '';
     }
 
@@ -468,6 +465,8 @@
       return;
     }
 
+    const BASIS_TAG = { blended: 'S+SD', sg: 'SG', seatdata: 'SD' };
+
     const tbl = document.createElement('table');
     tbl.className = 'blind-spots-tbl chart-tbl';
     tbl.innerHTML = `
@@ -476,12 +475,14 @@
         <th title="Movement vs yesterday's chart">+/-</th>
         <th>Event</th><th>Venue</th>
         <th class="num">T-days</th>
-        <th class="num" title="Blended 7-day MA daily sales: SeatGeek + SeatData (treats unknown SeatData qty as 1)">Vol/day</th>
-        <th class="num" title="Volume-weighted blended 7-day MA median price across SeatGeek + SeatData">Med px</th>
-        <th class="num" title="Blended 7-day MA daily gross: SeatGeek + SeatData sold comps">GMV/day</th>
-        <th class="num" title="EVO/TEvo market inventory — tickets available · get-in price. We hold ZERO owned here (that's the point); this is the open market we're not in.">EVO inv</th>
-        <th class="num" title="StubHub inventory — active listings · median price (via TicketsData daily snapshot)">SH inv</th>
-        <th class="num" title="Chart score = percentile(volume) + percentile(median), 0–2. Blended percentiles when SeatData present, else SeatGeek-only.">Score</th>
+        <th class="num" title="Blended 7-day MA daily sales: SeatGeek + SeatData (unknown SeatData qty counts as 1). Basis sup: S+SD blended · SG SeatGeek-only · SD SeatData-only.">Vol/day</th>
+        <th class="num" title="Volume-weighted blended median SOLD price across SeatGeek + SeatData — what actually sold.">Sold px</th>
+        <th class="num" title="Median of the per-platform median prices (SG sold · SeatData sold · StubHub · GoTickets · Vivid · EVO retail) — a cross-platform value level.">All-plat $</th>
+        <th class="num" title="How many platforms show a live market: SG + SeatData sales, StubHub + GoTickets + Vivid listings, EVO tickets. A ranking term (breadth).">Mkts</th>
+        <th title="PRIMARY (face-value) availability still on sale: AXS (veritix) and/or TM primary listings. Blank = resale-only. SeatGeek primary is not observable (our SG feed is resale-only).">Face</th>
+        <th class="num" title="EVO/TEvo market inventory — tickets available · get-in price. We hold ZERO here; this is the open market we're not in.">EVO inv</th>
+        <th class="num" title="StubHub inventory — active listings · median price (TicketsData daily snapshot)">SH inv</th>
+        <th class="num" title="Chart score 0–2.5 = pct(blended volume) + pct(all-platform median) + 0.5·pct(platform breadth). Hover the basis sup for the sales-tape mix.">Score</th>
         <th class="num" title="Best rank achieved · days on chart">Peak·On</th>
       </tr></thead>
       <tbody></tbody>`;
@@ -496,22 +497,18 @@
         : escapeHtml(r.sg_event_name || ('SG ' + r.sg_event_id));
 
       const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
-      const hasSd = (r.score_basis === 'blended');
-      const effScore = hasSd ? r.blended_score : r.chart_score;
-      const score = (effScore == null) ? '—' : (+effScore).toFixed(2);
-      // tooltip breakdowns: SG raw vs SD raw (the single columns show the blend)
+      const score = (r.chart_score == null) ? '—' : (+r.chart_score).toFixed(2);
+      const basisTag = BASIS_TAG[r.score_basis] || '?';
       const volTip   = `SG ${r.ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume))}` +
-                       ` · SD ${r.sd_ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.sd_ma7_volume))}`;
-      const medTip   = `SG ${money(r.ma7_median)} · SD ${money(r.sd_ma7_median)}`;
-      const grossTip = `SG ${money(r.ma7_gross)} · SD ${money(r.sd_ma7_gross)}` +
-                       (r.sd_sales_7d == null ? ' (no SeatData sales yet)' : ` · ${r.sd_sales_7d} SD rows/7d`);
-      const scoreTip = hasSd
-        ? `blended ${(r.blended_score == null ? '—' : (+r.blended_score).toFixed(2))} · SG-only ${(r.chart_score == null ? '—' : (+r.chart_score).toFixed(2))}`
-        : `SG-only ${(r.chart_score == null ? '—' : (+r.chart_score).toFixed(2))} (no SeatData)`;
+                       ` · SD ${r.sd_ma7_volume == null ? '—' : T.fmtNum(Math.round(+r.sd_ma7_volume))}` +
+                       ` · GMV ${money(r.ma7_gross_blended)}/day` +
+                       (r.sd_sales_7d ? ` · ${r.sd_sales_7d} SD sales/7d` : '');
+      const soldTip  = `SG ${money(r.ma7_median)} · SD ${money(r.sd_ma7_median)}`;
+      const allPlatTip = `median of platform medians (${r.platform_breadth ?? '?'} live markets)`;
+      const scoreTip = `basis ${escapeHtml(r.score_basis || '?')} · breadth ${r.platform_breadth ?? '?'}`;
       const peakOn = `${r.peak_rank ?? '—'}·${r.days_on_chart ?? '—'}`;
-      // Cross-source market depth — the open inventory on markets we're NOT in.
-      // EVO/StubHub come from get_sg_market_chart (evo_* via latest_event_metrics,
-      // sh_* via the daily TD snapshot). "count · $price".
+
+      // Cross-source open depth (markets we're NOT in): "count · $price".
       const evoCell = (r.evo_tickets == null && r.evo_getin == null) ? '—'
         : `${r.evo_tickets == null ? '?' : T.fmtNum(Math.round(+r.evo_tickets))} · ${money(r.evo_getin)}`;
       const evoTip  = `EVO/TEvo market (we own 0): `
@@ -521,18 +518,27 @@
         : `${r.sh_listings == null ? '?' : T.fmtNum(Math.round(+r.sh_listings))} · ${money(r.sh_median)}`;
       const shTip   = `StubHub: ${r.sh_listings == null ? 'no data' : T.fmtNum(Math.round(+r.sh_listings)) + ' listings'} · median ${money(r.sh_median)}`;
 
+      // Primary (face-value) availability — AXS/TM chips; blank = resale-only.
+      const faceCell = r.primary_sources
+        ? r.primary_sources.split(',').map(s =>
+            `<span class="badge gap-chip" title="face-value primary inventory on ${escapeHtml(s)}">${escapeHtml(s)}</span>`
+          ).join(' ')
+        : '<span class="muted">—</span>';
+
       tr.innerHTML = `
         <td class="num chart-rank">${r.rank}</td>
         <td>${movementCell(r)}</td>
         <td>${eventLabel}</td>
         <td>${escapeHtml(r.sg_venue_name || '—')}</td>
         <td class="num">${d === null ? '—' : d}</td>
-        <td class="num" title="${volTip}">${r.ma7_volume_blended == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume_blended))}</td>
-        <td class="num" title="${medTip}">${money(r.ma7_median_blended)}</td>
-        <td class="num" title="${grossTip}">${money(r.ma7_gross_blended)}</td>
+        <td class="num" title="${volTip}">${r.ma7_volume_blended == null ? '—' : T.fmtNum(Math.round(+r.ma7_volume_blended))}<sup>${basisTag}</sup></td>
+        <td class="num" title="${soldTip}">${money(r.ma7_median_blended)}</td>
+        <td class="num" title="${allPlatTip}">${money(r.market_median_all)}</td>
+        <td class="num">${r.platform_breadth ?? '—'}</td>
+        <td>${faceCell}</td>
         <td class="num" title="${evoTip}">${evoCell}</td>
         <td class="num" title="${shTip}">${shCell}</td>
-        <td class="num" title="${scoreTip}"><strong>${score}</strong>${hasSd ? '' : '<sup title="SeatGeek-only basis">sg</sup>'}</td>
+        <td class="num" title="${scoreTip}"><strong>${score}</strong><sup>${basisTag}</sup></td>
         <td class="num" title="peak rank · consecutive days on chart">${peakOn}</td>`;
       tb.appendChild(tr);
     });
