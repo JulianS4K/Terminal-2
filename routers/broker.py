@@ -201,6 +201,41 @@ def build_broker_router(
             return {**empty, "error": str(e)}
         return res if isinstance(res, dict) else empty
 
+    @router.get("/api/broker/season-ticket-value")
+    def broker_season_ticket_value_leaderboard(_=Depends(require_auth)):
+        """Season-ticket package value leaderboard (major pro leagues: NFL/NBA/MLB/NHL/MLS).
+        Each row compares the package's per-seat ask to the cost of assembling a COMPARABLE
+        seat game-by-game — same section + row within a band, pair-sellable — across the
+        team's regular-season home games, at getin and VWAP baselines, with a BUY/FAIR/SKIP
+        verdict. Read from the season_ticket_package_value table (rebuilt daily) via the
+        SECDEF get_season_ticket_leaderboard RPC. Degrades to empty if the migration
+        (20260709130000) isn't applied yet."""
+        db = get_require_sb()()
+        empty = {"packages": [], "computed_at": None}
+        try:
+            res = db.rpc("get_season_ticket_leaderboard", {}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
+    @router.get("/api/broker/season-ticket-value/{event_id}")
+    def broker_season_ticket_value_detail(event_id: int, row_band: int = 5, _=Depends(require_auth)):
+        """Live per-package valuation drill-down for one season-ticket package event:
+        per-seat (section+row) package ask vs comparable season cost (getin & VWAP) within
+        a +/- row_band, plus the rolled-up summary + verdict. Computed live via the SECDEF
+        get_season_ticket_value RPC so it's always current. Degrades to an error skeleton if
+        the migration isn't applied yet."""
+        db = get_require_sb()()
+        band = max(0, min(int(row_band), 20))
+        empty = {"event": {"pkg_event_id": event_id}, "params": {"row_band": band},
+                 "summary": None, "seats": []}
+        try:
+            res = db.rpc("get_season_ticket_value",
+                         {"p_pkg_event_id": event_id, "p_row_band": band}).execute().data
+        except Exception as e:
+            return {**empty, "error": str(e)}
+        return res if isinstance(res, dict) else empty
+
     @router.get("/api/broker/event/{event_id}/broadway-cast")
     def broker_event_broadway_cast(event_id: int, _=Depends(require_auth)):
         """Broadway 'who's playing the lead' + get-in price per performer for the
