@@ -24,6 +24,7 @@
       { key: 'price_p90',     label: 'Ceiling (p90)',      fmt: 'usd',  better: 'max' },
       { key: 'spread_ratio',  label: 'Spread (p90÷get-in)',fmt: 'mult', better: null  },
       { key: 'market_tickets',label: 'Market float (tix)', fmt: 'num',  better: 'max' },
+      { key: 'median_median_price', label: 'Median · all events', fmt: 'usd', better: 'max' },
     ]},
     { title: 'Position', rows: [
       { key: 'owned_tickets',      label: 'Owned tickets',   fmt: 'num', better: 'max', delta: 'owned_tickets_d30', deltaFmt: 'num' },
@@ -36,6 +37,11 @@
       { key: 'getin_d7_pct',     label: 'Get-in Δ 7d',  fmt: 'spct', better: null  },
       { key: 'home_price_median',label: 'Home price median', fmt: 'usd',  better: 'max', sportsOnly: true },
       { key: 'away_price_median',label: 'Away price median', fmt: 'usd',  better: 'max', sportsOnly: true },
+    ]},
+    { title: 'Top event (highest median)', rows: [
+      { key: 'top_event_name',  label: 'Event',         fmt: 'text', better: null },
+      { key: 'top_event_median',label: 'Median',        fmt: 'usd',  better: 'max' },
+      { key: '_seasonphase',    label: 'Season · phase', fmt: 'text', better: null },
     ]},
   ];
 
@@ -67,7 +73,8 @@
     const arw = v > 0 ? '▲ ' : (v < 0 ? '▼ ' : '');
     return `<span class="sc-delta ${cls}">${arw}${Math.abs(v).toFixed(1)}%</span>`;
   }
-  const FMT = { num, usd, usd2, mult, pct, spct };
+  const text = v => (v != null && v !== '') ? escapeHtml(String(v)) : '—';
+  const FMT = { num, usd, usd2, mult, pct, spct, text };
 
   function fmtVal(row, card) {
     const raw = card ? card[row.key] : null;
@@ -126,7 +133,7 @@
         const cells = selected.map((s, i) => {
           const c = cards[s.id];
           const val = (row.sportsOnly && c && !c.is_sports) ? '—' : fmtVal(row, c);
-          return `<td class="cmp-val${lead.has(i) ? ' leader' : ''}">${val}</td>`;
+          return `<td class="cmp-val${lead.has(i) ? ' leader' : ''}${row.fmt === 'text' ? ' txt' : ''}">${val}</td>`;
         }).join('');
         rows.push(`<tr><td class="cmp-lbl">${escapeHtml(row.label)}</td>${cells}</tr>`);
       });
@@ -176,7 +183,10 @@
       T.setStatus(res.error.message, 'err');
       return;
     }
-    (res.data || []).forEach(c => { cards[c.performer_id] = c; });
+    (res.data || []).forEach(c => {
+      c._seasonphase = [c.top_event_season, c.top_event_phase].filter(Boolean).join(' · ');
+      cards[c.performer_id] = c;
+    });
     // backfill names from the card if we only had an id (URL restore)
     selected.forEach(s => { const c = cards[s.id]; if (c && c.performer_name) s.name = c.performer_name; });
     renderChips(); renderTable();

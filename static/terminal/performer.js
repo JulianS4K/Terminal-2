@@ -618,6 +618,7 @@
       row('Ceiling (p90)', usd(d.price_p90)),
       row('Spread (p90÷get-in)', mult(d.spread_ratio)),
       row('Market float (tix)', num(d.market_tickets)),
+      row('Median · all events', usd(d.median_median_price)),
     ].join('');
     const position = [
       row('Owned tickets', num(d.owned_tickets) + deltaN(d.owned_tickets_d30, num)),
@@ -632,11 +633,23 @@
       d.is_sports ? row('Away price median', usd(d.away_price_median)) : '',
     ].join('');
 
+    // Top event — the performer's highest-median real game (season packages /
+    // parking excluded), tagged with its season + phase (preseason/regular/playoff).
+    let topEvent = '';
+    if (d.top_event_id && d.top_event_name) {
+      const tag = [d.top_event_season, d.top_event_phase].filter(Boolean).join(' · ');
+      topEvent = `<div class="sc-topevent">
+        <span class="sc-te-lbl">TOP EVENT${tag ? ` · ${escapeHtml(tag)}` : ''}</span>
+        <a class="sc-te-name" href="event.html?event=${d.top_event_id}">${escapeHtml(d.top_event_name)}</a>
+        <span class="sc-te-val">${usd(d.top_event_median)} median${d.top_event_date ? ` · ${escapeHtml(d.top_event_date)}` : ''}</span>
+      </div>`;
+    }
+
     body.innerHTML = `<div class="sc-groups">
       <div class="sc-group"><h4>Market</h4>${market}</div>
       <div class="sc-group"><h4>Position</h4>${position}</div>
       <div class="sc-group"><h4>Trend</h4>${trend}</div>
-    </div>`;
+    </div>${topEvent}`;
   }
 
   // ---------- Cross-event daily metrics (Overview) ----------

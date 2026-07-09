@@ -61,6 +61,13 @@
     .sc-delta.up { color: var(--pos, #4ade80); }
     .sc-delta.down { color: var(--neg, #f87171); }
     @media (max-width: 768px) { .sc-groups { grid-template-columns: 1fr; } }
+    .sc-topevent { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 14px;
+      padding: 10px 14px; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.08);
+      border-left: 3px solid var(--accent, #fbbf24); border-radius: 8px; }
+    .sc-topevent .sc-te-lbl { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; }
+    .sc-topevent .sc-te-name { font-size: 13px; font-weight: 600; color: var(--text); text-decoration: none; }
+    .sc-topevent .sc-te-name:hover { text-decoration: underline; }
+    .sc-topevent .sc-te-val { font-size: 12px; color: var(--muted, #b5b5b5); font-variant-numeric: tabular-nums; margin-left: auto; }
 
     /* Cross-event daily metrics (Overview tab) */
     #pdmSplit { display: flex; gap: 6px; }
@@ -346,6 +353,6 @@
   <script src="nav.js?v=20260709cmp"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260709stat"></script>
+  <script src="performer.js?v=20260709te"></script>
 </body>
 </html>
