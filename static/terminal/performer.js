@@ -303,6 +303,12 @@
       { key: 'axs_getin_min',   label: 'AXS get-in',   fmt: 'usd2', better: 'min' },
       { key: 'axs_listings',    label: 'AXS listings', fmt: 'num',  better: 'max' },
     ]},
+    { title: 'Primary (face · non-resale)', optional: true, probe: 'primary_median', rows: [
+      { key: 'primary_median',     label: 'Primary median',  fmt: 'usd', better: null  },
+      { key: 'primary_tm_median',  label: 'TM primary',      fmt: 'usd', better: null  },
+      { key: 'primary_axs_median', label: 'AXS primary',     fmt: 'usd', better: null  },
+      { key: 'primary_events',     label: 'Primary events',  fmt: 'num', better: 'max' },
+    ]},
     { title: 'SG sold (realized)', optional: true, probe: 'sg_sold_median', rows: [
       { key: 'sg_sold_median',    label: 'Sold median',        fmt: 'usd',  better: null  },
       { key: 'sg_sold_qty',       label: 'Sold qty',           fmt: 'num',  better: 'max' },
@@ -929,11 +935,36 @@
       </div>`;
     }
 
+    // PRIMARY · FACE — box-office median (TM non-resale + AXS non-FlashSeats).
+    // The face anchor beneath the resale ask; the gap is the resale premium.
+    // Blended across sources; per-source medians shown for transparency.
+    let primaryBlk = '';
+    if (d.primary_median != null && isFinite(d.primary_median)) {
+      const srcTag = ({ tm: 'Ticketmaster', axs: 'AXS', both: 'TM + AXS' })[d.primary_source] || '';
+      let prem = '';
+      if (d.price_median != null && isFinite(d.price_median) && d.primary_median > 0) {
+        const p = Math.round(((d.price_median - d.primary_median) / d.primary_median) * 1000) / 10;
+        const cls = p > 0 ? 'ask-hi' : 'ask-lo';
+        prem = `<div class="sc-sgsold-note">Ask <span class="${cls}">${p > 0 ? '+' : ''}${p}%</span> ${p >= 0 ? 'over' : 'under'} face</div>`;
+      }
+      const sub = [];
+      if (d.primary_tm_median != null)  sub.push(`<tr><td>Ticketmaster</td><td>${usd(d.primary_tm_median)}</td><td>${num(d.primary_tm_events)}</td></tr>`);
+      if (d.primary_axs_median != null) sub.push(`<tr><td>AXS</td><td>${usd(d.primary_axs_median)}</td><td>${num(d.primary_axs_events)}</td></tr>`);
+      primaryBlk = `<div class="sc-sgsold">
+        <div class="sc-te-lbl">PRIMARY · FACE — box-office median (non-resale)${srcTag ? ` · ${escapeHtml(srcTag)}` : ''}</div>
+        <div class="sc-row"><span class="sc-lbl">Primary median</span><span class="sc-val">${usd(d.primary_median)} <span class="sc-muted">· ${num(d.primary_events)} events</span></span></div>
+        <table class="sc-sgsold-tbl">
+          <thead><tr><th>Source</th><th>Median</th><th>Events</th></tr></thead>
+          <tbody>${sub.join('')}</tbody>
+        </table>${prem}
+      </div>`;
+    }
+
     body.innerHTML = `<div class="sc-groups">
       <div class="sc-group"><h4>Market</h4>${market}</div>
       <div class="sc-group"><h4>Position</h4>${position}</div>
       <div class="sc-group"><h4>Trend</h4>${trend}</div>
-    </div>${topEvent}${axsLine}${sgSold}`;
+    </div>${topEvent}${axsLine}${primaryBlk}${sgSold}`;
   }
 
   // ---------- Cross-event daily metrics (Overview) ----------
