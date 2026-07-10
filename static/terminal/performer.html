@@ -78,6 +78,27 @@
     table.sc-sgsold-tbl td:nth-child(2), table.sc-sgsold-tbl td:nth-child(3) { color: var(--pos, #4ade80); font-weight: 600; }
     .sc-sgsold-note { margin-top: 8px; font-size: 12px; color: var(--muted, #b5b5b5); }
     .sc-muted { color: var(--muted, #8a8a8a); font-weight: 400; font-size: 11px; }
+    /* ---- Stat-card history sparkline (ask / face / sold) ---- */
+    .sc-hist { margin-top: 14px; padding: 10px 14px 12px; background: var(--panel, #141414);
+      border: 1px solid rgba(255,255,255,.08); border-left: 3px solid var(--info, #60a5fa); border-radius: 8px; }
+    .sc-hist .sc-te-lbl { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; display: block; }
+    .sc-hist-legend { display: flex; align-items: center; gap: 14px; margin: 6px 0 2px; font-size: 11px; }
+    .sc-hist-leg { display: inline-flex; align-items: center; gap: 5px; color: var(--muted, #b5b5b5); }
+    .sc-hist-leg i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+    .sc-hist-span { margin-left: auto; color: var(--muted, #8a8a8a); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .sc-hist-wrap { position: relative; }
+    .sc-hist-svg { width: 100%; height: auto; display: block; overflow: visible; }
+    .sc-hist-axis { stroke: rgba(255,255,255,.12); stroke-width: 1; }
+    .sc-hist-end { font-size: 10px; font-weight: 700; font-family: inherit; }
+    .sc-hist-vline { stroke: rgba(255,255,255,.35); stroke-width: 1; stroke-dasharray: 3 3; }
+    .sc-hist-hit { cursor: crosshair; }
+    .sc-hist-tip { position: absolute; top: 0; transform: translateX(-50%); pointer-events: none;
+      background: rgba(10,10,10,.94); border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
+      padding: 5px 8px; font-size: 11px; white-space: nowrap; z-index: 5; }
+    .sc-hist-tip .sc-hist-tip-d { color: var(--muted, #8a8a8a); font-size: 10px; margin-bottom: 3px; }
+    .sc-hist-tip div { display: flex; align-items: center; gap: 5px; }
+    .sc-hist-tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+    .sc-hist-tip b { margin-left: auto; padding-left: 10px; font-variant-numeric: tabular-nums; }
     /* asks vs realized clearing: over = expensive asks (amber); under = underpriced/buy (green) */
     .ask-hi { color: var(--warn, #f59e0b); font-weight: 700; }
     .ask-lo { color: var(--pos, #4ade80); font-weight: 700; }
@@ -509,6 +530,6 @@
   <script src="nav.js?v=20260710nav"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260709primary"></script>
+  <script src="performer.js?v=20260710history"></script>
 </body>
 </html>
