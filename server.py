@@ -1727,24 +1727,42 @@ app.include_router(build_store_test_router(
 
 
 # ============================================================
-# D2 dashboard mount (unified-for-testing architecture, 2026-05-16)
+# D2 dashboard mount (unified-for-testing architecture, 2026-05-16;
+# env-gated for lane decomposition 2026-07-10 —
+# docs/archive/2026-07-10-code-storage-blueprint.md §4 step 1)
 # ============================================================
-# Operator directive: keep 3 services alive (terminal-test, storefront-test,
-# d2-orders-dashboard) but route warm runtime traffic to storefront-test during
-# dev/test to avoid cold-start drag. At beta, each surface migrates back to its
-# own service. PR #129 exposed d2_dashboard.main.router for this purpose.
+# During dev/test the D2 orders-dashboard router is include_router'd into this
+# shell so `/api/d2/*` is reachable SAME-ORIGIN. The D0 terminal Orders tab
+# (static/terminal/orders.js) depends on that: it calls `/api/d2/orders` +
+# `/api/d2/cron-freshness` as same-origin relative paths, has no cross-origin
+# D2 base, and orders.html's CSP `connect-src` does NOT yet list the standalone
+# service host. So a hard un-mount would break the Orders tab.
+#
+# The lane-decomposition target is to serve D2 ONLY from its own
+# d2-orders-dashboard service (uvicorn d2_dashboard.main:app). Cutover is a
+# deliberate flag flip, NOT a big-bang: set D2_MOUNT_IN_SHELL=false to un-mount
+# here. Do that ONLY after (a) the standalone d2-orders-dashboard service is
+# live + env-configured and (b) static/terminal/orders.js is repointed to the
+# cross-origin D2 base AND orders.html's CSP connect-src adds
+# https://d2-orders-dashboard.onrender.com. Default stays mounted (no-op merge).
 #
 # Mount strategy: prefix-less include_router (resolves bot_chat 180 question A).
 # D2's `/api/d2/*` routes land at same paths. D2's standalone `@router.get("/")`
 # is shadowed by the earlier `@app.get("/")` homescreen (FastAPI: first-registered
 # wins for matching). Auth (question B): D2 routes reuse their own dependency
 # injection; the shell's `require_auth` applies on app.py's own routes.
-try:
-    from d2_dashboard.main import router as d2_router  # type: ignore
-    app.include_router(d2_router)
-    logging.getLogger(__name__).info("d2_dashboard router mounted at unified shell (%d routes)", len(d2_router.routes))
-except Exception as _d2_import_err:  # pragma: no cover — d2 module optional in dev
-    logging.getLogger(__name__).warning("d2_dashboard router NOT mounted: %s", _d2_import_err)
+_D2_MOUNT_IN_SHELL = os.getenv("D2_MOUNT_IN_SHELL", "true").strip().lower() not in ("false", "0", "no", "off")
+if _D2_MOUNT_IN_SHELL:
+    try:
+        from d2_dashboard.main import router as d2_router  # type: ignore
+        app.include_router(d2_router)
+        logging.getLogger(__name__).info("d2_dashboard router mounted at unified shell (%d routes)", len(d2_router.routes))
+    except Exception as _d2_import_err:  # pragma: no cover — d2 module optional in dev
+        logging.getLogger(__name__).warning("d2_dashboard router NOT mounted: %s", _d2_import_err)
+else:  # pragma: no cover — un-mounted path runs only on the standalone d2-orders-dashboard deploy, not the mounted test harness
+    logging.getLogger(__name__).info(
+        "d2_dashboard NOT mounted in shell (D2_MOUNT_IN_SHELL=false); served only by the standalone d2-orders-dashboard service"
+    )
 
 
 # ============================================================

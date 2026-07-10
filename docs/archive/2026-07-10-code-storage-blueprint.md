@@ -113,10 +113,19 @@ repo extraction stays optional and downstream.
 
 Deploy first, repo last. Each step is independently valuable and reversible until the last.
 
-1. **Un-mount D2 dashboard from the shell.** Stop `include_router`'ing `d2_dashboard.main`
-   into `server.py` (`server.py:1743`); run it on its own `d2-orders-dashboard` service
-   (`uvicorn d2_dashboard.main:app` — the service + IaC already exist). Smallest real
-   deploy-separation, zero new infra. *(Lowest risk — the standalone app already exists.)*
+1. **Un-mount D2 dashboard from the shell.** The mount is now **env-gated**: `server.py`
+   reads `D2_MOUNT_IN_SHELL` (default `true` → mounted, no behavior change) and skips the
+   `include_router(d2_router)` when set `false`, leaving D2 served only by its own
+   `d2-orders-dashboard` service (`uvicorn d2_dashboard.main:app` — service + IaC already
+   exist). **Cutover is not a pure flag flip:** the D0 terminal Orders tab
+   (`static/terminal/orders.js`) is a *same-origin* consumer of `/api/d2/*` with no
+   cross-origin base, and `static/terminal/orders.html`'s CSP `connect-src` does not yet
+   list `https://d2-orders-dashboard.onrender.com`. So before setting `D2_MOUNT_IN_SHELL=false`
+   in prod: (a) confirm the standalone service is live + env-configured, (b) repoint
+   `orders.js` to a cross-origin D2 base, and (c) add the host to `orders.html`'s CSP.
+   D2's standalone `app` already carries credentialed CORS whitelisting the terminal origin,
+   so the server side is ready. *(Lowest risk — the standalone app already exists; the gate
+   makes the runtime cutover reversible.)*
 2. **Give D0 terminal + D1 store their own web services.** Two `render-*.yaml` web services,
    each starting `server:app` but with a surface-scoped router set (or a thin per-surface
    entrypoint that mounts only its routers). A D1 deploy can then never take down D0 —
