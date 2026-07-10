@@ -661,7 +661,18 @@ async function loadSalesFeed() {
   renderSalesFeed(body.rows || []);
 }
 
-const _METRICS_SOURCES = ["evo", "seatgeek", "seatdata", "tickpick", "vivid"];
+// [source_key, display_label]. source_key must match what d2_metrics_window
+// emits (uo.source): SeatGeek was swapped 'seatgeek' → 'seatgeek_sales' in
+// migration 20260516200000 (dormant seller-side → broker firehose). Keying on
+// the old 'seatgeek' silently rendered $0 for the SG row (the .find never
+// matched). Label mirrors the "sg market" filter checkbox.
+const _METRICS_SOURCES = [
+  ["evo", "evo"],
+  ["seatgeek_sales", "sg market"],
+  ["seatdata", "seatdata"],
+  ["tickpick", "tickpick"],
+  ["vivid", "vivid"],
+];
 const _METRICS_WINDOW_LABELS = [
   ["hour",  "Last hour"],
   ["today", "Today (ET)"],
@@ -707,13 +718,13 @@ function renderKpiGrid(windows) {
     const curTotal     = _sumGross(cur, "gross_total");
     const priTotal     = _sumGross(pri, "gross_total");
     const curCount     = (cur || []).reduce((s, r) => s + Number(r.orders_count || 0), 0);
-    const perSourceRows = _METRICS_SOURCES.map((src) => {
+    const perSourceRows = _METRICS_SOURCES.map(([src, srcLabel]) => {
       const row = (cur || []).find((r) => r.source === src) || {};
       const orders = Number(row.orders_count || 0);
       const fulfilled = Number(row.fulfilled_count || 0);
       const gross = Number(row.fulfilled_gross || 0);
       return `<tr>
-        <td class="kpi-src">${escapeHtml(src)}</td>
+        <td class="kpi-src">${escapeHtml(srcLabel)}</td>
         <td class="kpi-num">${_fmtUsd(gross)}</td>
         <td class="kpi-num">${fulfilled}/${orders}</td>
       </tr>`;
