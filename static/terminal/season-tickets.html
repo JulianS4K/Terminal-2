@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Season Tix</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260707a" />
+  <style>
+    /* Leaderboard rows drill into the per-package breakdown on click. */
+    .stv-board tbody tr.stv-clickable { cursor: pointer; }
+    .stv-board tbody tr.stv-clickable:hover td { background: rgba(255, 255, 255, 0.05); }
+  </style>
+</head>
+<body data-page="season-tickets">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">—</span>
+  </header>
+
+  <main class="wrap subs">
+    <section id="stv-intro-panel">
+      <div class="panel-title">SEASON-TICKET PACKAGE VALUE</div>
+      <p class="muted small">
+        Is a season-ticket package worth buying vs. assembling <strong>comparable seats</strong>
+        game-by-game? Each package seat is priced against the <strong>same section, row&nbsp;±band,
+        pair-sellable</strong> listings in every regular-season home game — at both the
+        <strong>getin</strong> (cheapest comparable pair) and <strong>VWAP</strong>
+        (depth-weighted typical) baseline. Major pro leagues only (NFL/NBA/MLB/NHL/MLS).
+        <span class="muted">Verdict = quantity-weighted share of the package's own inventory that undercuts buying each game.</span>
+      </p>
+      <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="stvBand">Row band ±</label>
+          <input id="stvBand" type="number" inputmode="numeric" min="0" max="20" value="5" />
+        </div>
+        <div class="subs-field submit">
+          <button type="button" class="ctrl-btn" id="stvReload">Reload leaderboard</button>
+        </div>
+        <div id="stvMeta" class="subs-order-msg muted small"></div>
+      </div>
+    </section>
+
+    <section id="stv-board-panel">
+      <div class="panel-title row"><span>LEAGUE LEADERBOARD</span><span id="stvBoardCount" class="muted small"></span></div>
+      <p class="muted small">Rebuilt daily. Click a row for the per-seat breakdown (computed live).</p>
+      <div id="stvBoard" class="subs-table-wrap"></div>
+    </section>
+
+    <section id="stv-detail-panel" hidden>
+      <div class="panel-title row"><span id="stvDetailTitle">PACKAGE DETAIL</span><span id="stvDetailVerdict" class="muted small"></span></div>
+      <div id="stvDetailSummary" class="subs-recap"></div>
+      <div class="panel-title row"><span>PER-SEAT COMPARISON</span><span id="stvSeatCount" class="muted small"></span></div>
+      <div id="stvSeatTable" class="subs-table-wrap"></div>
+      <p class="muted small">
+        Δ columns = comparable season cost − package ask, per seat. Positive (green) = the package
+        undercuts buying that seat game-by-game; negative (red) = assembling it yourself is cheaper.
+      </p>
+    </section>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <!-- Cache-busting: bump ?v=<date> on any first-party asset change. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260709st"></script>
+  <script src="season-tickets.js?v=20260709a2"></script>
+</body>
+</html>

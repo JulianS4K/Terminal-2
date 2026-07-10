@@ -37,6 +37,8 @@
     { id: 'event',     label: 'EVENT',     href: 'event.html' },
     { id: 'venue',     label: 'VENUE',     href: 'venue.html' },
     { id: 'performer', label: 'PERFORMER', href: 'performer.html' },
+    // (COMPARE folded into the performer stat-card gallery 2026-07-09 — the
+    // landing grid has a compare basket; compare.html now redirects there.)
     // Sports data surfaces (ESPN pipelines). Leagues = one hub across every
     // ESPN-tracked league: team leagues (per-team demand + blind spots) plus
     // the merged racing series (F1 + NASCAR schedule + driver standings +
@@ -76,6 +78,12 @@
     // a better-section fallback. Backed by /api/broker/event/{id}/substitutions.
     // Grouped with the discovery/axs tools cluster.
     { id: 'subs',      label: 'SUBS',      href: 'subs.html' },
+    // Season Tix — is a season-ticket package worth buying vs assembling
+    // comparable seats game-by-game? Per-seat package ask vs same-section,
+    // row±band, pair-sellable cost across the team's regular-season home games
+    // (getin & VWAP baselines). Major pro leagues only (NFL/NBA/MLB/NHL/MLS).
+    // Backed by /api/broker/season-ticket-value. Wired 2026-07-09.
+    { id: 'season-tickets', label: 'SEASON TIX', href: 'season-tickets.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
     { id: 'health',    label: 'HEALTH',    href: 'health.html' },
   ];

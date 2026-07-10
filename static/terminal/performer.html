@@ -49,6 +49,153 @@
     .tsrc.owned { background: rgba(74,222,128,.15); color: var(--pos); }
     .tsrc.market { background: rgba(96,165,250,.15); color: var(--info); }
     .trip-row .tr-mm { color: var(--muted, #8a8a8a); font-size: 11px; font-variant-numeric: tabular-nums; width: 70px; text-align: right; }
+    /* Statistics stat-card (Overview tab) — dense label/value grid, 3 groups. */
+    .sc-groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .sc-group { background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 10px 14px; }
+    .sc-group h4 { margin: 0 0 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; }
+    .sc-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; border-top: 1px solid rgba(255,255,255,.05); }
+    .sc-row:first-of-type { border-top: none; }
+    .sc-row .sc-lbl { font-size: 12px; color: var(--muted, #b5b5b5); }
+    .sc-row .sc-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+    .sc-row .sc-val .sc-delta { font-size: 11px; margin-left: 6px; font-weight: 600; }
+    .sc-delta.up { color: var(--pos, #4ade80); }
+    .sc-delta.down { color: var(--neg, #f87171); }
+    @media (max-width: 768px) { .sc-groups { grid-template-columns: 1fr; } }
+    .sc-topevent { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 14px;
+      padding: 10px 14px; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.08);
+      border-left: 3px solid var(--accent, #fbbf24); border-radius: 8px; }
+    .sc-topevent .sc-te-lbl { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; }
+    .sc-topevent .sc-te-name { font-size: 13px; font-weight: 600; color: var(--text); text-decoration: none; }
+    .sc-topevent .sc-te-name:hover { text-decoration: underline; }
+    .sc-topevent .sc-te-val { font-size: 12px; color: var(--muted, #b5b5b5); font-variant-numeric: tabular-nums; margin-left: auto; }
+    .sc-sgsold { margin-top: 14px; padding: 10px 14px; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.08);
+      border-left: 3px solid var(--pos, #4ade80); border-radius: 8px; }
+    .sc-sgsold .sc-te-lbl { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; display: block; margin-bottom: 6px; }
+    table.sc-sgsold-tbl { border-collapse: collapse; width: 100%; max-width: 460px; font-variant-numeric: tabular-nums; }
+    table.sc-sgsold-tbl th, table.sc-sgsold-tbl td { padding: 4px 12px 4px 0; text-align: right; font-size: 12px; }
+    table.sc-sgsold-tbl th:first-child, table.sc-sgsold-tbl td:first-child { text-align: left; }
+    table.sc-sgsold-tbl th { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #8a8a8a); font-weight: 600; border-bottom: 1px solid rgba(255,255,255,.08); }
+    table.sc-sgsold-tbl td:nth-child(2), table.sc-sgsold-tbl td:nth-child(3) { color: var(--pos, #4ade80); font-weight: 600; }
+    .sc-sgsold-note { margin-top: 8px; font-size: 12px; color: var(--muted, #b5b5b5); }
+    .sc-muted { color: var(--muted, #8a8a8a); font-weight: 400; font-size: 11px; }
+    /* ---- Stat-card history sparkline (ask / face / sold) ---- */
+    .sc-hist { margin-top: 14px; padding: 10px 14px 12px; background: var(--panel, #141414);
+      border: 1px solid rgba(255,255,255,.08); border-left: 3px solid var(--info, #60a5fa); border-radius: 8px; }
+    .sc-hist .sc-te-lbl { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; display: block; }
+    .sc-hist-legend { display: flex; align-items: center; gap: 14px; margin: 6px 0 2px; font-size: 11px; }
+    .sc-hist-leg { display: inline-flex; align-items: center; gap: 5px; color: var(--muted, #b5b5b5); }
+    .sc-hist-leg i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+    .sc-hist-span { margin-left: auto; color: var(--muted, #8a8a8a); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .sc-hist-wrap { position: relative; }
+    .sc-hist-svg { width: 100%; height: auto; display: block; overflow: visible; }
+    .sc-hist-axis { stroke: rgba(255,255,255,.12); stroke-width: 1; }
+    .sc-hist-end { font-size: 10px; font-weight: 700; font-family: inherit; }
+    .sc-hist-vline { stroke: rgba(255,255,255,.35); stroke-width: 1; stroke-dasharray: 3 3; }
+    .sc-hist-hit { cursor: crosshair; }
+    .sc-hist-tip { position: absolute; top: 0; transform: translateX(-50%); pointer-events: none;
+      background: rgba(10,10,10,.94); border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
+      padding: 5px 8px; font-size: 11px; white-space: nowrap; z-index: 5; }
+    .sc-hist-tip .sc-hist-tip-d { color: var(--muted, #8a8a8a); font-size: 10px; margin-bottom: 3px; }
+    .sc-hist-tip div { display: flex; align-items: center; gap: 5px; }
+    .sc-hist-tip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+    .sc-hist-tip b { margin-left: auto; padding-left: 10px; font-variant-numeric: tabular-nums; }
+    /* asks vs realized clearing: over = expensive asks (amber); under = underpriced/buy (green) */
+    .ask-hi { color: var(--warn, #f59e0b); font-weight: 700; }
+    .ask-lo { color: var(--pos, #4ade80); font-weight: 700; }
+    table.pg-trend-tbl td .ask-hi, table.pg-trend-tbl td .ask-lo { font-weight: 600; }
+
+    /* ---- Trending performers table (top of index) ---- */
+    .pg-trending { margin-top: 10px; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.09);
+      border-left: 3px solid var(--warn, #f59e0b); border-radius: 10px; padding: 10px 14px 4px; }
+    .pg-trending-hd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; }
+    .pg-trending-hd > span:first-child { font-size: 12px; font-weight: 700; letter-spacing: .05em; color: var(--warn, #f59e0b); }
+    .pg-trend-by { display: inline-flex; gap: 4px; margin-left: auto; }
+    .pg-trend-by .ctrl-btn { padding: 3px 10px; background: var(--panel-2, #1a1a1a); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 6px; color: var(--muted, #8a8a8a); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .pg-trend-by .ctrl-btn.is-active { color: var(--warn, #f59e0b); border-color: var(--warn, #f59e0b); }
+    .pg-trend-scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+    table.pg-trend-tbl { border-collapse: collapse; width: 100%; min-width: 620px; font-variant-numeric: tabular-nums; }
+    table.pg-trend-tbl th, table.pg-trend-tbl td { padding: 6px 12px; text-align: right; white-space: nowrap; }
+    table.pg-trend-tbl thead th { position: sticky; top: 0; background: var(--panel, #141414); z-index: 1;
+      font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted, #8a8a8a);
+      border-bottom: 1px solid rgba(255,255,255,.12); }
+    table.pg-trend-tbl th.l, table.pg-trend-tbl td.l { text-align: left; }
+    table.pg-trend-tbl td.rk { color: var(--muted, #8a8a8a); font-size: 11px; }
+    table.pg-trend-tbl td.nm a { color: var(--text, #e5e5e5); font-weight: 600; font-size: 13px; text-decoration: none; }
+    table.pg-trend-tbl td.nm a:hover { color: var(--accent, #fbbf24); }
+    table.pg-trend-tbl tbody tr:hover td { background: rgba(255,255,255,.03); }
+    table.pg-trend-tbl td.trend { font-weight: 700; color: var(--pos, #4ade80); }
+    table.pg-trend-tbl td.trend.down { color: var(--neg, #f87171); }
+    .pg-trend-add { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(255,255,255,.16);
+      background: var(--panel-2, #1a1a1a); color: var(--muted, #b5b5b5); font-size: 14px; line-height: 1; cursor: pointer; }
+    .pg-trend-add:hover { border-color: var(--accent, #fbbf24); color: var(--accent, #fbbf24); }
+    .pg-trend-add.picked { background: var(--accent, #fbbf24); color: #0a0a0a; border-color: var(--accent, #fbbf24); }
+
+    /* ---- Performer stat-card GALLERY (index mode) ---- */
+    .pg-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-bottom: 14px; }
+    .pg-controls .ctrl-input { flex: 1 1 220px; max-width: 340px; padding: 8px 11px; background: var(--panel, #141414);
+      color: inherit; border: 1px solid rgba(255,255,255,.14); border-radius: 8px; font: inherit; }
+    .pg-sort { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .pg-sort .ctrl-lbl { font-size: 10px; letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; }
+    .pg-sort .ctrl-btn { padding: 5px 10px; background: var(--panel-2, #1a1a1a); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 6px; color: var(--muted, #8a8a8a); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .pg-sort .ctrl-btn.is-active { color: var(--accent, #fbbf24); border-color: var(--accent, #fbbf24); }
+    .pg-sports { font-size: 12px; color: var(--muted, #8a8a8a); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+
+    .pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+    .pg-card { position: relative; background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.09);
+      border-radius: 10px; padding: 12px 13px; cursor: pointer; transition: border-color .1s; }
+    .pg-card:hover { border-color: var(--dim, #4a4a4a); }
+    .pg-card.picked { border-color: var(--accent, #fbbf24); box-shadow: inset 0 0 0 1px var(--accent, #fbbf24); }
+    .pg-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+    .pg-card-name { font-weight: 700; font-size: 14px; line-height: 1.2; }
+    .pg-card-sub { font-size: 10px; color: var(--muted, #8a8a8a); text-transform: uppercase; letter-spacing: .04em; }
+    .pg-add { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px; border: 1px solid rgba(255,255,255,.16);
+      background: var(--panel-2, #1a1a1a); color: var(--muted, #b5b5b5); font-size: 15px; line-height: 1; cursor: pointer; }
+    .pg-add:hover { border-color: var(--accent, #fbbf24); color: var(--accent, #fbbf24); }
+    .pg-card.picked .pg-add { background: var(--accent, #fbbf24); color: #0a0a0a; border-color: var(--accent, #fbbf24); }
+    .pg-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .pg-metrics > div { display: flex; flex-direction: column; gap: 1px; }
+    .pg-metrics .v { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .pg-metrics .v.up { color: var(--pos, #4ade80); } .pg-metrics .v.down { color: var(--neg, #f87171); }
+    .pg-metrics .l { font-size: 9px; color: var(--muted, #8a8a8a); text-transform: uppercase; letter-spacing: .03em; }
+    .pg-card-te { margin-top: 9px; font-size: 11px; color: var(--muted, #8a8a8a); white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; }
+    .pg-card-te b { color: var(--text, #e5e5e5); font-weight: 600; }
+    .pg-card-axs { margin-top: 5px; font-size: 10px; color: var(--info, #60a5fa); }
+
+    /* Compare basket — sticky action bar */
+    .pg-basket { position: sticky; bottom: 10px; z-index: 30; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-top: 14px; padding: 9px 12px; background: var(--panel-2, #1a1a1a);
+      border: 1px solid var(--accent, #fbbf24); border-radius: 10px; box-shadow: 0 6px 22px rgba(0,0,0,.55); }
+    .pg-basket-lbl { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--accent, #fbbf24); text-transform: uppercase; }
+    .pg-basket-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; }
+    .pg-basket-chips .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px;
+      background: var(--panel, #141414); border: 1px solid rgba(255,255,255,.14); border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .pg-basket-chips .chip button { background: none; border: none; color: var(--muted, #8a8a8a); cursor: pointer; font-size: 14px; line-height: 1; }
+    .pg-basket-chips .chip button:hover { color: var(--neg, #f87171); }
+    .pg-basket-clear { background: none; border: none; color: var(--muted, #8a8a8a); cursor: pointer; font-size: 12px; }
+
+    /* Compare table (folded in from compare.html) */
+    #pgComparePanel { margin-top: 14px; }
+    .cmp-table-scroll { overflow-x: auto; margin-top: 4px; }
+    table.cmp-table { border-collapse: collapse; width: 100%; min-width: 520px; font-variant-numeric: tabular-nums; }
+    table.cmp-table th, table.cmp-table td { padding: 8px 14px; text-align: right; white-space: nowrap; }
+    table.cmp-table thead th { position: sticky; top: 0; background: var(--bg, #0a0a0a); z-index: 1;
+      border-bottom: 1px solid rgba(255,255,255,.14); font-size: 13px; }
+    table.cmp-table thead th.cmp-corner, table.cmp-table td.cmp-lbl { text-align: left; }
+    table.cmp-table td.cmp-lbl { color: var(--muted, #b5b5b5); font-size: 12px; font-weight: 500; }
+    table.cmp-table tr.cmp-grouphdr td { padding-top: 14px; font-size: 11px; font-weight: 700;
+      letter-spacing: .06em; color: var(--muted, #8a8a8a); text-transform: uppercase; text-align: left; }
+    table.cmp-table tbody tr:hover td { background: rgba(255,255,255,.03); }
+    table.cmp-table td.cmp-val { font-size: 13px; font-weight: 600; }
+    table.cmp-table td.cmp-val.txt { text-align: left; white-space: normal; font-weight: 500; font-size: 12px; max-width: 220px; }
+    table.cmp-table td.cmp-val.leader { color: var(--pos, #4ade80); }
+    table.cmp-table thead th .th-sub { display: block; font-size: 10px; font-weight: 400; color: var(--muted, #8a8a8a); }
+    table.cmp-table thead th a { color: inherit; text-decoration: none; }
+    table.cmp-table thead th a:hover { text-decoration: underline; }
+    @media (max-width: 640px) { .pg-grid { grid-template-columns: 1fr 1fr; } }
+
     /* Cross-event daily metrics (Overview tab) */
     #pdmSplit { display: flex; gap: 6px; }
     .pdm-delta { font-size: 11px; margin-left: 6px; font-weight: 600; }
@@ -87,13 +234,63 @@
 
   <main class="wrap performer">
 
-    <!-- INDEX MODE: 4-league directory shown when no ?performer=<id> in URL. -->
+    <!-- INDEX MODE: stat-card GALLERY + compare basket (redesign 2026-07-09).
+         Replaces the old league directory. Shown when no ?performer=<id>. -->
     <section id="perf-index" hidden>
       <div class="panel-title row">
-        <span>PERFORMERS — directory</span>
+        <span>PERFORMERS — stat cards</span>
         <span class="muted small" id="perfIndexCounts"></span>
       </div>
-      <div id="perfIndexBody"><div class="empty">loading…</div></div>
+
+      <!-- TRENDING — top 25 by same-event-set 30d price momentum (only events
+           priced in both windows, so it's repricing not slate churn), liquidity-
+           gated. get_trending_performers. Sits on top of the gallery. -->
+      <div id="perf-trending" class="pg-trending">
+        <div class="pg-trending-hd">
+          <span>🔥 TRENDING PERFORMERS</span>
+          <span class="muted small">top 25 · same-event 30d momentum <span id="pgTrendMeta"></span></span>
+          <span class="pg-trend-by" id="pgTrendBy" role="group" aria-label="Trend basis">
+            <button class="ctrl-btn is-active" data-by="ask" title="listing/ask price momentum">Ask</button>
+            <button class="ctrl-btn" data-by="sold" title="realized SG sold-price momentum">Sold</button>
+          </span>
+        </div>
+        <div id="pgTrendBody"><div class="empty">loading…</div></div>
+      </div>
+
+      <div class="muted small" style="margin:16px 0 10px">
+        Every performer's Statistics card. Tap a card to open it; tap <b>＋</b> to add up to 5 to the
+        compare basket, then <b>Compare</b> for the side-by-side.
+      </div>
+      <div class="pg-controls">
+        <input id="pgSearch" type="search" class="ctrl-input" placeholder="Search performers…" autocomplete="off" spellcheck="false" />
+        <div class="pg-sort" id="pgSort" role="group" aria-label="Sort">
+          <span class="ctrl-lbl">SORT</span>
+          <button class="ctrl-btn is-active" data-sort="notional">Owned $</button>
+          <button class="ctrl-btn" data-sort="market">Market</button>
+          <button class="ctrl-btn" data-sort="owned">Owned tix</button>
+          <button class="ctrl-btn" data-sort="getin">Get-in</button>
+          <button class="ctrl-btn" data-sort="movers">Movers 30d</button>
+        </div>
+        <label class="pg-sports"><input type="checkbox" id="pgSportsOnly" /> sports only</label>
+      </div>
+      <div id="pgGrid" class="pg-grid"><div class="empty">loading…</div></div>
+    </section>
+
+    <!-- Compare basket bar — sticky footer, appears once ≥1 card is picked. -->
+    <div id="pgBasket" class="pg-basket" hidden>
+      <span class="pg-basket-lbl">COMPARE</span>
+      <span id="pgBasketChips" class="pg-basket-chips"></span>
+      <button id="pgCompareBtn" class="event-tab">Compare →</button>
+      <button id="pgClearBtn" class="pg-basket-clear">clear</button>
+    </div>
+
+    <!-- Compare panel — the folded-in side-by-side table (was compare.html). -->
+    <section id="pgComparePanel" hidden>
+      <div class="panel-title row">
+        <span>COMPARE — side by side</span>
+        <a href="#" id="pgCompareClose" class="muted small">✕ close</a>
+      </div>
+      <div id="pgCompareBody"></div>
     </section>
 
     <!-- DETAIL MODE: existing hero + rollup + tabbed sections. Shown when ?performer=<id>. -->
@@ -138,6 +335,18 @@
           <div class="ru-cell"><span class="ru-num" id="ruRetailMedAvg">—</span><span class="ru-lbl">retail median (wt)</span></div>
           <div class="ru-cell"><span class="ru-num" id="ruEventsWithOwned">—</span><span class="ru-lbl">events with position</span></div>
         </div>
+      </section>
+
+      <!-- STATISTICS — the Yahoo-Finance-"Statistics"-panel analog: a dense
+           label/value block of persisted metrics (get_broker_performer_stat_card
+           over performer_metrics_daily). Three groups: MARKET / POSITION / TREND.
+           Populated by loadStatCard in performer.js. -->
+      <section id="perf-stat-card" hidden>
+        <div class="panel-title row">
+          <span>STATISTICS</span>
+          <span class="muted small" id="statCardMeta"></span>
+        </div>
+        <div id="statCardBody"><div class="empty">loading…</div></div>
       </section>
 
       <!-- Kalshi/Polymarket prediction markets attributed to this performer's team:
@@ -318,9 +527,9 @@
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260708eb"></script>
+  <script src="nav.js?v=20260710nav"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="performer.js?v=20260704mrg"></script>
+  <script src="performer.js?v=20260710history"></script>
 </body>
 </html>

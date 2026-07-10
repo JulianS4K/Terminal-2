@@ -89,9 +89,15 @@
       </div>
     </section>
 
+    <!-- DISCOVERY: top US events we hold NO position in (SG owned=0 AND EVO
+         owned=0), ranked by ALL-PLATFORM demand — blended SG+SeatData sales,
+         median-of-medians across platforms, and market breadth. Surfaces open
+         cross-source depth (EVO/StubHub) + primary (face-value) availability on
+         AXS/TM. Backed by the redesigned get_sg_market_chart RPC (mig
+         20260709190000; sg_market_chart also feeds SeatData/TD enrollment). -->
     <section id="sg-chart">
       <div class="panel-title row">
-        <span>TOP 50 — SG SELLING, WE'RE NOT IN</span>
+        <span>TOP 50 — MARKET SELLING, WE'RE NOT IN</span>
         <span class="muted small" id="sgChartMeta"></span>
       </div>
       <div class="ctrl-group sg-chart-tabs">
@@ -149,8 +155,8 @@
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260708eb"></script>
-  <script src="home.js?v=20260702b"></script>
+  <script src="nav.js?v=20260710nav"></script>
+  <script src="home.js?v=20260709c"></script>
   <script src="news-ticker.js?v=20260707all500"></script>
 </body>
 </html>
