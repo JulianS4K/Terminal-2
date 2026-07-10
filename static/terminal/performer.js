@@ -836,6 +836,7 @@
     const res = await Auth.client.rpc('get_broker_performer_stat_card', { p_performer_id: performerId });
     if (res.error) { body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(res.error.message)}</div>`; return; }
     renderStatCard(res.data || {});
+    try { loadStatCardHistory(performerId); } catch (e) { console.error('statCardHistory', e); }
   }
 
   function renderStatCard(d) {
@@ -964,7 +965,116 @@
       <div class="sc-group"><h4>Market</h4>${market}</div>
       <div class="sc-group"><h4>Position</h4>${position}</div>
       <div class="sc-group"><h4>Trend</h4>${trend}</div>
-    </div>${topEvent}${axsLine}${primaryBlk}${sgSold}`;
+    </div>${topEvent}${axsLine}${primaryBlk}${sgSold}<div class="sc-hist" id="scHistory"></div>`;
+  }
+
+  // ---------- Stat-card HISTORY sparkline (ask / face / sold over time) ----------
+  //
+  // Persisted daily timeseries (performer_stat_card_history, appended daily). The
+  // ask line has ~120d of backfilled depth; face/sold accrue from the day the
+  // primary/realized layers shipped, so they render as a short (or single-point)
+  // segment that grows over time. Palette validated CVD-safe against the dark
+  // surface (dataviz skill): ask #3b82f6, face #d97706, sold #16a34a.
+
+  const HIST_SERIES = [
+    { key: 'price_median',   label: 'Ask',  color: '#3b82f6' },
+    { key: 'primary_median', label: 'Face', color: '#d97706' },
+    { key: 'sg_sold_median', label: 'Sold', color: '#16a34a' },
+  ];
+
+  async function loadStatCardHistory(performerId) {
+    const el = document.getElementById('scHistory');
+    if (!el) return;
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client) return;
+    const res = await Auth.client.rpc('get_performer_stat_card_history', { p_performer_id: performerId, p_days: 120 });
+    if (res.error) return;                       // history is additive — fail quiet
+    renderStatCardHistory(Array.isArray(res.data) ? res.data : []);
+  }
+
+  function renderStatCardHistory(series) {
+    const el = document.getElementById('scHistory');
+    if (!el) return;
+    // need at least 2 dated points on the ask line to draw a trend
+    const dated = series.filter(r => r && r.snapshot_date);
+    const askPts = dated.filter(r => r.price_median != null && isFinite(r.price_median));
+    if (askPts.length < 2) { el.innerHTML = ''; return; }
+
+    const W = 560, H = 132, padL = 10, padR = 46, padT = 12, padB = 20;
+    const n = dated.length;
+    const xs = i => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+
+    // shared USD y-domain across all three lenses
+    let lo = Infinity, hi = -Infinity;
+    for (const r of dated) for (const s of HIST_SERIES) {
+      const v = r[s.key]; if (v != null && isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    }
+    if (!isFinite(lo) || hi <= lo) { hi = lo + 1; }
+    const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+    const ys = v => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+
+    // per-series path (break the line across null gaps) + endpoint dot/label
+    const layers = HIST_SERIES.map(s => {
+      let d = '', pen = false, lastIdx = -1;
+      dated.forEach((r, i) => {
+        const v = r[s.key];
+        if (v != null && isFinite(v)) { d += `${pen ? 'L' : 'M'}${xs(i).toFixed(1)} ${ys(v).toFixed(1)}`; pen = true; lastIdx = i; }
+        else { pen = false; }
+      });
+      let end = '';
+      if (lastIdx >= 0) {
+        const v = dated[lastIdx][s.key];
+        end = `<circle cx="${xs(lastIdx).toFixed(1)}" cy="${ys(v).toFixed(1)}" r="3.2" fill="${s.color}" stroke="var(--panel,#141414)" stroke-width="1.5"/>` +
+              `<text x="${(xs(lastIdx) + 6).toFixed(1)}" y="${(ys(v) + 3.5).toFixed(1)}" class="sc-hist-end" fill="${s.color}">${gUsd(v)}</text>`;
+      }
+      return { s, path: d ? `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` : '', end, has: lastIdx >= 0 };
+    });
+
+    const legend = layers.filter(l => l.has).map(l =>
+      `<span class="sc-hist-leg"><i style="background:${l.s.color}"></i>${l.s.label}</span>`).join('');
+    const daySpan = dated.length;
+    const svg =
+      `<svg class="sc-hist-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="ask, face and sold price history">` +
+        `<line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" class="sc-hist-axis"/>` +
+        layers.map(l => l.path).join('') + layers.map(l => l.end).join('') +
+        `<g class="sc-hist-cross" style="display:none"><line class="sc-hist-vline" y1="${padT}" y2="${H - padB}"/></g>` +
+        `<rect class="sc-hist-hit" x="0" y="0" width="${W}" height="${H}" fill="transparent"/>` +
+      `</svg>`;
+
+    el.innerHTML =
+      `<div class="sc-te-lbl">HISTORY · ask / face / sold — daily median</div>` +
+      `<div class="sc-hist-legend">${legend}<span class="sc-hist-span">${daySpan}d</span></div>` +
+      `<div class="sc-hist-wrap">${svg}<div class="sc-hist-tip" style="display:none"></div></div>`;
+
+    wireHistHover(el, dated, xs, W, padR, padL);
+  }
+
+  // crosshair + tooltip on mousemove (nearest dated point)
+  function wireHistHover(el, dated, xs, W, padR, padL) {
+    const svg = el.querySelector('.sc-hist-svg');
+    const hit = el.querySelector('.sc-hist-hit');
+    const cross = el.querySelector('.sc-hist-cross');
+    const vline = el.querySelector('.sc-hist-vline');
+    const tip = el.querySelector('.sc-hist-tip');
+    const wrap = el.querySelector('.sc-hist-wrap');
+    if (!svg || !hit) return;
+    const n = dated.length;
+    hit.addEventListener('mousemove', (ev) => {
+      const rect = svg.getBoundingClientRect();
+      const fx = (ev.clientX - rect.left) / rect.width * W;             // to viewBox units
+      let i = 0;
+      if (n > 1) i = Math.round(((fx - padL) / (W - padR - padL)) * (n - 1));
+      i = Math.max(0, Math.min(n - 1, i));
+      const r = dated[i];
+      cross.style.display = ''; vline.setAttribute('x1', xs(i)); vline.setAttribute('x2', xs(i));
+      const rows = HIST_SERIES.map(s => (r[s.key] != null && isFinite(r[s.key]))
+        ? `<div><i style="background:${s.color}"></i>${s.label}<b>${gUsd(r[s.key])}</b></div>` : '').join('');
+      tip.innerHTML = `<div class="sc-hist-tip-d">${escapeHtml(r.snapshot_date)}</div>${rows}`;
+      tip.style.display = '';
+      const leftPct = (xs(i) / W) * 100;
+      tip.style.left = Math.max(2, Math.min(78, leftPct)) + '%';
+    });
+    hit.addEventListener('mouseleave', () => { cross.style.display = 'none'; tip.style.display = 'none'; });
   }
 
   // ---------- Cross-event daily metrics (Overview) ----------
