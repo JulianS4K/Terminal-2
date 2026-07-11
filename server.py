@@ -1735,12 +1735,14 @@ app.include_router(build_store_test_router(
 # 2026-07-02 (PROJECT_BIBLE §2.3). So its `/api/d2/*` routes are include_router'd
 # into this shell to stay SAME-ORIGIN with the D0 terminal Orders tab
 # (static/terminal/orders.js calls `/api/d2/orders` + `/api/d2/cron-freshness`
-# as same-origin relative paths). Consolidation target: fold these routes into a
-# D0 `routers/` module and serve them from D0's own deploy alongside the terminal;
-# the historical standalone `d2-orders-dashboard` service is RETIRED, not revived
-# (pointing it at its own service would re-create the D2/D0 split the merge
-# dissolved — see blueprint §4 step 1). The terminal stays same-origin throughout:
-# NO cross-origin repoint, NO CSP change.
+# as same-origin relative paths). The routes are now fronted by the D0 module
+# `routers/d0_orders.py` (consolidation slice 1) instead of importing the ex-D2
+# package directly; the target is to serve them from D0's own deploy alongside the
+# terminal and RETIRE the historical standalone `d2-orders-dashboard` service (not
+# revive it — pointing it at its own service would re-create the D2/D0 split the
+# merge dissolved; blueprint §4 step 1). The terminal stays same-origin throughout:
+# NO cross-origin repoint, NO CSP change. Follow-up slices move the route bodies +
+# helpers into `core/` and drop the standalone d2_dashboard app.
 #
 # The D2_MOUNT_IN_SHELL gate (default `true` → mounted, no-op merge) only toggles
 # whether this shell mounts the routes during that move; the end state is "mounted
@@ -1754,11 +1756,12 @@ app.include_router(build_store_test_router(
 _D2_MOUNT_IN_SHELL = os.getenv("D2_MOUNT_IN_SHELL", "true").strip().lower() not in ("false", "0", "no", "off")
 if _D2_MOUNT_IN_SHELL:
     try:
-        from d2_dashboard.main import router as d2_router  # type: ignore
-        app.include_router(d2_router)
-        logging.getLogger(__name__).info("d2_dashboard router mounted at unified shell (%d routes)", len(d2_router.routes))
+        from routers.d0_orders import build_d0_orders_router
+        _orders_router = build_d0_orders_router()
+        app.include_router(_orders_router)
+        logging.getLogger(__name__).info("d0 orders-dashboard router mounted at unified shell (%d routes)", len(_orders_router.routes))
     except Exception as _d2_import_err:  # pragma: no cover — d2 module optional in dev
-        logging.getLogger(__name__).warning("d2_dashboard router NOT mounted: %s", _d2_import_err)
+        logging.getLogger(__name__).warning("d0 orders-dashboard router NOT mounted: %s", _d2_import_err)
 else:  # pragma: no cover — un-mounted path runs only when D0 serves the dashboard from its own deploy, not the mounted test harness
     logging.getLogger(__name__).info(
         "d2_dashboard NOT mounted in this shell (D2_MOUNT_IN_SHELL=false); expected to be served from D0's own deploy (orders dashboard was merged into D0)"

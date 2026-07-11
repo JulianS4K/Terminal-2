@@ -1,8 +1,17 @@
+# ⚠️ RETIREMENT-BOUND (2026-07-10) — DO NOT provision/revive this service.
+# The D2 lane was MERGED INTO D0 on 2026-07-02 (PROJECT_BIBLE §2.3): the orders
+# dashboard is a D0 sub-surface, served SAME-ORIGIN with the D0 terminal from the
+# D0 deploy (its `/api/d2/*` routes are fronted by `routers/d0_orders.py`). This
+# standalone `d2-orders-dashboard` service is an idle placeholder; reviving it as
+# its own service would re-create the D2/D0 split the merge dissolved. Slated for
+# deletion once the routes finish consolidating into D0's own deploy (a Render
+# write = Applier action, §2.1). Kept here only as a historical record until then.
+# See docs/archive/2026-07-10-code-storage-blueprint.md §4 step 1.
+#
 # Render.com Infrastructure-as-Code blueprint for D2's orders dashboard.
 #
-# OWNER: D2 (Order Clients) — per LANE_DISCIPLINE.md §Cross-cutting Rule #6
-# (PRs #104 + #105, 2026-05-14). D2 has standing read + write authority
-# on the d2-orders-dashboard service.
+# OWNER: D0 (orders dashboard, ex-D2 — folded into D0 2026-07-02). Historically
+# D2 (PRs #104 + #105, 2026-05-14) before the lane merge.
 # Service: d2-orders-dashboard (srv-d82b4kl7vvec73b4r3r0)
 # Companion blueprint for D1's storefront: render.yaml
 #

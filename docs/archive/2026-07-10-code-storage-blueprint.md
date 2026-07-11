@@ -132,16 +132,22 @@ Deploy first, repo last. Each step is independently valuable and reversible unti
 
 1. **Consolidate the orders dashboard *into* D0 (do NOT re-split it).** Because D2 merged into
    D0, the target is one D0 deploy serving the terminal + orders dashboard **same-origin** —
-   the idle standalone `d2-orders-dashboard` service is **retired**, not revived. Concretely:
-   fold `d2_dashboard/main.py`'s `/api/d2/*` routes into D0's `routers/` package (e.g.
-   `routers/d0_orders.py`) so the dashboard is a first-class D0 module rather than a bolt-on
-   sub-app `include_router`'d at runtime, then drop `render-d2-dashboard.yaml`. The terminal
+   the idle standalone `d2-orders-dashboard` service is **retired**, not revived. The terminal
    Orders tab (`static/terminal/orders.js`) **stays same-origin — no cross-origin repoint, no
-   CSP widening.** A `D2_MOUNT_IN_SHELL` env gate already exists in `server.py` (default
-   mounted) to toggle the mount during the move; its end state is *"mounted in D0's own service
-   alongside the terminal,"* not *"served by a separate d2 service."* *(This reverses the first
-   draft, which mistakenly pointed the dashboard at its own service — that re-creates the D2/D0
-   split the merge dissolved.)*
+   CSP widening.** Staged like BR-CODE-1 (routers-first, then helpers→`core/`):
+   - **Slice 1 ✅ (landed):** `routers/d0_orders.py` is the D0-owned entry point — `server.py`
+     mounts the orders-dashboard router via `build_d0_orders_router()` from there instead of
+     importing the ex-D2 `d2_dashboard` package directly; `render-d2-dashboard.yaml` marked
+     retirement-bound. Behavior-identical, paths unchanged (`/api/d2/*`).
+   - **Next slices:** move the route bodies + shared helpers from `d2_dashboard/main.py` into
+     `core/` + `routers/d0_orders.py` (breaking the import coupling), then drop the standalone
+     `d2_dashboard` app + its unreachable HTML dashboard, then delete the retired service (a
+     Render write = Applier action, §2.1).
+
+   The `D2_MOUNT_IN_SHELL` env gate (default mounted) toggles the mount during the move; its end
+   state is *"mounted in D0's own service alongside the terminal,"* not *"served by a separate d2
+   service."* *(This reverses the first draft, which mistakenly pointed the dashboard at its own
+   service — that re-creates the D2/D0 split the merge dissolved.)*
 2. **Decide D0's service boundary (surface ≠ service).** The near-term isolation win is giving
    the **D0 API** its own web service instead of sharing the `vibepass-storefront-test` shell
    with D1 + D5. That is a *deploy* decision about which surfaces co-tenant, not a code change:
