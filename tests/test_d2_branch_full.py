@@ -8,21 +8,17 @@ only ever exercised the one way:
   247->251  _vault_secret: rpc data is neither str nor dict -> fall to `return None`
   652->647  _fetch_cron_freshness: duplicate non-queue row for an already-seen
             source -> the `if` is False, loop continues without overwrite
-  737->743  _match_event: target_date matches none of the 3 strptime formats ->
-            the format loop exhausts (no break) with target_ts left None
   839->845  _fetch_unified_orders_page: include_terminal=True skips the or_ filter
   858->860  _fetch_unified_orders_page: a row with last_seen_at falsy/older ->
             the as_of update `if` is False, fall to the count bump
   882->886  _fetch_unified_orders_page: a row whose event_name is already set ->
             the back-fill `if` is False, fall straight to rows.append
   1032->1034 _fetch_filtered_orders: as above (last_seen_at falsy/older)
-  1077->1085 _fetch_orders_from_sql: no tevo_event_ids -> skip the v_event_base query
   1351->1335 _fetch_unified_orders_fast: a row with last_seen_at falsy/older ->
             the as_of update `if` is False, loop continues
 
-(109->119, 179->193 are import-time prod-guard branches and 767->745 is a
-structurally-unreachable arm of _match_event's score comparison -- all three are
-pragma'd in source, same idea as the pre-existing 100/131 guards.)
+(109->119, 179->193 are import-time prod-guard branches, pragma'd in source,
+same idea as the pre-existing 100/131 guards.)
 
 No real network / DB -- everything is monkeypatched to in-memory fakes, mirroring
 the FakeSupabase / _UOQuery conventions of the companion files.
@@ -128,20 +124,6 @@ def test_fetch_cron_freshness_keeps_first_when_dup_non_queue(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 737->743 -- _match_event: target_date matches none of the strptime formats
-# --------------------------------------------------------------------------
-
-def test_match_event_unparseable_target_date_exhausts_format_loop():
-    """A target_date in a format none of the 3 strptime patterns accept makes
-    the format loop exhaust without `break`, leaving target_ts None (737->743).
-    Matching then proceeds on tokens only and still returns the candidate."""
-    candidates = [{"event_name": "Knicks Lakers", "tevo_event_id": 77,
-                   "event_at_utc": "2026-06-01T23:30:00Z"}]
-    match = d2_main._match_event("Knicks Lakers", "31/12/2026", candidates)
-    assert match["tevo_event_id"] == 77
-
-
-# --------------------------------------------------------------------------
 # 839->845 + 858->860 -- _fetch_unified_orders_page
 # --------------------------------------------------------------------------
 
@@ -223,30 +205,6 @@ def test_fetch_filtered_orders_null_last_seen_skips_as_of(monkeypatch):
     out = d2_main._fetch_filtered_orders("evo", 10)
     assert out["per_source_count"]["evo"] == 1
     assert "evo" not in out["per_source_as_of"]
-
-
-# --------------------------------------------------------------------------
-# 1077->1085 -- _fetch_orders_from_sql: no tevo_event_ids -> skip v_event_base
-# --------------------------------------------------------------------------
-
-def test_fetch_orders_from_sql_no_event_ids_skips_event_query(monkeypatch):
-    """When none of the unified_orders rows carry a tevo_event_id, the
-    `if event_ids:` block is skipped (1077->1085) and v_event_base is never
-    queried -- rows come back with null event fields."""
-    rows = [{"source": "evo", "source_order_id": "1", "tevo_event_id": None,
-             "source_status": "accepted", "canonical_status": "accepted",
-             "quantity": 2, "gross_value": "100.0",
-             "created_at": "2026-05-13T19:00:00Z", "last_seen_at": "2026-05-13T20:00:00Z"}]
-    class Sb:
-        def table(self, name):
-            if name == "v_event_base":
-                raise AssertionError("v_event_base should not be queried -- no event ids")
-            return _UOQuery(rows)
-    monkeypatch.setattr(d2_main, "_sb", lambda: Sb())
-    out = d2_main._fetch_orders_from_sql("evo", 25)
-    assert out["ok"] is True
-    assert out["rows"][0]["event_name"] is None
-    assert out["rows"][0]["event_date"] is None
 
 
 # --------------------------------------------------------------------------

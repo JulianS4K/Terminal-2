@@ -251,19 +251,8 @@ def _vault_secret(name: str) -> str | None:
     return None
 
 
-def _env_first(*names: str) -> str | None:
-    """Return the first set env var from `names`. Lets us accept either the
-    vault-canonical key (TEVO_API_TOKEN) or the legacy storefront key
-    (TEVO_TOKEN) without forcing the operator to pick."""
-    for n in names:
-        v = os.environ.get(n)
-        if v:
-            return v
-    return None
-
-
 def _env_first_named(*names: str) -> tuple[str | None, str | None]:
-    """Like _env_first but also returns the env-var name that resolved.
+    """Return the first set env var from `names` plus the name that resolved.
     Used by /healthz/detail so the operator can see which token variant was
     loaded (e.g. when a 401 fires on TickPick — was the right env var read?)."""
     for n in names:
@@ -309,47 +298,6 @@ def _broker_diag(*token_names: str, secret_names: tuple[str, ...] = ()) -> dict:
     return diag
 
 
-def _evo_client():
-    from evo_client import EvoClient
-    token = _env_first("TEVO_API_TOKEN", "TEVO_TOKEN")
-    secret = _env_first("TEVO_API_SECRET", "TEVO_SECRET")
-    if not (token and secret):
-        return None
-    return EvoClient(token, secret, sandbox=os.environ.get("TEVO_SANDBOX", "false").lower() == "true")
-
-
-def _sg_client():
-    from seatgeek_client import SeatGeekClient
-    try:
-        return SeatGeekClient()
-    except Exception:
-        return None
-
-
-def _tickpick_client():
-    from tickpick_client import TickPickClient
-    token = _env_first("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
-    if not token:
-        return None
-    return TickPickClient(token)
-
-
-def _vivid_client():
-    from vivid_client import VividClient
-    token = os.environ.get("VIVID_API_TOKEN") or _vault_secret("VIVID_API_TOKEN")
-    if not token:
-        return None
-    return VividClient(token)
-
-
-def _seatdata_client():
-    from seatdata_client import SeatDataClient, SeatDataError
-    try:
-        return SeatDataClient(db=_sb())
-    except SeatDataError:
-        return None
-
-
 def _gotickets_client():
     from gotickets_client import GoTicketsClient
     access_id = os.environ.get("GOTICKETS_ACCESS_ID") or _vault_secret("GOTICKETS_ACCESS_ID")
@@ -385,220 +333,7 @@ def _sb():
     return _SB_SINGLETON
 
 
-# ---------- Normalizer ----------
-#
-# Target shape per row:
-#   {
-#     "source":      "evo" | "seatgeek" | "tickpick" | "vivid"
-#     "order_id":    str
-#     "event_name":  str | None
-#     "event_date":  str | None     (ISO 8601 if available)
-#     "qty":         int | None
-#     "status":      str | None
-#     "amount":      float | None   (total, in source's currency)
-#     "currency":    str | None
-#     "ordered_at":  str | None     (ISO 8601)
-#   }
-
-def _norm_evo(o: dict) -> dict:
-    # Evo list_orders doesn't return event at the top level — it lives inside
-    # the first item's ticket_group. Pattern verified against the operator's
-    # reference Tkinter app: o.items[0].ticket_group.event.{name,occurs_at}.
-    items = o.get("items") or []
-    first_tg = (items[0] or {}).get("ticket_group") or {} if items else {}
-    event = first_tg.get("event") or {}
-    qty = sum(int(it.get("quantity") or 0) for it in items) if items else None
-    status = o.get("state")
-    return {
-        "source": "evo",
-        "order_id": str(o.get("id") or ""),
-        "event_name": event.get("name"),
-        "event_date": event.get("occurs_at"),
-        "qty": qty,
-        "status": status,
-        "canonical_status": _canonical_status("evo", status),
-        "amount": _to_float(o.get("total")),
-        "currency": o.get("currency"),
-        "ordered_at": o.get("created_at"),
-    }
-
-
-def _norm_sg(o: dict) -> dict:
-    # SeatGeek's seller_order/{id} payload uses:
-    #   event.name    (not event.title)
-    #   event.date    "YYYY-MM-DD"   (separate from event.time "HH:MM:SS")
-    #   listing.quantity (not o.quantity)
-    #   created / updated (not created_at / ordered_at)
-    # Earlier reading of `.title` / `.datetime_local` left event_date + qty
-    # blank on the deep-detail panel. Combine date + time into an ISO string.
-    event = o.get("event") or {}
-    listing = o.get("listing") or {}
-    status = o.get("status")
-    ev_date = event.get("date")
-    ev_time = event.get("time") or "00:00:00"
-    event_dt = f"{ev_date}T{ev_time}" if ev_date else (
-        event.get("datetime_local") or event.get("datetime_utc")
-    )
-    return {
-        "source": "seatgeek",
-        "order_id": str(o.get("order_id") or o.get("id") or ""),
-        "event_name": event.get("name") or event.get("title") or o.get("event_title"),
-        "event_date": event_dt,
-        "qty": _to_int(o.get("quantity") or listing.get("quantity")),
-        "status": status,
-        "canonical_status": _canonical_status("seatgeek", status),
-        "amount": _to_float(o.get("total") or o.get("payout")),
-        "currency": o.get("currency"),
-        "ordered_at": o.get("created") or o.get("created_at") or o.get("ordered_at"),
-    }
-
-
-def _norm_tickpick(o: dict) -> dict:
-    status = o.get("status")
-    return {
-        "source": "tickpick",
-        "order_id": str(o.get("orderId") or o.get("order_id") or o.get("id") or ""),
-        "event_name": o.get("eventName") or o.get("event_name"),
-        "event_date": o.get("eventDate") or o.get("event_date"),
-        "qty": _to_int(o.get("quantity") or o.get("qty")),
-        "status": status,
-        "canonical_status": _canonical_status("tickpick", status),
-        "amount": _to_float(o.get("total") or o.get("payout")),
-        "currency": o.get("currency"),
-        "ordered_at": o.get("orderDate") or o.get("createdAt"),
-    }
-
-
-def _norm_vivid(o: dict) -> dict:
-    # Vivid orders come from XML — flat-dict, all string values. The XML uses
-    # a lowercase <event> tag for the event name (not <eventName>); reading
-    # the wrong key was leaving event_name blank in the dashboard.
-    status = o.get("status")
-    return {
-        "source": "vivid",
-        "order_id": str(o.get("orderId") or ""),
-        "event_name": o.get("event") or o.get("eventName"),
-        "event_date": o.get("eventDate"),
-        "qty": _to_int(o.get("quantity")),
-        "status": status,
-        "canonical_status": _canonical_status("vivid", status),
-        "amount": _to_float(o.get("total") or o.get("price")),
-        "currency": o.get("currency"),
-        "ordered_at": o.get("orderDate"),
-    }
-
-
-def _norm_gotickets(o: dict) -> dict:
-    """GoTickets /rest/sales/:id response. The API doesn't return a single
-    'status' string — the operator's Apps Script derives state from the
-    `fulfilled` bool + `cancelReason` + `sellerStatus`. Mirror that here:
-        cancelReason set → cancelled
-        fulfilled=true   → fulfilled
-        else             → pending
-    """
-    fulfilled = bool(o.get("fulfilled"))
-    cancel = (o.get("cancelReason") or "").strip()
-    if cancel and cancel.lower() not in ("", "null"):
-        canonical = "cancelled"
-        raw_status = f"cancelReason:{cancel}"
-    elif fulfilled:
-        canonical = "fulfilled"
-        raw_status = "fulfilled"
-    else:
-        canonical = "pending"
-        raw_status = o.get("sellerStatus") or "pending"
-    event = o.get("event") or {}
-    return {
-        "source": "gotickets",
-        "order_id": str(o.get("id") or o.get("orderId") or o.get("saleId") or ""),
-        "event_name": event.get("name") or event.get("title"),
-        "event_date": event.get("startsAt") or event.get("date") or event.get("eventDate"),
-        "qty": _to_int(o.get("quantity") or o.get("ticketCount")),
-        "status": raw_status,
-        "canonical_status": canonical,
-        "amount": _to_float(o.get("total") or o.get("salePrice")),
-        "currency": o.get("currency"),
-        "ordered_at": o.get("createdAt") or o.get("saleDate"),
-        "fulfillment_time": o.get("fulfillmentTime"),
-    }
-
-
-# Canonical status mapping — buckets borrowed from public.order_status_xref.
-# Keeps the dashboard's Status column comparable across sources. Evo + SG
-# rows coming from SQL already have unified_orders.canonical_status; this
-# table is the in-Python equivalent for the API-path rows (tickpick, vivid,
-# gotickets, plus the SQL-empty fallback path for evo + sg).
-_CANONICAL_STATUS: dict[str, dict[str, str]] = {
-    "evo": {
-        "pending": "pending",
-        "accepted": "accepted",
-        "completed": "fulfilled",
-        "rejected": "rejected",
-        "pending_substitution": "substitution",
-    },
-    "seatgeek": {
-        "open": "pending",
-        "pending": "pending",
-        "confirmed": "accepted",
-        "fulfilled": "fulfilled",
-        "delivered": "fulfilled",
-        "cancelled": "cancelled",
-        "pending_substitution": "substitution",
-    },
-    # TickPick's broker list is fetched with status=unfulfilled, so the
-    # bare value "unfulfilled" maps to accepted (broker has the order,
-    # awaiting delivery). Other terminal states map per Apps Script semantics.
-    "tickpick": {
-        "unfulfilled": "accepted",
-        "pending":     "pending",
-        "fulfilled":   "fulfilled",
-        "filled":      "fulfilled",
-        "cancelled":   "cancelled",
-        "canceled":    "cancelled",
-        "rejected":    "rejected",
-    },
-    # Vivid's getOrders endpoint surfaces PENDING_SHIPMENT / PENDING_RETRANSFER
-    # for the active-order feed. Both = broker holds, awaiting shipment.
-    "vivid": {
-        "PENDING_SHIPMENT":   "accepted",
-        "PENDING_RETRANSFER": "accepted",
-        "FULFILLED":          "fulfilled",
-        "SHIPPED":            "fulfilled",
-        "CANCELLED":          "cancelled",
-        "CANCELED":           "cancelled",
-        "REJECTED":           "rejected",
-    },
-    # GoTickets: the Apps Script reads fulfilled (bool) + cancelReason + sellerStatus.
-    # Status field varies — we map common values; the read-only fetcher
-    # also derives a canonical via the fulfilled/cancelReason booleans
-    # in _norm_gotickets below.
-    "gotickets": {
-        "fulfilled": "fulfilled",
-        "cancelled": "cancelled",
-        "canceled":  "cancelled",
-        "rejected":  "rejected",
-        "pending":   "pending",
-    },
-}
-
-
-def _canonical_status(source: str, raw: str | None) -> str | None:
-    """Map a source's raw status enum to the canonical bucket
-    (pending / accepted / fulfilled / rejected / cancelled / substitution).
-    Returns None on unrecognized values so the caller can decide whether to
-    surface the raw value untranslated or hide it. Case-insensitive — handles
-    Vivid's UPPERCASE XML enum and TickPick's lowercase JSON enum uniformly."""
-    if not raw:
-        return None
-    table = _CANONICAL_STATUS.get(source, {})
-    if raw in table:
-        return table[raw]
-    raw_low = raw.lower()
-    for k, v in table.items():
-        if k.lower() == raw_low:
-            return v
-    return None
-
+# ---------- Coercion helpers ----------
 
 def _to_int(v: Any) -> int | None:
     try:
@@ -700,98 +435,11 @@ def _pull_event_window(days_back: int = 1, days_forward: int = 120) -> list[dict
         return []
 
 
-_TOKEN_STOPWORDS = frozenset({
-    "the", "vs", "at", "and", "of", "a", "an", "in", "on", "to", "for", "with",
-    "tour", "live", "presents", "featuring", "feat", "ft",
-})
-
-
-def _tokenize_event(name: str | None) -> set[str]:
-    """Best-effort tokenization for fuzzy event matching: lowercase, split on
-    non-alphanumeric, drop stopwords + 1–2 char fragments. Same shape used
-    by the existing in-DB matcher (supabase/migrations/...phase11...)."""
-    if not name:
-        return set()
-    import re
-    toks = re.split(r"[^a-z0-9]+", name.lower())
-    return {t for t in toks if len(t) >= 3 and t not in _TOKEN_STOPWORDS}
-
-
-def _match_event(target_name: str | None, target_date: str | None, candidates: list[dict]) -> dict | None:
-    """Pick the best v_event_base candidate for a tickpick/vivid order based
-    on token overlap + date proximity. Returns None when no candidate clears
-    the heuristic floor.
-
-    Match rules (mirror the in-DB matcher's spirit, simpler):
-      - candidate event_at_utc within ±12h of target_date
-      - >=2 shared 3+char tokens, OR Jaccard similarity >= 0.5
-    Ties broken by smallest date delta."""
-    if not target_name or not candidates:
-        return None
-    target_tokens = _tokenize_event(target_name)
-    if not target_tokens:
-        return None
-    target_ts = None
-    if target_date:
-        from datetime import datetime
-        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
-            try:
-                target_ts = datetime.strptime(target_date.replace("Z", "+0000"), fmt)
-                break
-            except ValueError:
-                continue
-    best = None
-    best_score = (0, float("inf"))  # (-shared_tokens, date_delta_seconds)
-    for c in candidates:
-        c_tokens = _tokenize_event(c.get("event_name"))
-        if not c_tokens:
-            continue
-        shared = len(target_tokens & c_tokens)
-        jaccard = shared / max(1, len(target_tokens | c_tokens))
-        if shared < 2 and jaccard < 0.5:
-            continue
-        date_delta = float("inf")
-        if target_ts and c.get("event_at_utc"):
-            from datetime import datetime
-            try:
-                c_ts = datetime.fromisoformat(c["event_at_utc"].replace("Z", "+00:00"))
-                if c_ts.tzinfo is None:
-                    from datetime import timezone
-                    c_ts = c_ts.replace(tzinfo=timezone.utc)
-                date_delta = abs((target_ts - c_ts).total_seconds())
-                if date_delta > 12 * 3600:
-                    continue
-            except (ValueError, TypeError):
-                continue
-        score = (shared, -date_delta)
-        if score > (-best_score[0], -best_score[1]):  # pragma: no cover - false arm unreachable: any floor-passing candidate has shared>=1, and the compared tuple's first element is -best_score[0]<=-1, so score[0]>=1 always wins the comparison
-            best = c
-            best_score = (shared, date_delta)
-    return best
-
-
-def _enrich_row_with_event(row: dict, event_window: list[dict]) -> dict:
-    """Look up a canonical event for a tickpick/vivid order row. When matched,
-    overlay tevo_event_id + canonical event_name/event_date so the row joins
-    cleanly with the SQL-backed sources in the same table."""
-    if not event_window:
-        return row
-    match = _match_event(row.get("event_name"), row.get("event_date"), event_window)
-    if not match:
-        return row
-    row["tevo_event_id"] = match.get("tevo_event_id")
-    row["event_name"] = match.get("event_name") or row.get("event_name")
-    row["event_date"] = match.get("event_at_local") or match.get("event_at_utc") or row.get("event_date")
-    row["event_origin"] = "matched"
-    return row
-
-
 # Terminal canonical_status values from public.order_status_xref. Used by
 # the active-only default filter on /api/d2/orders. Rows with NULL
 # canonical_status (sources whose source_status didn't match an xref row)
 # are also surfaced in the active view — they're "unknown" and probably
 # need operator attention more than the known-terminal rows.
-_TERMINAL_STATUSES = ("fulfilled", "rejected", "cancelled")
 _ACTIVE_STATUSES = ("pending", "accepted", "substitution")
 
 
@@ -1050,72 +698,6 @@ def _fetch_filtered_orders(
         }
 
 
-def _fetch_orders_from_sql(source: str, per_page: int, page: int = 1) -> dict | None:
-    """Pull a source's orders out of unified_orders, joined to v_event_base
-    for event_name + event_date. Returns None when Supabase isn't configured
-    so the caller can fall back to the upstream API.
-
-    Pagination via PostgREST .range() — `page` is 1-based to match the
-    /api/d2/orders ?page= query semantics."""
-    sb = _sb()
-    if sb is None:
-        return None
-    try:
-        start = max(0, (page - 1) * per_page)
-        end = start + per_page - 1
-        uo_res = (
-            sb.table("unified_orders")
-            .select("source,source_order_id,tevo_event_id,source_status,canonical_status,quantity,gross_value,created_at,last_seen_at")
-            .eq("source", source)
-            .order("created_at", desc=True)
-            .range(start, end)
-            .execute()
-        )
-        uo_rows = uo_res.data or []
-        event_ids = list({r["tevo_event_id"] for r in uo_rows if r.get("tevo_event_id")})
-        events_by_id: dict = {}
-        if event_ids:
-            ev_res = (
-                sb.table("v_event_base")
-                .select("tevo_event_id,event_name,event_at_local,event_at_utc")
-                .in_("tevo_event_id", event_ids)
-                .execute()
-            )
-            events_by_id = {e["tevo_event_id"]: e for e in (ev_res.data or [])}
-        rows = []
-        for r in uo_rows:
-            ev = events_by_id.get(r.get("tevo_event_id")) or {}
-            rows.append({
-                "source": source,
-                "order_id": str(r.get("source_order_id") or ""),
-                "event_name": ev.get("event_name"),
-                "event_date": ev.get("event_at_local") or ev.get("event_at_utc"),
-                "qty": _to_int(r.get("quantity")),
-                "status": r.get("source_status"),
-                "canonical_status": r.get("canonical_status"),
-                "amount": _to_float(r.get("gross_value")),
-                "currency": None,
-                "ordered_at": r.get("created_at"),
-            })
-        as_of = max((r.get("last_seen_at") for r in uo_rows if r.get("last_seen_at")), default=None)
-        return {
-            "source": source,
-            "ok": True,
-            "rows": rows,
-            "total": None,           # avoid the extra count(*) round-trip
-            "origin": "sql",
-            "as_of": as_of,
-        }
-    except Exception as e:
-        return {
-            "source": source,
-            "ok": False,
-            "error": _scrub_err(f"{source}.sql", e),
-            "rows": [],
-            "origin": "sql",
-        }
-
-
 # ---------- Fan-out helpers ----------
 
 _SAFE_CLIENT_ERROR_NAMES = frozenset({
@@ -1142,30 +724,6 @@ def _scrub_err(source: str, exc: Exception) -> str:
         if msg and "://" not in msg and len(msg) <= 120:
             return msg
     return "upstream error"
-
-
-def _fetch_evo(per_page: int, page: int = 1) -> dict:
-    return _fetch_one_source("evo", per_page, page)
-
-
-def _fetch_tickpick(per_page: int, page: int = 1) -> dict:
-    return _fetch_one_source("tickpick", per_page, page)
-
-
-def _fetch_vivid(per_page: int, page: int = 1) -> dict:
-    return _fetch_one_source("vivid", per_page, page)
-
-
-def _fetch_one_source(source: str, per_page: int, page: int = 1) -> dict:
-    """SQL-only single-source fetch. Returns the unified_orders fan-out for
-    one source — empty rows + ok=True when the cron-fed view has nothing,
-    503-shaped error when Supabase isn't configured. No upstream-API path:
-    per 2026-05-14 directive the dashboard reads only from SQL; cron
-    freshness (`/api/d2/cron-freshness`) is the operator's staleness signal."""
-    sql_row = _fetch_orders_from_sql(source, per_page, page)
-    if sql_row is None:
-        return {"source": source, "ok": False, "error": "Supabase not configured", "rows": [], "origin": "sql"}
-    return sql_row
 
 
 # ---------- Endpoints ----------
@@ -1282,25 +840,6 @@ def root():
     blob = json.dumps(_shell_config_blob()).replace("<", "\\u003c")
     html = _DASHBOARD_SHELL.replace(_CONFIG_PLACEHOLDER, blob)
     return HTMLResponse(html)
-
-
-@router.get("/api/d2/config")
-def config(_=Depends(require_auth)):
-    """Front-end bootstrap config (no secrets)."""
-    return {
-        "supabase_url": SUPABASE_URL,
-        "supabase_anon_key": SUPABASE_ANON_KEY,
-        "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
-    }
-
-
-@router.get("/api/d2/config-public")
-def config_public():
-    """Pre-auth bootstrap — mirror of the blob server-rendered into the HTML
-    shell. Kept as a JSON endpoint for API consumers and for the front-end's
-    fallback path; the shell normally doesn't fetch this on boot. Anon key is
-    safe to expose (that's its design)."""
-    return _shell_config_blob()
 
 
 def _fetch_unified_orders_fast(per_page: int, include_terminal: bool = False) -> dict | None:
