@@ -7,6 +7,13 @@
 > ("don't split the monorepo now") and the tracking rows `BR-CODE-1` / `BR-SPLIT-1` /
 > `BR-SPLIT-2` in `KANBAN.md`. Ownership authority remains `PROJECT_BIBLE §2`; this file is
 > the **storage layout + decomposition sequence**, not a new ownership source.
+>
+> **Corrected 2026-07-10 (operator):** two lane-topology facts drive this doc and had been
+> mis-stated in the first draft — (1) **D2 was merged INTO D0** (2026-07-02, `§2.3`): the
+> orders dashboard is a D0 sub-surface to **consolidate**, not a surface to split onto its own
+> service; (2) **fantasy is D5**, a distinct product spun OUT of the terminal, hosted on the
+> shared **D0-owned** storefront shell (**surface ≠ service**, `§2.7`). The two are mirror
+> images — one folded in, one split out — and the sections below now reflect that.
 
 ## TL;DR
 
@@ -62,10 +69,16 @@ router module), but **all of them are mounted into one `server:app` process and 
 - ✅ **D4 (Bridge)** — fully isolated already: standalone npm/TS app in `d4_bridge/`, own
   `vite` build → `static/bridge/`, own `exos-*` edge functions, `firestore.rules`, and
   **value-only** DB links (`bridge_event_xref`, never writes D0 tables). Extraction-ready today.
-- 🟡 **D2 (orders dashboard)** — own FastAPI app (`d2_dashboard/main.py`) + own service
-  definition, but currently mounted into the shell. Un-mount = standalone.
-- 🟡 **D0 / D1 / D5** — clean router modules sharing one process. Un-mount needs a per-surface
-  web service, not a code change.
+- 🟢 **Orders dashboard (part of D0, ex-D2)** — the D2 lane was **merged into D0** on
+  2026-07-02 (`§2.3`); `d2_dashboard/*` is now a D0 sub-surface and its historical
+  `d2-orders-dashboard` service is a D0-owned **idle placeholder**. It is *not* a surface to
+  split out — the correct move is to **consolidate it into D0** (keep it same-origin with the
+  terminal, retire the idle service). See §4 step 1.
+- 🟡 **D0 / D1 / D5** — clean router modules sharing the one storefront-shell process.
+  **Surface ≠ service** (`§2.7`): D1 store and D5 fantasy are distinct product *surfaces*
+  hosted on the **D0-owned** `vibepass-storefront-test` shell, not services of their own.
+  Runtime isolation here is a deploy decision, not a code change — the modules are already
+  clean.
 
 ---
 
@@ -91,16 +104,20 @@ thing and is therefore forbidden by principle 1.
 Each is a clean module today. The near-term win is giving each its **own process/service**;
 repo extraction stays optional and downstream.
 
-| Surface | Router module | Static tree | Service IaC | Deploy-separable | Repo-separable |
-|---|---|---|---|---|---|
-| **D0** terminal + orders dash | `routers/broker.py`, `routers/d0_sales.py`, `d2_dashboard/` | `static/terminal/`, `d2_dashboard/` | `render-d0-terminal.yaml`, `render-d2-dashboard.yaml` | ✅ ready | after Tier-0 client/`core` shim |
-| **D1** store | `routers/store.py` | `static/store/` | (shares `render.yaml` shell) | ✅ ready | after Tier-0 shim |
-| **D5** fantasy | `/fantasy/*` block in `routers/pages.py` | `static/fantasy/` | (shares `render.yaml` shell) | 🟡 needs its block split from `pages.py` first | later |
+| Surface | Router module | Static tree | Deploy today (surface ≠ service, `§2.7`) | Repo-separable |
+|---|---|---|---|---|
+| **D0** terminal | `routers/broker.py`, `routers/d0_sales.py` | `static/terminal/` | API on `vibepass-storefront-test`; static on `vibepass-terminal-test` (both D0-owned) | after Tier-0 client/`core` shim |
+| **D0** orders dashboard *(ex-D2, merged in 2026-07-02)* | `d2_dashboard/` (mounted) | `d2_dashboard/` | mounted in the D0 shell; **consolidate here + retire the idle `d2-orders-dashboard` service** — do NOT re-split | with D0 |
+| **D1** store | `routers/store.py` | `static/store/` | tenant of the D0-owned `vibepass-storefront-test` shell | after Tier-0 shim |
+| **D5** fantasy *(distinct product, spun out of terminal)* | `/fantasy/*` block in `routers/pages.py` | `static/fantasy/` | tenant of the D0-owned `vibepass-storefront-test` shell | after Tier-0 shim |
 
-> **Note:** D0/D1/D5 repo extraction is bounded by Tier 0 — a product repo would still need to
-> import the shared `core/` + `*_client.py`, so a split here means publishing that substrate as
-> an installable library or git submodule. That cost is why deploy-separation, not repo-separation,
-> is the Tier-1 target.
+> **Note 1 — surface ≠ service.** Owning a *surface* (its routes + static tree) is separate
+> from owning the *service* it deploys on (`§2.7`). D1 and D5 own their surfaces but are hosted
+> on D0's storefront shell; D0 owns three services. So "deploy isolation" here means deciding
+> which surfaces share a service, not mechanically one-service-per-surface.
+> **Note 2 — repo extraction** is bounded by Tier 0: a product repo would still import the
+> shared `core/` + `*_client.py`, so a split means publishing that substrate as a library or
+> submodule. That cost is why deploy-separation, not repo-separation, is the Tier-1 target.
 
 ### Tier 2 — Isolated product — **repo-extractable today**
 | Surface | Stored units | Status |
@@ -113,26 +130,28 @@ repo extraction stays optional and downstream.
 
 Deploy first, repo last. Each step is independently valuable and reversible until the last.
 
-1. **Un-mount D2 dashboard from the shell.** The mount is now **env-gated**: `server.py`
-   reads `D2_MOUNT_IN_SHELL` (default `true` → mounted, no behavior change) and skips the
-   `include_router(d2_router)` when set `false`, leaving D2 served only by its own
-   `d2-orders-dashboard` service (`uvicorn d2_dashboard.main:app` — service + IaC already
-   exist). **Cutover is not a pure flag flip:** the D0 terminal Orders tab
-   (`static/terminal/orders.js`) is a *same-origin* consumer of `/api/d2/*` with no
-   cross-origin base, and `static/terminal/orders.html`'s CSP `connect-src` does not yet
-   list `https://d2-orders-dashboard.onrender.com`. So before setting `D2_MOUNT_IN_SHELL=false`
-   in prod: (a) confirm the standalone service is live + env-configured, (b) repoint
-   `orders.js` to a cross-origin D2 base, and (c) add the host to `orders.html`'s CSP.
-   D2's standalone `app` already carries credentialed CORS whitelisting the terminal origin,
-   so the server side is ready. *(Lowest risk — the standalone app already exists; the gate
-   makes the runtime cutover reversible.)*
-2. **Give D0 terminal + D1 store their own web services.** Two `render-*.yaml` web services,
-   each starting `server:app` but with a surface-scoped router set (or a thin per-surface
-   entrypoint that mounts only its routers). A D1 deploy can then never take down D0 —
-   **this captures the bulk of the isolation value a git split would buy.**
-3. **Split the D5 `/fantasy/*` block out of `routers/pages.py`** into `routers/fantasy.py`
-   so fantasy is a first-class module (it is the one Tier-1 surface still sharing a router
-   file). Then it can move to its own service like D0/D1.
+1. **Consolidate the orders dashboard *into* D0 (do NOT re-split it).** Because D2 merged into
+   D0, the target is one D0 deploy serving the terminal + orders dashboard **same-origin** —
+   the idle standalone `d2-orders-dashboard` service is **retired**, not revived. Concretely:
+   fold `d2_dashboard/main.py`'s `/api/d2/*` routes into D0's `routers/` package (e.g.
+   `routers/d0_orders.py`) so the dashboard is a first-class D0 module rather than a bolt-on
+   sub-app `include_router`'d at runtime, then drop `render-d2-dashboard.yaml`. The terminal
+   Orders tab (`static/terminal/orders.js`) **stays same-origin — no cross-origin repoint, no
+   CSP widening.** A `D2_MOUNT_IN_SHELL` env gate already exists in `server.py` (default
+   mounted) to toggle the mount during the move; its end state is *"mounted in D0's own service
+   alongside the terminal,"* not *"served by a separate d2 service."* *(This reverses the first
+   draft, which mistakenly pointed the dashboard at its own service — that re-creates the D2/D0
+   split the merge dissolved.)*
+2. **Decide D0's service boundary (surface ≠ service).** The near-term isolation win is giving
+   the **D0 API** its own web service instead of sharing the `vibepass-storefront-test` shell
+   with D1 + D5. That is a *deploy* decision about which surfaces co-tenant, not a code change:
+   D1 store and D5 fantasy are D0-shell tenants today and can stay so, or move — a D1/D5 deploy
+   taking down D0 is the risk to remove. **This captures the bulk of the isolation value a git
+   split would buy.**
+3. **Make D5 fantasy a first-class module.** Split the `/fantasy/*` block out of
+   `routers/pages.py` into `routers/fantasy.py` so the D5 product surface is a clean module
+   (it is the one product still sharing a router file). It remains a tenant of the D0 shell
+   unless/until step 2 moves it — surface ≠ service.
 4. **(Optional PoC) Extract D4 (Bridge) as a standalone repo.** Already isolated → near-zero
    risk; validates the git-split model end-to-end (own CI, own deploy, value-only DB link)
    before anyone touches D0/D1.
