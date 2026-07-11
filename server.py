@@ -1602,6 +1602,17 @@ app.include_router(build_store_router(
 ))
 
 
+# /api/mcp/* read-only data for the ext-apps MCP surfaces (D0 leagues, D4
+# events) -> routers/mcp.py. Shared-secret gated (X-MCP-Read-Secret vs env
+# MCP_READ_SECRET; fail-closed 503 when unset). D1's app reuses the retail
+# concierge (/api/store/retail-chat) instead of a second search path.
+from routers.mcp import build_mcp_router  # noqa: E402
+app.include_router(build_mcp_router(
+    get_require_sb=lambda: require_sb,
+    get_read_secret=lambda: os.environ.get("MCP_READ_SECRET"),
+))
+
+
 # /api/store/seatmap/* proxy + section crosswalk -> routers/seatmap.py
 # (BR-CODE-1 decomposition slice). get_sb resolves the live app.sb so the
 # monkeypatch tests bind; the moved _fetch helper uses the shared requests
