@@ -1,4 +1,4 @@
-"""D2 Orders Dashboard — FastAPI app.
+"""D2 Orders API router — the /api/d2/* order surface.
 
 Single-window view of every broker order surface D2 owns:
   - Evo (TEvo)       list_orders
@@ -8,20 +8,18 @@ Single-window view of every broker order surface D2 owns:
 
 Plus a side tab for SeatData market analytics (account + usage).
 
+This module exposes `router` (an APIRouter carrying the /api/d2/* endpoints),
+which the D0 unified shell imports and mounts same-origin
+(routers/d0_orders.py → server.py). The standalone FastAPI app + its HTML
+dashboard UI were removed in consolidation slice 4 (operator-confirmed unused).
+
 Auth model mirrors app.py:162 — Supabase JWT verification via /auth/v1/user
-+ email-domain gate. The HTML root is unauthenticated (it hosts the login
-flow); /api/d2/* endpoints all require Authorization: Bearer <jwt>.
++ email-domain gate; /api/d2/* endpoints all require Authorization: Bearer <jwt>.
 
 Env vars (set on Render — D1 provisions):
   SUPABASE_URL                  https://xxxx.supabase.co
   SUPABASE_ANON_KEY             public anon key
   ALLOWED_EMAIL_DOMAIN          default "s4kent.com"
-  D2_CANONICAL_ORIGIN           https://d2-orders-dashboard.onrender.com
-                                Used as the OAuth redirectTo origin so Supabase
-                                Auth bounces back to the right host post-Google.
-                                Optional — front-end falls back to window.origin
-                                when unset. Set this on Render to avoid surprises
-                                with custom domains / preview URLs.
   AUTH_DISABLED                 "true" to bypass the Supabase JWT gate entirely.
                                 Self-disables on prod platforms (RENDER /
                                 FLY_APP_NAME / ENVIRONMENT=production). Loud
@@ -34,23 +32,17 @@ Env vars (set on Render — D1 provisions):
                                      also honored)
   VIVID_API_TOKEN                    Vivid Seats broker apiToken
   SEATDATA_API_KEY                   SeatData (optional — analytics tab only)
-
-Start: uvicorn d2_dashboard.main:app --host 0.0.0.0 --port $PORT
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import JSONResponse
 
 # ---------- Bootstrap ----------
 
@@ -61,18 +53,6 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 # for the SQL-first hybrid in /api/d2/orders.
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 ALLOWED_EMAIL_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "s4kent.com")
-# Canonical public URL of this service. Used as the OAuth redirectTo origin so
-# Supabase Auth bounces back to the right host post-Google. Set on Render to
-# https://d2-orders-dashboard.onrender.com (or your custom domain). Falls back
-# to the browser's window.location.origin when unset.
-D2_CANONICAL_ORIGIN = (os.environ.get("D2_CANONICAL_ORIGIN") or "").rstrip("/")
-# Lane-status fields surfaced via /healthz/detail (authed). Lets the operator
-# read the current D2 phase / UI state without scrolling KANBAN.md. Defaults
-# match where the lane stands at this commit: data-collection is healthy, the
-# UI rebuild has shipped to PR but operator hasn't accepted it yet. Flip
-# D2_UI_STATUS on the service env (e.g. to "rebuilt") after acceptance.
-D2_PHASE = os.environ.get("D2_PHASE", "data-collection")
-D2_UI_STATUS = os.environ.get("D2_UI_STATUS", "rebuild-pending")
 
 # AUTH_DISABLED is a testing-only kill switch. To prevent a misconfig from
 # accidentally opening the whole API on a live deploy, it ONLY takes effect
@@ -116,80 +96,13 @@ elif AUTH_DISABLED:  # pragma: no cover - import-time branch; AUTH_DISABLED is f
         flush=True,
     )
 
-TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-
-# Boot-time sanity check. The JWT gate needs Supabase env vars; surface their
-# absence loudly instead of silently serving a "Server misconfigured" panel
-# after JS boot. AUTH_DISABLED is production-locked (above), so on a prod
-# platform the gate is always on and these env vars are always required.
-PROD_MISSING_SUPABASE = (
-    (not AUTH_DISABLED)
-    and bool(os.environ.get("RENDER") or os.environ.get("FLY_APP_NAME"))
-    and not (SUPABASE_URL and SUPABASE_ANON_KEY)
-)
-if PROD_MISSING_SUPABASE:  # pragma: no cover - import-time prod-guard warning
-    import sys as _sys
-    print(
-        "ERROR: d2_dashboard has AUTH_DISABLED=false on a production platform "
-        "but SUPABASE_URL / SUPABASE_ANON_KEY are not set. The Supabase JWT "
-        "gate cannot function. Either set both env vars or set "
-        "AUTH_DISABLED=true. Serving 503 at / until resolved.",
-        file=_sys.stderr,
-        flush=True,
-    )
-
-# Read the dashboard shell once at import time. The template contains a single
-# `__D2_CONFIG_JSON__` placeholder that gets replaced with the per-request JSON
-# config blob on each `/` hit. Cheaper than Jinja and avoids the dep.
-_DASHBOARD_SHELL_PATH = TEMPLATES_DIR / "dashboard.html"
-_DASHBOARD_SHELL = (
-    _DASHBOARD_SHELL_PATH.read_text(encoding="utf-8")
-    if _DASHBOARD_SHELL_PATH.is_file()
-    else None
-)
-_CONFIG_PLACEHOLDER = "__D2_CONFIG_JSON__"
-
-app = FastAPI(title="Undelivered — D2 fulfillment + sales tracking")
-
-# ---------- CORS ----------
-# D0's unified-shell /undelivered scaffold on vibepass-storefront-test.onrender.com
-# fetches D2's /api/d2/* cross-origin. Without CORS the browser blocks the XHR
-# at preflight. Whitelist explicit origins (not '*') because the API is
-# auth-gated and credentialed requests are incompatible with wildcard.
-# Localhost in dev: any port (8000, 8080, 5173, etc.); regex covers them.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "https://vibepass-storefront-test.onrender.com",
-        "https://vibepass-terminal-test.onrender.com",  # if D0 terminal also fetches /api/d2/*
-        "https://d2-orders-dashboard.onrender.com",      # same-origin is fine without CORS, but listing keeps the matrix explicit
-    ],
-    # Localhost origins are a dev convenience only — on a production deploy a
-    # credentialed allow-any-localhost-port grant is broader than needed
-    # (audit 2026-06-10). _is_production() is the same detector the
-    # AUTH_DISABLED kill switch uses.
-    allow_origin_regex=(None if _is_production() else r"https?://localhost(:\d+)?"),
-    allow_credentials=True,
-    allow_methods=["GET", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-    max_age=600,
-)
-
-if STATIC_DIR.is_dir():  # pragma: no cover - import-time branch; STATIC_DIR exists in the repo so the not-taken (no-mount) arm is unreachable at test time
-    app.mount("/static/d2", StaticFiles(directory=str(STATIC_DIR)), name="d2_static")
-
 # ---------- Router for unified-shell mount (D0 consolidated frontend) ----------
 #
-# `router` exposes the same routes as `app` but as an importable APIRouter.
-# Standalone deploy still works (we app.include_router(router) at the end);
-# the unified shell can also do `unified_app.include_router(router, prefix="/undelivered")`
-# to host this dashboard under /undelivered/* on the consolidated service.
-#
-# Per operator directive 2026-05-15 + bot_chat 180: D0 owns the unified shell;
-# D2 supplies this router. Sub-app mount via FastAPI(app).mount() is the
-# alternative — APIRouter is the lower-friction path because middleware
-# composes cleanly (FastAPI mount() warns about middleware isolation).
+# `router` exposes the /api/d2/* routes as an importable APIRouter. The D0
+# unified shell imports `router` directly and mounts it same-origin
+# (routers/d0_orders.py → server.py), so the orders dashboard API is served
+# from the D0 deploy. The standalone app + its HTML dashboard UI were removed
+# in consolidation slice 4 (operator-confirmed unused).
 router = APIRouter()
 
 
@@ -251,53 +164,6 @@ def _vault_secret(name: str) -> str | None:
     return None
 
 
-def _env_first_named(*names: str) -> tuple[str | None, str | None]:
-    """Return the first set env var from `names` plus the name that resolved.
-    Used by /healthz/detail so the operator can see which token variant was
-    loaded (e.g. when a 401 fires on TickPick — was the right env var read?)."""
-    for n in names:
-        v = os.environ.get(n)
-        if v:
-            return v, n
-    return None, None
-
-
-def _mask_token(t: str | None) -> str | None:
-    """Show only the last 4 chars of a token. Lets the operator confirm a
-    token rotation took effect without exposing the full value in logs or
-    on /healthz/detail."""
-    if not t:
-        return None
-    if len(t) <= 4:
-        return "***"
-    return f"...{t[-4:]}"
-
-
-def _broker_diag(*token_names: str, secret_names: tuple[str, ...] = ()) -> dict:
-    """Build the per-broker diagnostic blob shown on /healthz/detail.
-    Reports which env-var name was actually read and a masked tail of its
-    value — enough for the operator to confirm a token rotation took
-    effect without exposing the secret. Adds duplicate-set detection
-    so when both vault-canonical and legacy names are populated with
-    different values (a common cause of TickPick 401 — wrong key wins),
-    the dashboard surfaces it explicitly."""
-    token_val, token_src = _env_first_named(*token_names)
-    set_variants = [n for n in token_names if os.environ.get(n)]
-    diag: dict = {
-        "token_set": bool(token_val),
-        "token_env_var": token_src,
-        "token_masked": _mask_token(token_val),
-    }
-    if len(set_variants) > 1:
-        diag["token_warning"] = f"multiple env vars set ({', '.join(set_variants)}); using {token_src}"
-    if secret_names:
-        secret_val, secret_src = _env_first_named(*secret_names)
-        diag["secret_set"] = bool(secret_val)
-        diag["secret_env_var"] = secret_src
-        diag["secret_masked"] = _mask_token(secret_val)
-    return diag
-
-
 def _gotickets_client():
     from gotickets_client import GoTicketsClient
     access_id = os.environ.get("GOTICKETS_ACCESS_ID") or _vault_secret("GOTICKETS_ACCESS_ID")
@@ -354,7 +220,6 @@ from core.d0_orders import (  # noqa: F401  (re-exported for route + monkeypatch
     _EVENT_WINDOW_CACHE,
     _EVENT_WINDOW_TTL_SEC,
     _build_order_rows,
-    _shell_config_blob,
     _deep_order_evo_sql,
     _deep_order_seatgeek_sales_sql,
     _deep_order_tickpick_sql,
@@ -407,108 +272,6 @@ def _fetch_unified_orders_fast(per_page: int, include_terminal: bool = False) ->
 
 
 # ---------- Endpoints ----------
-
-@app.get("/healthz")
-def healthz():
-    """Public LIVENESS check. Stripped to a minimal shape — operator can still
-    confirm the process is up, but no fingerprintable detail is exposed.
-    Use /healthz/detail with a valid Bearer token for the full diagnostic,
-    or /readyz for a Supabase-connectivity readiness probe.
-
-    Render's health-check path points HERE (liveness) on purpose — a transient
-    Supabase blip must NOT mark the process unhealthy and trigger a restart."""
-    return {"ok": True, "service": "d2_dashboard"}
-
-
-@app.get("/readyz")
-def readyz():
-    """Public READINESS probe — verifies the dashboard can actually reach
-    Supabase and read its serving view (`unified_orders`), not just that the
-    process is up. Catches the failure mode /healthz can't see: a present-but-
-    wrong/unreachable SUPABASE_URL passes liveness but 503s on the first data
-    hit. Operators + uptime monitors curl this post-deploy.
-
-    Leaks only a reachability enum (no error detail to the client; the full
-    exception goes to stderr). One cheap LIMIT-1 read per hit. Do NOT wire
-    Render's health-check path to this — keep that on /healthz (see above)."""
-    sb = _sb()
-    if sb is None:
-        return JSONResponse(
-            {"ok": False, "service": "d2_dashboard", "supabase": "not_configured"},
-            status_code=503,
-        )
-    try:
-        # Probe the exact surface the dashboard serves. UNION-ALL view + LIMIT 1
-        # short-circuits after the first branch's first row — cheap.
-        sb.table("unified_orders").select("source").limit(1).execute()
-        return {"ok": True, "service": "d2_dashboard", "supabase": "reachable"}
-    except Exception as e:
-        import sys as _sys
-        print(f"[d2_dashboard] /readyz supabase probe failed: {e!r}", file=_sys.stderr, flush=True)
-        return JSONResponse(
-            {"ok": False, "service": "d2_dashboard", "supabase": "unreachable"},
-            status_code=503,
-        )
-
-
-@app.get("/healthz/detail")
-def healthz_detail(_=Depends(require_auth)):
-    """Authenticated diagnostic snapshot. Same shape the old /healthz had —
-    booleans + lengths + platform indicators. Behind require_auth so only
-    operator (or any @allowed-domain user) can see it."""
-    import sys as _sys
-    return {
-        "ok": True,
-        "service": "d2_dashboard",
-        "phase": D2_PHASE,
-        "ui": D2_UI_STATUS,
-        "python": _sys.version.split()[0],
-        "auth_disabled": AUTH_DISABLED,
-        "supabase": {
-            "url_set": bool(SUPABASE_URL),
-            "anon_key_length": len(SUPABASE_ANON_KEY or ""),
-            "allowed_email_domain": ALLOWED_EMAIL_DOMAIN,
-        },
-        "brokers": {
-            "evo":      _broker_diag("TEVO_API_TOKEN", "TEVO_TOKEN", secret_names=("TEVO_API_SECRET", "TEVO_SECRET")) | {"sandbox": os.environ.get("TEVO_SANDBOX", "false").lower() == "true"},
-            "seatgeek": _broker_diag("SEATGEEK_API_TOKEN"),
-            "tickpick": _broker_diag("TICKPICK_API_TOKEN", "TICKPICK_TOKEN"),
-            "vivid":    _broker_diag("VIVID_API_TOKEN"),
-            "seatdata": _broker_diag("SEATDATA_API_KEY"),
-            "gotickets": _broker_diag("GOTICKETS_ACCESS_ID", secret_names=("GOTICKETS_API_SECRET",)),
-        },
-        "platform": {
-            "render": bool(os.environ.get("RENDER")),
-            "fly": bool(os.environ.get("FLY_APP_NAME")),
-            "environment": os.environ.get("ENVIRONMENT") or os.environ.get("NODE_ENV") or None,
-        },
-        "templates": {
-            "dir_exists": TEMPLATES_DIR.is_dir(),
-            "dashboard_html_exists": (TEMPLATES_DIR / "dashboard.html").is_file(),
-        },
-    }
-
-
-@router.get("/")
-def root():
-    """Dashboard HTML entry point.
-
-    Standalone deploy: visible at /. Unified shell (mount prefix=/undelivered):
-    visible at /undelivered/. Either way the in-page asset links resolve via
-    the static mount on `app` (or the shell's static handling).
-    """
-    if PROD_MISSING_SUPABASE:
-        raise HTTPException(503, "d2_dashboard misconfigured: SUPABASE_URL / SUPABASE_ANON_KEY not set")
-    if not _DASHBOARD_SHELL:
-        raise HTTPException(500, "dashboard.html missing")
-    # JSON.stringify equivalent — escape `<` to defuse `</script>` injection
-    # from any future config field that ends up reflecting user input.
-    blob = json.dumps(
-        _shell_config_blob(SUPABASE_URL, SUPABASE_ANON_KEY, ALLOWED_EMAIL_DOMAIN, AUTH_DISABLED, D2_CANONICAL_ORIGIN)
-    ).replace("<", "\\u003c")
-    html = _DASHBOARD_SHELL.replace(_CONFIG_PLACEHOLDER, blob)
-    return HTMLResponse(html)
-
 
 @router.get("/api/d2/orders")
 def orders(
@@ -1023,12 +786,4 @@ def sales_feed(limit: int = 20, _=Depends(require_auth)):
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "timings_ms": {"sql.sales_feed": round(total_ms, 1)},
     })
-
-
-# ---------- Include router into standalone app ----------
-#
-# Standalone Render deploy serves everything from `app` (which now includes the
-# router routes). The unified D0 shell imports `router` directly and mounts it
-# under a prefix (e.g. "/undelivered") — bypassing this include.
-app.include_router(router)
 

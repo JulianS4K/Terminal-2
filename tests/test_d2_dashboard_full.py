@@ -47,7 +47,12 @@ def _auth_disabled_by_default(monkeypatch):
 
 @pytest.fixture
 def client():
-    return TestClient(d2_main.app)
+    # The standalone app was removed in consolidation slice 4; build a throwaway
+    # app from the API router (same way the D0 shell mounts it).
+    from fastapi import FastAPI
+    _a = FastAPI()
+    _a.include_router(d2_main.router)
+    return TestClient(_a)
 
 
 # --------------------------------------------------------------------------
@@ -71,7 +76,7 @@ def auth_on(monkeypatch):
 
 
 def test_require_auth_missing_bearer_401(auth_on, client):
-    r = client.get("/healthz/detail")
+    r = client.get("/api/d2/cron-freshness")
     assert r.status_code == 401
     assert "missing bearer token" in r.json()["detail"]
 
@@ -80,7 +85,7 @@ def test_require_auth_no_supabase_config_500(monkeypatch, client):
     monkeypatch.setattr(d2_main, "AUTH_DISABLED", False)
     monkeypatch.setattr(d2_main, "SUPABASE_URL", None)
     monkeypatch.setattr(d2_main, "SUPABASE_ANON_KEY", None)
-    r = client.get("/healthz/detail", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 500
     assert "Supabase auth not configured" in r.json()["detail"]
 
@@ -89,7 +94,7 @@ def test_require_auth_upstream_unreachable_502(auth_on, monkeypatch, client):
     def boom(*a, **k):
         raise RuntimeError("connection refused to db.internal")
     monkeypatch.setattr(d2_main.requests, "get", boom)
-    r = client.get("/healthz/detail", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 502
     # Internal error detail must not leak.
     assert "connection refused" not in str(r.json())
@@ -97,7 +102,7 @@ def test_require_auth_upstream_unreachable_502(auth_on, monkeypatch, client):
 
 def test_require_auth_invalid_session_401(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get", lambda *a, **k: _FakeResp(ok=False))
-    r = client.get("/healthz/detail", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 401
     assert "invalid session" in r.json()["detail"]
 
@@ -105,7 +110,7 @@ def test_require_auth_invalid_session_401(auth_on, monkeypatch, client):
 def test_require_auth_bad_audience_401(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get",
                         lambda *a, **k: _FakeResp(payload={"aud": "anon"}))
-    r = client.get("/healthz/detail", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 401
     assert "audience" in r.json()["detail"]
 
@@ -113,7 +118,7 @@ def test_require_auth_bad_audience_401(auth_on, monkeypatch, client):
 def test_require_auth_email_unconfirmed_403(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get",
                         lambda *a, **k: _FakeResp(payload={"aud": "authenticated"}))
-    r = client.get("/healthz/detail", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 403
     assert "email not confirmed" in r.json()["detail"]
 
@@ -122,7 +127,7 @@ def test_require_auth_wrong_domain_403(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get", lambda *a, **k: _FakeResp(payload={
         "aud": "authenticated", "email_confirmed_at": "2026-01-01", "email": "x@evil.com",
     }))
-    r = client.get("/healthz/detail", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 403
     assert "access restricted" in r.json()["detail"]
 
@@ -132,9 +137,12 @@ def test_require_auth_happy_path_returns_user(auth_on, monkeypatch, client):
         "aud": "authenticated", "email_confirmed_at": "2026-01-01",
         "email": "julian@" + d2_main.ALLOWED_EMAIL_DOMAIN,
     }))
-    r = client.get("/healthz/detail", headers={"Authorization": "Bearer good"})
+    # No Supabase service-role key in the test env → the cron-freshness handler
+    # short-circuits to an empty blob, but auth passes and the route returns 200.
+    monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer good"})
     assert r.status_code == 200
-    assert r.json()["service"] == "d2_dashboard"
+    assert "sources" in r.json()
 
 
 # --------------------------------------------------------------------------
@@ -179,12 +187,6 @@ def test_vault_secret_swallows_exception(monkeypatch):
     monkeypatch.setattr(d2_main, "_sb", lambda: Sb())
     assert d2_main._vault_secret("X") is None
 
-
-
-def test_mask_token_variants():
-    assert d2_main._mask_token(None) is None
-    assert d2_main._mask_token("abcd") == "***"
-    assert d2_main._mask_token("abcde") == "...bcde"
 
 
 # --------------------------------------------------------------------------
@@ -601,16 +603,6 @@ def test_fetch_unified_orders_fast_exception(monkeypatch):
 # --------------------------------------------------------------------------
 # orders endpoint — when clamp + filtered 503 + fast 503
 # --------------------------------------------------------------------------
-
-def test_root_500_when_shell_missing(monkeypatch, client):
-    """When the dashboard.html shell didn't load at import time, `/` raises a
-    500 rather than serving an empty page."""
-    monkeypatch.setattr(d2_main, "PROD_MISSING_SUPABASE", False)
-    monkeypatch.setattr(d2_main, "_DASHBOARD_SHELL", None)
-    r = client.get("/")
-    assert r.status_code == 500
-    assert "dashboard.html missing" in r.json()["detail"]
-
 
 def test_orders_bad_when_clamps_to_all(monkeypatch, client):
     captured = {}

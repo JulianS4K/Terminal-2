@@ -139,10 +139,20 @@ Deploy first, repo last. Each step is independently valuable and reversible unti
      mounts the orders-dashboard router via `build_d0_orders_router()` from there instead of
      importing the ex-D2 `d2_dashboard` package directly; `render-d2-dashboard.yaml` marked
      retirement-bound. Behavior-identical, paths unchanged (`/api/d2/*`).
-   - **Next slices:** move the route bodies + shared helpers from `d2_dashboard/main.py` into
-     `core/` + `routers/d0_orders.py` (breaking the import coupling), then drop the standalone
-     `d2_dashboard` app + its unreachable HTML dashboard, then delete the retired service (a
-     Render write = Applier action, §2.1).
+   - **Slice 2 ✅ (landed):** the shared data/DB helpers moved from `d2_dashboard/main.py` into
+     `core/d0_orders.py` (matching the `core/broker_helpers.py` precedent); one-directional
+     imports, monkeypatch bindings preserved via `_sb`-injecting wrapper shims. main.py 1539→1034.
+   - **Slice 3 — SKIPPED (operator, 2026-07-10):** lifting the `/api/d2/*` route *handlers* out
+     of `main.py` into `routers/d0_orders.py` would force a rewrite of the monkeypatch-heavy d2
+     test suite (patches target `d2_main.*`) for zero functional gain. The routes stay in the
+     `d2_dashboard` package, fronted by the D0 seam — a fine end state.
+   - **Slice 4 ✅ (landed):** the standalone `d2_dashboard` app + its unused HTML dashboard were
+     removed (operator confirmed nobody uses it) — `app`/CORS/`StaticFiles`, the `/healthz*` +
+     `/readyz` routes, the root HTML route, `templates/` + `static/dashboard.*`, and the helpers
+     that cascaded dead. Only the mounted `/api/d2/*` API router + its deps remain. main.py
+     1034→789; `render-d2-dashboard.yaml` marked DEAD (its `:app` start command no longer exists).
+   - **Slice 5 (pending, Applier):** delete the `d2-orders-dashboard` Render service (a Render
+     write, §2.1 — operator action in the dashboard).
 
    The `D2_MOUNT_IN_SHELL` env gate (default mounted) toggles the mount during the move; its end
    state is *"mounted in D0's own service alongside the terminal,"* not *"served by a separate d2

@@ -409,23 +409,6 @@ def _scrub_err(source: str, exc: Exception) -> str:
     return "upstream error"
 
 
-def _shell_config_blob(supabase_url, supabase_anon_key, allowed_email_domain, auth_disabled, canonical_origin) -> dict:
-    """Per-request bootstrap config injected into the HTML shell. Anon key is
-    safe to expose by design; no secrets here. The canonical_origin lets the
-    front-end build an OAuth redirectTo that matches what's registered in
-    Supabase Auth rather than guessing from window.location.
-
-    Values are passed in by the caller (main.py's `/` route) so this module
-    stays free of the app's env-var config constants — one-directional."""
-    return {
-        "supabase_url": supabase_url,
-        "supabase_anon_key": supabase_anon_key,
-        "allowed_email_domain": allowed_email_domain,
-        "auth_disabled": auth_disabled,
-        "canonical_origin": canonical_origin or None,
-    }
-
-
 def _fetch_unified_orders_fast(sb, per_page: int, include_terminal: bool = False) -> dict | None:
     """First-paint fast path: one global query, upcoming-only, sorted by
     event_date ASC. No per-source split, no v_event_base join, no API call.

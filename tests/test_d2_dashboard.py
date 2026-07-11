@@ -44,7 +44,13 @@ def _cleanup_d2_env_after_module():
 
 @pytest.fixture
 def client(monkeypatch):
-    return TestClient(d2_main.app)
+    # The standalone app was removed in consolidation slice 4; build a throwaway
+    # app from the API router so the /api/d2/* routes are exercised the same way
+    # the D0 shell mounts them.
+    from fastapi import FastAPI
+    _a = FastAPI()
+    _a.include_router(d2_main.router)
+    return TestClient(_a)
 
 
 def _stub_evo(per_page, page=1):
@@ -84,191 +90,6 @@ def _stub_tickpick(per_page, page=1):
 
 def _stub_vivid_err(per_page, page=1):
     return {"source": "vivid", "ok": False, "error": "boom", "rows": []}
-
-
-def test_healthz_public_minimal(client):
-    """Public /healthz exposes only ok + service — no fingerprintable detail."""
-    r = client.get("/healthz")
-    assert r.status_code == 200
-    body = r.json()
-    assert body == {"ok": True, "service": "d2_dashboard"}
-
-
-class _ReadyzQuery:
-    """Minimal chainable stub for sb.table(...).select(...).limit(...).execute()."""
-    def __init__(self, raises=False):
-        self._raises = raises
-    def select(self, *a, **k): return self
-    def limit(self, *a, **k): return self
-    def execute(self):
-        if self._raises:
-            raise RuntimeError("connection refused to db.internal:5432")
-        return type("R", (), {"data": [{"source": "evo"}]})()
-
-
-def test_readyz_reachable_when_supabase_responds(monkeypatch, client):
-    """/readyz does a real LIMIT-1 read against unified_orders. When Supabase
-    answers, it returns 200 + supabase=reachable — the readiness signal that
-    /healthz (liveness only) can't give."""
-    sb = type("Sb", (), {"table": lambda self, *a, **k: _ReadyzQuery()})()
-    monkeypatch.setattr(d2_main, "_sb", lambda: sb)
-    r = client.get("/readyz")
-    assert r.status_code == 200
-    assert r.json() == {"ok": True, "service": "d2_dashboard", "supabase": "reachable"}
-
-
-def test_readyz_503_when_supabase_not_configured(monkeypatch, client):
-    """No Supabase client (unset/missing env) → 503 + supabase=not_configured.
-    This is the failure mode /healthz can't see (process is up, DB isn't)."""
-    monkeypatch.setattr(d2_main, "_sb", lambda: None)
-    r = client.get("/readyz")
-    assert r.status_code == 503
-    assert r.json()["supabase"] == "not_configured"
-
-
-def test_readyz_503_when_supabase_unreachable_without_leaking_detail(monkeypatch, client):
-    """Client present but the probe read raises (wrong URL / DB down) → 503 +
-    supabase=unreachable. The exception detail must NOT leak into the client
-    body (it goes to stderr); only the reachability enum is exposed."""
-    sb = type("Sb", (), {"table": lambda self, *a, **k: _ReadyzQuery(raises=True)})()
-    monkeypatch.setattr(d2_main, "_sb", lambda: sb)
-    r = client.get("/readyz")
-    assert r.status_code == 503
-    body = r.json()
-    assert body["supabase"] == "unreachable"
-    assert "connection refused" not in str(body)  # no internal detail leaks
-
-
-def test_cors_storefront_origin_allowed(client):
-    """D0's /undelivered scaffold on vibepass-storefront-test.onrender.com
-    must be able to fetch /api/d2/* cross-origin per the unified architecture
-    (bot_chat 194 Option C + row 216 CORS gap flag).
-
-    Preflight request from the storefront origin should be allowed with
-    credentialed methods + Authorization header echo.
-    """
-    r = client.options(
-        "/api/d2/orders",
-        headers={
-            "Origin": "https://vibepass-storefront-test.onrender.com",
-            "Access-Control-Request-Method": "GET",
-            "Access-Control-Request-Headers": "authorization",
-        },
-    )
-    assert r.status_code in (200, 204)
-    assert r.headers.get("access-control-allow-origin") == "https://vibepass-storefront-test.onrender.com"
-    assert "GET" in r.headers.get("access-control-allow-methods", "")
-    assert r.headers.get("access-control-allow-credentials") == "true"
-
-
-def test_cors_unknown_origin_not_echoed(client):
-    """Random origin not in the whitelist should NOT be echoed back —
-    prevents accidental opening of the API to arbitrary sites if the
-    operator forgets to update the allowlist."""
-    r = client.options(
-        "/api/d2/orders",
-        headers={
-            "Origin": "https://evil.example.com",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-    # FastAPI/Starlette CORSMiddleware returns 400 OR omits the allow-origin
-    # header on a non-whitelisted origin — either is acceptable. Key is the
-    # browser will block the request.
-    assert r.headers.get("access-control-allow-origin") != "https://evil.example.com"
-
-
-def test_cors_localhost_dev_allowed(client):
-    """Local dev (uvicorn at any port) must work — operator runs the dashboard
-    on localhost:8000 typically; D0 may run their shell on a different port."""
-    r = client.options(
-        "/api/d2/orders",
-        headers={
-            "Origin": "http://localhost:8000",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-    assert r.status_code in (200, 204)
-    assert r.headers.get("access-control-allow-origin") == "http://localhost:8000"
-
-
-def test_healthz_detail_under_auth_disabled(client):
-    """Full diagnostic moved to /healthz/detail behind require_auth. With
-    AUTH_DISABLED=true (test env), the route returns the rich shape."""
-    r = client.get("/healthz/detail")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["ok"] is True
-    assert body["service"] == "d2_dashboard"
-    assert body["auth_disabled"] is True
-    assert "python" in body
-    assert set(body["brokers"]) == {"evo", "seatgeek", "tickpick", "vivid", "seatdata", "gotickets"}
-    # Per-broker diag carries the env-var name actually read + a masked tail
-    # so the operator can verify a token rotation took effect (e.g. when a
-    # 401 fires on TickPick and they need to confirm the right key is loaded).
-    assert "token_set" in body["brokers"]["tickpick"]
-    assert "token_env_var" in body["brokers"]["tickpick"]
-    assert "token_masked" in body["brokers"]["tickpick"]
-    assert body["templates"]["dashboard_html_exists"] is True
-    # Lane-status fields default to data-collection / rebuild-pending.
-    assert body["phase"] == "data-collection"
-    assert body["ui"] == "rebuild-pending"
-
-
-def test_root_serves_html(client):
-    """Root serves the Undelivered shell (rebranded from prior "D2 Orders
-    Dashboard" per D0 architecture decision 2026-05-15, bot_chat 194 Option C).
-    Same FastAPI app, customer-service framing."""
-    r = client.get("/")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/html")
-    assert "Undelivered" in r.text
-
-
-def test_root_injects_config_blob(client):
-    """The shell substitutes a JSON config blob in place of the placeholder
-    so the front-end module can read window.__D2_CONFIG__ synchronously
-    without a /api/d2/config-public round trip on boot."""
-    r = client.get("/")
-    assert r.status_code == 200
-    body = r.text
-    # Placeholder must be fully replaced.
-    assert "__D2_CONFIG_JSON__" not in body
-    # The config script tag is present and contains valid JSON with expected keys.
-    assert '<script id="d2-config" type="application/json">' in body
-    # Expected fields land in the inline blob.
-    assert '"allowed_email_domain":' in body
-    assert '"auth_disabled":' in body
-    assert '"canonical_origin":' in body
-
-
-def test_root_returns_503_when_prod_missing_supabase_with_auth_on(monkeypatch, client):
-    """`/` returns 503 when the boot guard fires — operator set
-    AUTH_DISABLED=false on a prod platform without Supabase env vars. Catches
-    the misconfiguration before users see a 'Server misconfigured' panel.
-    With AUTH_DISABLED=true (the default), Supabase env vars are unused and
-    the guard never trips."""
-    monkeypatch.setattr(d2_main, "PROD_MISSING_SUPABASE", True)
-    r = client.get("/")
-    assert r.status_code == 503
-    # Healthz stays public + minimal regardless.
-    r = client.get("/healthz")
-    assert r.status_code == 200
-
-
-def test_static_css_and_js_mounted(client):
-    """The split assets must be reachable under /static/d2/ so the shell's
-    <link> and <script src=> resolve. 404 here means StaticFiles didn't mount."""
-    r = client.get("/static/d2/dashboard.css")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/css")
-    assert "--bg:" in r.text  # CSS variables block
-
-    r = client.get("/static/d2/dashboard.js")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("application/javascript") or \
-           r.headers["content-type"].startswith("text/javascript")
-    assert "window.__D2_CONFIG__" in r.text
 
 
 def test_orders_503_when_supabase_unconfigured(monkeypatch, client):
@@ -928,31 +749,6 @@ def test_orders_page_clamped_to_minimum_one(monkeypatch, client):
     monkeypatch.setattr(d2_main, "_fetch_unified_orders_page", fake_page)
     assert client.get("/api/d2/orders?page=-5").status_code == 200
     assert seen["page"] == 1
-
-
-def test_broker_diag_masks_token_and_reports_env_var(monkeypatch):
-    """The /healthz/detail diag exposes which env var resolved + a masked
-    tail (last 4 chars) so the operator can verify a token rotation took
-    effect without exposing the secret."""
-    monkeypatch.setenv("TICKPICK_API_TOKEN", "supersecret-abcd")
-    monkeypatch.delenv("TICKPICK_TOKEN", raising=False)
-    diag = d2_main._broker_diag("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
-    assert diag["token_set"] is True
-    assert diag["token_env_var"] == "TICKPICK_API_TOKEN"
-    assert diag["token_masked"] == "...abcd"
-    assert "token_warning" not in diag
-
-
-def test_broker_diag_warns_when_multiple_env_vars_set(monkeypatch):
-    """Both vault-canonical AND legacy env vars set is a common cause of
-    auth failures (operator rotates one but not the other). Surface it."""
-    monkeypatch.setenv("TICKPICK_API_TOKEN", "new-XXXX")
-    monkeypatch.setenv("TICKPICK_TOKEN",     "old-YYYY")
-    diag = d2_main._broker_diag("TICKPICK_API_TOKEN", "TICKPICK_TOKEN")
-    assert diag["token_env_var"] == "TICKPICK_API_TOKEN"
-    assert "token_warning" in diag
-    assert "TICKPICK_API_TOKEN" in diag["token_warning"]
-    assert "TICKPICK_TOKEN" in diag["token_warning"]
 
 
 def test_order_detail_unknown_source(client):
