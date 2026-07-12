@@ -651,6 +651,9 @@ def test_narrate_background_failure(client, monkeypatch):
 def test_narration_voice_selection(fake):
     assert onb_podcasts._narration_voice(
         {"speaker_profile": {"speakers": [{"name": "N", "voice_id": "echo"}]}}) == "echo"
+    # first speaker has no voice_id → loop continues to the one that does
+    assert onb_podcasts._narration_voice(
+        {"speaker_profile": {"speakers": [{"name": "A"}, {"name": "B", "voice_id": "nova"}]}}) == "nova"
     assert onb_podcasts._narration_voice({"episode_profile": {"voice": "onyx"}}) == "onyx"
     assert onb_podcasts._narration_voice({}) == "alloy"
 

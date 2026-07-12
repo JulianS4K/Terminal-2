@@ -164,8 +164,7 @@ def _chunk_for_tts(text: str, limit: int = _TTS_CHAR_LIMIT) -> list[str]:
             chunks.append(piece[:limit].strip())
             piece = piece[limit:]
         buf = piece
-    if buf.strip():
-        chunks.append(buf.strip())
+    chunks.append(buf.strip())  # flush the tail; empties are filtered below
     return [c for c in chunks if c]
 
 
