@@ -617,6 +617,94 @@ def test_podcast_empty_turn_and_extract_json(fake, monkeypatch):
     assert out["status"] == "done"
 
 
+# ============================================================ narration
+def test_narrate_flow(client, stub_providers):
+    """POST /narrate → single-voice mp3 on an episode row (shareable audio_url)."""
+    nb = _mk_notebook(client)
+    nid = nb["id"]
+    # validation: missing notebook, empty text
+    assert client.post("/api/notebook/notebooks/nope/narrate", json={"text": "hi"}).status_code == 404
+    assert client.post(f"/api/notebook/notebooks/{nid}/narrate", json={"text": "  "}).status_code == 400
+    # background narration runs synchronously under TestClient → done + audio_url
+    r = client.post(f"/api/notebook/notebooks/{nid}/narrate",
+                    json={"text": "Read me aloud.", "name": "N1", "voice": "nova"})
+    assert r.status_code == 200
+    eid = r.json()["episode"]["id"]
+    ep = client.get(f"/api/notebook/episodes/{eid}").json()
+    assert ep["status"] == "done" and ep["audio_url"]
+    assert ep["episode_profile"]["kind"] == "narration"
+    assert client.get(f"/api/notebook/jobs/{r.json()['job_id']}").json()["status"] == "done"
+
+
+def test_narrate_background_failure(client, monkeypatch):
+    """Route → background narration that raises is swallowed by _run_narration;
+    the episode row still records the error status (covers the wrapper's except)."""
+    monkeypatch.setattr(onb_providers, "tts",
+                        lambda *a, **k: (_ for _ in ()).throw(ProviderError("no tts")))
+    nb = _mk_notebook(client)
+    r = client.post(f"/api/notebook/notebooks/{nb['id']}/narrate", json={"text": "hi there"})
+    assert r.status_code == 200
+    ep = client.get(f"/api/notebook/episodes/{r.json()['episode']['id']}").json()
+    assert ep["status"] == "error" and "OPENAI_API_KEY" in ep["error"]
+
+
+def test_narration_voice_selection(fake):
+    assert onb_podcasts._narration_voice(
+        {"speaker_profile": {"speakers": [{"name": "N", "voice_id": "echo"}]}}) == "echo"
+    assert onb_podcasts._narration_voice({"episode_profile": {"voice": "onyx"}}) == "onyx"
+    assert onb_podcasts._narration_voice({}) == "alloy"
+
+
+def test_chunk_for_tts():
+    assert onb_podcasts._chunk_for_tts("") == []
+    assert onb_podcasts._chunk_for_tts("short") == ["short"]
+    # many sentence-delimited pieces → several chunks under the limit
+    many = onb_podcasts._chunk_for_tts("a. " * 100, limit=50)
+    assert len(many) > 1 and all(len(c) <= 50 for c in many)
+    # a single unbreakable piece longer than the limit → hard-sliced
+    sliced = onb_podcasts._chunk_for_tts("x" * 120, limit=50)
+    assert len(sliced) == 3 and all(len(c) <= 50 for c in sliced)
+
+
+def test_narration_error_paths(fake, monkeypatch):
+    # episode not found → ValueError
+    with pytest.raises(ValueError):
+        onb_podcasts.generate_narration(fake, "missing")
+    # empty content → error status recorded, NO job (covers the no-job except branch)
+    ep0 = repo.create_episode(fake, {"name": "e0", "content": "", "status": "queued"})
+    with pytest.raises(ValueError):
+        onb_podcasts.generate_narration(fake, ep0["id"])
+    assert repo.get_episode(fake, ep0["id"])["status"] == "error"
+    # no TTS provider → ProviderError → friendly "set OPENAI_API_KEY" note + job error
+    monkeypatch.setattr(onb_providers, "tts",
+                        lambda *a, **k: (_ for _ in ()).throw(ProviderError("no tts")))
+    ep = repo.create_episode(fake, {"name": "e", "content": "narrate this", "status": "queued"})
+    job = repo.create_job(fake, kind="narration", ref_id=ep["id"])
+    with pytest.raises(ProviderError):
+        onb_podcasts.generate_narration(fake, ep["id"], job_id=job["id"])
+    row = repo.get_episode(fake, ep["id"])
+    assert row["status"] == "error" and "OPENAI_API_KEY" in row["error"]
+    assert repo.get_job(fake, job["id"])["status"] == "error"
+
+
+def test_narration_success_without_job(fake, monkeypatch):
+    """Direct call without a job_id → success branch with `if job_id` false."""
+    monkeypatch.setattr(onb_providers, "tts", lambda _t, **_k: b"MP3")
+    ep = repo.create_episode(fake, {"name": "e", "content": "hello world", "status": "queued"})
+    out = onb_podcasts.generate_narration(fake, ep["id"])
+    assert out["status"] == "done" and out["audio_url"]
+
+
+def test_narration_upload_failure(monkeypatch):
+    """Storage failure → generic (non-ProviderError) except branch → error status."""
+    fake = FakeSB(storage_fail=True)
+    monkeypatch.setattr(onb_providers, "tts", lambda _t, **_k: b"MP3")
+    ep = repo.create_episode(fake, {"name": "e", "content": "narrate", "status": "queued"})
+    with pytest.raises(RuntimeError):
+        onb_podcasts.generate_narration(fake, ep["id"])
+    assert repo.get_episode(fake, ep["id"])["status"] == "error"
+
+
 # ============================================================ ingest unit
 def test_extract_text_variants(monkeypatch):
     assert onb_ingest.extract_text({"kind": "text", "text": " hi ", "title": "T"}) == ("hi", "T")

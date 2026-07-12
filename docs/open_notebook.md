@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.7.0 (2026-07-07)
+**Doc version:** v1.8.0 (2026-07-12)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -12,7 +12,8 @@ Create **notebooks**, add **sources** (text / URL / PDF), which are extracted,
 chunked, and embedded; run **transformations** (reusable prompts → insights);
 **search** sources (full-text + vector); **ask** questions with RAG (decompose →
 parallel vector search → cited synthesis); **chat** grounded in the whole notebook
-context; and generate multi-speaker **podcasts** (outline → transcript → TTS).
+context; generate multi-speaker **podcasts** (outline → transcript → TTS); and
+**narrate** any text to a shareable single-voice mp3 (TTS only, no LLM stages).
 
 ## Architecture
 - **Storage** — Supabase Postgres, `onb_*` tables in `public` (migration
@@ -141,6 +142,20 @@ pre-deduped so the raw sales firehose is never read.
   by any session under operator direction — no A1 gate). pgvector embedding dim is fixed at DDL time — changing the
   embedding model's dimension requires a follow-up migration.
 - Podcast audio needs a **public** Storage bucket named per `ONB_AUDIO_BUCKET`.
+
+## Narration (text → shareable mp3)
+A lightweight companion to podcasts: `POST /api/notebook/notebooks/{id}/narrate
+{"text": "...", "name?": "...", "voice?": "alloy"}` synthesizes the given text
+**straight to audio** — no outline/transcript LLM stages — with a single voice,
+chunking long text under the OpenAI TTS input cap and stitching the mp3 parts
+(`open_notebook/podcasts.py:generate_narration`). It reuses the podcast surface
+end-to-end: the result is an `onb_episodes` row (job `kind='narration'`) with a
+public `audio_url`, so it lists, plays, and deletes through the same
+`/api/notebook/episodes*` endpoints and the NOTEBOOK tab's Podcasts panel (which
+also exposes a **Narrate** card + per-episode **Copy link / Download**). Unlike a
+podcast — which degrades to transcript-only without OpenAI — narration *is* the
+audio, so with no TTS provider the episode ends `status='error'` with a
+"set OPENAI_API_KEY" note rather than producing an empty file.
 
 ## Graceful degradation without OpenAI
 The subsystem is fully usable on a Claude key alone. Where OpenAI would add a
