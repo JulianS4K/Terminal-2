@@ -4,9 +4,8 @@ Companion to tests/test_d2_dashboard.py (smoke tests). This file drives the
 remaining uncovered branches to bring d2_dashboard/main.py to 100% line
 coverage: the real require_auth path (AUTH_DISABLED off), vault-secret +
 env-first helpers, client factories, the SQL-backed fetchers
-(_fetch_unified_orders_page / _fetch_filtered_orders / _fetch_unified_orders_fast /
-_fetch_orders_from_sql), the fuzzy event matcher, the metrics + health +
-sales-feed error branches, and the deep-order SQL helpers.
+(_fetch_unified_orders_page / _fetch_filtered_orders / _fetch_unified_orders_fast),
+the metrics + health + sales-feed error branches, and the deep-order SQL helpers.
 
 No real network / DB — everything is monkeypatched to in-memory fakes.
 """
@@ -48,7 +47,12 @@ def _auth_disabled_by_default(monkeypatch):
 
 @pytest.fixture
 def client():
-    return TestClient(d2_main.app)
+    # The standalone app was removed in consolidation slice 4; build a throwaway
+    # app from the API router (same way the D0 shell mounts it).
+    from fastapi import FastAPI
+    _a = FastAPI()
+    _a.include_router(d2_main.router)
+    return TestClient(_a)
 
 
 # --------------------------------------------------------------------------
@@ -72,7 +76,7 @@ def auth_on(monkeypatch):
 
 
 def test_require_auth_missing_bearer_401(auth_on, client):
-    r = client.get("/api/d2/config")
+    r = client.get("/api/d2/cron-freshness")
     assert r.status_code == 401
     assert "missing bearer token" in r.json()["detail"]
 
@@ -81,7 +85,7 @@ def test_require_auth_no_supabase_config_500(monkeypatch, client):
     monkeypatch.setattr(d2_main, "AUTH_DISABLED", False)
     monkeypatch.setattr(d2_main, "SUPABASE_URL", None)
     monkeypatch.setattr(d2_main, "SUPABASE_ANON_KEY", None)
-    r = client.get("/api/d2/config", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 500
     assert "Supabase auth not configured" in r.json()["detail"]
 
@@ -90,7 +94,7 @@ def test_require_auth_upstream_unreachable_502(auth_on, monkeypatch, client):
     def boom(*a, **k):
         raise RuntimeError("connection refused to db.internal")
     monkeypatch.setattr(d2_main.requests, "get", boom)
-    r = client.get("/api/d2/config", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 502
     # Internal error detail must not leak.
     assert "connection refused" not in str(r.json())
@@ -98,7 +102,7 @@ def test_require_auth_upstream_unreachable_502(auth_on, monkeypatch, client):
 
 def test_require_auth_invalid_session_401(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get", lambda *a, **k: _FakeResp(ok=False))
-    r = client.get("/api/d2/config", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 401
     assert "invalid session" in r.json()["detail"]
 
@@ -106,7 +110,7 @@ def test_require_auth_invalid_session_401(auth_on, monkeypatch, client):
 def test_require_auth_bad_audience_401(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get",
                         lambda *a, **k: _FakeResp(payload={"aud": "anon"}))
-    r = client.get("/api/d2/config", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 401
     assert "audience" in r.json()["detail"]
 
@@ -114,7 +118,7 @@ def test_require_auth_bad_audience_401(auth_on, monkeypatch, client):
 def test_require_auth_email_unconfirmed_403(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get",
                         lambda *a, **k: _FakeResp(payload={"aud": "authenticated"}))
-    r = client.get("/api/d2/config", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 403
     assert "email not confirmed" in r.json()["detail"]
 
@@ -123,7 +127,7 @@ def test_require_auth_wrong_domain_403(auth_on, monkeypatch, client):
     monkeypatch.setattr(d2_main.requests, "get", lambda *a, **k: _FakeResp(payload={
         "aud": "authenticated", "email_confirmed_at": "2026-01-01", "email": "x@evil.com",
     }))
-    r = client.get("/api/d2/config", headers={"Authorization": "Bearer xyz"})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer xyz"})
     assert r.status_code == 403
     assert "access restricted" in r.json()["detail"]
 
@@ -133,13 +137,16 @@ def test_require_auth_happy_path_returns_user(auth_on, monkeypatch, client):
         "aud": "authenticated", "email_confirmed_at": "2026-01-01",
         "email": "julian@" + d2_main.ALLOWED_EMAIL_DOMAIN,
     }))
-    r = client.get("/api/d2/config", headers={"Authorization": "Bearer good"})
+    # No Supabase service-role key in the test env → the cron-freshness handler
+    # short-circuits to an empty blob, but auth passes and the route returns 200.
+    monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
+    r = client.get("/api/d2/cron-freshness", headers={"Authorization": "Bearer good"})
     assert r.status_code == 200
-    assert "supabase_url" in r.json()
+    assert "sources" in r.json()
 
 
 # --------------------------------------------------------------------------
-# _vault_secret / _env_first / _mask_token
+# _vault_secret / _mask_token
 # --------------------------------------------------------------------------
 
 class _RpcCall:
@@ -181,71 +188,10 @@ def test_vault_secret_swallows_exception(monkeypatch):
     assert d2_main._vault_secret("X") is None
 
 
-def test_env_first_returns_first_set(monkeypatch):
-    monkeypatch.delenv("AAA", raising=False)
-    monkeypatch.setenv("BBB", "v")
-    assert d2_main._env_first("AAA", "BBB") == "v"
-    monkeypatch.delenv("BBB", raising=False)
-    assert d2_main._env_first("AAA", "BBB") is None
-
-
-def test_mask_token_variants():
-    assert d2_main._mask_token(None) is None
-    assert d2_main._mask_token("abcd") == "***"
-    assert d2_main._mask_token("abcde") == "...bcde"
-
 
 # --------------------------------------------------------------------------
 # Client factories
 # --------------------------------------------------------------------------
-
-def test_evo_client_none_without_creds(monkeypatch):
-    monkeypatch.setattr(d2_main, "_env_first", lambda *n: None)
-    assert d2_main._evo_client() is None
-
-
-def test_evo_client_built_with_creds(monkeypatch):
-    monkeypatch.setattr(d2_main, "_env_first", lambda *n: "tok-or-secret")
-    c = d2_main._evo_client()
-    assert c is not None
-
-
-def test_sg_client_swallows_constructor_error(monkeypatch):
-    import seatgeek_client
-    def boom(*a, **k):
-        raise RuntimeError("no token")
-    monkeypatch.setattr(seatgeek_client, "SeatGeekClient", boom)
-    assert d2_main._sg_client() is None
-
-
-def test_tickpick_client_none_without_token(monkeypatch):
-    monkeypatch.setattr(d2_main, "_env_first", lambda *n: None)
-    assert d2_main._tickpick_client() is None
-
-
-def test_tickpick_client_built_with_token(monkeypatch):
-    monkeypatch.setattr(d2_main, "_env_first", lambda *n: "tok")
-    assert d2_main._tickpick_client() is not None
-
-
-def test_vivid_client_none_without_token(monkeypatch):
-    monkeypatch.delenv("VIVID_API_TOKEN", raising=False)
-    monkeypatch.setattr(d2_main, "_vault_secret", lambda n: None)
-    assert d2_main._vivid_client() is None
-
-
-def test_vivid_client_built_from_env(monkeypatch):
-    monkeypatch.setenv("VIVID_API_TOKEN", "vtok")
-    assert d2_main._vivid_client() is not None
-
-
-def test_seatdata_client_returns_none_on_error(monkeypatch):
-    import seatdata_client
-    def boom(*a, **k):
-        raise seatdata_client.SeatDataError("no key")
-    monkeypatch.setattr(seatdata_client, "SeatDataClient", boom)
-    monkeypatch.setattr(d2_main, "_sb", lambda: None)
-    assert d2_main._seatdata_client() is None
 
 
 def test_gotickets_client_none_without_creds(monkeypatch):
@@ -368,111 +314,6 @@ def test_pull_event_window_queries_and_caches(monkeypatch):
     assert out == rows
     # Reset so other tests aren't affected by the warm cache.
     d2_main._EVENT_WINDOW_CACHE.update({"at": 0.0, "rows": []})
-
-
-# --------------------------------------------------------------------------
-# Fuzzy event matcher + enrichment
-# --------------------------------------------------------------------------
-
-def test_tokenize_event_drops_stopwords_and_short():
-    toks = d2_main._tokenize_event("The Knicks vs Lakers")
-    assert "knicks" in toks and "lakers" in toks
-    assert "the" not in toks and "vs" not in toks
-
-
-def test_tokenize_event_empty_for_none():
-    assert d2_main._tokenize_event(None) == set()
-
-
-def test_match_event_returns_none_without_name_or_candidates():
-    assert d2_main._match_event(None, None, [{"event_name": "X"}]) is None
-    assert d2_main._match_event("Knicks vs Lakers", None, []) is None
-
-
-def test_match_event_returns_none_when_target_all_stopwords():
-    assert d2_main._match_event("the vs at", None, [{"event_name": "Knicks Lakers"}]) is None
-
-
-def test_match_event_picks_best_by_tokens_and_date():
-    candidates = [
-        {"event_name": "Random Concert", "event_at_utc": "2026-06-01T23:30:00Z"},
-        {"event_name": "Knicks vs Lakers Game", "event_at_utc": "2026-06-01T23:30:00Z",
-         "tevo_event_id": 42},
-    ]
-    match = d2_main._match_event("Knicks Lakers", "2026-06-01T23:30:00Z", candidates)
-    assert match["tevo_event_id"] == 42
-
-
-def test_match_event_skips_candidate_without_tokens():
-    candidates = [
-        {"event_name": "", "event_at_utc": "2026-06-01T23:30:00Z"},
-        {"event_name": "Knicks Lakers", "tevo_event_id": 7,
-         "event_at_utc": "2026-06-01T23:30:00Z"},
-    ]
-    match = d2_main._match_event("Knicks Lakers", "2026-06-01T23:30:00Z", candidates)
-    assert match["tevo_event_id"] == 7
-
-
-def test_match_event_rejects_far_date():
-    candidates = [{"event_name": "Knicks Lakers", "tevo_event_id": 9,
-                   "event_at_utc": "2027-06-01T23:30:00Z"}]
-    # Same tokens but >12h apart → rejected.
-    assert d2_main._match_event("Knicks Lakers", "2026-06-01T23:30:00Z", candidates) is None
-
-
-def test_match_event_handles_unparseable_candidate_date():
-    candidates = [{"event_name": "Knicks Lakers", "tevo_event_id": 11,
-                   "event_at_utc": "not-a-date"}]
-    # Unparseable candidate date with a parsed target → continue (skip).
-    assert d2_main._match_event("Knicks Lakers", "2026-06-01T23:30:00Z", candidates) is None
-
-
-def test_match_event_no_target_date_matches_on_tokens(monkeypatch):
-    candidates = [{"event_name": "Knicks Lakers Showdown", "tevo_event_id": 21,
-                   "event_at_utc": "2026-06-01T23:30:00Z"}]
-    match = d2_main._match_event("Knicks Lakers", None, candidates)
-    assert match["tevo_event_id"] == 21
-
-
-def test_match_event_target_date_later_format_parses():
-    """A space-separated target_date fails the first two strptime formats and
-    parses on the third (`%Y-%m-%d %H:%M:%S`), exercising the except-continue
-    in the format loop. The resulting naive target vs the candidate's
-    tz-aware date makes the subtraction raise (caught) → no match, but the
-    format loop's except branch is what we're covering here."""
-    candidates = [{"event_name": "Knicks Lakers", "tevo_event_id": 41,
-                   "event_at_utc": "2026-06-01T23:30:00Z"}]
-    match = d2_main._match_event("Knicks Lakers", "2026-06-01 23:30:00", candidates)
-    assert match is None
-
-
-def test_match_event_naive_candidate_date_gets_utc():
-    candidates = [{"event_name": "Knicks Lakers", "tevo_event_id": 31,
-                   "event_at_utc": "2026-06-01T23:30:00"}]  # naive, no tz
-    match = d2_main._match_event("Knicks Lakers", "2026-06-01T23:30:00Z", candidates)
-    assert match["tevo_event_id"] == 31
-
-
-def test_enrich_row_noop_without_window():
-    row = {"event_name": "X"}
-    assert d2_main._enrich_row_with_event(row, []) is row
-
-
-def test_enrich_row_noop_without_match():
-    row = {"event_name": "Totally Unrelated Thing", "event_date": None}
-    window = [{"event_name": "Different Show", "tevo_event_id": 1}]
-    assert d2_main._enrich_row_with_event(row, window) is row
-
-
-def test_enrich_row_overlays_matched_event():
-    row = {"event_name": "Knicks Lakers", "event_date": "2026-06-01T23:30:00Z"}
-    window = [{"event_name": "Knicks Lakers Game", "tevo_event_id": 99,
-               "event_at_local": "2026-06-01T19:30:00-04:00",
-               "event_at_utc": "2026-06-01T23:30:00Z"}]
-    out = d2_main._enrich_row_with_event(row, window)
-    assert out["tevo_event_id"] == 99
-    assert out["event_origin"] == "matched"
-    assert out["event_date"] == "2026-06-01T19:30:00-04:00"
 
 
 # --------------------------------------------------------------------------
@@ -712,27 +553,6 @@ def test_fetch_filtered_outer_exception(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# _fetch_orders_from_sql error branch + _fetch_tickpick / _fetch_vivid
-# --------------------------------------------------------------------------
-
-def test_fetch_orders_from_sql_error_branch(monkeypatch):
-    class Sb:
-        def table(self, name):
-            return _UOQuery([], raise_on_execute=True)
-    monkeypatch.setattr(d2_main, "_sb", lambda: Sb())
-    out = d2_main._fetch_orders_from_sql("evo", 25)
-    assert out["ok"] is False
-    assert out["origin"] == "sql"
-
-
-def test_fetch_tickpick_and_vivid_wrap_sql(monkeypatch):
-    monkeypatch.setattr(d2_main, "_fetch_orders_from_sql",
-                        lambda src, n, p=1: {"source": src, "ok": True, "rows": [], "origin": "sql"})
-    assert d2_main._fetch_tickpick(per_page=5)["source"] == "tickpick"
-    assert d2_main._fetch_vivid(per_page=5)["source"] == "vivid"
-
-
-# --------------------------------------------------------------------------
 # _fetch_unified_orders_fast
 # --------------------------------------------------------------------------
 
@@ -783,16 +603,6 @@ def test_fetch_unified_orders_fast_exception(monkeypatch):
 # --------------------------------------------------------------------------
 # orders endpoint — when clamp + filtered 503 + fast 503
 # --------------------------------------------------------------------------
-
-def test_root_500_when_shell_missing(monkeypatch, client):
-    """When the dashboard.html shell didn't load at import time, `/` raises a
-    500 rather than serving an empty page."""
-    monkeypatch.setattr(d2_main, "PROD_MISSING_SUPABASE", False)
-    monkeypatch.setattr(d2_main, "_DASHBOARD_SHELL", None)
-    r = client.get("/")
-    assert r.status_code == 500
-    assert "dashboard.html missing" in r.json()["detail"]
-
 
 def test_orders_bad_when_clamps_to_all(monkeypatch, client):
     captured = {}
