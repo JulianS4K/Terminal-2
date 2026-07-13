@@ -29,4 +29,4 @@ cryptography>=49.0.0,<50.0  # >=46.0.5 clears GHSA-r6ph-v2qm-q3c2 (SECT curve su
 # sentry-sdk — error tracking, wired in core/observability.py. Inert unless the
 # operator sets SENTRY_DSN (init_sentry no-ops without it), so it adds zero
 # runtime behavior until activated. FastAPI/Starlette auto-instrument.
-sentry-sdk>=2.64.0,<3.0
+sentry-sdk>=2.65.0,<3.0
