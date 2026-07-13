@@ -4,19 +4,24 @@
 // Auth: `Authorization: Bearer sk_live_...`. The key is never stored in plaintext
 // (migration 20260616200000) — we SHA-256 the presented key and look up the
 // matching non-revoked row in exos_api_keys, which yields the org_id every query
-// is then scoped to. Read-only: no endpoint mutates anything.
+// is then scoped to. All mutating access is the single POST check-in route.
 //
 // Required secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 //
-// Endpoints (all org-scoped to the key):
-//   GET  /events                      → the org's events
+// List endpoints accept ?limit= (1..500, default 100) & ?offset= (default 0) and
+// return `{ data, page: { limit, offset, returned } }`. Single-object endpoints
+// return `{ data }`.
+//
+// Endpoints (all org-scoped to the key; GET /openapi.json is public):
+//   GET  /openapi.json                → OpenAPI 3.1 spec (no auth)
+//   GET  /events                      → the org's events            (paginated)
 //   GET  /events/:id                  → one event + its tiers
-//   GET  /events/:id/attendees        → tickets for the event
+//   GET  /events/:id/attendees        → tickets for the event       (paginated)
 //   GET  /events/:id/set-times        → the event's lineup schedule
-//   GET  /events/:id/check-ins        → the event's scan log
+//   GET  /events/:id/check-ins        → the event's scan log        (paginated)
 //   GET  /tickets/:id                 → one ticket's status
-//   GET  /orders                      → the org's checkout sessions
-//   GET  /invoices                    → the org's invoices
+//   GET  /orders                      → the org's checkout sessions (paginated)
+//   GET  /invoices                    → the org's invoices          (paginated)
 //   POST /events/:id/check-in         → programmatic door check-in (body:
 //                                        {ticket_id, barcode, idempotency_key?})
 
@@ -24,6 +29,16 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "GET" && req.method !== "POST") return json({ error: "method not allowed" }, 405);
+
+  const url = new URL(req.url);
+  // Path after the function name: /exos-api/<...>.
+  const path = url.pathname.replace(/^.*\/exos-api/, "").replace(/\/+$/, "");
+  const seg = path.split("/").filter(Boolean); // e.g. ['events', ':id', 'attendees']
+
+  // Public, unauthenticated: the machine-readable API description.
+  if (req.method === "GET" && seg.length === 1 && seg[0] === "openapi.json") {
+    return json(openapiSpec());
+  }
 
   const auth = req.headers.get("Authorization") ?? "";
   const key = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
@@ -47,9 +62,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     await sb.from("exos_api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
   } catch { /* best-effort */ }
 
-  // Path after the function name: /exos-api/<...>.
-  const path = new URL(req.url).pathname.replace(/^.*\/exos-api/, "").replace(/\/+$/, "");
-  const seg = path.split("/").filter(Boolean); // e.g. ['events', ':id', 'attendees']
+  const { limit, offset } = pageParams(url);
+  const paged = (data: unknown[] | null) => json({ data: data ?? [], page: { limit, offset, returned: data?.length ?? 0 } });
 
   try {
     // ── Writes (POST) ─────────────────────────────────────────────────────
@@ -88,9 +102,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .from("exos_events")
         .select("id, name, slug, status, starts_at, currency, tickets_sold, total_tickets, created_at")
         .eq("org_id", orgId)
-        .order("starts_at", { ascending: false });
+        .order("starts_at", { ascending: false })
+        .range(offset, offset + limit - 1);
       if (error) throw error;
-      return json({ data });
+      return paged(data);
     }
 
     if (seg[0] === "events" && seg.length === 2) {
@@ -115,9 +130,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .from("exos_tickets")
         .select("id, tier_name, owner_email, status, check_in_at, price_paid, channel_source, created_at")
         .eq("event_id", seg[1]).eq("org_id", orgId)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limit - 1);
       if (error) throw error;
-      return json({ data });
+      return paged(data);
     }
 
     if (seg[0] === "events" && seg.length === 3 && seg[2] === "set-times") {
@@ -134,9 +150,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .select("ticket_id, source, verification, scanned_at, scanned_by_email")
         .eq("event_id", seg[1]).eq("org_id", orgId)
         .order("scanned_at", { ascending: false })
-        .limit(1000);
+        .range(offset, offset + limit - 1);
       if (error) throw error;
-      return json({ data });
+      return paged(data);
     }
 
     if (seg[0] === "tickets" && seg.length === 2) {
@@ -155,9 +171,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .select("session_id, event_id, status, quantity, amount_cents, tax_cents, currency, buyer_email, created_at, fulfilled_at")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
-        .limit(500);
+        .range(offset, offset + limit - 1);
       if (error) throw error;
-      return json({ data });
+      return paged(data);
     }
 
     if (seg[0] === "invoices" && seg.length === 1) {
@@ -166,17 +182,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .select("number, event_id, session_id, buyer_email, currency, subtotal_cents, tax_cents, total_cents, status, issued_at")
         .eq("org_id", orgId)
         .order("issued_at", { ascending: false })
-        .limit(500);
+        .range(offset, offset + limit - 1);
       if (error) throw error;
-      return json({ data });
+      return paged(data);
     }
 
-    return json({ error: "not found", hint: "GET /events, /events/:id, /events/:id/{attendees,set-times,check-ins}, /tickets/:id, /orders, /invoices · POST /events/:id/check-in" }, 404);
+    return json({ error: "not found", hint: "GET /openapi.json, /events, /events/:id, /events/:id/{attendees,set-times,check-ins}, /tickets/:id, /orders, /invoices · POST /events/:id/check-in" }, 404);
   } catch (e) {
     console.error("exos-api error:", e);
     return json({ error: "internal error" }, 500);
   }
 });
+
+/** Clamp ?limit (1..500, default 100) and ?offset (>=0, default 0). */
+function pageParams(url: URL): { limit: number; offset: number } {
+  const l = parseInt(url.searchParams.get("limit") ?? "", 10);
+  const o = parseInt(url.searchParams.get("offset") ?? "", 10);
+  const limit = Number.isFinite(l) ? Math.min(Math.max(l, 1), 500) : 100;
+  const offset = Number.isFinite(o) && o > 0 ? o : 0;
+  return { limit, offset };
+}
 
 async function sha256Hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -185,4 +210,74 @@ async function sha256Hex(s: string): Promise<string> {
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+/** OpenAPI 3.1 description of this API, served publicly at GET /openapi.json. */
+function openapiSpec(): unknown {
+  const paged = {
+    type: "object",
+    properties: {
+      data: { type: "array", items: { type: "object" } },
+      page: {
+        type: "object",
+        properties: {
+          limit: { type: "integer" },
+          offset: { type: "integer" },
+          returned: { type: "integer" },
+        },
+      },
+    },
+  };
+  const single = { type: "object", properties: { data: { type: "object" } } };
+  const listParams = [
+    { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 500, default: 100 } },
+    { name: "offset", in: "query", schema: { type: "integer", minimum: 0, default: 0 } },
+  ];
+  const idParam = { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } };
+  const ok = (schema: unknown) => ({ "200": { description: "OK", content: { "application/json": { schema } } } });
+  return {
+    openapi: "3.1.0",
+    info: { title: "Exos Public API", version: "1.0.0", description: "Org-scoped ticketing API. Auth: Authorization: Bearer <api key>." },
+    servers: [{ url: "/functions/v1/exos-api" }],
+    components: {
+      securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+    },
+    security: [{ bearerAuth: [] }],
+    paths: {
+      "/events": { get: { summary: "List events", parameters: listParams, responses: ok(paged) } },
+      "/events/{id}": { get: { summary: "Get one event + tiers", parameters: [idParam], responses: ok(single) } },
+      "/events/{id}/attendees": { get: { summary: "List attendees", parameters: [idParam, ...listParams], responses: ok(paged) } },
+      "/events/{id}/set-times": { get: { summary: "Event lineup schedule", parameters: [idParam], responses: ok({ type: "object", properties: { data: { type: "array" } } }) } },
+      "/events/{id}/check-ins": { get: { summary: "Event scan log", parameters: [idParam, ...listParams], responses: ok(paged) } },
+      "/events/{id}/check-in": {
+        post: {
+          summary: "Programmatic door check-in",
+          parameters: [idParam],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["ticket_id", "barcode"],
+                  properties: {
+                    ticket_id: { type: "string", format: "uuid" },
+                    barcode: { type: "string", description: "A live signed barcode (T-… or T2-…). Required." },
+                    idempotency_key: { type: "string", format: "uuid", description: "Retries with the same key are a no-op." },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Checked in", content: { "application/json": { schema: single } } },
+            "422": { description: "Refused (used / voided / barcode-rejected / wrong-org / doors-not-open / barcode-required)" },
+          },
+        },
+      },
+      "/tickets/{id}": { get: { summary: "Get one ticket's status", parameters: [idParam], responses: ok(single) } },
+      "/orders": { get: { summary: "List checkout sessions", parameters: listParams, responses: ok(paged) } },
+      "/invoices": { get: { summary: "List invoices", parameters: listParams, responses: ok(paged) } },
+    },
+  };
 }
