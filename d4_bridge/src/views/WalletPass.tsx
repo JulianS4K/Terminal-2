@@ -30,7 +30,8 @@ import { motion } from 'motion/react';
 import { getTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { signBarcode, currentBucket } from '../lib/barcode';
+import { signBarcode, signBarcodeV2, currentBucket } from '../lib/barcode';
+import { issueV2 } from '../lib/barcodeFlags';
 import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
 
 export default function WalletPass() {
@@ -90,7 +91,12 @@ export default function WalletPass() {
       lastBucket = bucket;
       if (barcodeSecret) {
         try {
-          const signed = await signBarcode(ticketId2, uid, barcodeSecret, bucket);
+          // v2 issuance (flag-gated) emits the compact binary `T2-` code; the
+          // client can only sign the symmetric hmac scheme (ed25519 signing is
+          // a server-side concern). Default stays on the v1 `T-` HMAC code.
+          const signed = issueV2
+            ? await signBarcodeV2({ ticketId: ticketId2, ownerId: uid, scheme: 'hmac', secret: barcodeSecret, bucket })
+            : await signBarcode(ticketId2, uid, barcodeSecret, bucket);
           if (!cancelled) setBarcode(signed);
           return;
         } catch (err) {
@@ -261,7 +267,7 @@ export default function WalletPass() {
           <div className="relative flex flex-col items-center">
             <div className={`p-4 bg-white border-[3px] border-black rounded-2xl ${muted ? 'opacity-20 grayscale' : ''}`}>
               {qrUnlocked ? (
-                <QRCodeSVG value={barcode || ticket.id} size={260} level="H" includeMargin={false} fgColor="#000000" />
+                <QRCodeSVG value={barcode || ticket.id} size={260} level="H" marginSize={4} fgColor="#000000" />
               ) : (
                 <div className="w-[260px] h-[260px] flex flex-col items-center justify-center text-center px-6">
                   <Lock className="w-10 h-10 text-black/30 mb-4" aria-hidden="true" />

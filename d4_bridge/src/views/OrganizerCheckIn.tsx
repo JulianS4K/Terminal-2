@@ -16,7 +16,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { verifyBarcode, extractTicketIdFromAny } from '../lib/barcode';
+import { verifyAnyBarcode, extractTicketIdFromAny } from '../lib/barcode';
 import { joinCheckinChannel } from '../lib/checkinChannel';
 
 // Anything older than this is dropped from localStorage when the page mounts.
@@ -534,7 +534,9 @@ export default function OrganizerCheckIn() {
       // secret; we surface a clear "code rejected, please re-sync"
       // error to the operator instead of silently admitting a screenshot.
       if (offlineTicket.barcodeSecret && !isBareManualEntry) {
-        const verify = await verifyBarcode(probeValue, offlineTicket.barcodeSecret);
+        // verifyAnyBarcode handles both v1 (`T-`) and v2 (`T2-`) codes; the
+        // per-ticket secret covers the v1 + v2-hmac schemes offline.
+        const verify = await verifyAnyBarcode(probeValue, { secret: offlineTicket.barcodeSecret });
         if (!verify.ok) {
           setStatus('invalid-barcode');
           const reasonText: Record<string, string> = {
@@ -748,7 +750,7 @@ export default function OrganizerCheckIn() {
       // HMAC verification path for actual barcode payloads. Legacy 3-segment
       // shapes are REJECTED (verifyBarcode returns ok:false for them) — an
       // unsigned code is forgeable from a screenshot.
-      const verify = await verifyBarcode(probeValue, scanTicket.barcodeSecret || '');
+      const verify = await verifyAnyBarcode(probeValue, { secret: scanTicket.barcodeSecret || '' });
       if (!verify.ok) {
         setStatus('invalid-barcode');
         const reasonText: Record<string, string> = {
