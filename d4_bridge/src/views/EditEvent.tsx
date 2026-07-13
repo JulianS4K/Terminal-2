@@ -18,6 +18,8 @@ import { motion } from 'motion/react';
 import { handleFirestoreError, OperationType } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
+import SetTimesEditor from '../components/SetTimesEditor';
+import { setTimesToRows, normalizeSetTimes, type SetTimeRow } from '../lib/setTimes';
 import { normalizeArtistLinks } from '../lib/artistLinks';
 import ArtistLinksEditor from '../components/ArtistLinksEditor';
 import AddonsEditor from '../components/AddonsEditor';
@@ -77,6 +79,10 @@ export default function EditEvent() {
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [eventData, setEventData] = useState<Partial<Event>>({});
+  // Optional set-times editor rows (label + venue wall-clock). Seeded from the
+  // loaded event; normalized to UTC on save. Kept as its own state (not inside
+  // eventData) so adding an empty row doesn't churn the Event object.
+  const [setTimeRows, setSetTimeRows] = useState<SetTimeRow[]>([]);
   // Snapshot of the original tier ids so we can compute additions/removals
   // and write the matching tierSales sub-collection updates atomically.
   const [originalTierIds, setOriginalTierIds] = useState<string[]>([]);
@@ -137,6 +143,7 @@ export default function EditEvent() {
         return;
       }
       setEventData(data);
+      setSetTimeRows(setTimesToRows(data.timing?.setTimes, data.timezone));
       setOriginalTierIds((data.ticketTiers || []).map((t) => t.id));
       setOriginalTiers((data.ticketTiers || []).map((t) => ({ id: t.id, name: t.name })));
       setOriginalCodes(data.discountCodes || []);
@@ -462,6 +469,9 @@ export default function EditEvent() {
         startsAt: tsToIso(startTs),
         doorsAt: tsToIso(ed.timing?.doorsOpen),
         endsAt: tsToIso(ed.timing?.endTime),
+        // Always send the normalized array so clearing every row persists as []
+        // (updateEvent skips undefined). Venue wall-clock → UTC + sorted here.
+        setTimes: normalizeSetTimes(setTimeRows, tz),
         timezone: tz,
         currency: (ed.currency || 'USD').toUpperCase(),
         venueName: ed.location,
@@ -897,6 +907,14 @@ export default function EditEvent() {
                   />
                 </div>
               </div>
+           </div>
+
+           <div className="mt-8">
+             <SetTimesEditor
+               rows={setTimeRows}
+               onChange={setSetTimeRows}
+               timezoneNote={eventData.timezone}
+             />
            </div>
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

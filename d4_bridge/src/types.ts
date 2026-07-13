@@ -233,6 +233,12 @@ export interface Event {
     doorsOpen?: Timestamp;
     startTime: Timestamp;
     endTime?: Timestamp;
+    // Optional lineup / set-time schedule (opener, headliner, …), organizer-
+    // entered in venue wall-clock and stored as UTC. Absent on most events.
+    // Persisted as the `set_times` jsonb column (mig 20260713150000); powers the
+    // ticket-pass countdown after doors + show-start (TicketPhaseCountdown) and
+    // is normalized by lib/setTimes.ts.
+    setTimes?: { label: string; at: Timestamp }[];
   };
   automatiqListingId?: string;
   syncStatus?: 'synced' | 'failed' | 'pending';

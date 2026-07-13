@@ -205,7 +205,14 @@ export default function WalletPass() {
     : null;
   const doorsAt = event?.timing?.doorsOpen?.toDate?.() ?? null;
   const showStartAt = event?.timing?.startTime?.toDate?.() ?? eventStart;
-  const setTimePhases: CountdownPhase[] = [];
+  const setTimePhases: CountdownPhase[] = (event?.timing?.setTimes ?? [])
+    .map((s, i): CountdownPhase | null => {
+      const at = s.at?.toDate?.();
+      return at && !Number.isNaN(at.getTime())
+        ? { key: `set-${i}`, label: `${s.label} in`, at }
+        : null;
+    })
+    .filter((p): p is CountdownPhase => p !== null);
   const postRevealPhases: CountdownPhase[] = [
     ...(doorsAt ? [{ key: 'doors', label: 'Doors open in', at: doorsAt }] : []),
     ...(showStartAt ? [{ key: 'start', label: 'Show starts in', at: showStartAt }] : []),

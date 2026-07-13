@@ -79,6 +79,12 @@ export function mapEvent(row: any, tiers?: any[], discounts?: any[]): Event {
           doorsOpen: row.doors_at ? toTs(row.doors_at) : undefined,
           startTime: toTs(row.starts_at),
           endTime: row.ends_at ? toTs(row.ends_at) : undefined,
+          setTimes:
+            Array.isArray(row.set_times) && row.set_times.length
+              ? row.set_times
+                  .filter((s: any) => s && s.at)
+                  .map((s: any) => ({ label: String(s.label ?? ''), at: toTs(s.at) }))
+              : undefined,
         }
       : undefined,
     automatiqListingId: row.automatiq_listing_id ?? undefined,
@@ -195,6 +201,9 @@ export interface EventInput {
   startsAt?: string | null;
   doorsAt?: string | null;
   endsAt?: string | null;
+  // Optional lineup schedule. Each `at` is an ISO-8601 UTC instant; the editor
+  // normalizes venue wall-clock → UTC (lib/setTimes.ts). Stored as set_times jsonb.
+  setTimes?: { label: string; at: string }[];
   occursAtLocal?: string | null;
   timezone?: string;
   currency?: string;
@@ -221,7 +230,7 @@ export interface EventInput {
 
 const EVENT_COL: Array<[keyof EventInput, string]> = [
   ['name', 'name'], ['description', 'description'], ['status', 'status'], ['slug', 'slug'],
-  ['startsAt', 'starts_at'], ['doorsAt', 'doors_at'], ['endsAt', 'ends_at'], ['occursAtLocal', 'occurs_at_local'],
+  ['startsAt', 'starts_at'], ['doorsAt', 'doors_at'], ['endsAt', 'ends_at'], ['setTimes', 'set_times'], ['occursAtLocal', 'occurs_at_local'],
   ['timezone', 'timezone'], ['currency', 'currency'], ['venueName', 'venue_name'], ['venueLocation', 'venue_location'],
   ['venueAddress', 'venue_address'], ['primaryPerformerName', 'primary_performer_name'], ['performerNames', 'performer_names'],
   ['artistLinks', 'artist_links'],
