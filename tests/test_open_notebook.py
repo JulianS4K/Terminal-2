@@ -599,6 +599,19 @@ def test_build_podcast_content_budget(fake):
     assert out and len(out) < 30000
 
 
+def test_podcast_content_budget_from_config(fake, monkeypatch):
+    """With no explicit args, build_podcast_content honors the env-tunable
+    config budgets (ONB_PODCAST_CONTENT_BUDGET / ONB_PODCAST_PER_SOURCE)."""
+    monkeypatch.setattr(onb_config, "ONB_PODCAST_CONTENT_BUDGET", 5000)
+    monkeypatch.setattr(onb_config, "ONB_PODCAST_PER_SOURCE", 1000)
+    nb = repo.create_notebook(fake, name="n")
+    for i in range(3):
+        s = repo.create_source(fake, title=f"s{i}", asset={}, status="done", full_text="z" * 4000)
+        repo.link_source(fake, nb["id"], s["id"])
+    out = onb_podcasts.build_podcast_content(fake, nb["id"])
+    assert out and len(out) <= 6000  # per-source capped at 1000, total budget 5000
+
+
 def test_podcast_empty_turn_and_extract_json(fake, monkeypatch):
     # _extract_json: brackets present but invalid → falls through to default
     assert onb_podcasts._extract_json("[bad]", default=["d"]) == ["d"]

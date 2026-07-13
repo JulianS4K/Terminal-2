@@ -21,11 +21,14 @@ _VOICE_POOL = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 _TTS_CHAR_LIMIT = 3500
 
 
-def build_podcast_content(db, notebook_id: str, *, char_budget: int = 40000,
-                          per_source: int = 12000) -> str:
+def build_podcast_content(db, notebook_id: str, *, char_budget: int | None = None,
+                          per_source: int | None = None) -> str:
     """Flatten a notebook's sources/insights/notes into source material. Budgets
-    are generous so a rich performer digest (many enrichment sections) reaches
-    the outline/transcript stages instead of being truncated to a snapshot."""
+    are generous (env-tunable, see config.ONB_PODCAST_*) so a rich performer
+    digest (many enrichment sections) reaches the outline/transcript stages
+    instead of being truncated to a snapshot."""
+    char_budget = char_budget or config.ONB_PODCAST_CONTENT_BUDGET
+    per_source = per_source or config.ONB_PODCAST_PER_SOURCE
     parts: list[str] = []
     used = 0
     for s in repo.list_sources(db, notebook_id=notebook_id):
@@ -71,7 +74,7 @@ def generate_episode(db, episode_id: str, *, job_id: str | None = None) -> dict:
         # Stage 1 — outline
         outline_raw = providers.chat(
             [{"role": "user", "content": prompts.podcast_outline_user(briefing, content, num_segments)}],
-            max_tokens=1500, temperature=0.4,
+            max_tokens=config.ONB_PODCAST_OUTLINE_TOKENS, temperature=0.4,
         )
         outline = _extract_json(outline_raw, default=[])
 
@@ -80,7 +83,7 @@ def generate_episode(db, episode_id: str, *, job_id: str | None = None) -> dict:
         transcript_raw = providers.chat(
             [{"role": "user", "content": prompts.podcast_transcript_user(
                 json.dumps(outline), speakers, briefing)}],
-            max_tokens=4000, temperature=0.6,
+            max_tokens=config.ONB_PODCAST_SCRIPT_TOKENS, temperature=0.6,
         )
         transcript = _extract_json(transcript_raw, default=[])
         if not transcript:

@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.8.0 (2026-07-12)
+**Doc version:** v1.9.0 (2026-07-13)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -95,9 +95,9 @@ Sources folded in (all already ingested by the platform — no external API call
   So the digest (and therefore Ask / Chat / Podcast, which build on it) points at every
   performer-tied source — ESPN, Reddit, and X included.
 
-Podcast content budgets (`build_podcast_content`) are generous (40k total / 12k per
-source) so the full digest reaches the outline/transcript stages instead of being
-truncated to a snapshot. One call —
+Podcast content budgets (`build_podcast_content`) are generous (120k total / 40k per
+source by default, env-tunable — see *Config / env*) so the full digest reaches the
+outline/transcript stages instead of being truncated to a snapshot. One call —
 `POST /api/notebook/performers/notebook {"name": "New York Yankees"}` (or
 `{"performer_id": N}`) — resolves the performer, creates a notebook, ingests the
 digest, and it's ready for Ask/Chat/Podcast. The terminal's **+ Performer** button
@@ -135,6 +135,14 @@ pre-deduped so the raw sales firehose is never read.
   `ONB_STT_MODEL`, `ONB_TTS_MODEL`, `ONB_CHUNK_SIZE`/`ONB_CHUNK_OVERLAP`,
   `ONB_AUDIO_BUCKET` (default `onb-audio`, a public Supabase Storage bucket for
   podcast audio).
+- **Generation budgets** (env-tunable; raised defaults for richer episodes /
+  scripts / reports) — how much source material feeds the LLM and how long the
+  output may run. Podcast: `ONB_PODCAST_CONTENT_BUDGET` (120k chars) /
+  `ONB_PODCAST_PER_SOURCE` (40k) + `ONB_PODCAST_OUTLINE_TOKENS` (4k) /
+  `ONB_PODCAST_SCRIPT_TOKENS` (8k). Ask report: `ONB_ASK_SYNTH_TOKENS` (3k).
+  Chat: `ONB_CHAT_CONTEXT_BUDGET` (60k) / `ONB_CHAT_PER_SOURCE` (12k) +
+  `ONB_CHAT_REPLY_TOKENS` (4k). Output-token caps are kept ≤ the edge (Haiku)
+  fallback path's limit so both the direct-key (Opus) and edge transports stay safe.
 
 ## Deploy notes
 - Deps: `openai`, `pypdf` (both lazily imported).
