@@ -26,6 +26,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ArrowLeft, Sun, Lock } from 'lucide-react';
+import TicketPhaseCountdown, { type CountdownPhase } from '../components/TicketPhaseCountdown';
 import { motion } from 'motion/react';
 import { getTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
@@ -190,6 +191,26 @@ export default function WalletPass() {
   const muted = isUsed || isVoided || isInTransfer;
   // Entry QR only renders within 24h of the event (unknown date → unlocked).
   const qrUnlocked = isWithinHoursBefore(event?.date?.toDate?.(), 24);
+
+  // Milestone chain for the evolving pass countdown: reveal → doors → show
+  // start → set times. `revealAt` mirrors the qrUnlocked 24h window. Doors +
+  // show-start come from event.timing when present (fall back start → date).
+  // Set times aren't in the event model yet — when a `timing.setTimes` field is
+  // added, map it into `setTimePhases` and the post-reveal chain lights up with
+  // zero further wiring.
+  const REVEAL_HOURS_BEFORE = 24;
+  const eventStart = event?.date?.toDate?.() ?? null;
+  const revealAt = eventStart
+    ? new Date(eventStart.getTime() - REVEAL_HOURS_BEFORE * 60 * 60 * 1000)
+    : null;
+  const doorsAt = event?.timing?.doorsOpen?.toDate?.() ?? null;
+  const showStartAt = event?.timing?.startTime?.toDate?.() ?? eventStart;
+  const setTimePhases: CountdownPhase[] = [];
+  const postRevealPhases: CountdownPhase[] = [
+    ...(doorsAt ? [{ key: 'doors', label: 'Doors open in', at: doorsAt }] : []),
+    ...(showStartAt ? [{ key: 'start', label: 'Show starts in', at: showStartAt }] : []),
+    ...setTimePhases,
+  ];
   const stamp = isVoided
     ? {
         text: 'REFUNDED',
@@ -270,10 +291,23 @@ export default function WalletPass() {
                 <QRCodeSVG value={barcode || ticket.id} size={260} level="H" marginSize={4} fgColor="#000000" />
               ) : (
                 <div className="w-[260px] h-[260px] flex flex-col items-center justify-center text-center px-6">
-                  <Lock className="w-10 h-10 text-black/30 mb-4" aria-hidden="true" />
+                  <Lock className="w-9 h-9 text-black/30 mb-3" aria-hidden="true" />
                   <p className="type text-[11px] uppercase tracking-widest text-black/50">Entry code locked</p>
-                  <p className="type text-[11px] text-black/40 mt-1">
-                    Unlocks 24h before{event?.date ? ` · ${formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ' the event'}
+                  {revealAt ? (
+                    <TicketPhaseCountdown
+                      className="mt-3"
+                      phases={[{ key: 'reveal', label: 'Unlocks in', at: revealAt }]}
+                    />
+                  ) : null}
+                  <p className="type text-[11px] text-black/40 mt-3">
+                    {event?.date
+                      ? formatInTz(event.date.toDate(), event.timezone, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })
+                      : 'Date TBA'}
                   </p>
                 </div>
               )}
@@ -292,6 +326,12 @@ export default function WalletPass() {
               </div>
             ) : null}
           </div>
+
+          {!muted && qrUnlocked && postRevealPhases.length > 0 ? (
+            <div className="mt-6 flex flex-col items-center text-center">
+              <TicketPhaseCountdown phases={postRevealPhases} doneLabel="Enjoy the show ✦" />
+            </div>
+          ) : null}
 
           <div className="mt-6 pt-6 border-t border-dashed border-black/20 flex justify-between items-end">
             <div className="text-left">
