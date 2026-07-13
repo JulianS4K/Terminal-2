@@ -28,6 +28,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { ArrowLeft, Sun, Lock } from 'lucide-react';
 import TicketPhaseCountdown, { type CountdownPhase } from '../components/TicketPhaseCountdown';
 import { qrStyleFromBranding } from '../lib/qrStyle';
+import { livenessCue } from '../lib/livenessCue';
 import { motion } from 'motion/react';
 import { getTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
@@ -376,6 +377,26 @@ export default function WalletPass() {
                   style={{ width: `${(timeLeft / 30) * 100}%` }}
                 />
               </div>
+              {/* Liveness cue — a rotating color+code derived from the current
+                  barcode, changing every 30s in lockstep with it. A screenshot
+                  freezes it; a live pass keeps cycling. Human-glanceable
+                  anti-screenshot tell for door staff. See lib/livenessCue.ts. */}
+              {barcode ? (
+                (() => {
+                  const cue = livenessCue(barcode);
+                  return (
+                    <div
+                      className="mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                      style={{ backgroundColor: cue.hex }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      <span className="type text-[10px] font-black uppercase tracking-widest text-white">
+                        Live · {cue.label}
+                      </span>
+                    </div>
+                  );
+                })()
+              ) : null}
             </div>
           ) : null}
 

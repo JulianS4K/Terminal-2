@@ -1,4 +1,5 @@
-// exos-api — read-only, org-scoped public REST API for Exos (Hi.Events parity).
+// exos-api — org-scoped public REST API for Exos (Hi.Events parity): reads +
+// programmatic door check-in.
 //
 // Auth: `Authorization: Bearer sk_live_...`. The key is never stored in plaintext
 // (migration 20260616200000) — we SHA-256 the presented key and look up the
