@@ -27,6 +27,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ArrowLeft, Sun, Lock } from 'lucide-react';
 import TicketPhaseCountdown, { type CountdownPhase } from '../components/TicketPhaseCountdown';
+import { qrStyleFromBranding } from '../lib/qrStyle';
 import { motion } from 'motion/react';
 import { getTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
@@ -205,6 +206,9 @@ export default function WalletPass() {
     : null;
   const doorsAt = event?.timing?.doorsOpen?.toDate?.() ?? null;
   const showStartAt = event?.timing?.startTime?.toDate?.() ?? eventStart;
+  // Brand-customizable QR (org color + center logo), contrast-guarded so it
+  // stays scannable. See lib/qrStyle.ts.
+  const qrStyle = qrStyleFromBranding(event?.branding, 260);
   const setTimePhases: CountdownPhase[] = (event?.timing?.setTimes ?? [])
     .map((s, i): CountdownPhase | null => {
       const at = s.at?.toDate?.();
@@ -295,7 +299,14 @@ export default function WalletPass() {
           <div className="relative flex flex-col items-center">
             <div className={`p-4 bg-white border-[3px] border-black rounded-2xl ${muted ? 'opacity-20 grayscale' : ''}`}>
               {qrUnlocked ? (
-                <QRCodeSVG value={barcode || ticket.id} size={260} level="H" marginSize={4} fgColor="#000000" />
+                <QRCodeSVG
+                  value={barcode || ticket.id}
+                  size={260}
+                  level="H"
+                  marginSize={4}
+                  fgColor={qrStyle.fgColor}
+                  imageSettings={qrStyle.imageSettings}
+                />
               ) : (
                 <div className="w-[260px] h-[260px] flex flex-col items-center justify-center text-center px-6">
                   <Lock className="w-9 h-9 text-black/30 mb-3" aria-hidden="true" />

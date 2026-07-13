@@ -7,16 +7,22 @@
 //
 // Required secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 //
-// Endpoints (all GET, all scoped to the key's org):
-//   GET /events                      → the org's events
-//   GET /events/:id                  → one event + its tiers
-//   GET /events/:id/attendees        → tickets for the event
-//   GET /orders                      → the org's checkout sessions
+// Endpoints (all org-scoped to the key):
+//   GET  /events                      → the org's events
+//   GET  /events/:id                  → one event + its tiers
+//   GET  /events/:id/attendees        → tickets for the event
+//   GET  /events/:id/set-times        → the event's lineup schedule
+//   GET  /events/:id/check-ins        → the event's scan log
+//   GET  /tickets/:id                 → one ticket's status
+//   GET  /orders                      → the org's checkout sessions
+//   GET  /invoices                    → the org's invoices
+//   POST /events/:id/check-in         → programmatic door check-in (body:
+//                                        {ticket_id, barcode, idempotency_key?})
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 Deno.serve(async (req: Request): Promise<Response> => {
-  if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
+  if (req.method !== "GET" && req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
   const auth = req.headers.get("Authorization") ?? "";
   const key = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
@@ -45,6 +51,37 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const seg = path.split("/").filter(Boolean); // e.g. ['events', ':id', 'attendees']
 
   try {
+    // ── Writes (POST) ─────────────────────────────────────────────────────
+    if (req.method === "POST") {
+      // POST /events/:id/check-in — programmatic door check-in. Body:
+      //   { ticket_id, barcode, idempotency_key? }
+      // Calls the service-role, org-scoped RPC (mig 20260713170000): a signed
+      // barcode is required, single-use is atomic, and idempotency_key makes a
+      // retried POST a no-op.
+      if (seg[0] === "events" && seg.length === 3 && seg[2] === "check-in") {
+        const { data: ev } = await sb.from("exos_events").select("id").eq("org_id", orgId).eq("id", seg[1]).maybeSingle();
+        if (!ev) return json({ error: "event not found" }, 404);
+        let body: Record<string, unknown> = {};
+        try { body = await req.json(); } catch { /* empty/invalid body → validated below */ }
+        const ticketId = body?.ticket_id;
+        if (!ticketId || typeof ticketId !== "string") return json({ error: "ticket_id required" }, 400);
+        const { data, error } = await sb.rpc("exos_api_check_in_ticket", {
+          p_org: orgId,
+          p_ticket: ticketId,
+          p_barcode_payload: typeof body?.barcode === "string" ? body.barcode : null,
+          p_idempotency_key: typeof body?.idempotency_key === "string" ? body.idempotency_key : null,
+          p_api_key_id: keyRow.id,
+        });
+        if (error) throw error;
+        const result = (data ?? { ok: false, reason: "not-found" }) as { ok: boolean; reason: string };
+        // ok → 200; a refusal (used / voided / barcode-rejected / wrong-org / …)
+        // → 422 so the caller can distinguish it from a 5xx.
+        return json({ data: result }, result.ok ? 200 : 422);
+      }
+      return json({ error: "not found", hint: "POST /events/:id/check-in" }, 404);
+    }
+
+    // ── Reads (GET) ───────────────────────────────────────────────────────
     if (seg[0] === "events" && seg.length === 1) {
       const { data, error } = await sb
         .from("exos_events")
@@ -82,6 +119,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json({ data });
     }
 
+    if (seg[0] === "events" && seg.length === 3 && seg[2] === "set-times") {
+      const { data: ev } = await sb.from("exos_events").select("set_times").eq("org_id", orgId).eq("id", seg[1]).maybeSingle();
+      if (!ev) return json({ error: "event not found" }, 404);
+      return json({ data: ev.set_times ?? [] });
+    }
+
+    if (seg[0] === "events" && seg.length === 3 && seg[2] === "check-ins") {
+      const { data: ev } = await sb.from("exos_events").select("id").eq("org_id", orgId).eq("id", seg[1]).maybeSingle();
+      if (!ev) return json({ error: "event not found" }, 404);
+      const { data, error } = await sb
+        .from("exos_event_checkins")
+        .select("ticket_id, source, verification, scanned_at, scanned_by_email")
+        .eq("event_id", seg[1]).eq("org_id", orgId)
+        .order("scanned_at", { ascending: false })
+        .limit(1000);
+      if (error) throw error;
+      return json({ data });
+    }
+
+    if (seg[0] === "tickets" && seg.length === 2) {
+      const { data, error } = await sb
+        .from("exos_tickets")
+        .select("id, event_id, tier_name, owner_email, status, check_in_at, created_at")
+        .eq("org_id", orgId).eq("id", seg[1]).maybeSingle();
+      if (error) throw error;
+      if (!data) return json({ error: "ticket not found" }, 404);
+      return json({ data });
+    }
+
     if (seg[0] === "orders" && seg.length === 1) {
       const { data, error } = await sb
         .from("exos_checkout_sessions")
@@ -104,7 +170,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json({ data });
     }
 
-    return json({ error: "not found", hint: "GET /events, /events/:id, /events/:id/attendees, /orders, /invoices" }, 404);
+    return json({ error: "not found", hint: "GET /events, /events/:id, /events/:id/{attendees,set-times,check-ins}, /tickets/:id, /orders, /invoices · POST /events/:id/check-in" }, 404);
   } catch (e) {
     console.error("exos-api error:", e);
     return json({ error: "internal error" }, 500);
