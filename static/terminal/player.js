@@ -9,6 +9,12 @@
 (function () {
   'use strict';
   const T = window.Terminal;
+  // escapeHtml is exposed as window.TermRender.escapeHtml (render.js) — bind it
+  // locally like every other terminal page. Without this, bare escapeHtml(...)
+  // is a ReferenceError, which threw in renderSeasonStats/renderGameLog for any
+  // player that actually HAS stats (e.g. LeBron), leaving the page stuck on
+  // "loading…" and blocking the market/buzz panels downstream.
+  const escapeHtml = window.TermRender.escapeHtml;
 
   function getParams() {
     const q = new URLSearchParams(location.search);
