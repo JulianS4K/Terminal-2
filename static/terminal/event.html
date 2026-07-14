@@ -544,13 +544,6 @@
           <span class="seatmap-src-label">Source on map:</span>
           <span class="seatmap-src-sel" id="seatmapSourceSel"></span>
         </div>
-        <!-- Zone quick-select: one click selects every venue-map section in a tier
-             (hundreds band or named level). Populated from the venue manifest; hidden
-             when the venue has no groupable zones. -->
-        <div class="seatmap-zone-row row" id="seatmapZoneRow" hidden>
-          <span class="seatmap-src-label">Zones:</span>
-          <span class="seatmap-zone-sel" id="seatmapZoneSel"></span>
-        </div>
         <div class="seatmap-mapwrap">
           <div id="seatmapHost" class="seatmap-host"></div>
         </div>
@@ -558,8 +551,16 @@
              the selected source, with an inline control to map each to a venue-map polygon
              (persisted via set_event_section_manual_map; survives the refresh cron). -->
         <div id="seatmapUnmapped" class="seatmap-unmapped"></div>
+        <!-- Zone quick-select — sits directly above the listing table it filters. One
+             click selects every venue-map section in a tier (hundreds band or named
+             level), highlighting them on the map above and filtering the list below.
+             Populated from the venue manifest; hidden when there are no groupable zones. -->
+        <div class="seatmap-zone-row row" id="seatmapZoneRow" hidden>
+          <span class="seatmap-src-label">Zones:</span>
+          <span class="seatmap-zone-sel" id="seatmapZoneSel"></span>
+        </div>
         <div class="seatmap-side-hd row">
-          <span id="seatmapSelLabel">Click a section to filter listings</span>
+          <span id="seatmapSelLabel">Click a section or pick a zone to filter listings</span>
           <button type="button" id="seatmapResetBtn" class="seatmap-reset" hidden>Reset</button>
         </div>
         <div id="seatmapListBody"><div class="empty">—</div></div>
