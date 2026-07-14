@@ -69,6 +69,7 @@ direction — no central gatekeeper.
 Add a fact to the doc that already owns it; link, don't duplicate.
 
 ## Where to look next
+- **How to alternate agents cleanly** (roster, config parity, handoff protocol) → `docs/multi_agent_workflow.md`
 - Full playbook, SQL macros, §3 column landmines, §5 cross-source ID architecture → `PROJECT_BIBLE.md`
 - What already exists (tables/views/crons/edge fns/vault) → `RESOURCES_BIBLE.md`
 - Migration filename/header/apply rules → `MIGRATION_CONVENTIONS.md`
