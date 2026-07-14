@@ -62,13 +62,14 @@
       <div id="plMktBody"></div>
     </section>
 
-    <!-- ESPN NEWS: name-scoped headlines from the espn_news wire (shown if any) -->
-    <section id="player-news" hidden style="margin-top:14px">
+    <!-- LIVE FEED: one merged, auto-refreshing stream — ESPN news + Reddit + X +
+         transactions + market pulse, name-scoped to the player (get_player_feed). -->
+    <section id="player-feed" hidden style="margin-top:14px">
       <div class="panel-title row">
-        <span>ESPN NEWS</span>
-        <span class="muted small" id="plNewsMeta"></span>
+        <span>LIVE FEED <span class="feed-live-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#1e7a3a;margin-left:4px;vertical-align:middle"></span></span>
+        <span class="muted small" id="plFeedMeta"></span>
       </div>
-      <div id="plNewsBody"></div>
+      <div id="plFeedBody"><div class="empty">loading…</div></div>
     </section>
 
     <section id="player-stats" hidden>
@@ -84,23 +85,6 @@
       <div id="plGamesBody"><div class="empty">loading…</div></div>
     </section>
 
-    <section id="player-txns" hidden style="margin-top:14px">
-      <div class="panel-title row">
-        <span>TRANSACTIONS</span>
-        <span class="muted small" id="plTxnMeta"></span>
-      </div>
-      <div id="plTxnBody"></div>
-    </section>
-
-    <!-- BUZZ: name-scoped X (Twitter) + Reddit wire posts (shown only if any) -->
-    <section id="player-social" hidden style="margin-top:14px">
-      <div class="panel-title row">
-        <span>BUZZ</span>
-        <span class="muted small" id="plSocialMeta"></span>
-      </div>
-      <div id="plSocialBody"></div>
-    </section>
-
   </main>
 
   <script src="lib/supabase.js"></script>
@@ -109,6 +93,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260710nav"></script>
-  <script src="player.js?v=20260714poly"></script>
+  <script src="player.js?v=20260714feed"></script>
 </body>
 </html>
