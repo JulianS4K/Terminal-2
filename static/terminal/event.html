@@ -552,9 +552,10 @@
              (persisted via set_event_section_manual_map; survives the refresh cron). -->
         <div id="seatmapUnmapped" class="seatmap-unmapped"></div>
         <!-- Zone quick-select — sits directly above the listing table it filters. One
-             click selects every venue-map section in a tier (hundreds band or named
-             level), highlighting them on the map above and filtering the list below.
-             Populated from the venue manifest; hidden when there are no groupable zones. -->
+             click selects every venue-map polygon in a curated pricing zone (L1 / U1 /
+             FO / …), highlighting them on the map above and filtering the list below.
+             Zones + their polygons come from get_event_zone_sections (curated import);
+             the row hides for events with no curated zones. -->
         <div class="seatmap-zone-row row" id="seatmapZoneRow" hidden>
           <span class="seatmap-src-label">Zones:</span>
           <span class="seatmap-zone-sel" id="seatmapZoneSel"></span>
