@@ -1,12 +1,11 @@
-// D0 Terminal — Trade Watch.
+// D0 Terminal — Trade Watch (player watchlist).
 //
-// "Be the first to know when he trades." One consolidated RPC (get_trade_watch,
-// mig 20260714130000) returns, per tracked player: ESPN roster team/status, the
-// Kalshi next-team market (leader + candidates), a high-frequency Wikipedia
-// team-hint + change flag, and a fused MOVED/WATCHING state.
-//
-// Tracked players are seeded in player_market_athlete_map (LeBron today; add a
-// row per player). Fully auth-gated (@s4kent.com), like the rest of the terminal.
+// get_trade_watch() returns, per watchlisted player: ESPN roster team/status,
+// the prediction market (leader + candidates), a Wikipedia team-hint + change
+// flag, and a fused MOVED/WATCHING state. The watchlist is managed here —
+// add via player search (terminal_search → watchlist_add), remove per card
+// (watchlist_remove). Everything downstream (feeds, wiki-watch, social poll)
+// picks up a watchlisted athlete automatically. Auth-gated (@s4kent.com).
 
 (function () {
   'use strict';
@@ -20,18 +19,29 @@
       showEmpty('trade watch needs auth — sign in with @s4kent.com', 'err');
       return;
     }
+    setupAdd();
+    setupRemove();
+    return loadWatch();
+  }
+
+  async function loadWatch() {
+    const Auth = window.TerminalAuth;
     T.setStatus('Loading trade watch…');
     const res = await Auth.client.rpc('get_trade_watch');
     if (res.error) { showEmpty(escapeHtml(res.error.message), 'err'); return; }
     const players = (res.data || {}).players || [];
+    const meta = document.getElementById('twMeta');
+    if (meta) meta.textContent = `${players.length} watched`;
+    const empty = document.getElementById('tw-empty');
     if (!players.length) {
-      showEmpty('no tracked players yet — seed player_market_athlete_map', 'ok');
-      return;
+      empty.removeAttribute('hidden');
+      empty.innerHTML = '<div class="empty">watchlist is empty — add a player above</div>';
+      document.getElementById('tw-body').innerHTML = '';
+    } else {
+      empty.setAttribute('hidden', '');
+      document.getElementById('tw-body').innerHTML = players.map(renderCard).join('');
     }
     T.setStatus('Loaded', 'ok');
-    const meta = document.getElementById('twMeta');
-    if (meta) meta.textContent = `${players.length} tracked`;
-    document.getElementById('tw-body').innerHTML = players.map(renderCard).join('');
   }
 
   function showEmpty(html, kind) {
@@ -39,6 +49,88 @@
     el.removeAttribute('hidden');
     el.innerHTML = `<div class="empty">${html}</div>`;
     T.setStatus(kind === 'err' ? 'Error' : 'Ready', kind || 'ok');
+  }
+
+  // ---- Add a player (search → watchlist_add) --------------------------------
+  function setupAdd() {
+    const input = document.getElementById('twAddInput');
+    const sugg = document.getElementById('twAddSuggest');
+    if (!input || !sugg || input.dataset.wired) return;
+    input.dataset.wired = '1';
+    let debounceT = 0, lastQ = '';
+
+    async function run(q) {
+      if (q === lastQ) return;
+      lastQ = q;
+      if (q.length < 2) { sugg.setAttribute('hidden', ''); return; }
+      const Auth = window.TerminalAuth;
+      const res = await Auth.client.rpc('terminal_search', { p_q: q, p_limit: 6 });
+      if (res.error) { sugg.setAttribute('hidden', ''); return; }
+      const players = (res.data || {}).players || [];
+      if (!players.length) {
+        sugg.innerHTML = '<div class="empty" style="padding:8px">no players match</div>';
+        sugg.removeAttribute('hidden');
+        return;
+      }
+      sugg.innerHTML = players.map(pl => {
+        const meta = [pl.team_name, pl.espn_league].filter(Boolean).join(' · ');
+        return `<div class="tw-sugg-row" role="button" tabindex="0"
+            data-id="${escapeHtml(String(pl.espn_athlete_id || ''))}"
+            data-league="${escapeHtml(String(pl.espn_league || ''))}"
+            style="display:flex;justify-content:space-between;gap:8px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border,#222)">
+          <span>${escapeHtml(pl.full_name || '—')}</span>
+          <span class="muted small">${escapeHtml(meta)}</span>
+        </div>`;
+      }).join('');
+      sugg.removeAttribute('hidden');
+    }
+
+    input.addEventListener('input', () => {
+      clearTimeout(debounceT);
+      const q = input.value.trim();
+      debounceT = setTimeout(() => run(q), 250);
+    });
+    async function pick(row) {
+      const id = row.getAttribute('data-id');
+      const league = row.getAttribute('data-league');
+      if (!id || !league) return;
+      const Auth = window.TerminalAuth;
+      T.setStatus('Adding…');
+      const res = await Auth.client.rpc('watchlist_add', { p_athlete_id: id, p_league: league });
+      sugg.setAttribute('hidden', '');
+      input.value = ''; lastQ = '';
+      if (res.error || !(res.data || {}).ok) { T.setStatus('Add failed', 'err'); return; }
+      await loadWatch();
+    }
+    sugg.addEventListener('click', e => {
+      const row = e.target.closest('.tw-sugg-row');
+      if (row) pick(row);
+    });
+    sugg.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { const row = e.target.closest('.tw-sugg-row'); if (row) pick(row); }
+    });
+    document.addEventListener('click', e => {
+      if (!input.contains(e.target) && !sugg.contains(e.target)) sugg.setAttribute('hidden', '');
+    });
+  }
+
+  // ---- Remove a player (delegated on the card container) --------------------
+  function setupRemove() {
+    const body = document.getElementById('tw-body');
+    if (!body || body.dataset.wired) return;
+    body.dataset.wired = '1';
+    body.addEventListener('click', async e => {
+      const btn = e.target.closest('.tw-remove');
+      if (!btn) return;
+      const id = btn.getAttribute('data-id');
+      const league = btn.getAttribute('data-league');
+      if (!id || !league) return;
+      const Auth = window.TerminalAuth;
+      T.setStatus('Removing…');
+      const res = await Auth.client.rpc('watchlist_remove', { p_athlete_id: id, p_league: league });
+      if (res.error) { T.setStatus('Remove failed', 'err'); return; }
+      await loadWatch();
+    });
   }
 
   function renderCard(p) {
@@ -51,7 +143,6 @@
       ? `<img src="${escapeHtml(p.headshot_url)}" alt="" style="width:52px;height:52px;border-radius:50%;object-fit:cover;flex:0 0 auto" />`
       : '';
 
-    // Market candidate bars (top 6).
     const cands = (p.candidates || []).slice(0, 6);
     const max = Math.max(...cands.map(c => Number(c.pct) || 0), 1);
     const bars = cands.map(c => {
@@ -73,7 +164,6 @@
       ? `${escapeHtml(p.market_leader.team || '—')} <strong>${p.market_leader.pct}%</strong>`
       : '—';
 
-    // Wikipedia line + change flag.
     const wikiChanged = p.wiki_changed_at
       ? `<span class="badge" style="background:#7a1e1e;color:#fff;margin-left:6px">team change detected</span>` : '';
     const wikiLine = p.wiki_team
@@ -85,6 +175,9 @@
       + ` <span class="muted small">(${escapeHtml(p.roster_status || 'active')})</span>`;
 
     const close = p.close_time ? ` · settles ${T.fmtDate(p.close_time)}` : '';
+    const remove = `<button class="tw-remove" title="remove from watchlist"
+      data-id="${escapeHtml(String(p.espn_athlete_id || ''))}" data-league="${escapeHtml(String(p.espn_league || ''))}"
+      style="margin-left:auto;background:none;border:1px solid var(--border,#333);color:var(--muted,#888);border-radius:6px;padding:1px 7px;cursor:pointer">✕</button>`;
 
     return `<div class="tw-card" style="border:1px solid var(--border,#222);border-radius:10px;padding:12px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
@@ -94,6 +187,7 @@
             <a href="${playerHref}" class="title" style="font-size:1.05rem">${escapeHtml(p.athlete_name || '—')}</a>
             <span class="muted small">${escapeHtml(p.espn_league || '')}</span>
             ${badge}
+            ${remove}
           </div>
           <div class="muted small" style="margin-top:2px">${rosterLine}</div>
         </div>

@@ -31,9 +31,17 @@
       <span class="muted small" id="twMeta"></span>
     </div>
     <p class="muted small" style="margin:2px 0 12px">
-      Be the first to know when a tracked player moves — fuses the Kalshi next-team
-      market, a high-frequency Wikipedia team poll, and the ESPN roster into one live state.
+      Be the first to know when a watchlisted player moves — fuses the prediction
+      market (Kalshi + Polymarket), a high-frequency Wikipedia team poll, and the
+      ESPN roster into one live state. Adding a player also turns on their feeds.
     </p>
+
+    <div class="tw-add" style="position:relative;max-width:440px;margin-bottom:16px">
+      <input id="twAddInput" type="search" placeholder="＋ add player to watchlist…" autocomplete="off" spellcheck="false"
+        style="width:100%;padding:8px 11px;border-radius:8px;border:1px solid var(--border,#222);background:var(--panel-2,#111);color:inherit" />
+      <div id="twAddSuggest" hidden
+        style="position:absolute;top:100%;left:0;right:0;z-index:20;margin-top:3px;background:var(--panel,#161616);border:1px solid var(--border,#222);border-radius:8px;overflow:hidden"></div>
+    </div>
 
     <section id="tw-empty" hidden><div class="empty">loading…</div></section>
     <section id="tw-body"></section>
@@ -45,6 +53,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260714tw"></script>
-  <script src="trade-watch.js?v=20260714tw"></script>
+  <script src="trade-watch.js?v=20260714watchlist"></script>
 </body>
 </html>
