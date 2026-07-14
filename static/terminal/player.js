@@ -102,6 +102,8 @@
 
   // Kalshi (etc.) prediction markets about this player — e.g. next-team
   // "transfer" odds. Additive: silent if untracked/unsupported.
+  // Prediction markets about this player: Kalshi next-team odds + Polymarket
+  // markets (next-team + props). Additive: silent if none.
   async function loadPlayerMarket(id, league) {
     const Auth = window.TerminalAuth;
     const res = await Auth.client.rpc('get_player_prediction_markets',
@@ -109,34 +111,54 @@
     if (res.error) return;
     const d = res.data || {};
     const cands = d.applicable ? (d.candidates || []) : [];
-    if (!cands.length) return;
+    const poly = d.applicable ? (d.polymarket || []) : [];
+    if (!cands.length && !poly.length) return;
     document.getElementById('player-market').removeAttribute('hidden');
-    const label = d.market_kind === 'next_team' ? 'TRANSFER MARKET · NEXT TEAM' : 'MARKET';
-    setText('plMktTitle', label);
+    setText('plMktTitle', (d.market_kind === 'next_team' || poly.length) ? 'TRANSFER MARKET · NEXT TEAM' : 'MARKET');
     const meta = document.getElementById('plMktMeta');
     if (meta) {
-      const src = cands[0] && cands[0].source ? cands[0].source : 'market';
-      meta.textContent = src.toUpperCase()
-        + (d.close_time ? ' · settles ' + T.fmtDate(d.close_time) : '');
+      const srcs = [];
+      if (cands.length) srcs.push('Kalshi');
+      if (poly.length) srcs.push('Polymarket');
+      meta.textContent = srcs.join(' + ') + (d.close_time ? ' · settles ' + T.fmtDate(d.close_time) : '');
     }
-    const max = Math.max(...cands.map(c => Number(c.yes_price) || 0), 0.01);
-    document.getElementById('plMktBody').innerHTML = cands.map(c => {
-      const pct = Math.round((Number(c.yes_price) || 0) * 100);
-      const w = Math.max(2, Math.round(((Number(c.yes_price) || 0) / max) * 100));
-      const name = c.dest_performer_id != null
-        ? `<a href="performer.html?performer=${encodeURIComponent(c.dest_performer_id)}">${escapeHtml(c.dest_team_name || c.dest_team_token || '—')}</a>`
-        : escapeHtml(c.dest_team_name || c.dest_team_token || '—');
+
+    // one implied-probability bar row
+    function bar(text, pct, href, external) {
+      const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      const nm = href
+        ? `<a href="${href}"${external ? ' target="_blank" rel="noopener noreferrer"' : ''}>${escapeHtml(text)}</a>`
+        : escapeHtml(text);
       return `<div class="mkt-row" style="display:flex;align-items:center;gap:8px;padding:3px 0">
-        <span class="mkt-name" style="flex:0 0 42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
-        <span class="mkt-bar" style="flex:1;height:8px;border-radius:4px;background:var(--panel-2,#1a1a1a);overflow:hidden">
-          <span style="display:block;height:100%;width:${w}%;background:var(--accent,#4ea1ff)"></span>
+        <span style="flex:0 0 48%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nm}</span>
+        <span style="flex:1;height:8px;border-radius:4px;background:var(--panel-2,#1a1a1a);overflow:hidden">
+          <span style="display:block;height:100%;width:${Math.max(2, p)}%;background:var(--accent,#4ea1ff)"></span>
         </span>
-        <span class="mkt-pct num" style="flex:0 0 44px;text-align:right">${pct}%</span>
+        <span class="num" style="flex:0 0 44px;text-align:right">${p}%</span>
       </div>`;
-    }).join('') +
-      (cands[0] && cands[0].url
-        ? `<div class="muted small" style="margin-top:6px"><a href="${escapeHtml(cands[0].url)}" target="_blank" rel="noopener noreferrer">view on source ↗</a></div>`
-        : '');
+    }
+
+    let html = '';
+    if (cands.length) {
+      html += '<div class="muted small" style="margin:2px 0 1px">Kalshi</div>';
+      html += cands.map(c => bar(
+        c.dest_team_name || c.dest_team_token || '—',
+        (Number(c.yes_price) || 0) * 100,
+        c.dest_performer_id != null ? `performer.html?performer=${encodeURIComponent(c.dest_performer_id)}` : null,
+        false
+      )).join('');
+    }
+    if (poly.length) {
+      html += '<div class="muted small" style="margin:8px 0 1px">Polymarket</div>';
+      html += poly.map(m => {
+        const lbl = (m.subtitle && m.subtitle.trim())
+          ? m.subtitle
+          : String(m.question || m.title || '—').replace(/^NBA:\s*/, '');
+        const href = /^https?:\/\//i.test(m.url || '') ? escapeHtml(m.url) : null;
+        return bar(lbl, (Number(m.yes_price) || 0) * 100, href, true);
+      }).join('');
+    }
+    document.getElementById('plMktBody').innerHTML = html;
   }
 
   // Name-scoped social buzz (X + Reddit wire posts mentioning the player).
