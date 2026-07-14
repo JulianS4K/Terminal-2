@@ -4400,6 +4400,7 @@
   // per event from get_event_section_map; authoritative — they win over the heuristic matcher
   // and the */10 refresh cron cannot clobber them (mig 20260620130000).
   let _seatmapManual = {};
+  let _seatmapZones = [];   // curated zones for this event: [{zone_id, name, keys:[lc polygon keys]}]
   // Frontend source key → venue_section_map.platform. GT is absent (the crosswalk's CHECK
   // allows only evo/sg/tp/vd/sh), so GameTime sections can be TRACKED but not manually mapped.
   const _SM_PLATFORM = { EVO: 'evo', SG: 'sg', SH: 'sh', VD: 'vd', TP: 'tp' };
@@ -4718,44 +4719,38 @@
     return out;
   }
 
-  // ----- Zone quick-select (map-side) -----
-  // Group the venue's manifest sections into selectable ZONES so the user can pick a
-  // whole tier with one click instead of shift-clicking each polygon. Reuses the exact
-  // zone→keys expansion the TickPick coloring path uses (_seatmapZoneKeys), so a zone
-  // selects precisely the sections that source would paint. Two zone kinds:
-  //   • hundreds bands present in this venue ("100s", "200s", …)
-  //   • named tiers present in this venue (Field, Lower, Club, Suite, …)
-  // A zone is only offered when it covers >1 section (a 1-section "zone" is just a click).
-  const _SM_ZONE_ORDER = ['field', 'floor', 'lower', 'middle', 'upper', 'club', 'suite', 'lounge', 'balcony', 'bridge', 'terrace', 'vip'];
-
-  function _seatmapAvailableZones(idx) {
-    if (!idx) return [];
-    if (idx._zonesAvail) return idx._zonesAvail;
-    const out = [];
-    // hundreds bands actually present in the manifest
-    const bands = new Set();
-    idx.byNum.forEach((_arr, num) => { const h = Math.floor(parseInt(num, 10) / 100); if (h >= 1) bands.add(h); });
-    Array.from(bands).sort((a, b) => a - b).forEach(h => {
-      const label = (h * 100) + 's';
-      const keys = _seatmapZoneKeys(label, idx);       // expansion is lower-cased/label-agnostic
-      if (keys.length > 1) out.push({ label, keys });
-    });
-    // named tiers actually present
-    _SM_ZONE_ORDER.forEach(word => {
-      const keys = _seatmapZoneKeys(word, idx);
-      if (keys.length > 1) out.push({ label: word.charAt(0).toUpperCase() + word.slice(1), keys });
-    });
-    idx._zonesAvail = out;
-    return out;
+  // ----- Zone quick-select (curated, map-side) -----
+  // Zones come from the imported CURATED zone taxonomy (performer_zones /
+  // performer_zone_rules), resolved per event by the get_event_zone_sections RPC
+  // into { zone_name, display_order, seatmap_keys[] } — the polygon keys the map
+  // draws. One chip = one curated zone (L1 / U1 / FO / …); clicking it selects
+  // those polygons on the map (highlight) and filters the listings below. Loaded
+  // once per event; the row hides for events with no curated zones.
+  async function _seatmapLoadZones(eventId) {
+    _seatmapZones = [];
+    const r = await rpcOrNull('get_event_zone_sections', { p_event_id: eventId });
+    const zones = (r && r.data && Array.isArray(r.data.zones)) ? r.data.zones : [];
+    // Keep only polygons this venue's manifest actually draws, so a chip never
+    // claims sections the map can't select. Manifest keys are real-case; zone keys
+    // arrive lower-cased from venue_section_map — compare in lowercase throughout
+    // (the map library lowercases selection ids too, so lc keys select correctly).
+    const manifest = _seatmapRemap
+      ? new Set(_seatmapAllKeys(_seatmapRemap).map(k => String(k).toLowerCase()))
+      : null;
+    _seatmapZones = zones.map(z => {
+      let keys = (z.seatmap_keys || []).map(k => String(k).toLowerCase());
+      if (manifest) keys = keys.filter(k => manifest.has(k));
+      return { zone_id: z.zone_id, name: z.zone_name || ('Zone ' + z.zone_id), keys };
+    }).filter(z => z.keys.length);   // drop zones with no drawable polygon on this map
   }
 
-  // Which offered zone (if any) exactly matches the current on-map selection → active chip.
-  // Manual polygon clicks that don't equal a whole zone leave no chip active.
-  function _seatmapActiveZoneIndex(zones) {
+  // Which curated zone (if any) exactly matches the current on-map selection → active
+  // chip. Manual polygon clicks that don't equal a whole zone leave no chip active.
+  function _seatmapActiveZoneIndex() {
     if (!_seatmapSelected.length) return -1;
     const sel = new Set(_seatmapSelected.map(s => String(s).toLowerCase()));
-    for (let i = 0; i < zones.length; i++) {
-      const zk = zones[i].keys.map(k => String(k).toLowerCase());
+    for (let i = 0; i < _seatmapZones.length; i++) {
+      const zk = _seatmapZones[i].keys;   // already lower-cased
       if (zk.length === sel.size && zk.every(k => sel.has(k))) return i;
     }
     return -1;
@@ -4767,32 +4762,30 @@
     _seatmapSelected.slice().forEach(s => { try { _seatmapApi.deselectSection(s); } catch (_) { /* ignore */ } });
   }
 
-  // Render the zone chip row (hidden when this venue has no groupable zones). Active
-  // state is derived from the live selection so it stays in sync with map clicks.
+  // Render the curated-zone chip row (hidden when the event has no curated zones).
+  // Active state is derived from the live selection so it stays in sync with map clicks.
   function renderSeatmapZones() {
     const host = document.getElementById('seatmapZoneSel');
     const row = document.getElementById('seatmapZoneRow');
     if (!host || !row) return;
-    const zones = _seatmapRemap ? _seatmapAvailableZones(_seatmapRemap) : [];
-    if (!zones.length) { host.innerHTML = ''; row.hidden = true; return; }
+    if (!_seatmapZones.length) { host.innerHTML = ''; row.hidden = true; return; }
     row.hidden = false;
-    const active = _seatmapActiveZoneIndex(zones);
-    host.innerHTML = zones.map((z, i) =>
+    const active = _seatmapActiveZoneIndex();
+    host.innerHTML = _seatmapZones.map((z, i) =>
       `<button type="button" class="sm-zone-btn${i === active ? ' active' : ''}" data-zone="${i}">` +
-      `${escapeHtml(z.label)} <span class="sm-src-cnt">${z.keys.length}</span></button>`
+      `${escapeHtml(z.name)} <span class="sm-src-cnt">${z.keys.length}</span></button>`
     ).join('');
   }
 
   // Toggle a zone: clear the current selection, then (unless this zone was already the
-  // active selection) select every section it covers. The library's onSelection callback
+  // active selection) select every polygon it covers. The library's onSelection callback
   // (componentDidUpdate) fires with the resulting set → onSeatmapSelection refreshes the
   // listing table + chip state, so we don't touch _seatmapSelected here.
   function selectSeatmapZone(i) {
     if (!_seatmapApi || typeof _seatmapApi.selectSection !== 'function') return;
-    const zones = _seatmapRemap ? _seatmapAvailableZones(_seatmapRemap) : [];
-    const z = zones[i];
+    const z = _seatmapZones[i];
     if (!z) return;
-    const wasActive = _seatmapActiveZoneIndex(zones) === i;
+    const wasActive = _seatmapActiveZoneIndex() === i;
     _seatmapClearSelection();
     if (!wasActive) {
       z.keys.forEach(k => { try { _seatmapApi.selectSection(k); } catch (_) { /* not on this map */ } });
@@ -5061,6 +5054,7 @@
     _seatmapSelected = [];
     _seatmapUserPicked = false;
     _seatmapManual = {};
+    _seatmapZones = [];
     await _seatmapLoadManual(eventId);   // persisted operator overrides (venue_section_map)
 
     // (3) Default source = TEvo. Build the map ONCE with its floors; later source
@@ -5091,9 +5085,12 @@
     renderSeatmapSelector();
     renderSeatmapList();
     renderSeatmapUnmapped();
-    renderSeatmapZones();
+    renderSeatmapZones();   // hides the row until the curated zones load
     updateSeatmapMeta(ticketGroups.length);
     _seatmapProbeSources(eventId);   // fire-and-forget: enable/disable + count the other sources
+    // Curated zones (RLS-locked → SECDEF RPC). Non-blocking: map is already up;
+    // the chip row appears when the fetch lands.
+    _seatmapLoadZones(eventId).then(renderSeatmapZones).catch(e => console.error('[zones]', e));
   }
 
   // Switch which source colors the map. Re-colors via updateTicketGroups() (no SVG rebuild)
