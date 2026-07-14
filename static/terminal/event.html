@@ -544,6 +544,13 @@
           <span class="seatmap-src-label">Source on map:</span>
           <span class="seatmap-src-sel" id="seatmapSourceSel"></span>
         </div>
+        <!-- Zone quick-select: one click selects every venue-map section in a tier
+             (hundreds band or named level). Populated from the venue manifest; hidden
+             when the venue has no groupable zones. -->
+        <div class="seatmap-zone-row row" id="seatmapZoneRow" hidden>
+          <span class="seatmap-src-label">Zones:</span>
+          <span class="seatmap-zone-sel" id="seatmapZoneSel"></span>
+        </div>
         <div class="seatmap-mapwrap">
           <div id="seatmapHost" class="seatmap-host"></div>
         </div>

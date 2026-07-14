@@ -4718,6 +4718,87 @@
     return out;
   }
 
+  // ----- Zone quick-select (map-side) -----
+  // Group the venue's manifest sections into selectable ZONES so the user can pick a
+  // whole tier with one click instead of shift-clicking each polygon. Reuses the exact
+  // zone→keys expansion the TickPick coloring path uses (_seatmapZoneKeys), so a zone
+  // selects precisely the sections that source would paint. Two zone kinds:
+  //   • hundreds bands present in this venue ("100s", "200s", …)
+  //   • named tiers present in this venue (Field, Lower, Club, Suite, …)
+  // A zone is only offered when it covers >1 section (a 1-section "zone" is just a click).
+  const _SM_ZONE_ORDER = ['field', 'floor', 'lower', 'middle', 'upper', 'club', 'suite', 'lounge', 'balcony', 'bridge', 'terrace', 'vip'];
+
+  function _seatmapAvailableZones(idx) {
+    if (!idx) return [];
+    if (idx._zonesAvail) return idx._zonesAvail;
+    const out = [];
+    // hundreds bands actually present in the manifest
+    const bands = new Set();
+    idx.byNum.forEach((_arr, num) => { const h = Math.floor(parseInt(num, 10) / 100); if (h >= 1) bands.add(h); });
+    Array.from(bands).sort((a, b) => a - b).forEach(h => {
+      const label = (h * 100) + 's';
+      const keys = _seatmapZoneKeys(label, idx);       // expansion is lower-cased/label-agnostic
+      if (keys.length > 1) out.push({ label, keys });
+    });
+    // named tiers actually present
+    _SM_ZONE_ORDER.forEach(word => {
+      const keys = _seatmapZoneKeys(word, idx);
+      if (keys.length > 1) out.push({ label: word.charAt(0).toUpperCase() + word.slice(1), keys });
+    });
+    idx._zonesAvail = out;
+    return out;
+  }
+
+  // Which offered zone (if any) exactly matches the current on-map selection → active chip.
+  // Manual polygon clicks that don't equal a whole zone leave no chip active.
+  function _seatmapActiveZoneIndex(zones) {
+    if (!_seatmapSelected.length) return -1;
+    const sel = new Set(_seatmapSelected.map(s => String(s).toLowerCase()));
+    for (let i = 0; i < zones.length; i++) {
+      const zk = zones[i].keys.map(k => String(k).toLowerCase());
+      if (zk.length === sel.size && zk.every(k => sel.has(k))) return i;
+    }
+    return -1;
+  }
+
+  // Deselect everything currently selected on the map (shared by Reset + zone toggle).
+  function _seatmapClearSelection() {
+    if (!_seatmapApi || typeof _seatmapApi.deselectSection !== 'function') return;
+    _seatmapSelected.slice().forEach(s => { try { _seatmapApi.deselectSection(s); } catch (_) { /* ignore */ } });
+  }
+
+  // Render the zone chip row (hidden when this venue has no groupable zones). Active
+  // state is derived from the live selection so it stays in sync with map clicks.
+  function renderSeatmapZones() {
+    const host = document.getElementById('seatmapZoneSel');
+    const row = document.getElementById('seatmapZoneRow');
+    if (!host || !row) return;
+    const zones = _seatmapRemap ? _seatmapAvailableZones(_seatmapRemap) : [];
+    if (!zones.length) { host.innerHTML = ''; row.hidden = true; return; }
+    row.hidden = false;
+    const active = _seatmapActiveZoneIndex(zones);
+    host.innerHTML = zones.map((z, i) =>
+      `<button type="button" class="sm-zone-btn${i === active ? ' active' : ''}" data-zone="${i}">` +
+      `${escapeHtml(z.label)} <span class="sm-src-cnt">${z.keys.length}</span></button>`
+    ).join('');
+  }
+
+  // Toggle a zone: clear the current selection, then (unless this zone was already the
+  // active selection) select every section it covers. The library's onSelection callback
+  // (componentDidUpdate) fires with the resulting set → onSeatmapSelection refreshes the
+  // listing table + chip state, so we don't touch _seatmapSelected here.
+  function selectSeatmapZone(i) {
+    if (!_seatmapApi || typeof _seatmapApi.selectSection !== 'function') return;
+    const zones = _seatmapRemap ? _seatmapAvailableZones(_seatmapRemap) : [];
+    const z = zones[i];
+    if (!z) return;
+    const wasActive = _seatmapActiveZoneIndex(zones) === i;
+    _seatmapClearSelection();
+    if (!wasActive) {
+      z.keys.forEach(k => { try { _seatmapApi.selectSection(k); } catch (_) { /* not on this map */ } });
+    }
+  }
+
   // Collapse listing rows → one ticketGroup per matched manifest section at its lowest floor
   // (what the map colors by). Unmatched sections are skipped (grey) but still appear in the
   // listing table. No manifest (fetch failed) → fall back to the raw section as the key.
@@ -5010,6 +5091,7 @@
     renderSeatmapSelector();
     renderSeatmapList();
     renderSeatmapUnmapped();
+    renderSeatmapZones();
     updateSeatmapMeta(ticketGroups.length);
     _seatmapProbeSources(eventId);   // fire-and-forget: enable/disable + count the other sources
   }
@@ -5036,6 +5118,7 @@
     renderSeatmapSelector();   // refresh active state
     renderSeatmapList();
     renderSeatmapUnmapped();
+    renderSeatmapZones();       // selection was cleared on source switch — clear active chip
     updateSeatmapMeta(ticketGroups.length);
   }
 
@@ -5101,6 +5184,7 @@
     }
     if (reset) reset.hidden = _seatmapSelected.length === 0;
     renderSeatmapList();
+    renderSeatmapZones();   // keep the active-zone chip in sync with the live selection
   }
 
   function updateSeatmapMeta(mappedCount) {
@@ -5206,14 +5290,19 @@
         selectSeatmapSource(btn.dataset.src);
       });
     }
+    // Zone chips: one click selects/deselects every section in a tier (delegated; survives re-render).
+    const zoneSel = document.getElementById('seatmapZoneSel');
+    if (zoneSel) {
+      zoneSel.addEventListener('click', (e) => {
+        const btn = e.target.closest('.sm-zone-btn');
+        if (!btn) return;
+        selectSeatmapZone(+btn.dataset.zone);
+      });
+    }
     const reset = document.getElementById('seatmapResetBtn');
     if (reset) {
       reset.addEventListener('click', () => {
-        if (_seatmapApi && typeof _seatmapApi.deselectSection === 'function') {
-          _seatmapSelected.slice().forEach(s => {
-            try { _seatmapApi.deselectSection(s); } catch (_) { /* ignore */ }
-          });
-        }
+        _seatmapClearSelection();
         onSeatmapSelection([]);
       });
     }
