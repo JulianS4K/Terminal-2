@@ -60,7 +60,44 @@
     renderGameLog(d.recent_games || [], league);
     loadPlayerTxns(id, league);
     loadPlayerMarket(id, league);
+    loadPlayerNews((d.bio || {}).full_name, league);
     loadPlayerSocial((d.bio || {}).full_name, league);
+  }
+
+  // ESPN news mentioning this player (name-filtered over the espn_news wire).
+  // Additive: silent if none/unsupported.
+  async function loadPlayerNews(name, league) {
+    if (!name) return;
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_player_espn_news',
+      { p_name: name, p_league: league, p_limit: 20 });
+    if (res.error) return;
+    const items = (res.data || {}).items || [];
+    if (!items.length) return;
+    document.getElementById('player-news').removeAttribute('hidden');
+    const meta = document.getElementById('plNewsMeta');
+    if (meta) meta.textContent = `${items.length} stor${items.length === 1 ? 'y' : 'ies'}`;
+    document.getElementById('plNewsBody').innerHTML = items.map(it => {
+      const img = it.image_url
+        ? `<img src="${escapeHtml(it.image_url)}" alt="" loading="lazy" style="width:64px;height:44px;object-fit:cover;border-radius:6px;flex:0 0 auto" />`
+        : '';
+      const head = it.url
+        ? `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.headline || '')}</a>`
+        : escapeHtml(it.headline || '');
+      const summary = it.summary
+        ? `<div class="txn-desc muted small">${escapeHtml(it.summary.slice(0, 160))}${it.summary.length > 160 ? '…' : ''}</div>`
+        : '';
+      return `<div class="txn-row" style="display:flex;gap:10px;align-items:flex-start">
+        ${img}
+        <div style="flex:1;min-width:0">
+          <div class="txn-row-head">
+            <span class="txn-team">${head}</span>
+            <span class="txn-date muted">${it.published_at ? T.fmtDate(it.published_at) : ''}</span>
+          </div>
+          ${summary}
+        </div>
+      </div>`;
+    }).join('');
   }
 
   // Kalshi (etc.) prediction markets about this player — e.g. next-team
