@@ -53,6 +53,15 @@
       </div>
     </section>
 
+    <!-- TRANSFER / PLAYER MARKET: Kalshi next-team odds (shown only if tracked) -->
+    <section id="player-market" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span id="plMktTitle">MARKET</span>
+        <span class="muted small" id="plMktMeta"></span>
+      </div>
+      <div id="plMktBody"></div>
+    </section>
+
     <section id="player-stats" hidden>
       <div class="panel-title">SEASON STATS</div>
       <div id="plStatsBody"><div class="empty">loading…</div></div>
@@ -74,6 +83,15 @@
       <div id="plTxnBody"></div>
     </section>
 
+    <!-- BUZZ: name-scoped X (Twitter) + Reddit wire posts (shown only if any) -->
+    <section id="player-social" hidden style="margin-top:14px">
+      <div class="panel-title row">
+        <span>BUZZ</span>
+        <span class="muted small" id="plSocialMeta"></span>
+      </div>
+      <div id="plSocialBody"></div>
+    </section>
+
   </main>
 
   <script src="lib/supabase.js"></script>
@@ -82,6 +100,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260710nav"></script>
-  <script src="player.js?v=20260704txn"></script>
+  <script src="player.js?v=20260714mkt"></script>
 </body>
 </html>

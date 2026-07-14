@@ -53,6 +53,74 @@
     renderSeasonStats(d.season_stats || {});
     renderGameLog(d.recent_games || [], league);
     loadPlayerTxns(id, league);
+    loadPlayerMarket(id, league);
+    loadPlayerSocial((d.bio || {}).full_name, league);
+  }
+
+  // Kalshi (etc.) prediction markets about this player — e.g. next-team
+  // "transfer" odds. Additive: silent if untracked/unsupported.
+  async function loadPlayerMarket(id, league) {
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_player_prediction_markets',
+      { p_athlete_id: id, p_league: league });
+    if (res.error) return;
+    const d = res.data || {};
+    const cands = d.applicable ? (d.candidates || []) : [];
+    if (!cands.length) return;
+    document.getElementById('player-market').removeAttribute('hidden');
+    const label = d.market_kind === 'next_team' ? 'TRANSFER MARKET · NEXT TEAM' : 'MARKET';
+    setText('plMktTitle', label);
+    const meta = document.getElementById('plMktMeta');
+    if (meta) {
+      const src = cands[0] && cands[0].source ? cands[0].source : 'market';
+      meta.textContent = src.toUpperCase()
+        + (d.close_time ? ' · settles ' + T.fmtDate(d.close_time) : '');
+    }
+    const max = Math.max(...cands.map(c => Number(c.yes_price) || 0), 0.01);
+    document.getElementById('plMktBody').innerHTML = cands.map(c => {
+      const pct = Math.round((Number(c.yes_price) || 0) * 100);
+      const w = Math.max(2, Math.round(((Number(c.yes_price) || 0) / max) * 100));
+      const name = c.dest_performer_id != null
+        ? `<a href="performer.html?performer=${encodeURIComponent(c.dest_performer_id)}">${escapeHtml(c.dest_team_name || c.dest_team_token || '—')}</a>`
+        : escapeHtml(c.dest_team_name || c.dest_team_token || '—');
+      return `<div class="mkt-row" style="display:flex;align-items:center;gap:8px;padding:3px 0">
+        <span class="mkt-name" style="flex:0 0 42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+        <span class="mkt-bar" style="flex:1;height:8px;border-radius:4px;background:var(--panel-2,#1a1a1a);overflow:hidden">
+          <span style="display:block;height:100%;width:${w}%;background:var(--accent,#4ea1ff)"></span>
+        </span>
+        <span class="mkt-pct num" style="flex:0 0 44px;text-align:right">${pct}%</span>
+      </div>`;
+    }).join('') +
+      (cands[0] && cands[0].url
+        ? `<div class="muted small" style="margin-top:6px"><a href="${escapeHtml(cands[0].url)}" target="_blank" rel="noopener noreferrer">view on source ↗</a></div>`
+        : '');
+  }
+
+  // Name-scoped social buzz (X + Reddit wire posts mentioning the player).
+  async function loadPlayerSocial(name, league) {
+    if (!name) return;
+    const Auth = window.TerminalAuth;
+    const res = await Auth.client.rpc('get_player_social',
+      { p_name: name, p_league: league, p_limit: 30 });
+    if (res.error) return;
+    const items = (res.data || {}).items || [];
+    if (!items.length) return;
+    document.getElementById('player-social').removeAttribute('hidden');
+    const meta = document.getElementById('plSocialMeta');
+    if (meta) meta.textContent = `${items.length} post${items.length === 1 ? '' : 's'}`;
+    document.getElementById('plSocialBody').innerHTML = items.map(it => {
+      const head = it.url
+        ? `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.handle || it.source)}</a>`
+        : `<span>${escapeHtml(it.handle || it.source)}</span>`;
+      return `<div class="txn-row">
+        <div class="txn-row-head">
+          <span class="badge">${escapeHtml(it.source || '')}</span>
+          <span class="txn-team">${head}</span>
+          <span class="txn-date muted">${it.published_at ? T.fmtDate(it.published_at) : ''}</span>
+        </div>
+        <div class="txn-desc">${escapeHtml(it.title || '')}</div>
+      </div>`;
+    }).join('');
   }
 
   // Recent ESPN transactions mentioning this player (name-matched, league-scoped)
