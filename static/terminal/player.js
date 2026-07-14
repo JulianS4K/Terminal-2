@@ -58,42 +58,59 @@
     renderHero(d, league);
     renderSeasonStats(d.season_stats || {});
     renderGameLog(d.recent_games || [], league);
-    loadPlayerTxns(id, league);
     loadPlayerMarket(id, league);
-    loadPlayerNews((d.bio || {}).full_name, league);
-    loadPlayerSocial((d.bio || {}).full_name, league);
+    startPlayerFeed(id, (d.bio || {}).full_name, league);
   }
 
-  // ESPN news mentioning this player (name-filtered over the espn_news wire).
-  // Additive: silent if none/unsupported.
-  async function loadPlayerNews(name, league) {
+  // ---- LIVE FEED: one merged stream (ESPN news + Reddit + X + transactions +
+  // market pulse), name-scoped, newest-first, auto-refreshing every 30s. ------
+  let feedTimer = null;
+  function startPlayerFeed(id, name, league) {
     if (!name) return;
+    if (feedTimer) { clearInterval(feedTimer); feedTimer = null; }
+    loadPlayerFeed(id, name, league);
+    // Poll for a live feed; the page is single-view so no teardown needed.
+    feedTimer = setInterval(() => loadPlayerFeed(id, name, league), 30000);
+  }
+
+  const FEED_BADGE = {
+    news: '#2a5db0', reddit: '#d24d1f', x: '#1d9bf0',
+    transaction: '#1e7a3a', market: '#6a4ea1'
+  };
+
+  async function loadPlayerFeed(id, name, league) {
     const Auth = window.TerminalAuth;
-    const res = await Auth.client.rpc('get_player_espn_news',
-      { p_name: name, p_league: league, p_limit: 20 });
-    if (res.error) return;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+    const res = await Auth.client.rpc('get_player_feed',
+      { p_athlete_id: id, p_name: name, p_league: league, p_window_hours: 72, p_limit: 40 });
+    if (res.error) return;   // additive; leave the last good render in place
     const items = (res.data || {}).items || [];
-    if (!items.length) return;
-    document.getElementById('player-news').removeAttribute('hidden');
-    const meta = document.getElementById('plNewsMeta');
-    if (meta) meta.textContent = `${items.length} stor${items.length === 1 ? 'y' : 'ies'}`;
-    document.getElementById('plNewsBody').innerHTML = items.map(it => {
-      const img = it.image_url
-        ? `<img src="${escapeHtml(it.image_url)}" alt="" loading="lazy" style="width:64px;height:44px;object-fit:cover;border-radius:6px;flex:0 0 auto" />`
+    document.getElementById('player-feed').removeAttribute('hidden');
+    const meta = document.getElementById('plFeedMeta');
+    if (meta) meta.textContent = `${items.length} · updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const body = document.getElementById('plFeedBody');
+    if (!items.length) { body.innerHTML = '<div class="empty">no recent activity</div>'; return; }
+    body.innerHTML = items.map(it => {
+      const color = FEED_BADGE[it.item_type] || '#333';
+      const badge = `<span class="badge" style="background:${color};color:#fff">${escapeHtml(it.source || it.item_type || '')}</span>`;
+      const handle = it.handle ? `<span class="muted small">${escapeHtml(it.handle)}</span>` : '';
+      const when = it.published_at ? `<span class="txn-date muted">${T.fmtDate(it.published_at)}</span>` : '';
+      const title = it.url
+        ? `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.title || '')}</a>`
+        : escapeHtml(it.title || '');
+      const img = (it.item_type === 'news' && it.image_url)
+        ? `<img src="${escapeHtml(it.image_url)}" alt="" loading="lazy" style="width:58px;height:40px;object-fit:cover;border-radius:6px;flex:0 0 auto" />`
         : '';
-      const head = it.url
-        ? `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.headline || '')}</a>`
-        : escapeHtml(it.headline || '');
       const summary = it.summary
-        ? `<div class="txn-desc muted small">${escapeHtml(it.summary.slice(0, 160))}${it.summary.length > 160 ? '…' : ''}</div>`
+        ? `<div class="txn-desc muted small">${escapeHtml(it.summary.slice(0, 150))}${it.summary.length > 150 ? '…' : ''}</div>`
         : '';
       return `<div class="txn-row" style="display:flex;gap:10px;align-items:flex-start">
         ${img}
         <div style="flex:1;min-width:0">
-          <div class="txn-row-head">
-            <span class="txn-team">${head}</span>
-            <span class="txn-date muted">${it.published_at ? T.fmtDate(it.published_at) : ''}</span>
+          <div class="txn-row-head" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            ${badge}${handle}${when}
           </div>
+          <div class="txn-team" style="margin-top:2px">${title}</div>
           ${summary}
         </div>
       </div>`;
@@ -159,59 +176,6 @@
       }).join('');
     }
     document.getElementById('plMktBody').innerHTML = html;
-  }
-
-  // Name-scoped social buzz (X + Reddit wire posts mentioning the player).
-  async function loadPlayerSocial(name, league) {
-    if (!name) return;
-    const Auth = window.TerminalAuth;
-    const res = await Auth.client.rpc('get_player_social',
-      { p_name: name, p_league: league, p_limit: 30 });
-    if (res.error) return;
-    const items = (res.data || {}).items || [];
-    if (!items.length) return;
-    document.getElementById('player-social').removeAttribute('hidden');
-    const meta = document.getElementById('plSocialMeta');
-    if (meta) meta.textContent = `${items.length} post${items.length === 1 ? '' : 's'}`;
-    document.getElementById('plSocialBody').innerHTML = items.map(it => {
-      const head = it.url
-        ? `<a href="${escapeHtml(it.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(it.handle || it.source)}</a>`
-        : `<span>${escapeHtml(it.handle || it.source)}</span>`;
-      return `<div class="txn-row">
-        <div class="txn-row-head">
-          <span class="badge">${escapeHtml(it.source || '')}</span>
-          <span class="txn-team">${head}</span>
-          <span class="txn-date muted">${it.published_at ? T.fmtDate(it.published_at) : ''}</span>
-        </div>
-        <div class="txn-desc">${escapeHtml(it.title || '')}</div>
-      </div>`;
-    }).join('');
-  }
-
-  // Recent ESPN transactions mentioning this player (name-matched, league-scoped)
-  // — see get_espn_player_transactions. Best-effort: silent if none/unsupported.
-  async function loadPlayerTxns(id, league) {
-    const Auth = window.TerminalAuth;
-    const res = await Auth.client.rpc('get_espn_player_transactions',
-      { p_athlete_id: id, p_league: league, p_limit: 20 });
-    if (res.error) return;   // block is additive; don't disrupt the page on error
-    const rows = res.data || [];
-    if (!rows.length) return;
-    document.getElementById('player-txns').removeAttribute('hidden');
-    const meta = document.getElementById('plTxnMeta');
-    if (meta) meta.textContent = `${rows.length} move${rows.length === 1 ? '' : 's'}`;
-    document.getElementById('plTxnBody').innerHTML = rows.map(r => {
-      const team = r.tevo_performer_id != null
-        ? `<a class="txn-team" href="performer.html?performer=${encodeURIComponent(r.tevo_performer_id)}">${escapeHtml(r.team || '—')}</a>`
-        : `<span class="txn-team">${escapeHtml(r.team || '—')}</span>`;
-      return `<div class="txn-row">
-        <div class="txn-row-head">
-          <span class="txn-date muted">${r.txn_date ? T.fmtDate(r.txn_date) : '—'}</span>
-          ${team}
-        </div>
-        <div class="txn-desc">${escapeHtml(r.description || '')}</div>
-      </div>`;
-    }).join('');
   }
 
   function renderHero(d, league) {
