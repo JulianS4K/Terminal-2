@@ -47,6 +47,11 @@
     // Fantasy was promoted to its own hub surface (D5, /fantasy/) — no longer a
     // terminal tab. The global search still deep-links to it (see below).
     { id: 'transactions', label: 'TRANSACTIONS', href: 'transactions.html' },
+    // Trade Watch — "first to know when he trades": fuses the Kalshi next-team
+    // market, a high-frequency Wikipedia team-hint poll, and the ESPN roster team
+    // into one MOVED/WATCHING state per tracked player. Backed by get_trade_watch
+    // (mig 20260714130000). Grouped by the transactions/movers "what moved" cluster.
+    { id: 'trade-watch', label: 'TRADE WATCH', href: 'trade-watch.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
     // owned-vs-market, price distribution, top sections). Backed by
