@@ -52,6 +52,10 @@
     // into one MOVED/WATCHING state per tracked player. Backed by get_trade_watch
     // (mig 20260714130000). Grouped by the transactions/movers "what moved" cluster.
     { id: 'trade-watch', label: 'TRADE WATCH', href: 'trade-watch.html' },
+    // Cast Watch — Broadway twin of Trade Watch: shows with a detected Wikipedia
+    // cast-section change (the theatre analog of a trade). Backed by get_cast_watch
+    // (mig 20260714220000).
+    { id: 'cast-watch', label: 'CAST WATCH', href: 'cast-watch.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
     // owned-vs-market, price distribution, top sections). Backed by
