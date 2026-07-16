@@ -95,6 +95,11 @@
     { id: 'season-tickets', label: 'SEASON TIX', href: 'season-tickets.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
     { id: 'health',    label: 'HEALTH',    href: 'health.html' },
+    // Help — the in-app onboarding guide + feature tour + glossary for
+    // first-time operators (static/terminal/help.html). Kept last so it reads
+    // as the always-available "lost? start here" tab. The full design brief for
+    // the richer onboarding overlay lives in docs/d0_onboarding_guide.md.
+    { id: 'help',      label: 'HELP',      href: 'help.html' },
   ];
 
   function inject() {
