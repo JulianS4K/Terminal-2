@@ -43,7 +43,7 @@ If your change must touch another lane's surface: propose via PR comment to the 
 |---|---|
 | A1 | Data plane — DB + ingest pipeline + cross-source xref + DB security + crons |
 | B1 | Build + guards + governance — CI, drift, freshness, tests, and the docs surface |
-| D0 | Terminal (broker view) + orders dashboard — **priority active lane** |
+| D0 | Terminal (broker view) + orders dashboard |
 | D1 | Store / storefront |
 | D3 | Broadway |
 | D4 | Exos / Bridge |
