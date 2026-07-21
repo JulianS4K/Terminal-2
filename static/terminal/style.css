@@ -797,6 +797,47 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 .wrap.performer .tab-pane[hidden],
 .wrap.venue     .tab-pane[hidden] { display: none; }
 
+/* ---------- PLAYER page (mirrors performer page layout) ----------
+   Without these the page falls back to the base main.wrap 12-col grid, which
+   squeezes every section into a 1/12 track on desktop AND leaves the hero
+   headshot (#plHero) unconstrained — it renders at natural size and blows out
+   the whole layout. Flex column + a capped, cover-fit avatar fixes both. */
+.wrap.player { display: flex; flex-direction: column; gap: 12px; }
+.wrap.player > section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+}
+#player-hero {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 16px;
+  align-items: center;
+}
+#player-hero .ph-left img {
+  width: 88px; height: 88px; object-fit: cover;
+  border-radius: 50%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+#player-hero .ph-right .title { margin: 0 0 4px; font-size: 22px; }
+#player-hero .ph-right .meta {
+  margin: 0; color: var(--muted);
+  font-family: var(--mono); font-size: 12px;
+}
+#player-hero .ph-right .meta .dot { margin: 0 8px; color: var(--dim); }
+#player-hero .ph-right .meta a { color: var(--accent); }
+
+/* ---------- TRADE WATCH page ----------
+   Same trap as the player page: with only the bare `wrap` class it inherits the
+   12-col grid and the whole page (add box + watch cards) collapses into a narrow
+   left column on desktop. A capped single-column flow reads well at any width. */
+.wrap.trade-watch {
+  display: flex; flex-direction: column; gap: 0;
+  max-width: 900px;
+}
+.wrap.trade-watch > * { min-width: 0; }
+
 /* ---------- Entity index (performer + venue 4-league directory) ---------- */
 
 .entity-index-grid {
@@ -2430,9 +2471,9 @@ body[data-page="login"] {
 
   /* Performer/venue hero: shrink the logo column so a long name has room and
      never gets squeezed to a vertical sliver (same failure mode as #hero). */
-  #perf-hero, #venue-hero { grid-template-columns: 64px 1fr; gap: 12px; }
-  #perf-hero .ph-left img, #venue-hero .ph-left img { width: 56px; height: 56px; }
-  #perf-hero .ph-right .title, #venue-hero .ph-right .title { font-size: 18px; overflow-wrap: anywhere; }
+  #perf-hero, #venue-hero, #player-hero { grid-template-columns: 64px 1fr; gap: 12px; }
+  #perf-hero .ph-left img, #venue-hero .ph-left img, #player-hero .ph-left img { width: 56px; height: 56px; }
+  #perf-hero .ph-right .title, #venue-hero .ph-right .title, #player-hero .ph-right .title { font-size: 18px; overflow-wrap: anywhere; }
 
   /* Dense tables: scroll the table itself rather than blow out the layout. */
   table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
