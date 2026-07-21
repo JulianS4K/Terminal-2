@@ -1,4 +1,5 @@
 -- 20260721120000_a1_enable_rls_public_athlete_zone_tables.sql
+-- Migration 20260721120000 · level:security · lane:A1 · writes:athlete_pages,athlete_external_ids,athlete_wikipedia,espn_athlete_brand,zone_price_observations · reads:none · pre:none
 -- Lane: A1 (DB security — RLS/SECDEF, PROJECT_BIBLE §2.4).
 --
 -- Fixes the CRITICAL Supabase security-linter finding `rls_disabled_in_public`
