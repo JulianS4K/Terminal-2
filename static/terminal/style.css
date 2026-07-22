@@ -838,6 +838,21 @@ table .empty { color: var(--muted); padding: 12px; text-align: center; }
 }
 .wrap.trade-watch > * { min-width: 0; }
 
+/* ---------- CAST WATCH page (sibling of trade-watch) ----------
+   Same 12-col-grid trap: bare `wrap` squeezes the watch cards into a 1/12
+   sliver on desktop. Capped single-column flow, identical to trade-watch. */
+.wrap.cast-watch {
+  display: flex; flex-direction: column; gap: 0;
+  max-width: 900px;
+}
+.wrap.cast-watch > * { min-width: 0; }
+
+/* ---------- HEALTH dashboard ----------
+   `wrap health` had no layout rule, so its ~10 top-level status divs tiled
+   horizontally across the base 12-col grid (each ~1/12 wide) instead of
+   stacking. A flex column restores the vertical dashboard. */
+.wrap.health { display: flex; flex-direction: column; gap: 10px; }
+
 /* ---------- Entity index (performer + venue 4-league directory) ---------- */
 
 .entity-index-grid {
@@ -2615,7 +2630,9 @@ body[data-page="login"] {
 .sales .panel-title.small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 12px 0 6px; }
 
 /* ---------- RACING page (RACING nav tab) ---------- */
-.wrap.racing { padding: 14px; }
+/* Redirect stubs (racing/compare both forward elsewhere): plain block so the
+   single message section spans full width instead of a 1/12 grid sliver. */
+.wrap.racing, .wrap.compare { display: block; padding: 14px; }
 .race-series { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .race-tab {
   font-family: var(--mono); font-size: 11px; letter-spacing: .4px;
