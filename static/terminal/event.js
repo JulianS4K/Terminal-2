@@ -5873,7 +5873,7 @@
       // Offer-level AXS buy deep-link (closest AXS primary allows — no per-seat link).
       const buyUrl = lst && lst.buy_url;
       const buyHead = buyUrl ? '<th>Buy</th>' : '';
-      t2.innerHTML = `<thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th>
+      t2.innerHTML = `<thead><tr><th>Listing</th><th>Section</th><th>Row</th><th class="num">Qty</th>
         <th class="num">Price</th><th>Type</th><th>Seats</th><th>Src</th>${buyHead}</tr></thead><tbody></tbody>`;
       const b2 = t2.querySelector('tbody');
       listings.forEach(r => {
@@ -5884,7 +5884,13 @@
           const tip = `Buy on AXS — pick Sec ${r.section || ''} · Row ${r.row || ''} · seats ${r.seat_numbers || ''}`;
           buyCell = `<td><a class="axs-buy" href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(tip)}">Buy ▸</a></td>`;
         }
+        // Stable marketplace-style listing id (persists across polls; reprice keeps it).
+        const lid = r.listing_id != null ? String(r.listing_id) : '';
+        const lidCell = lid
+          ? `<td class="axs-lid" title="AXS listing ${escapeHtml(lid)}">${escapeHtml(lid.slice(-8))}</td>`
+          : '<td>—</td>';
         tr.innerHTML = `
+          ${lidCell}
           <td>${escapeHtml(r.section || '—')}</td>
           <td>${escapeHtml(r.row || '—')}</td>
           <td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>

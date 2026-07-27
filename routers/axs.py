@@ -173,7 +173,7 @@ def build_axs_router(get_require_sb: Callable[[], Callable], require_auth: Calla
         rows = (
             db.table("v_axs_listings")
             .select("section,row,quantity,retail_price,type,format,wheelchair,seat_numbers,"
-                    "src,neighborhood,is_ga,seat_from,seat_to")
+                    "src,neighborhood,is_ga,seat_from,seat_to,listing_id")
             .eq("snapshot_id", s0["id"])
             .order("section").order("row").order("seat_from")
             .limit(limit).execute()

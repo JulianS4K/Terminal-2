@@ -138,8 +138,8 @@ def test_axs_sections_summary(client, monkeypatch):
 
 def test_axs_listings_summary(client, monkeypatch):
     rows = [
-        {"quantity": 3, "retail_price": 120, "src": "primary"},
-        {"quantity": 2, "retail_price": 400, "src": "resale"},
+        {"quantity": 3, "retail_price": 120, "src": "primary", "listing_id": 136875980610387530},
+        {"quantity": 2, "retail_price": 400, "src": "resale", "listing_id": 42},
     ]
     buy = "https://shop.axs.com/?c=axs&e=55498790445672539"
     _db(monkeypatch, tables={
@@ -148,6 +148,7 @@ def test_axs_listings_summary(client, monkeypatch):
         rpc={"axs_event_buy_url": buy})
     body = client.get("/api/axs/event/1/listings").json()
     assert body["buy_url"] == buy   # offer-level AXS buy deep-link surfaced per listing
+    assert body["listings"][0]["listing_id"] == 136875980610387530  # stable listing id passthrough
     s = body["summary"]
     assert s["blocks"] == 2 and s["total_seats"] == 5
     assert s["min_price"] == 120 and s["max_price"] == 400

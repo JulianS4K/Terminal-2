@@ -2775,3 +2775,4 @@ a.axs-buy {
   white-space: nowrap; line-height: 1.6;
 }
 a.axs-buy:hover { background: var(--accent); color: #fff; }
+td.axs-lid { font-family: var(--mono, monospace); font-size: 11px; color: var(--muted, #888); cursor: help; }
