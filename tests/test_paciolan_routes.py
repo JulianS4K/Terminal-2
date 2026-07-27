@@ -147,6 +147,57 @@ def test_listings_empty_summary_defaults():
     assert s["min_price"] is None and s["max_price"] is None
 
 
+# ---- events (URL layer) ----
+_EVENTS = [
+    # mapped + actively pulled + healthy last pull
+    {"tenant": "bgsufalcons", "event_code": "F26/F01", "event_name": "Falcons",
+     "map_tevo_event_id": 999001, "target_active": True, "last_status": "ok"},
+    # unmapped, not pulled, last pull errored (counts toward "stale")
+    {"tenant": "bgsufalcons", "event_code": "F26/F02", "event_name": "Falcons 2",
+     "map_tevo_event_id": None, "target_active": False, "last_status": "error"},
+    # expired last status also counts as stale; no target
+    {"tenant": "other", "event_code": "X/1", "event_name": "X",
+     "map_tevo_event_id": None, "target_active": None, "last_status": "expired"},
+]
+
+
+def test_events_summary_counts():
+    sb = _Sb(tables={"v_paciolan_events": _EVENTS})
+    r = _client(sb).get("/api/paciolan/events")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 3
+    assert body["mapped"] == 1
+    assert body["pulling"] == 1
+    assert body["stale"] == 2          # error + expired
+    assert body["events"][0]["event_code"] == "F26/F01"
+
+
+def test_events_active_filter_and_empty():
+    # active=true exercises the .eq() branch; empty table exercises `data or []`.
+    r = _client(_Sb(tables={"v_paciolan_events": []})).get(
+        "/api/paciolan/events?active=true&limit=999999")
+    body = r.json()
+    assert body["count"] == 0 and body["events"] == []
+    assert body["mapped"] == 0 and body["pulling"] == 0 and body["stale"] == 0
+
+
+# ---- health screen ----
+def test_health_returns_single_row():
+    row = {"targets_active": 2, "pending": 1, "inflight": 0, "ok_24h": 5,
+           "empty_24h": 1, "error_24h": 0, "expired_24h": 0}
+    r = _client(_Sb(tables={"v_paciolan_pull_health": [row]})).get(
+        "/api/paciolan/health")
+    assert r.status_code == 200
+    assert r.json()["ok_24h"] == 5 and r.json()["targets_active"] == 2
+
+
+def test_health_empty_returns_object():
+    r = _client(_Sb(tables={"v_paciolan_pull_health": []})).get(
+        "/api/paciolan/health")
+    assert r.status_code == 200 and r.json() == {}
+
+
 # ---- sections ----
 def test_sections_endpoint():
     rows = [{"level": "U", "section_label": "16U", "pct_available": 81.4,

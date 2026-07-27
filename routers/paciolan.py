@@ -60,6 +60,39 @@ def build_paciolan_router(get_require_sb: Callable[[], Callable],
                                    if s.get("available")),
         }
 
+    @router.get("/api/paciolan/events")
+    def paciolan_events(active: bool = False, limit: int = 1000,
+                        _=Depends(require_auth)):
+        """URL layer for the PACIOLAN tab: every captured (tenant,event_code)
+        with its latest snapshot, face get-in/band + live availability, AQ
+        mapping, and pull-loop health (v_paciolan_events). `active=true` narrows
+        to events the autonomous driver is still pulling. Service-role read
+        (paciolan_* tables are RLS-locked, like the AXS events route)."""
+        limit = max(1, min(int(limit), 5000))
+        db = get_require_sb()()
+        q = db.table("v_paciolan_events").select("*")
+        if active:
+            q = q.eq("target_active", True)
+        rows = (q.order("occurs_at").limit(limit).execute()).data or []
+        return {
+            "count": len(rows),
+            "mapped": sum(1 for r in rows if r.get("map_tevo_event_id")),
+            "pulling": sum(1 for r in rows if r.get("target_active")),
+            "stale": sum(1 for r in rows
+                         if r.get("last_status") in ("error", "expired")),
+            "events": rows,
+        }
+
+    @router.get("/api/paciolan/health")
+    def paciolan_health(_=Depends(require_auth)):
+        """Health screen for the PACIOLAN tab: single-row rollup of the
+        autonomous pull loop — active targets, live queue depth, 24h outcome mix
+        (ok/empty/error/expired), and freshness (v_paciolan_pull_health)."""
+        db = get_require_sb()()
+        rows = (db.table("v_paciolan_pull_health").select("*")
+                .limit(1).execute()).data or []
+        return rows[0] if rows else {}
+
     @router.get("/api/paciolan/snapshot/{snapshot_id}/listings")
     def paciolan_listings(snapshot_id: int, limit: int = 5000,
                           _=Depends(require_auth)):
