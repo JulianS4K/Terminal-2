@@ -27,12 +27,19 @@ function eventCodeFromPath() {
 function buildCapture() {
   const { sections, seats } = self.PaciolanParse.parseSeatmap(document);
   if (!sections.length && !seats.length) return null;
+  // Event metadata (name/date/venue/teams) so the server can map this to the
+  // canonical AQ event → EVO/SeatGeek/StubHub (paciolan_aq_match).
+  const meta = self.PaciolanParse.parseEventMeta(document);
   return {
     platform: "paciolan",
     tenant: tenantFromHost(),
     event_code: eventCodeFromPath(),
     source_url: location.href,
-    event_name: (document.title || "").trim() || null,
+    event_name: meta.event_name,
+    occurs_at: meta.occurs_at,
+    venue_name: meta.venue_name,
+    home_team: meta.home_team,
+    away_team: meta.away_team,
     captured_at: new Date().toISOString(),
     sections,
     seats,

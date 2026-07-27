@@ -23,6 +23,7 @@ and `evenue.net` is a FORBIDDEN_HOST in that audit like every other source.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Iterable
 
@@ -161,6 +162,70 @@ def parse_seatmap_html(html: str) -> dict[str, list[dict[str, Any]]]:
             "available": available,
         })
     return {"sections": sections, "seats": seats}
+
+
+# --- event metadata (for AQ mapping to EVO/SG/StubHub) -------------------
+# The matcher (paciolan_aq_match, a mirror of axs_aq_match) needs event
+# name + date + venue. eVenue event pages usually embed a schema.org Event as
+# JSON-LD; we read that, then fall back to the page title. Teams are split from
+# the matchup string ("Away at Home" / "Home vs Away"). Twin of
+# parse_seatmap.js parseEventMeta().
+_JSONLD_RE = re.compile(
+    r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.S | re.I)
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
+
+
+def split_teams(name: str | None) -> tuple[str | None, str | None]:
+    """Matchup string → (home_team, away_team). '<away> at <home>' puts the
+    home team second; '<home> vs <away>' puts it first. Returns (None, None)
+    if no separator is found."""
+    s = name or ""
+    for sep, home_first in ((" at ", False), (" @ ", False),
+                            (" vs. ", True), (" vs ", True), (" v ", True)):
+        if sep in s:
+            left, right = s.split(sep, 1)
+            left, right = left.strip(), right.strip()
+            return (left, right) if home_first else (right, left)
+    return None, None
+
+
+def parse_event_meta(html: str) -> dict[str, Any]:
+    """Extract {event_name, occurs_at, venue_name, home_team, away_team} from a
+    rendered eVenue event page (schema.org Event JSON-LD, then <title>)."""
+    meta: dict[str, Any] = {"event_name": None, "occurs_at": None,
+                            "venue_name": None, "home_team": None,
+                            "away_team": None}
+    for m in _JSONLD_RE.finditer(html):
+        try:
+            data = json.loads(m.group(1))
+        except (ValueError, TypeError):
+            continue
+        for it in (data if isinstance(data, list) else [data]):
+            if not isinstance(it, dict):
+                continue
+            if not (it.get("@type") in ("Event", "SportsEvent")
+                    or "startDate" in it):
+                continue
+            meta["event_name"] = meta["event_name"] or it.get("name")
+            meta["occurs_at"] = meta["occurs_at"] or it.get("startDate")
+            loc = it.get("location")
+            if isinstance(loc, dict):
+                meta["venue_name"] = meta["venue_name"] or loc.get("name")
+            for key, dst in (("homeTeam", "home_team"), ("awayTeam", "away_team")):
+                v = it.get(key)
+                if isinstance(v, dict):
+                    meta[dst] = meta[dst] or v.get("name")
+                elif isinstance(v, str):
+                    meta[dst] = meta[dst] or v
+    if not meta["event_name"]:
+        t = _TITLE_RE.search(html)
+        if t:
+            meta["event_name"] = t.group(1).strip() or None
+    if meta["event_name"] and not (meta["home_team"] and meta["away_team"]):
+        home, away = split_teams(meta["event_name"])
+        meta["home_team"] = meta["home_team"] or home
+        meta["away_team"] = meta["away_team"] or away
+    return meta
 
 
 # --- consecutive-seat grouping (twin of v_paciolan_seat_groups) ----------

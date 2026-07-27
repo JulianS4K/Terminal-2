@@ -16,8 +16,10 @@ from paciolan_client import (
     _assert_readonly_method,
     classify_seat_type,
     group_consecutive,
+    parse_event_meta,
     parse_seat_key,
     split_level_section,
+    split_teams,
     parse_seatmap_html,
 )
 
@@ -159,6 +161,64 @@ def test_parse_seatmap_html_extracts_seats_and_sections():
     assert s1["available"] is True and s1["price"] == 25.0
     s24 = next(s for s in out["seats"] if s["data_seat_key"] == "U:16U:19:24")
     assert s24["available"] is False and s24["price"] == 21.0
+
+
+# ---------- event metadata (AQ mapping inputs) ----------
+def test_split_teams():
+    assert split_teams("Toledo at Bowling Green") == ("Bowling Green", "Toledo")
+    assert split_teams("Toledo @ Bowling Green") == ("Bowling Green", "Toledo")
+    assert split_teams("Bowling Green vs Toledo") == ("Bowling Green", "Toledo")
+    assert split_teams("Bowling Green vs. Toledo") == ("Bowling Green", "Toledo")
+    assert split_teams("Bowling Green v Toledo") == ("Bowling Green", "Toledo")
+    assert split_teams("Some Concert") == (None, None)
+    assert split_teams(None) == (None, None)
+
+
+def test_parse_event_meta_from_jsonld_sportsevent():
+    html = (
+        '<script type="application/ld+json">'
+        '{"@type":"SportsEvent","name":"Bowling Green vs Toledo",'
+        '"startDate":"2026-09-05T18:00:00Z",'
+        '"location":{"@type":"Place","name":"Doyt Perry Stadium"},'
+        '"homeTeam":{"name":"Bowling Green Falcons"},"awayTeam":"Toledo Rockets"}'
+        '</script>'
+    )
+    m = parse_event_meta(html)
+    assert m["event_name"] == "Bowling Green vs Toledo"
+    assert m["occurs_at"] == "2026-09-05T18:00:00Z"
+    assert m["venue_name"] == "Doyt Perry Stadium"
+    assert m["home_team"] == "Bowling Green Falcons"   # dict form
+    assert m["away_team"] == "Toledo Rockets"          # string form
+
+
+def test_parse_event_meta_jsonld_list_and_teams_from_name():
+    # JSON-LD as a list; Event without teams → teams split from the name.
+    html = (
+        '<script type="application/ld+json">'
+        '[{"@type":"WebSite"},{"@type":"Event","name":"Toledo at Bowling Green",'
+        '"startDate":"2026-09-05","location":{"name":"Doyt Perry Stadium"}}]'
+        '</script>'
+    )
+    m = parse_event_meta(html)
+    assert m["event_name"] == "Toledo at Bowling Green"
+    assert m["home_team"] == "Bowling Green" and m["away_team"] == "Toledo"
+
+
+def test_parse_event_meta_falls_back_to_title():
+    # Invalid JSON-LD + a non-Event object are skipped; <title> is the fallback.
+    html = ('<script type="application/ld+json">{bad json</script>'
+            '<script type="application/ld+json">"a string"</script>'
+            '<script type="application/ld+json">{"@type":"Org"}</script>'
+            '<title>  BGSU Football  </title>')
+    m = parse_event_meta(html)
+    assert m["event_name"] == "BGSU Football"
+    assert m["occurs_at"] is None and m["venue_name"] is None
+
+
+def test_parse_event_meta_nothing():
+    m = parse_event_meta("<p>no metadata here</p>")
+    assert m == {"event_name": None, "occurs_at": None, "venue_name": None,
+                 "home_team": None, "away_team": None}
 
 
 # ---------- RULE 2 read-only guard (parity with the other clients) ----------

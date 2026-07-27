@@ -128,7 +128,56 @@ function groupConsecutive(seats) {
   return blocks;
 }
 
+// --- event metadata (for AQ mapping to EVO/SeatGeek/StubHub) ---------------
+// Twin of paciolan_client.parse_event_meta(): schema.org Event JSON-LD, then
+// the page title. Teams split from the matchup string. The matcher
+// (paciolan_aq_match) needs name + date + venue to resolve the aq_short_event_id.
+function splitTeams(name) {
+  const s = name || "";
+  const seps = [[" at ", false], [" @ ", false],
+                [" vs. ", true], [" vs ", true], [" v ", true]];
+  for (const [sep, homeFirst] of seps) {
+    const i = s.indexOf(sep);
+    if (i >= 0) {
+      const left = s.slice(0, i).trim(), right = s.slice(i + sep.length).trim();
+      return homeFirst ? [left, right] : [right, left];
+    }
+  }
+  return [null, null];
+}
+
+function parseEventMeta(root) {
+  root = root || document;
+  const meta = { event_name: null, occurs_at: null, venue_name: null,
+                 home_team: null, away_team: null };
+  root.querySelectorAll('script[type="application/ld+json"]').forEach((el) => {
+    let data;
+    try { data = JSON.parse(el.textContent || ""); } catch (_) { return; }
+    (Array.isArray(data) ? data : [data]).forEach((it) => {
+      if (!it || typeof it !== "object") return;
+      if (!(it["@type"] === "Event" || it["@type"] === "SportsEvent" || "startDate" in it)) return;
+      meta.event_name = meta.event_name || it.name || null;
+      meta.occurs_at = meta.occurs_at || it.startDate || null;
+      if (it.location && typeof it.location === "object")
+        meta.venue_name = meta.venue_name || it.location.name || null;
+      [["homeTeam", "home_team"], ["awayTeam", "away_team"]].forEach(([k, d]) => {
+        const v = it[k];
+        if (v && typeof v === "object") meta[d] = meta[d] || v.name || null;
+        else if (typeof v === "string") meta[d] = meta[d] || v;
+      });
+    });
+  });
+  if (!meta.event_name) meta.event_name = (document.title || "").trim() || null;
+  if (meta.event_name && !(meta.home_team && meta.away_team)) {
+    const [home, away] = splitTeams(meta.event_name);
+    meta.home_team = meta.home_team || home;
+    meta.away_team = meta.away_team || away;
+  }
+  return meta;
+}
+
 if (typeof self !== "undefined") {
   self.PaciolanParse = { parseSeatmap, groupConsecutive, splitLevelSection,
-                         parseSeatKey, classifySeatType };
+                         parseSeatKey, classifySeatType, parseEventMeta,
+                         splitTeams };
 }
