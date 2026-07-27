@@ -107,11 +107,49 @@ Capture payload (`p_payload`) shape:
                   "seat_type": "premium", "is_ga": false, "available": true } ] }
 ```
 
+## Export-health indicator
+
+A successful HTTP 200 isn't the same as a *good* export, so the popup shows a
+verdict after each upload (and colors the toolbar badge to match):
+
+- 🟢 **Export good** — uploaded, with available seats **and** the event
+  name/date/venue needed to map to EVO/SeatGeek/StubHub.
+- 🟠 **Uploaded, thin** — either **0 available seats** (you probably didn't
+  expand a section) or **missing event info** (won't map yet).
+- 🔴 **Upload failed** — with the error/status.
+
+The verdict lists a checklist — *uploaded ✓/✗ · N available seats · event info
+(name/date/venue)* — so you can see exactly what's missing. The toolbar badge is
+green / amber / red accordingly (grey = a passive buffer, not an upload).
+
+## Updates (git pull — no Web Store)
+
+The extension is installed **unpacked from this repo**, so it is not on the
+Chrome Web Store and Chrome will not auto-update it. To update:
+
+```bash
+./paciolan_extension/update.sh      # git pull --ff-only
+# then chrome://extensions → Reload ↻ on the extension
+```
+
+The popup footer shows the **loaded version** and a **Check for updates** button.
+That check compares your loaded `manifest.json` version to the latest version
+published to Supabase — which CI sets on every push to `main` that changes the
+extension (`.github/workflows/paciolan-extension-release.yml` →
+`paciolan_extension_publish`, secret-gated; the popup reads
+`paciolan_extension_latest`, public). When a newer version exists the footer
+says *"update available → vX.Y.Z · git pull + reload."*
+
+*(CI publish needs three repo secrets — `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+`PACIOLAN_INGEST_SECRET`; the workflow no-ops if they're unset. Nothing here uses
+the `service_role` key.)*
+
 ## Files
 
 | File | Role |
 |---|---|
 | `manifest.json` | MV3 manifest (content scripts, SW, permissions) |
+| `update.sh` | `git pull` helper (self-hosted update path) |
 | `parse_seatmap.js` | DOM → normalized `{sections, seats}` (twin of `paciolan_client.py`) |
 | `content.js` | reads the map, re-captures on expand/qty change, de-dupes |
 | `background.js` | ring-buffer + ship to our ingest URL |

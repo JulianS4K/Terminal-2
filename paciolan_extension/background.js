@@ -15,11 +15,44 @@ const RING_MAX = 100;
 async function getLocal(keys) { return await chrome.storage.local.get(keys); }
 async function setLocal(obj) { return await chrome.storage.local.set(obj); }
 
-function setBadge(count) {
+// Colored toolbar badge = at-a-glance export health.
+//   green  = good (uploaded, has available seats + mapping metadata)
+//   amber  = uploaded but thin (0 available seats, or missing name/date/venue)
+//   red    = upload failed
+//   grey   = passive capture (buffered, not uploaded)
+const BADGE = {
+  good:  { color: "#2e7d32", text: (n) => String(n) },
+  thin:  { color: "#b8860b", text: (n) => String(n) },
+  empty: { color: "#b8860b", text: () => "0" },
+  fail:  { color: "#c62828", text: () => "!" },
+  idle:  { color: "#616161", text: (n) => (n > 0 ? String(n) : "") },
+};
+function setBadge(level, count) {
+  const b = BADGE[level] || BADGE.idle;
   try {
-    chrome.action.setBadgeBackgroundColor({ color: "#2e7d32" });
-    chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
+    chrome.action.setBadgeBackgroundColor({ color: b.color });
+    chrome.action.setBadgeText({ text: b.text(count) });
   } catch (_) {}
+}
+
+// Judge a capture: did it upload, does it have sellable seats, and does it
+// carry the event name/date/venue the server needs to map it to EVO/StubHub?
+function assessQuality(payload, ship, uploaded) {
+  const available = payload.seats.filter((s) => s.available).length;
+  const hasMeta = !!(payload.event_name && payload.occurs_at && payload.venue_name);
+  let level;
+  if (!uploaded) level = "idle";
+  else if (!ship.shipped) level = "fail";
+  else if (available === 0) level = "empty";
+  else if (!hasMeta) level = "thin";
+  else level = "good";
+  return {
+    level, available, hasMeta,
+    meta: {
+      name: !!payload.event_name, date: !!payload.occurs_at,
+      venue: !!payload.venue_name,
+    },
+  };
 }
 
 // Upload one capture to Supabase: POST <url>/rest/v1/rpc/paciolan_ingest_secure
@@ -78,10 +111,12 @@ async function handleCapture(msg) {
   record.ship = msg.upload ? await uploadToSupabase(payload)
                            : { shipped: false, reason: "not requested" };
 
+  // Export-health verdict → colored badge + stored for the popup.
+  record.quality = assessQuality(payload, record.ship, !!msg.upload);
   const { captures = [] } = await getLocal(["captures"]);
   captures.unshift({ ...record, payload });
   await setLocal({ captures: captures.slice(0, RING_MAX) });
-  setBadge(availed);
+  setBadge(record.quality.level, availed);
   return record;
 }
 

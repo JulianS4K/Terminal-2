@@ -9,18 +9,31 @@
     label { display: block; margin: 8px 0 2px; font-weight: 600; font-size: 12px; }
     input[type=text], input[type=url], input[type=password] { width: 100%; box-sizing: border-box; padding: 5px; }
     .big { width: 100%; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
-           background: #1a7f37; color: #fff; border: 0; border-radius: 6px; margin: 10px 0; }
+           background: #1a7f37; color: #fff; border: 0; border-radius: 6px; margin: 10px 0 6px; }
     .big:disabled { background: #9bbfa6; cursor: default; }
     .row { display: flex; gap: 8px; }
     .row button { flex: 1; padding: 6px; cursor: pointer; }
     details { margin: 6px 0; }
     summary { cursor: pointer; font-weight: 600; font-size: 12px; }
-    #status { margin: 8px 0; padding: 8px; background: #f2f2f2; border-radius: 4px; font-size: 12px; }
-    #status.ok { background: #e7f5ec; }
-    #status.err { background: #fdecec; }
-    #recent { max-height: 140px; overflow: auto; border-top: 1px solid #ddd; margin-top: 8px; padding-top: 6px; }
+    /* export-health verdict */
+    #verdict { display: none; border-radius: 6px; padding: 9px 10px; margin: 6px 0; }
+    #verdict .head { font-weight: 700; font-size: 13px; }
+    #verdict ul { margin: 6px 0 0; padding-left: 18px; }
+    #verdict li { font-size: 12px; }
+    .v-good { background: #e7f5ec; border: 1px solid #7fbf95; }
+    .v-good .head { color: #1a7f37; }
+    .v-warn { background: #fdf4e3; border: 1px solid #d9b25c; }
+    .v-warn .head { color: #9a6b00; }
+    .v-fail { background: #fdecec; border: 1px solid #e0a0a0; }
+    .v-fail .head { color: #b3261e; }
+    .ok  { color: #1a7f37; } .no { color: #b3261e; }
+    #recent { max-height: 120px; overflow: auto; border-top: 1px solid #ddd; margin-top: 8px; padding-top: 6px; }
     .cap { font-size: 12px; padding: 3px 0; border-bottom: 1px solid #f0f0f0; }
     .muted { color: #777; }
+    footer { display: flex; justify-content: space-between; align-items: center;
+             margin-top: 10px; padding-top: 6px; border-top: 1px solid #eee; font-size: 11px; color: #888; }
+    footer button { font-size: 11px; padding: 3px 6px; cursor: pointer; }
+    #update.avail { color: #9a6b00; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -28,6 +41,7 @@
   <p class="sub">Open an eVenue event, expand the sections you want, then click below.</p>
 
   <button id="grab" class="big">Get seats &amp; upload to Supabase</button>
+  <div id="verdict"></div>
   <div id="status" class="muted">Configure Supabase below (one time), then click above.</div>
 
   <details id="cfg">
@@ -45,6 +59,12 @@
   </details>
 
   <div id="recent"></div>
+
+  <footer>
+    <span>v<span id="version">?</span></span>
+    <span id="update" class="muted">up to date</span>
+    <button id="checkUpdate">Check for updates</button>
+  </footer>
 
   <script src="popup.js"></script>
 </body>

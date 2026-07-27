@@ -1,0 +1,47 @@
+# Publish the paciolan_extension version to Supabase on push to main, so the
+# extension's popup can tell operators when a newer version exists (self-hosted
+# update channel — the extension is installed unpacked from this repo, NOT the
+# Chrome Web Store). Secret-gated via the shared ingest secret, so no
+# service_role key is needed in CI.
+#
+# Requires three repo secrets (Settings → Secrets → Actions):
+#   SUPABASE_URL, SUPABASE_ANON_KEY, PACIOLAN_INGEST_SECRET
+# If any is unset the job no-ops (so the workflow is safe to merge before the
+# secrets are configured).
+name: Paciolan extension release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "paciolan_extension/manifest.json"
+
+permissions:
+  contents: read
+
+jobs:
+  publish-version:
+    name: publish extension version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish version to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          PACIOLAN_INGEST_SECRET: ${{ secrets.PACIOLAN_INGEST_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ] || [ -z "${PACIOLAN_INGEST_SECRET:-}" ]; then
+            echo "Supabase secrets not set — skipping extension version publish."; exit 0
+          fi
+          ver="$(grep -o '"version"[^,]*' paciolan_extension/manifest.json | head -1 | grep -o '[0-9.]*')"
+          echo "Publishing paciolan_extension v${ver}"
+          code=$(curl -sS -o /tmp/resp -w '%{http_code}' -X POST \
+            "${SUPABASE_URL%/}/rest/v1/rpc/paciolan_extension_publish" \
+            -H "Content-Type: application/json" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            --data "$(printf '{"p_secret":"%s","p_version":"%s","p_notes":"pushed to main"}' "${PACIOLAN_INGEST_SECRET}" "${ver}")")
+          echo "HTTP ${code}"; cat /tmp/resp || true
+          [ "${code}" = "200" ] || { echo "publish failed"; exit 1; }
