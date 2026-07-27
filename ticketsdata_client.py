@@ -19,6 +19,10 @@ Credit cost (watch the budget — see scripts/ticketsdata_mvp.py):
 
 /fetch and /events responses carry `quota_remaining`; /match also carries
 `reports_remaining`. Callers should watch both to avoid exhausting the plan.
+
+Vendor how-to guides (integration, best-practices, per-platform) are indexed
+and mapped to this code in docs/ticketsdata_blog_howto_index.md — e.g. our
+_get() retry policy mirrors their prescribed 1.5s/3s backoff on 503/504.
 """
 from __future__ import annotations
 
