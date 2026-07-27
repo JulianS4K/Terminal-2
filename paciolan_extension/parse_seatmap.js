@@ -89,15 +89,23 @@ function parseSeatmap(root) {
 // Consecutive-seat grouping (parity with v_paciolan_seat_groups) — used for the
 // popup's local "N together" preview; the server view is the source of truth.
 function groupConsecutive(seats) {
-  const avail = seats.filter((s) => s.available).slice().sort((a, b) => {
-    const ka = [a.level, a.section_label, a.row_label, a.seat_type,
-                a.price == null ? -1 : a.price,
-                a.seat_no == null ? 1e12 : a.seat_no, a.seat_number || ""];
-    const kb = [b.level, b.section_label, b.row_label, b.seat_type,
-                b.price == null ? -1 : b.price,
-                b.seat_no == null ? 1e12 : b.seat_no, b.seat_number || ""];
-    return ka < kb ? -1 : ka > kb ? 1 : 0;
-  });
+  // Field-by-field comparator (NOT array `<`, which stringifies and would sort
+  // seat "10" before "6"). Numbers compare numerically, strings lexically —
+  // parity with the Python tuple sort and the SQL view's `order by seat_no`.
+  const cmp = (a, b) => {
+    const fields = [
+      [a.level || "", b.level || ""],
+      [a.section_label || "", b.section_label || ""],
+      [a.row_label || "", b.row_label || ""],
+      [a.seat_type || "", b.seat_type || ""],
+      [a.price == null ? -1 : a.price, b.price == null ? -1 : b.price],
+      [a.seat_no == null ? 1e12 : a.seat_no, b.seat_no == null ? 1e12 : b.seat_no],
+      [a.seat_number || "", b.seat_number || ""],
+    ];
+    for (const [x, y] of fields) { if (x < y) return -1; if (x > y) return 1; }
+    return 0;
+  };
+  const avail = seats.filter((s) => s.available).slice().sort(cmp);
   const blocks = [];
   let cur = null, prev = null;
   for (const s of avail) {
