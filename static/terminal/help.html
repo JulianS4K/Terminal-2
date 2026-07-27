@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Help &amp; Guide</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260707a" />
+  <!-- Help page is content-only; a small scoped block handles its prose layout
+       so we don't bloat the shared sheet for one static page. CSP allows
+       'unsafe-inline' for style-src. -->
+  <style>
+    .help-hero { margin: 4px 0 18px; }
+    .help-hero h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .5px; }
+    .help-hero .help-sub { max-width: 70ch; line-height: 1.5; }
+    .help-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .help-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
+    .help-toc a { text-decoration: none; }
+    #helpBody section { margin: 0 0 22px; }
+    .help-steps { list-style: none; counter-reset: hs; padding: 0; margin: 0; }
+    .help-steps li {
+      position: relative; padding: 8px 0 8px 34px; line-height: 1.5;
+      border-bottom: 1px solid var(--border, #1e1e1e);
+    }
+    .help-steps li:last-child { border-bottom: 0; }
+    .help-steps li::before {
+      counter-increment: hs; content: counter(hs);
+      position: absolute; left: 0; top: 8px;
+      width: 22px; height: 22px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 600;
+      background: var(--accent-dim, #16324a); color: var(--accent, #4ea1ff);
+    }
+    .help-grid { width: 100%; border-collapse: collapse; }
+    .help-grid th, .help-grid td {
+      text-align: left; vertical-align: top; padding: 7px 12px 7px 0;
+      border-bottom: 1px solid var(--border, #1e1e1e); line-height: 1.45;
+    }
+    .help-grid th { font-weight: 600; white-space: nowrap; }
+    .help-grid td.term { white-space: nowrap; font-weight: 600; }
+    .help-cluster-lbl { font-weight: 600; letter-spacing: .3px; margin: 0 0 2px; }
+    kbd {
+      display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 12px;
+      border: 1px solid var(--border, #333); background: var(--panel, #141414);
+      font-family: inherit;
+    }
+  </style>
+</head>
+<body data-page="help">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap help">
+
+    <div class="help-hero">
+      <h1>Help &amp; Guide</h1>
+      <p class="help-sub muted">
+        The S4K Terminal is your desk for pricing, tracking, and trading event tickets across
+        every marketplace. New here? Start with the five-minute walkthrough, then dip into the
+        feature tour and glossary as you need them.
+      </p>
+      <div class="help-actions">
+        <button class="ctrl-btn" id="replayTourBtn" title="Replay the guided walkthrough">▶ Replay the tour</button>
+        <a class="ctrl-btn" href="./" data-help-cta>Go to HOME</a>
+      </div>
+    </div>
+
+    <nav class="help-toc" aria-label="Help sections">
+      <a class="ctrl-btn" href="#help-start">First 5 minutes</a>
+      <a class="ctrl-btn" href="#help-global">Search &amp; sign-in</a>
+      <a class="ctrl-btn" href="#help-tour">Feature tour</a>
+      <a class="ctrl-btn" href="#help-glossary">Glossary</a>
+    </nav>
+
+    <div id="helpBody">
+      <section class="empty">loading guide…</section>
+    </div>
+
+    <section id="help-foot">
+      <div class="muted small">
+        Full design brief &amp; onboarding spec: <code>docs/d0_onboarding_guide.md</code>.
+        Restricted to <code>@s4kent.com</code>. Data is read-only across all marketplaces.
+      </div>
+    </section>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <script src="pwa.js?v=20260702"></script>
+  <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260716help"></script>
+  <script src="help.js?v=20260716a"></script>
+</body>
+</html>
