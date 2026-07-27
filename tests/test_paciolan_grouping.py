@@ -204,6 +204,18 @@ def test_parse_event_meta_jsonld_list_and_teams_from_name():
     assert m["home_team"] == "Bowling Green" and m["away_team"] == "Toledo"
 
 
+def test_parse_event_meta_event_without_location():
+    # Event with startDate but no `location` → the isinstance(loc, dict) branch's
+    # false path (venue stays None).
+    html = ('<script type="application/ld+json">'
+            '{"@type":"Event","name":"Concert Night","startDate":"2026-01-01"}'
+            '</script>')
+    m = parse_event_meta(html)
+    assert m["event_name"] == "Concert Night"
+    assert m["venue_name"] is None
+    assert m["home_team"] is None and m["away_team"] is None
+
+
 def test_parse_event_meta_falls_back_to_title():
     # Invalid JSON-LD + a non-Event object are skipped; <title> is the fallback.
     html = ('<script type="application/ld+json">{bad json</script>'
