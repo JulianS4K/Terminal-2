@@ -141,13 +141,23 @@ def test_axs_listings_summary(client, monkeypatch):
         {"quantity": 3, "retail_price": 120, "src": "primary"},
         {"quantity": 2, "retail_price": 400, "src": "resale"},
     ]
+    buy = "https://shop.axs.com/?c=axs&e=55498790445672539"
     _db(monkeypatch, tables={
         "axs_event_snapshots": [{"id": 1, "captured_at": "t", "event_name": "E", "venue_name": "V"}],
-        "v_axs_listings": rows})
-    s = client.get("/api/axs/event/1/listings").json()["summary"]
+        "v_axs_listings": rows},
+        rpc={"axs_event_buy_url": buy})
+    body = client.get("/api/axs/event/1/listings").json()
+    assert body["buy_url"] == buy   # offer-level AXS buy deep-link surfaced per listing
+    s = body["summary"]
     assert s["blocks"] == 2 and s["total_seats"] == 5
     assert s["min_price"] == 120 and s["max_price"] == 400
     assert s["biggest_block"] == 3 and s["resale_blocks"] == 1
+
+
+def test_axs_listings_no_snapshot_has_null_buy_url(client, monkeypatch):
+    _db(monkeypatch, tables={"axs_event_snapshots": []})
+    body = client.get("/api/axs/event/9/listings").json()
+    assert body["count"] == 0 and body["buy_url"] is None
 
 
 def test_axs_series_shape(client, monkeypatch):
