@@ -104,9 +104,35 @@ def test_split_level_section_and_seat_key():
     assert split_level_section("U:16U") == ("U", "16U")
     assert split_level_section("BN:20A") == ("BN", "20A")
     assert split_level_section("WC:WC11L") == ("WC", "WC11L")
+    assert split_level_section("NOCOLON") == ("", "NOCOLON")  # no-colon fallback
     parsed = parse_seat_key("U:16U:19:1")
     assert parsed == {"level": "U", "section_label": "16U",
                       "row_label": "19", "seat_number": "1"}
+    assert parse_seat_key("U:16U:19") is None  # <4 parts → malformed
+
+
+def test_parse_seatmap_html_edge_cases():
+    # Covers the defensive branches: an unquoted data-level-section (no regex
+    # capture → section skipped), an unquoted data-seat-key (skipped), a
+    # well-formed-but-short key (parsed None → skipped), and a lettered GA seat
+    # (seat_no None, is_ga True, price absent).
+    html = (
+        '<path data-level-section=UNQUOTED percent="1"></path>'          # skip
+        '<path data-level-section="S:1E" disabled aria-disabled="true"></path>'
+        '<circle data-seat-key=UNQUOTED></circle>'                       # skip
+        '<circle data-seat-key="U:16U:19"></circle>'                     # short → skip
+        '<circle data-seat-key="GA:GA:GA:GA" '
+        'aria-label="Section GA, General Admission, available"></circle>'  # GA, no price
+    )
+    out = parse_seatmap_html(html)
+    # Only the quoted, well-formed section survives.
+    assert [s["section_label"] for s in out["sections"]] == ["1E"]
+    assert out["sections"][0]["disabled"] is True
+    # Only the GA seat survives; it's non-numeric → seat_no None, is_ga True.
+    assert len(out["seats"]) == 1
+    ga = out["seats"][0]
+    assert ga["seat_no"] is None and ga["is_ga"] is True
+    assert ga["price"] is None and ga["seat_type"] == "ga"
 
 
 def test_classify_seat_type():

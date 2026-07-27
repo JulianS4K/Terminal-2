@@ -45,7 +45,7 @@ def build_paciolan_router(get_require_sb: Callable[[], Callable],
             raise HTTPException(503, "Paciolan ingest not configured")
         if not x_ingest_secret or not hmac.compare_digest(x_ingest_secret, expected):
             raise HTTPException(401, "bad or missing X-Ingest-Secret")
-        if not isinstance(payload, dict) or not payload.get("seats") and not payload.get("sections"):
+        if not payload.get("seats") and not payload.get("sections"):
             raise HTTPException(422, "payload must include 'seats' and/or 'sections'")
 
         db = get_require_sb()()

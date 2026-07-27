@@ -218,10 +218,10 @@ def group_consecutive(seats: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             blocks.append(cur)
         cur["quantity"] += 1
         cur["seat_numbers"].append(s.get("seat_number"))
+        # seat_from is set at block creation (the first, hence smallest, seat in
+        # the sorted run); only seat_to advances as the contiguous run extends.
         if seat_no is not None:
             cur["seat_to"] = seat_no
-            if cur["seat_from"] is None:
-                cur["seat_from"] = seat_no
         cur["is_ga"] = cur["is_ga"] or bool(s.get("is_ga"))
         prev_seat_no = seat_no
     for b in blocks:
