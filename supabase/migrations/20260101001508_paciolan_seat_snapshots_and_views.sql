@@ -1,10 +1,4 @@
--- Migration 20260727190000 · lane:A1 (data plane — new upstream source)
---   writes (DDL): paciolan_event_snapshots, paciolan_section_snapshots,
---                 paciolan_seat_snapshots (tables); paciolan_ingest(jsonb) RPC
---                 (SECDEF); v_paciolan_seat_groups, v_paciolan_listings (views)
---   reads: none (ingest is browser-extension-sourced; no server-side pull)
---   auth:  OPERATOR-APPROVAL REQUIRED before apply_migration (new source +
---          tables + SECDEF ingest RPC). Author: D0 → apply: A1.
+-- Migration 20260727190000 · level:data-collection · lane:D0 (author) → A1 (apply) · writes:paciolan_event_snapshots,paciolan_section_snapshots,paciolan_seat_snapshots,paciolan_ingest_config,paciolan_ingest(jsonb),paciolan_ingest_secure(text,jsonb),v_paciolan_seat_groups,v_paciolan_listings · reads:none · pre:core.readonly_guard (paciolan_client), axs_seat_snapshots (model mirrored) · auth:OPERATOR-APPROVAL REQUIRED before apply_migration (new upstream source + tables + SECDEF ingest RPCs + anon EXECUTE grant); set paciolan_ingest_config.secret + PACIOLAN_INGEST_SECRET after apply
 --
 -- Paciolan / eVenue primary box-office inventory, browser-extension-sourced
 -- (see paciolan_extension/ + paciolan_client.py). eVenue = Paciolan's consumer
@@ -231,6 +225,7 @@ comment on table public.paciolan_ingest_config is
 -- Core insert stays service-role only (used by the FastAPI /api/paciolan/ingest
 -- route, which gates its own X-Ingest-Secret).
 revoke all on function public.paciolan_ingest(jsonb) from public;
+grant execute on function public.paciolan_ingest(jsonb) to service_role;
 
 -- Secret-gated wrapper the browser extension calls with the anon key.
 create or replace function public.paciolan_ingest_secure(p_secret text, p_payload jsonb)
