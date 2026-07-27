@@ -27,6 +27,7 @@
 -- same per-event collect-listings invoke), so the DOWNSTREAM NOTE in 20260701180000 is unaffected.
 --
 -- Idempotent (CREATE OR REPLACE, identical signature). Re-apply is a no-op.
+-- Already applied to prod · via MCP 2026-07-27 (CI green on PR #900). Re-apply is a no-op.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.evo_listings_poll_tick(p_max integer DEFAULT 30)
