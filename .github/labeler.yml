@@ -45,6 +45,18 @@
           - "supabase/migrations/*exos*.sql"
           - "docs/d4_*"
 
+# D6 — Paciolan/eVenue primary box-office ingest (browser-extension-sourced).
+# paciolan_client normalizer, the Chrome collector, the /api/paciolan route
+# block, and the paciolan_* schema. RULE-2 lockdown of evenue.net is A1/B1
+# policy over this surface (PROJECT_BIBLE §2.3).
+"area:d6":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "paciolan_client.py"
+          - "paciolan_extension/**/*"
+          - "routers/paciolan.py"
+          - "supabase/migrations/*paciolan*.sql"
+
 "area:docs":
   - changed-files:
       - any-glob-to-any-file:

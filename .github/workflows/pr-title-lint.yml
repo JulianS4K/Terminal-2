@@ -44,7 +44,7 @@ jobs:
                 ``,
                 `**Allowed types**: feat, fix, chore, docs, refactor, test, perf, style, build, ci, revert`,
                 ``,
-                `**Common lanes**: a1, b1, c1, d0, d1, d2, d3, d4, e1, security, bibles, governance, deps, ci-deps, sg, store`,
+                `**Common lanes**: a1, b1, c1, d0, d1, d2, d3, d4, d5, d6, e1, security, bibles, governance, deps, ci-deps, sg, store`,
                 ``,
                 `See docs/pr_governance.md for the full convention.`,
                 ``,
