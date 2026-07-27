@@ -3,38 +3,47 @@
 <head>
   <meta charset="utf-8" />
   <style>
-    body { font: 13px/1.4 system-ui, sans-serif; width: 340px; margin: 0; padding: 12px; }
-    h1 { font-size: 14px; margin: 0 0 8px; }
-    label { display: block; margin: 8px 0 2px; font-weight: 600; }
-    input[type=text], input[type=url] { width: 100%; box-sizing: border-box; padding: 5px; }
-    .row { display: flex; align-items: center; gap: 6px; margin: 10px 0; }
-    button { padding: 6px 10px; cursor: pointer; }
-    #status { margin: 8px 0; padding: 6px; background: #f2f2f2; border-radius: 4px; }
-    #recent { max-height: 160px; overflow: auto; border-top: 1px solid #ddd; margin-top: 8px; padding-top: 6px; }
+    body { font: 13px/1.4 system-ui, sans-serif; width: 360px; margin: 0; padding: 12px; }
+    h1 { font-size: 14px; margin: 0 0 4px; }
+    .sub { color: #777; font-size: 12px; margin: 0 0 10px; }
+    label { display: block; margin: 8px 0 2px; font-weight: 600; font-size: 12px; }
+    input[type=text], input[type=url], input[type=password] { width: 100%; box-sizing: border-box; padding: 5px; }
+    .big { width: 100%; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+           background: #1a7f37; color: #fff; border: 0; border-radius: 6px; margin: 10px 0; }
+    .big:disabled { background: #9bbfa6; cursor: default; }
+    .row { display: flex; gap: 8px; }
+    .row button { flex: 1; padding: 6px; cursor: pointer; }
+    details { margin: 6px 0; }
+    summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+    #status { margin: 8px 0; padding: 8px; background: #f2f2f2; border-radius: 4px; font-size: 12px; }
+    #status.ok { background: #e7f5ec; }
+    #status.err { background: #fdecec; }
+    #recent { max-height: 140px; overflow: auto; border-top: 1px solid #ddd; margin-top: 8px; padding-top: 6px; }
     .cap { font-size: 12px; padding: 3px 0; border-bottom: 1px solid #f0f0f0; }
     .muted { color: #777; }
   </style>
 </head>
 <body>
   <h1>eVenue / Paciolan Seat Collector</h1>
+  <p class="sub">Open an eVenue event, expand the sections you want, then click below.</p>
 
-  <label>Ingest URL</label>
-  <input id="ingestUrl" type="url" placeholder="https://your-app/api/paciolan/ingest" />
+  <button id="grab" class="big">Get seats &amp; upload to Supabase</button>
+  <div id="status" class="muted">Configure Supabase below (one time), then click above.</div>
 
-  <label>Ingest secret (X-Ingest-Secret)</label>
-  <input id="ingestSecret" type="text" placeholder="shared secret (never service_role)" />
+  <details id="cfg">
+    <summary>Supabase settings</summary>
+    <label>Supabase URL</label>
+    <input id="supabaseUrl" type="url" placeholder="https://xxxx.supabase.co" />
+    <label>Anon (public) key</label>
+    <input id="supabaseAnonKey" type="password" placeholder="eyJ… (anon key — safe to embed)" />
+    <label>Ingest secret</label>
+    <input id="ingestSecret" type="password" placeholder="shared secret (matches paciolan_ingest_config)" />
+    <div class="row" style="margin-top:8px">
+      <button id="save">Save settings</button>
+      <button id="export">Export JSON</button>
+    </div>
+  </details>
 
-  <div class="row">
-    <input id="enabled" type="checkbox" /><label for="enabled" style="margin:0">Ship captures</label>
-  </div>
-
-  <div class="row">
-    <button id="save">Save</button>
-    <button id="recapture">Capture now</button>
-    <button id="export">Export JSON</button>
-  </div>
-
-  <div id="status" class="muted">Local-only until enabled.</div>
   <div id="recent"></div>
 
   <script src="popup.js"></script>

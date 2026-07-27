@@ -1,24 +1,26 @@
 // content.js  —  runs on *.evenue.net pages (ISOLATED world).
 //
-// Reads the rendered seat map (via parse_seatmap.js) and forwards a normalized
-// capture to the service worker. Seat numbers only exist in the DOM once a
-// section is expanded, so we also watch for DOM changes (expanding a section,
-// changing quantity) and re-capture — debounced. The top-level section
-// availability summary is captured on every pass even before any expand.
+// Reads the rendered seat map (via parse_seatmap.js). Two flows:
+//   * passive: on load + on DOM change (expand/quantity), refresh the local
+//     buffer/badge (no upload).
+//   * on demand: the popup's "Get seats & upload" button → scrape NOW and
+//     upload to Supabase, relaying the result (snapshot_id) back to the popup.
+//
+// Seat numbers only exist in the DOM once a section is expanded, so the button
+// captures whatever sections are currently open plus the always-present
+// per-section availability summary.
 //
 // RULE 2: only reads the DOM eVenue already rendered. Originates no request to
 // any evenue.net host.
 "use strict";
 
 function tenantFromHost() {
-  // bgsufalcons.evenue.net -> "bgsufalcons"
-  const h = location.hostname || "";
+  const h = location.hostname || "";           // bgsufalcons.evenue.net -> bgsufalcons
   return h.endsWith(".evenue.net") ? h.slice(0, -".evenue.net".length) : h;
 }
 
 function eventCodeFromPath() {
-  // /event/F26/F01 -> "F26/F01"
-  const m = /\/event\/([^/?#]+)\/([^/?#]+)/.exec(location.pathname);
+  const m = /\/event\/([^/?#]+)\/([^/?#]+)/.exec(location.pathname);  // /event/F26/F01
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
@@ -37,16 +39,12 @@ function buildCapture() {
   };
 }
 
+// Passive refresh (no upload), de-duped on the available-seat fingerprint.
 let lastSig = "";
-function capture(reason) {
+function passiveCapture(reason) {
   let payload;
-  try {
-    payload = buildCapture();
-  } catch (e) {
-    return;
-  }
+  try { payload = buildCapture(); } catch (e) { return; }
   if (!payload) return;
-  // De-dupe: skip if the available-seat/section fingerprint is unchanged.
   const sig = JSON.stringify([
     payload.sections.length,
     payload.seats.filter((s) => s.available).length,
@@ -54,26 +52,35 @@ function capture(reason) {
   ]);
   if (sig === lastSig) return;
   lastSig = sig;
-  chrome.runtime.sendMessage({ type: "paciolan_capture", reason, payload });
+  chrome.runtime.sendMessage({ type: "paciolan_capture", reason, upload: false,
+                               payload });
 }
 
 let t = null;
-function scheduleCapture(reason) {
-  clearTimeout(t);
-  t = setTimeout(() => capture(reason), 600);
-}
+function schedulePassive(reason) { clearTimeout(t); t = setTimeout(() => passiveCapture(reason), 600); }
 
-// Initial pass + observe the seat-map container for expands/quantity changes.
-scheduleCapture("load");
-const obs = new MutationObserver(() => scheduleCapture("mutation"));
-obs.observe(document.documentElement, { childList: true, subtree: true });
+schedulePassive("load");
+new MutationObserver(() => schedulePassive("mutation"))
+  .observe(document.documentElement, { childList: true, subtree: true });
 
-// Let the popup force a fresh capture.
+// Button-driven capture+upload: scrape now, ask background to upload, relay the
+// result to the popup.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === "paciolan_recapture") {
-    lastSig = "";
-    capture("manual");
-    sendResponse({ ok: true });
+  if (msg && msg.type === "paciolan_capture_now") {
+    let payload;
+    try { payload = buildCapture(); } catch (e) { payload = null; }
+    if (!payload) {
+      sendResponse({ ok: false, error: "No seat map found on this page. Open an eVenue event and expand a section." });
+      return true;
+    }
+    const availed = payload.seats.filter((s) => s.available).length;
+    chrome.runtime.sendMessage(
+      { type: "paciolan_capture", reason: "button", upload: true, payload },
+      (record) => sendResponse({ ok: true, record, scraped: {
+        sections: payload.sections.length, seats: payload.seats.length,
+        available_seats: availed } }),
+    );
+    return true; // async
   }
-  return true;
+  return false;
 });

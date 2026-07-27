@@ -1,11 +1,13 @@
 // background.js  —  MV3 service worker.
 //
 // Receives normalized captures from content.js, keeps a local ring-buffer for
-// the popup, and (if configured) ships each capture to our own ingest endpoint
-// with the shared X-Ingest-Secret header.
+// the popup, and uploads DIRECTLY TO SUPABASE via the secret-gated PostgREST
+// RPC `paciolan_ingest_secure` (anon key + shared X-Ingest secret). Passive
+// captures only refresh the local buffer/badge; upload happens on the popup's
+// "Get seats & upload" button (msg.upload === true).
 //
 // RULE 2: no request to any evenue.net host originates here. The only outbound
-// write is to OUR configured ingest URL (our Render app / Supabase).
+// write is to OUR configured Supabase project.
 "use strict";
 
 const RING_MAX = 100;
@@ -20,20 +22,40 @@ function setBadge(count) {
   } catch (_) {}
 }
 
-async function ship(payload) {
-  const cfg = await getLocal(["enabled", "ingestUrl", "ingestSecret"]);
-  if (!cfg.enabled || !cfg.ingestUrl) return { shipped: false, reason: "disabled" };
-  const headers = { "Content-Type": "application/json" };
-  if (cfg.ingestSecret) headers["X-Ingest-Secret"] = cfg.ingestSecret;
+// Upload one capture to Supabase: POST <url>/rest/v1/rpc/paciolan_ingest_secure
+// with { p_secret, p_payload }. Returns { shipped, status, snapshot_id?, error? }.
+async function uploadToSupabase(payload) {
+  const cfg = await getLocal(["supabaseUrl", "supabaseAnonKey", "ingestSecret"]);
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+    return { shipped: false, error: "Set Supabase URL + anon key in the popup." };
+  }
+  if (!cfg.ingestSecret) {
+    return { shipped: false, error: "Set the ingest secret in the popup." };
+  }
+  const base = cfg.supabaseUrl.replace(/\/+$/, "");
+  const url = `${base}/rest/v1/rpc/paciolan_ingest_secure`;
   try {
-    const res = await fetch(cfg.ingestUrl, {
+    const res = await fetch(url, {
       method: "POST",
-      headers,
-      body: JSON.stringify(payload),
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": cfg.supabaseAnonKey,
+        "Authorization": `Bearer ${cfg.supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ p_secret: cfg.ingestSecret, p_payload: payload }),
     });
-    return { shipped: res.ok, status: res.status };
+    let body = null;
+    try { body = await res.json(); } catch (_) {}
+    if (!res.ok) {
+      const msg = body && (body.message || body.hint || body.error) || res.statusText;
+      return { shipped: false, status: res.status, error: msg };
+    }
+    // PostgREST returns the function's scalar (the new snapshot_id).
+    const snapshotId = typeof body === "number" ? body
+      : (body && (body.snapshot_id ?? body)) ?? null;
+    return { shipped: true, status: res.status, snapshot_id: snapshotId };
   } catch (e) {
-    return { shipped: false, reason: String(e) };
+    return { shipped: false, error: String(e) };
   }
 }
 
@@ -51,8 +73,10 @@ async function handleCapture(msg) {
     reason: msg.reason,
   };
 
-  const shipResult = await ship(payload);
-  record.ship = shipResult;
+  // Upload only on explicit request (the popup button); passive captures just
+  // refresh the local buffer so a click ships the freshest map.
+  record.ship = msg.upload ? await uploadToSupabase(payload)
+                           : { shipped: false, reason: "not requested" };
 
   const { captures = [] } = await getLocal(["captures"]);
   captures.unshift({ ...record, payload });

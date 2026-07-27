@@ -205,3 +205,65 @@ from public.v_paciolan_seat_groups g;
 
 comment on view public.v_paciolan_listings is
   'Paciolan/eVenue box-office inventory in the marketplace listing standard (level/section/row/quantity/retail_price/type/wheelchair/splits), one row per consecutive-seat block. Adds seat_from/seat_to/seat_numbers. Read-only. Mirrors v_axs_listings.';
+
+-- ---- RLS: paciolan_* snapshot tables are service-role-only ----------------
+-- No anon/authenticated policies → deny-all to the public API. service_role
+-- bypasses RLS, and the SECDEF ingest functions (owned by the definer) insert
+-- regardless. Same posture as the axs_* snapshot tables.
+alter table public.paciolan_event_snapshots   enable row level security;
+alter table public.paciolan_section_snapshots enable row level security;
+alter table public.paciolan_seat_snapshots    enable row level security;
+
+-- ---- Supabase-direct ingest (Chrome extension, anon key + shared secret) --
+-- The extension uploads straight to Supabase via PostgREST RPC. The public
+-- anon key alone must NOT be able to write, so paciolan_ingest_secure() gates
+-- on a shared secret stored in a service-only config table (CLAUDE.md §1 rule
+-- 7 — never rely on verify_jwt / anon alone). Rotate by updating the row.
+create table if not exists public.paciolan_ingest_config (
+  id     int  primary key default 1,
+  secret text not null,
+  constraint paciolan_ingest_config_singleton check (id = 1)
+);
+alter table public.paciolan_ingest_config enable row level security;  -- deny-all to anon
+comment on table public.paciolan_ingest_config is
+  'Single-row shared ingest secret for paciolan_ingest_secure(). Service-role only (RLS deny-all); the SECDEF function reads it. Set/rotate: update paciolan_ingest_config set secret = ... where id = 1;';
+
+-- Core insert stays service-role only (used by the FastAPI /api/paciolan/ingest
+-- route, which gates its own X-Ingest-Secret).
+revoke all on function public.paciolan_ingest(jsonb) from public;
+
+-- Secret-gated wrapper the browser extension calls with the anon key.
+create or replace function public.paciolan_ingest_secure(p_secret text, p_payload jsonb)
+returns bigint
+language plpgsql security definer set search_path = public as $$
+declare
+  v_expected text;
+  v_n int;
+begin
+  select secret into v_expected from public.paciolan_ingest_config where id = 1;
+  if v_expected is null then
+    raise exception 'paciolan ingest not configured';
+  end if;
+  -- Constant-time-ish compare; reject on any mismatch.
+  if p_secret is null or length(p_secret) <> length(v_expected)
+     or not (p_secret = v_expected) then
+    raise exception 'unauthorized' using errcode = '28000';
+  end if;
+  -- Basic abuse guard: require some payload, cap seat count.
+  v_n := coalesce(jsonb_array_length(p_payload->'seats'), 0)
+       + coalesce(jsonb_array_length(p_payload->'sections'), 0);
+  if v_n = 0 then
+    raise exception 'empty payload';
+  end if;
+  if coalesce(jsonb_array_length(p_payload->'seats'), 0) > 20000 then
+    raise exception 'payload too large';
+  end if;
+  return public.paciolan_ingest(p_payload);
+end;
+$$;
+
+comment on function public.paciolan_ingest_secure(text, jsonb) is
+  'Supabase-direct ingest for the Chrome extension: validates a shared secret (paciolan_ingest_config) then delegates to paciolan_ingest(). EXECUTE granted to anon/authenticated so the extension can call it with the public anon key + secret. RULE 2: writes our own tables only.';
+
+revoke all on function public.paciolan_ingest_secure(text, jsonb) from public;
+grant execute on function public.paciolan_ingest_secure(text, jsonb) to anon, authenticated;

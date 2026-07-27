@@ -3,8 +3,8 @@
 A Manifest V3 Chrome extension that collects **Paciolan / eVenue** primary
 box-office inventory by **reading the rendered seat map** in your real,
 logged-in Chrome — normalizing it to the same `section / row / seat_from–seat_to
-/ qty` model we use for AXS — then (optionally) shipping it to our own ingest
-endpoint.
+/ qty` model we use for AXS. Click **“Get seats & upload to Supabase”** and it
+scrapes the currently-open sections and uploads them **directly to Supabase**.
 
 We **categorize the source as `paciolan`** (the ticketing platform); *eVenue* is
 Paciolan's consumer storefront brand at `<tenant>.evenue.net`
@@ -33,15 +33,25 @@ The only outbound write is to **our own** ingest endpoint (if you enable it).
 ```
 <tenant>.evenue.net/event/<price_type>/<perf>   (real Chrome renders the map)
   │  parse_seatmap.js  — DOM → { sections[], seats[] }  (twin of paciolan_client.py)
-  │  content.js        — captures on load + on expand/qty change (MutationObserver),
-  │                      de-dupes, sends to the service worker
+  │  content.js        — button → scrape open sections; passive → refresh buffer
   ▼
-background.js  — ring-buffer + ship to our ingest URL (X-Ingest-Secret header)
+background.js  — POST straight to Supabase:
+  POST <project>.supabase.co/rest/v1/rpc/paciolan_ingest_secure
+       headers: apikey + Authorization: Bearer <anon key>
+       body:    { p_secret: <ingest secret>, p_payload: {…capture…} }
   ▼
-POST /api/paciolan/ingest  → paciolan_ingest(jsonb) RPC
+paciolan_ingest_secure(secret, payload)   — validates secret, then →
+paciolan_ingest(payload)                  — inserts:
   → paciolan_event/section/seat_snapshots
   → v_paciolan_seat_groups (gaps-and-islands) → v_paciolan_listings
 ```
+
+The upload goes **directly to Supabase** (no server hop) via the PostgREST RPC.
+The public **anon key** is safe to embed; write authority is the **shared
+ingest secret** checked by `paciolan_ingest_secure` against the service-only
+`paciolan_ingest_config` row — the anon key alone can't write. (An alternate
+server-side path, `POST /api/paciolan/ingest` on our app with an
+`X-Ingest-Secret` header, also exists for headless/cron use.)
 
 Seat numbers only appear in the DOM **once a section is expanded**, so the map's
 top-level per-section availability % is captured on every pass, and the numbered
@@ -70,16 +80,20 @@ qty-1).
 
 Requires Chrome 111+.
 
-## Ship to our ingest (optional, off by default)
+## Configure the upload (one time)
 
-Open the popup and set:
+Open the popup → **Supabase settings**:
 
-- **Ingest URL** — `https://<our-app>/api/paciolan/ingest`
-- **Ingest secret** — the shared `X-Ingest-Secret` (matches the server's
-  `PACIOLAN_INGEST_SECRET` env). **Never** the Supabase `service_role` key.
-- **Ship captures** — check to enable.
+- **Supabase URL** — `https://<project>.supabase.co`
+- **Anon (public) key** — the project's `anon` key (public; safe to embed).
+  **Never** the `service_role` key.
+- **Ingest secret** — the shared secret stored in `paciolan_ingest_config`
+  (`update public.paciolan_ingest_config set secret = '…' where id = 1;`).
 
-POST body shape:
+Then just click **Get seats & upload to Supabase**. The popup reports the new
+`snapshot_id` and the seat/section counts.
+
+Capture payload (`p_payload`) shape:
 
 ```json
 { "platform": "paciolan", "tenant": "bgsufalcons",
