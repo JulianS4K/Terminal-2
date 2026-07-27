@@ -122,6 +122,47 @@ The verdict lists a checklist — *uploaded ✓/✗ · N available seats · even
 (name/date/venue)* — so you can see exactly what's missing. The toolbar badge is
 green / amber / red accordingly (grey = a passive buffer, not an upload).
 
+## Autonomous mode (SQL-driven pull loop)
+
+Beyond the manual button, the extension can run **hands-off** — the browser twin
+of how TicketsData fetches AXS. eVenue can't be fetched server-side (it's a
+`FORBIDDEN_HOST`, egress-blocked, and anti-bot), so instead of Postgres calling
+out, **SQL keeps a queue and this Chrome polls it**:
+
+```
+pg_cron  paciolan_enqueue_due()   auto-seeds captured events → due targets →
+                                  paciolan_pull_queue        (every 5 min)
+browser  paciolan_next_pull(sec)  claims one due row (FOR UPDATE SKIP LOCKED)
+         → opens a fresh background tab at the eVenue URL, scrapes, uploads,
+         paciolan_pull_resolve(…) marks it done, tab closes  (open+close per pull)
+pg_cron  paciolan_pull_sweep()    re-opens stuck rows (<3 tries), expires the
+                                  rest, prunes 7d                 (hourly)
+```
+
+Turn it on with the **“Autonomous auto-pull (SQL-driven)”** toggle in the popup.
+While armed, this Chrome polls the queue on a `chrome.alarms` timer (~1 min) and
+refreshes due events on its own; the popup shows the last poll and live queue
+depth (`pending / in-flight / done-24h`). The toggle is the safety — autonomous
+= it opens tabs by itself, so nothing runs until you arm it. Leave one
+logged-in Chrome open with the toggle on.
+
+**Self-refreshing watchlist:** any event you scrape once (manual button) is
+auto-seeded into `paciolan_pull_targets` and kept fresh — no manual upkeep. A1
+can also seed/adjust targets directly (`pull_interval_min`, `active`).
+
+The `next_pull` / `resolve` / `stats` RPCs are anon-granted but **secret-gated**
+by the same `paciolan_ingest_config` secret as ingest — the public anon key
+alone can't claim work or write. `SKIP LOCKED` means two Chromes never
+double-pull the same URL. **RULE 2 holds:** the queue only *names* eVenue URLs;
+the browser (you, in your own session) opens them read-only.
+
+*Note:* seat numbers only render once a section is expanded, so an autonomous
+pull captures the per-section availability % on every pass; deep per-seat
+capture stays a manual, section-expanded click for now.
+
+Migration: `supabase/migrations/20260727220000_paciolan_pull_queue.sql`
+(**A1 applies**; needs the ingest secret already set).
+
 ## Updates (git pull — no Web Store)
 
 The extension is installed **unpacked from this repo**, so it is not on the
@@ -152,8 +193,8 @@ the `service_role` key.)*
 | `update.sh` | `git pull` helper (self-hosted update path) |
 | `parse_seatmap.js` | DOM → normalized `{sections, seats}` (twin of `paciolan_client.py`) |
 | `content.js` | reads the map, re-captures on expand/qty change, de-dupes |
-| `background.js` | ring-buffer + ship to our ingest URL |
-| `popup.html` / `popup.js` | config, status, recent captures, export |
+| `background.js` | ring-buffer + ship to Supabase **+ the autonomous `chrome.alarms` driver** (poll queue → open/scrape/upload/resolve/close) |
+| `popup.html` / `popup.js` | config, status, verdict, recent, export, **auto-pull toggle + queue depth** |
 
 ## Server side
 

@@ -120,10 +120,177 @@ async function handleCapture(msg) {
   return record;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Autonomous driver — the browser half of the SQL pull loop.
+//
+// SQL (pg_cron) enqueues due events into paciolan_pull_queue; this driver polls
+// paciolan_next_pull on a chrome.alarms timer, opens the returned eVenue URL in a
+// fresh background tab, scrapes + uploads it, then reports the outcome with
+// paciolan_pull_resolve and closes the tab (open+close per pull). It only runs
+// while ARMED (a popup toggle) — autonomous = it opens tabs on its own, so the
+// toggle is the safety. RULE 2 unchanged: eVenue is only ever READ.
+const DRIVER_ALARM = "paciolan_driver";
+const DRIVER_PERIOD_MIN = 1;     // poll cadence
+const MAX_PULLS_PER_TICK = 3;    // cap tab churn per wake
+const RENDER_SETTLE_MS = 3500;   // let the seat-map SVG paint after load
+const PULL_TIMEOUT_MS = 30000;   // give up on a stuck tab
+
+// Call a secret-gated Paciolan RPC with the anon key. Returns parsed JSON or
+// throws. Shares the popup's configured URL / anon key / ingest secret.
+async function callRpc(fn, extraBody) {
+  const cfg = await getLocal(["supabaseUrl", "supabaseAnonKey", "ingestSecret"]);
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.ingestSecret) {
+    throw new Error("Supabase URL, anon key, and ingest secret must be set.");
+  }
+  const base = cfg.supabaseUrl.replace(/\/+$/, "");
+  const res = await fetch(`${base}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": cfg.supabaseAnonKey,
+      "Authorization": `Bearer ${cfg.supabaseAnonKey}`,
+    },
+    body: JSON.stringify({ p_secret: cfg.ingestSecret, ...extraBody }),
+  });
+  let body = null;
+  try { body = await res.json(); } catch (_) {}
+  if (!res.ok) {
+    const msg = (body && (body.message || body.hint || body.error)) || res.statusText;
+    throw new Error(`${fn}: ${msg}`);
+  }
+  return body;
+}
+
+async function setDriverStatus(patch) {
+  const { driverStatus = {} } = await getLocal(["driverStatus"]);
+  await setLocal({ driverStatus: { ...driverStatus, ...patch } });
+}
+
+// Wait until a tab reports status:'complete', then a fixed settle delay.
+function waitForTabLoad(tabId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      reject(new Error("tab load timed out"));
+    }, PULL_TIMEOUT_MS);
+    function onUpdated(id, info) {
+      if (id === tabId && info.status === "complete") {
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        clearTimeout(timer);
+        setTimeout(resolve, RENDER_SETTLE_MS);   // let the SVG map paint
+      }
+    }
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+function sendMessageToTab(tabId, msg) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, msg, (resp) => {
+      if (chrome.runtime.lastError) { resolve({ ok: false, error: chrome.runtime.lastError.message }); return; }
+      resolve(resp || { ok: false, error: "no response from page" });
+    });
+  });
+}
+
+// Drive one queued row: open the URL, scrape+upload, resolve, close the tab.
+async function drivePull(row) {
+  let tab = null;
+  try {
+    tab = await chrome.tabs.create({ url: row.url, active: false });
+    await waitForTabLoad(tab.id);
+    // content.js scrapes the rendered map and uploads via paciolan_ingest_secure.
+    const resp = await sendMessageToTab(tab.id, { type: "paciolan_capture_now" });
+    if (!resp.ok) {
+      await callRpc("paciolan_pull_resolve",
+        { p_id: row.id, p_status: "error", p_error: resp.error || "capture failed" });
+      return { id: row.id, status: "error", error: resp.error };
+    }
+    const shipped = resp.record && resp.record.ship && resp.record.ship.shipped;
+    const snapId = shipped ? resp.record.ship.snapshot_id : null;
+    const avail = resp.scraped ? resp.scraped.available_seats : 0;
+    const status = !shipped ? "error" : (avail > 0 ? "ok" : "empty");
+    await callRpc("paciolan_pull_resolve", {
+      p_id: row.id, p_status: status, p_snapshot_id: snapId,
+      p_available: avail,
+      p_error: shipped ? null : (resp.record && resp.record.ship && resp.record.ship.error) || "upload failed",
+    });
+    return { id: row.id, status, available: avail, snapshot_id: snapId };
+  } catch (e) {
+    await callRpc("paciolan_pull_resolve",
+      { p_id: row.id, p_status: "error", p_error: String(e) }).catch(() => {});
+    return { id: row.id, status: "error", error: String(e) };
+  } finally {
+    if (tab && tab.id != null) { try { await chrome.tabs.remove(tab.id); } catch (_) {} }
+  }
+}
+
+// One driver tick: claim + drive up to MAX_PULLS_PER_TICK due rows.
+let driverBusy = false;
+async function driverTick() {
+  const { driverArmed } = await getLocal(["driverArmed"]);
+  if (!driverArmed || driverBusy) return;
+  driverBusy = true;
+  try {
+    let done = 0;
+    const results = [];
+    for (let i = 0; i < MAX_PULLS_PER_TICK; i++) {
+      let claimed;
+      try {
+        claimed = await callRpc("paciolan_next_pull", { p_driver: "extension" });
+      } catch (e) {
+        await setDriverStatus({ last_tick: new Date().toISOString(), last_error: String(e) });
+        return;
+      }
+      // PostgREST returns an array of rows for a table-returning function.
+      const row = Array.isArray(claimed) ? claimed[0] : claimed;
+      if (!row || row.id == null) break;   // queue empty
+      results.push(await drivePull(row));
+      done++;
+    }
+    await setDriverStatus({
+      last_tick: new Date().toISOString(), last_error: null,
+      last_pulled: done, last_results: results,
+    });
+  } finally {
+    driverBusy = false;
+  }
+}
+
+async function setDriverArmed(armed) {
+  await setLocal({ driverArmed: !!armed });
+  if (armed) {
+    chrome.alarms.create(DRIVER_ALARM, { periodInMinutes: DRIVER_PERIOD_MIN });
+    driverTick();   // kick immediately so the operator sees it work
+  } else {
+    chrome.alarms.clear(DRIVER_ALARM);
+  }
+  await setDriverStatus({ armed: !!armed });
+}
+
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === DRIVER_ALARM) driverTick(); });
+
+// Re-arm the alarm across SW restarts if the operator left the driver on.
+async function restoreDriver() {
+  const { driverArmed } = await getLocal(["driverArmed"]);
+  if (driverArmed) chrome.alarms.create(DRIVER_ALARM, { periodInMinutes: DRIVER_PERIOD_MIN });
+}
+chrome.runtime.onStartup.addListener(restoreDriver);
+chrome.runtime.onInstalled.addListener(restoreDriver);
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "paciolan_capture") {
     handleCapture(msg).then(sendResponse);
     return true; // async response
+  }
+  if (msg && msg.type === "paciolan_driver_arm") {
+    setDriverArmed(msg.armed).then(() => sendResponse({ ok: true, armed: !!msg.armed }));
+    return true;
+  }
+  if (msg && msg.type === "paciolan_driver_status") {
+    getLocal(["driverArmed", "driverStatus"]).then((s) =>
+      sendResponse({ armed: !!s.driverArmed, status: s.driverStatus || {} }));
+    return true;
   }
   return false;
 });

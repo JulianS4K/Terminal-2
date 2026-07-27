@@ -173,6 +173,67 @@ async function checkForUpdates(manual) {
   }
 }
 
+// --- autonomous driver toggle + status -------------------------------------
+// The checkbox arms the background driver (chrome.alarms). Status shows the last
+// tick, what it pulled, and the live queue depth (paciolan_pull_stats).
+function fmtResults(st) {
+  if (!st || st.last_error) return st && st.last_error ? `error: ${st.last_error}` : "";
+  if (!st.last_tick) return "armed — waiting for the first poll…";
+  const when = new Date(st.last_tick).toLocaleTimeString();
+  const n = st.last_pulled || 0;
+  return n ? `last poll ${when}: pulled ${n} event${n === 1 ? "" : "s"}`
+           : `last poll ${when}: nothing due`;
+}
+
+async function refreshDriver() {
+  const info = await chrome.runtime.sendMessage({ type: "paciolan_driver_status" });
+  const on = !!(info && info.armed);
+  $("armed").checked = on;
+  $("driver").className = on ? "on" : "";
+  const el = $("driverStatus");
+  if (!on) {
+    el.textContent = "Off. When armed, this Chrome polls the pull queue and refreshes due events on its own.";
+    el.className = "muted";
+    return;
+  }
+  let line = fmtResults(info.status);
+  // Best-effort live queue depth.
+  const cfg = await chrome.storage.local.get(["supabaseUrl", "supabaseAnonKey", "ingestSecret"]);
+  if (cfg.supabaseUrl && cfg.supabaseAnonKey && cfg.ingestSecret) {
+    try {
+      const base = cfg.supabaseUrl.replace(/\/+$/, "");
+      const res = await fetch(`${base}/rest/v1/rpc/paciolan_pull_stats`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": cfg.supabaseAnonKey,
+          "Authorization": `Bearer ${cfg.supabaseAnonKey}`,
+        },
+        body: JSON.stringify({ p_secret: cfg.ingestSecret }),
+      });
+      const body = await res.json().catch(() => null);
+      const s = Array.isArray(body) ? body[0] : body;
+      if (res.ok && s) line += ` · queue: ${s.pending} pending, ${s.claimed} in-flight, ${s.resolved_24h} done/24h`;
+    } catch (_) { /* leave the tick line as-is */ }
+  }
+  el.textContent = line;
+  el.className = "muted";
+}
+
+$("armed").addEventListener("change", async () => {
+  const armed = $("armed").checked;
+  const cfg = await chrome.storage.local.get(["supabaseUrl", "supabaseAnonKey", "ingestSecret"]);
+  if (armed && (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !cfg.ingestSecret)) {
+    $("armed").checked = false;
+    $("cfg").open = true;
+    setStatus("Set Supabase URL, anon key, and ingest secret before arming auto-pull.", "err");
+    return;
+  }
+  await chrome.runtime.sendMessage({ type: "paciolan_driver_arm", armed });
+  refreshDriver();
+});
+
 $("checkUpdate").addEventListener("click", () => checkForUpdates(true));
 
 load();
+refreshDriver();

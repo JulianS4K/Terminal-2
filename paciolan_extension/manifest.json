@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Paciolan / eVenue Seat Collector",
-  "version": "0.2.0",
-  "description": "Reads the rendered eVenue (Paciolan) seat map in your real Chrome and ships a normalized seat/section snapshot to our own ingest endpoint. READ-ONLY: only reads the DOM the page already rendered; never issues any POST/hold/order to an evenue.net host.",
+  "version": "0.3.0",
+  "description": "Reads the rendered eVenue (Paciolan) seat map in your real Chrome and ships a normalized seat/section snapshot to our own ingest endpoint. Optional autonomous driver polls a SQL pull queue and refreshes due events on its own. READ-ONLY: only reads the DOM the page already rendered; never issues any POST/hold/order to an evenue.net host.",
   "minimum_chrome_version": "111",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage", "activeTab", "alarms", "tabs"],
   "host_permissions": [
     "https://*.evenue.net/*",
     "https://*.supabase.co/*"
