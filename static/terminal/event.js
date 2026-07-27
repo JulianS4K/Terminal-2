@@ -5873,8 +5873,8 @@
       // Offer-level AXS buy deep-link (closest AXS primary allows — no per-seat link).
       const buyUrl = lst && lst.buy_url;
       const buyHead = buyUrl ? '<th>Buy</th>' : '';
-      t2.innerHTML = `<thead><tr><th>Listing</th><th>Section</th><th>Row</th><th class="num">Qty</th>
-        <th class="num">Price</th><th>Type</th><th>Seats</th><th>Src</th>${buyHead}</tr></thead><tbody></tbody>`;
+      t2.innerHTML = `<thead><tr><th>Listing</th><th>Section</th><th>Row</th><th>Seats (lo–hi)</th>
+        <th class="num">Qty</th><th class="num">Price</th><th>Type</th><th>Src</th>${buyHead}</tr></thead><tbody></tbody>`;
       const b2 = t2.querySelector('tbody');
       listings.forEach(r => {
         const tr = document.createElement('tr');
@@ -5889,14 +5889,19 @@
         const lidCell = lid
           ? `<td class="axs-lid" title="AXS listing ${escapeHtml(lid)}">${escapeHtml(lid.slice(-8))}</td>`
           : '<td>—</td>';
+        // Seat numbers as a low–high range (full list on hover).
+        let seatRange;
+        if (r.seat_from == null && r.seat_to == null) seatRange = r.seat_numbers || '—';
+        else if (r.seat_to === r.seat_from) seatRange = String(r.seat_from);
+        else seatRange = `${r.seat_from}–${r.seat_to}`;
         tr.innerHTML = `
           ${lidCell}
           <td>${escapeHtml(r.section || '—')}</td>
           <td>${escapeHtml(r.row || '—')}</td>
+          <td class="axs-seats" title="${escapeHtml(r.seat_numbers || '')}">${escapeHtml(seatRange)}</td>
           <td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>
           <td class="num">${r.retail_price != null ? cur + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
           <td>${escapeHtml(r.type || '—')}${r.wheelchair ? ' ♿' : ''}</td>
-          <td>${escapeHtml(r.seat_numbers || '—')}</td>
           <td>${r.src === 'resale' ? 'resale' : 'primary'}</td>${buyCell}`;
         b2.appendChild(tr);
       });

@@ -2776,3 +2776,4 @@ a.axs-buy {
 }
 a.axs-buy:hover { background: var(--accent); color: #fff; }
 td.axs-lid { font-family: var(--mono, monospace); font-size: 11px; color: var(--muted, #888); cursor: help; }
+td.axs-seats { font-family: var(--mono, monospace); font-variant-numeric: tabular-nums; cursor: help; }
