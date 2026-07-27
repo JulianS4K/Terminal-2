@@ -13,7 +13,7 @@ defusedxml>=0.7.1,<1.0
 # powers embeddings/TTS/STT (chat/transform/RAG use the anthropic dep above);
 # pypdf extracts text from uploaded PDF sources. Both imported lazily so the
 # broker pipeline still loads if a host omits them.
-openai>=2.46.0,<3.0
+openai>=2.48.0,<3.0
 # pypdf floor raised to the 6.x line: the 5.x range carries a batch of moderate
 # resource-exhaustion advisories (RAM/infinite-loop on crafted PDFs) that
 # dependency-review blocks; all are patched in 6.x.
