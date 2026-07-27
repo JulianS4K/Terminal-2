@@ -123,59 +123,78 @@ def distill(doc: dict) -> dict:
 
 
 def _distill_v2(body: dict, doc: dict) -> dict:
-    """New TicketsData/AXS envelope (2026-07): section + price-point granularity.
+    """New TicketsData/AXS envelope (2026-07).
 
-    No per-seat manifest exists in this format, so ``seats_resale`` is flag-only
-    and section rows aggregate the per-``section`` ``price_points`` entries.
+    Same per-seat manifest + price book as the veritix format, just relocated to
+    ``body.inventory.offer_search[0].offers[].items[]`` and
+    ``body.inventory.inventory_v4[0].offerPrices``. Aggregates seats to section
+    rows (section/qty/price) — the DB ingest additionally keeps per-seat rows.
     """
     event = body.get("event", {}) or {}
     venue = event.get("venue", {}) or {}
     status = (body.get("onsale", {}) or {}).get("status", {}) or {}
-    sections_in = body.get("sections", []) or []
-    offers = body.get("offers", []) or []
-    price_points = body.get("price_points", []) or []
+    inv = body.get("inventory", {}) or {}
+    offer_search = inv.get("offer_search") or []
+    offers = (offer_search[0].get("offers") or []) if offer_search else []
+    iv4 = inv.get("inventory_v4") or []
+    offer_prices = (iv4[0].get("offerPrices") or []) if iv4 else []
 
-    # price_point.section is a useless constant here; the real section↔price link
-    # is price_level_id. Index each price level's min face + total availability,
-    # then attribute to the sections that list that level. (Levels shared across
-    # sections mean per-section avail can overlap — event totals below stay clean
-    # by summing the price_points directly.)
-    pl_face: dict[str, float] = {}
-    pl_avail: dict[str, int] = {}
+    # price_level_id -> face (dollars); mirrors the DB max(base)/100.
+    # offerID -> offerType: the v2 resale signal ('Single' = primary, '…Resale…'
+    # = resale). The old offerID '9…' prefix is a stale FlashSeats artifact that is
+    # WRONG in v2 (v2 primary offerIDs also start with 9).
+    pl_price: dict[str, float] = {}
+    offer_type: dict[str, str] = {}
+    for op in offer_prices:
+        offer_type[str(op.get("offerID"))] = op.get("offerType") or ""
+        for zp in op.get("zonePrices", []) or []:
+            for pl in zp.get("priceLevels", []) or []:
+                prices = pl.get("prices") or []
+                base = prices[0].get("base") if prices else None
+                if base is not None:
+                    plid = str(pl.get("priceLevelID"))
+                    d = _c2d(base)
+                    pl_price[plid] = d if plid not in pl_price else max(pl_price[plid], d)
+
+    sec: dict[str, dict] = {}
     faces: list[float] = []
-    getins: list[float] = []
+    primary_faces: list[float] = []
     seats_primary = 0
-    for pp in price_points:
-        plid = str(pp.get("price_level_id"))
-        face = (pp.get("pricing", {}) or {}).get("face")
-        if face is None:
-            face = _c2d(pp.get("amount"))
-        avail = int(pp.get("availability") or 0)
-        sold_out = bool(pp.get("sold_out"))
-        seats_primary += avail
-        if face is not None:
-            faces.append(face)
-            if avail > 0 and not sold_out:
-                getins.append(face)
-            pl_face[plid] = face if plid not in pl_face else min(pl_face[plid], face)
-        pl_avail[plid] = pl_avail.get(plid, 0) + avail
+    seats_resale = 0
+    for o in offers:
+        for it in (o.get("items") or []):
+            price = pl_price.get(str(it.get("priceLevelID")))
+            if price is None and it.get("originalPrice") is not None:
+                price = float(it["originalPrice"])
+            is_resale = "resale" in offer_type.get(str(it.get("offerID")), "").lower()
+            if is_resale:
+                seats_resale += 1
+            else:
+                seats_primary += 1
+                if price is not None:
+                    primary_faces.append(price)
+            if price is not None:
+                faces.append(price)
+            row = sec.setdefault(it.get("sectionLabel"), {
+                "section": it.get("sectionLabel"), "neighborhood": None, "ga": False,
+                "sold_out": False, "avail_qty": 0, "price_min": None, "price_max": None,
+                "seat_types": set(), "has_resale": False, "connection_fee": None,
+            })
+            row["avail_qty"] += 1
+            if it.get("isGASection"):
+                row["ga"] = True
+            if it.get("seatType"):
+                row["seat_types"].add(it["seatType"])
+            if row["neighborhood"] is None:
+                row["neighborhood"] = it.get("neighborhoodPrintDescription") or it.get("neighborhoodLabel")
+            if is_resale:
+                row["has_resale"] = True
+            if price is not None:
+                row["price_min"] = price if row["price_min"] is None else min(row["price_min"], price)
+                row["price_max"] = price if row["price_max"] is None else max(row["price_max"], price)
 
-    sec_rows: list[dict] = []
-    for s in sections_in:
-        pls = [str(x) for x in (s.get("price_levels") or [])]
-        sfaces = [pl_face[p] for p in pls if p in pl_face]
-        sec_rows.append({
-            "section": s.get("label"),
-            "neighborhood": s.get("neighborhood"),
-            "ga": s.get("general_admission"),
-            "sold_out": bool(s.get("sold_out")),
-            "avail_qty": sum(pl_avail.get(p, 0) for p in pls),
-            "price_min": min(sfaces) if sfaces else None,
-            "price_max": max(sfaces) if sfaces else None,
-            "seat_types": s.get("seat_types"),
-            "has_resale": False,  # v2 exposes resale only at event level (onsale.is_resale_enabled)
-            "connection_fee": None,
-        })
+    for row in sec.values():
+        row["seat_types"] = sorted(row["seat_types"]) or None
 
     return {
         "event": event.get("title"),
@@ -192,17 +211,17 @@ def _distill_v2(body: dict, doc: dict) -> dict:
         "response_s": doc.get("response_s"),
         "quota_remaining": doc.get("quota_remaining"),
         "totals": {
-            "listings": len(price_points) or None,
-            "sections": len(sections_in) or None,
-            "offers": len(offers) or None,
+            "listings": (seats_primary + seats_resale) or None,
+            "sections": len(sec) or None,
+            "offers": len(body.get("offers", []) or []) or None,
             "price_min": min(faces) if faces else None,
             "price_max": max(faces) if faces else None,
-            "get_in_available": min(getins) if getins else None,
+            "get_in_available": min(primary_faces) if primary_faces else None,
             "seats_primary": seats_primary,
-            "seats_resale": 0,
+            "seats_resale": seats_resale,
         },
         "sections": sorted(
-            sec_rows, key=lambda r: (r["price_min"] is None, r["price_min"] or 0)
+            sec.values(), key=lambda r: (r["price_min"] is None, r["price_min"] or 0)
         ),
     }
 

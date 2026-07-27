@@ -246,12 +246,22 @@ def test_distill_empty_doc():
 
 # ---------- distill: new v2 harvest envelope ----------
 
+def _v2_item(section, row, num, pl, offer_id="45672539", seat_type="STANDARD",
+             ga=False, nbhd="Admissions", orig=None):
+    it = {"sectionLabel": section, "rowLabel": row, "number": num,
+          "priceLevelID": pl, "offerID": offer_id, "seatType": seat_type,
+          "isGASection": ga, "neighborhoodPrintDescription": nbhd}
+    if orig is not None:
+        it["originalPrice"] = orig
+    return it
+
+
 def _v2_doc():
-    """A representative NEW-format (2026-07) AXS document — body.event +
-    price_points/sections/offers/onsale. Sections link to prices via
-    price_level_id (NOT price_point.section). Exercises face-vs-amount, sold-out,
-    a price level shared/duplicated, an orphan price level (event-only), a section
-    whose price levels have no points, and a section with no price_levels key."""
+    """A representative NEW-format (2026-07) AXS document — the seat manifest lives
+    at body.inventory.offer_search[0].offers[].items[], priced via
+    body.inventory.inventory_v4[0].offerPrices (priceLevelID -> prices[0].base cents).
+    Exercises: primary vs resale (offerID '9…'), price hit vs originalPrice fallback
+    vs no-price, GA flag, missing seat_type, section aggregation, and sort order."""
     return {
         "response_s": 66.0,
         "quota_remaining": 142231,
@@ -268,32 +278,30 @@ def _v2_doc():
                 "onSaleDate": "2026-04-24 23:00:00 +0000",
                 "offSaleDate": "2026-08-02 02:30:00 +0000",
             }},
-            "sections": [
-                {"label": "4", "price_levels": ["3597", "3646"], "neighborhood": "Lower",
-                 "seat_types": ["STANDARD"], "general_admission": False, "sold_out": False},
-                {"label": "226", "price_levels": ["6479"], "neighborhood": "Upper",
-                 "seat_types": ["STANDARD", "PREMIUM"], "general_admission": False},
-                # price level exists but has no price_point -> price None, avail 0, sorts last
-                {"label": "GA", "price_levels": ["9999"], "general_admission": True},
-                # no price_levels key at all -> avail 0, price None
-                {"label": "NOPL", "neighborhood": "Empty"},
-            ],
-            "offers": [{"name": "a"}, {"name": "b"}],
-            "price_points": [
-                {"price_level_id": "3597", "availability": 6, "sold_out": False,
-                 "pricing": {"face": 267.06}},
-                # face None -> amount/100 fallback; sold_out -> excluded from get-in
-                {"price_level_id": "3646", "availability": 4, "sold_out": True,
-                 "pricing": {"face": None}, "amount": 26706},
-                {"price_level_id": "6479", "availability": 10, "sold_out": False,
-                 "pricing": {"face": 70.86}},
-                # duplicate 6479 with a lower face -> exercises the pl_face min() branch
-                {"price_level_id": "6479", "availability": 5, "sold_out": False,
-                 "pricing": {"face": 65.00}},
-                # orphan price level: counted in event totals, claimed by no section
-                {"price_level_id": "3595", "availability": 2, "sold_out": False,
-                 "pricing": {"face": 310.66}},
-            ],
+            "offers": [{"name": "GA"}, {"name": "Dash Pass"}],  # event-level offers count = 2
+            "inventory": {
+                "inventory_v4": [{"offerPrices": [
+                    {"offerID": "45672539", "offerType": "Single", "zonePrices": [{"priceLevels": [
+                        {"priceLevelID": "PL_A", "prices": [{"base": 26706}]},   # $267.06
+                        {"priceLevelID": "PL_A", "prices": [{"base": 20000}]},   # dup -> max() wins ($267.06)
+                        {"priceLevelID": "PL_B", "prices": [{"base": 7086}]},    # $70.86
+                        {"priceLevelID": "PL_NOBASE", "prices": [{}]},           # no base -> skipped
+                    ]}]},
+                    # a resale offer — flagged by offerType, NOT the offerID prefix
+                    {"offerID": "90001", "offerType": "AXS Marketplace Resale", "zonePrices": []},
+                ]}],
+                "offer_search": [{"offers": [
+                    {"items": [
+                        _v2_item("4", "Q", "1", "PL_A"),                     # $267.06 STANDARD
+                        _v2_item("4", "Q", "2", "PL_A", seat_type=None),    # no seat_type
+                        _v2_item("226", "A", "1", "PL_B", ga=True),         # $70.86, GA, cheapest primary
+                        _v2_item("GA2", "GA", "1", "PL_MISSING", orig="55.5"),  # price via originalPrice
+                        _v2_item("NP", "Z", "1", "PL_NOBASE", seat_type=None),  # no price, no seat_type
+                        # offerID starts with '9' but offerType is Resale -> resale via offerType
+                        _v2_item("RS", "R", "1", "PL_A", offer_id="90001"),
+                    ]},
+                ]}],
+            },
         },
     }
 
@@ -304,38 +312,33 @@ def test_distill_v2_full():
     assert s["venue"] == "T-Mobile Arena"
     assert s["event_date"] == "2026-08-01T19:30:00-07:00"
     assert s["tz"] == "America/Los_Angeles"
-    assert s["api"] == "veritix"  # source tag normalized
+    assert s["api"] == "veritix"
     assert s["currency"] == "USD"
-    assert s["response_s"] == 66.0
-    assert s["quota_remaining"] == 142231
+    assert s["response_s"] == 66.0 and s["quota_remaining"] == 142231
     assert s["onsale_status"]["onSaleNow"] is True
-    assert s["onsale_status"]["onSaleDate"] == "2026-04-24 23:00:00 +0000"
     t = s["totals"]
-    assert t["listings"] == 5    # price_points count
-    assert t["sections"] == 4    # body.sections count
-    assert t["offers"] == 2
-    assert t["price_min"] == 65.00   # cheapest face across all price_points
-    assert t["price_max"] == 310.66
-    assert t["get_in_available"] == 65.00
-    assert t["seats_primary"] == 27  # 6+4+10+5+2 — clean sum of all price_points
-    assert t["seats_resale"] == 0
+    assert t["listings"] == 6          # total seat items (5 primary + 1 resale)
+    assert t["sections"] == 5          # 4, 226, GA2, NP, RS
+    assert t["offers"] == 2            # body.offers length
+    assert t["seats_primary"] == 5
+    assert t["seats_resale"] == 1
+    assert t["price_min"] == 55.5      # cheapest priced seat (originalPrice fallback)
+    assert t["price_max"] == 267.06
+    assert t["get_in_available"] == 55.5   # cheapest PRIMARY priced seat
     secs = s["sections"]
     sec4 = next(r for r in secs if r["section"] == "4")
-    assert sec4["price_min"] == 267.06 and sec4["price_max"] == 267.06
-    assert sec4["avail_qty"] == 10   # 3597(6) + 3646(4)
-    assert sec4["neighborhood"] == "Lower"
-    assert sec4["seat_types"] == ["STANDARD"]
+    assert sec4["avail_qty"] == 2 and sec4["price_min"] == 267.06 and sec4["price_max"] == 267.06
+    assert sec4["seat_types"] == ["STANDARD"]     # None seat_type dropped
     assert sec4["ga"] is False and sec4["has_resale"] is False
+    assert sec4["neighborhood"] == "Admissions"
     s226 = next(r for r in secs if r["section"] == "226")
-    assert s226["price_min"] == 65.00      # 6479 shared/duplicated -> min face wins
-    assert s226["avail_qty"] == 15         # 10 + 5
-    assert s226["seat_types"] == ["STANDARD", "PREMIUM"]
-    ga = next(r for r in secs if r["section"] == "GA")
-    assert ga["price_min"] is None and ga["avail_qty"] == 0 and ga["ga"] is True
-    nopl = next(r for r in secs if r["section"] == "NOPL")
-    assert nopl["price_min"] is None and nopl["avail_qty"] == 0
+    assert s226["price_min"] == 70.86 and s226["ga"] is True
+    rs = next(r for r in secs if r["section"] == "RS")
+    assert rs["has_resale"] is True and rs["avail_qty"] == 1
+    np = next(r for r in secs if r["section"] == "NP")
+    assert np["price_min"] is None and np["seat_types"] is None
     # cheapest section first; None-priced sections sort last
-    assert secs[0]["section"] == "226"
+    assert secs[0]["section"] == "GA2"   # $55.50
     assert secs[-1]["price_min"] is None
 
 
@@ -345,9 +348,11 @@ def test_distill_v2_fallbacks():
     doc = {"body": {
         "status": "success", "exit_code": "0",
         "event": {"title": "X", "venue": {"timezone": "America/New_York"}},
-        "sections": [{"label": "A", "price_levels": ["1"]}],
-        "price_points": [{"price_level_id": "1", "availability": 1, "sold_out": False,
-                          "pricing": {"face": 10.0}}],
+        "inventory": {
+            "inventory_v4": [{"offerPrices": [
+                {"zonePrices": [{"priceLevels": [{"priceLevelID": "1", "prices": [{"base": 1000}]}]}]}]}],
+            "offer_search": [{"offers": [{"items": [_v2_item("A", "1", "1", "1")]}]}],
+        },
     }}
     s = ax.distill(doc)
     assert s["venue"] is None
@@ -357,26 +362,8 @@ def test_distill_v2_fallbacks():
     assert s["sections"][0]["avail_qty"] == 1
 
 
-def test_distill_v2_priceless_point():
-    # price_point with neither face nor amount -> face stays None (excluded from
-    # prices) but its availability still counts toward the section + event totals.
-    doc = {"body": {
-        "status": "ok", "exit_code": 0, "event": {"title": "P"},
-        "sections": [{"label": "S", "price_levels": ["7"]}],
-        "price_points": [{"price_level_id": "7", "availability": 3,
-                          "sold_out": False, "pricing": {}}],
-    }}
-    s = ax.distill(doc)
-    assert s["totals"]["price_min"] is None
-    assert s["totals"]["get_in_available"] is None
-    assert s["totals"]["seats_primary"] == 3
-    sec = s["sections"][0]
-    assert sec["price_min"] is None
-    assert sec["avail_qty"] == 3
-
-
 def test_distill_v2_empty():
-    # empty event dict still dispatches to v2; no price_points/sections -> Nones
+    # empty event dict still dispatches to v2; no inventory -> all Nones / zeros
     s = ax.distill({"body": {"status": "ok", "exit_code": 0, "event": {}}})
     assert s["event"] is None and s["venue"] is None
     assert s["totals"]["listings"] is None
@@ -385,6 +372,7 @@ def test_distill_v2_empty():
     assert s["totals"]["price_min"] is None
     assert s["totals"]["get_in_available"] is None
     assert s["totals"]["seats_primary"] == 0
+    assert s["totals"]["seats_resale"] == 0
     assert s["sections"] == []
 
 
@@ -401,11 +389,11 @@ def test_normalize_v2_round_trip():
     assert es["occurs_at_local"] == "2026-08-01T19:30:00-07:00"
     assert es["api"] == "veritix"
     assert es["onsale_now"] is True
-    assert es["getin"] == 65.00
-    assert es["seats_primary"] == 27
-    assert es["seats_resale"] == 0
+    assert es["getin"] == 55.5
+    assert es["seats_primary"] == 5
+    assert es["seats_resale"] == 1
     assert es["quota_remaining"] == 142231
-    assert len(n["sections"]) == 4   # 4, 226, GA, NOPL
+    assert len(n["sections"]) == 5
 
 
 # ---------- axs_event_id_from_url ----------
