@@ -108,7 +108,106 @@ def _c2d(cents: Any) -> float | None:
 
 
 def distill(doc: dict) -> dict:
+    """Distill a raw AXS /fetch document into the canonical summary shape.
+
+    Handles BOTH TicketsData response formats — the new v2 harvest envelope
+    (``body.event`` + ``price_points``/``sections``/``offers``/``onsale``) is the
+    default; the legacy "veritix" envelope (``body.meta``/``prices``/``offers.offers``
+    /``startflow``) is the fallback. Both branches return the identical summary
+    dict, so ``normalize()``/``persist()`` are format-agnostic.
+    """
     body = doc.get("body", {}) or {}
+    if isinstance(body.get("event"), dict):
+        return _distill_v2(body, doc)
+    return _distill_veritix(body, doc)
+
+
+def _distill_v2(body: dict, doc: dict) -> dict:
+    """New TicketsData/AXS envelope (2026-07): section + price-point granularity.
+
+    No per-seat manifest exists in this format, so ``seats_resale`` is flag-only
+    and section rows aggregate the per-``section`` ``price_points`` entries.
+    """
+    event = body.get("event", {}) or {}
+    venue = event.get("venue", {}) or {}
+    status = (body.get("onsale", {}) or {}).get("status", {}) or {}
+    sections_in = body.get("sections", []) or []
+    offers = body.get("offers", []) or []
+    price_points = body.get("price_points", []) or []
+
+    # price_point.section is a useless constant here; the real section↔price link
+    # is price_level_id. Index each price level's min face + total availability,
+    # then attribute to the sections that list that level. (Levels shared across
+    # sections mean per-section avail can overlap — event totals below stay clean
+    # by summing the price_points directly.)
+    pl_face: dict[str, float] = {}
+    pl_avail: dict[str, int] = {}
+    faces: list[float] = []
+    getins: list[float] = []
+    seats_primary = 0
+    for pp in price_points:
+        plid = str(pp.get("price_level_id"))
+        face = (pp.get("pricing", {}) or {}).get("face")
+        if face is None:
+            face = _c2d(pp.get("amount"))
+        avail = int(pp.get("availability") or 0)
+        sold_out = bool(pp.get("sold_out"))
+        seats_primary += avail
+        if face is not None:
+            faces.append(face)
+            if avail > 0 and not sold_out:
+                getins.append(face)
+            pl_face[plid] = face if plid not in pl_face else min(pl_face[plid], face)
+        pl_avail[plid] = pl_avail.get(plid, 0) + avail
+
+    sec_rows: list[dict] = []
+    for s in sections_in:
+        pls = [str(x) for x in (s.get("price_levels") or [])]
+        sfaces = [pl_face[p] for p in pls if p in pl_face]
+        sec_rows.append({
+            "section": s.get("label"),
+            "neighborhood": s.get("neighborhood"),
+            "ga": s.get("general_admission"),
+            "sold_out": bool(s.get("sold_out")),
+            "avail_qty": sum(pl_avail.get(p, 0) for p in pls),
+            "price_min": min(sfaces) if sfaces else None,
+            "price_max": max(sfaces) if sfaces else None,
+            "seat_types": s.get("seat_types"),
+            "has_resale": False,  # v2 exposes resale only at event level (onsale.is_resale_enabled)
+            "connection_fee": None,
+        })
+
+    return {
+        "event": event.get("title"),
+        "venue": venue.get("name"),
+        "event_date": event.get("starts_local"),
+        "tz": event.get("timezone") or venue.get("timezone"),
+        "api": "veritix",  # normalize source tag so downstream stays uniform
+        "onsale_status": {
+            "onSaleNow": status.get("onSaleNow"),
+            "onSaleDate": status.get("onSaleDate"),
+            "offSaleDate": status.get("offSaleDate"),
+        },
+        "currency": event.get("currency") or "USD",
+        "response_s": doc.get("response_s"),
+        "quota_remaining": doc.get("quota_remaining"),
+        "totals": {
+            "listings": len(price_points) or None,
+            "sections": len(sections_in) or None,
+            "offers": len(offers) or None,
+            "price_min": min(faces) if faces else None,
+            "price_max": max(faces) if faces else None,
+            "get_in_available": min(getins) if getins else None,
+            "seats_primary": seats_primary,
+            "seats_resale": 0,
+        },
+        "sections": sorted(
+            sec_rows, key=lambda r: (r["price_min"] is None, r["price_min"] or 0)
+        ),
+    }
+
+
+def _distill_veritix(body: dict, doc: dict) -> dict:
     meta = body.get("meta", {}) or {}
     sections = body.get("sections", {}) or {}
     prices = body.get("prices", {}) or {}
