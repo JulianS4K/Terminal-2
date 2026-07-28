@@ -128,6 +128,26 @@ local buffer, so `chrome.storage` never holds megabytes; the server prunes raw
 to 14 days. The secret-gated ingest now accepts a raw-only capture (the drift
 case) — it's only rejected when there's *neither* parsed rows *nor* raw.
 
+## Optional: SQL wake-ping (trigger a reachable runner)
+
+The unpacked extension **polls** the queue, which needs no inbound access. If you
+instead run a **reachable runner** (a hosted fetcher, or a local runner exposed
+via a tunnel), the enqueue cron can *push* to it: after `paciolan_enqueue_due`
+queues work it fire-and-forget `net.http_post`s a secret-gated kick to every
+endpoint you register, so the runner pulls immediately instead of waiting for its
+next poll. Register one with
+
+```sql
+select public.paciolan_register_driver_endpoint(
+  'https://<your-runner>/wake', '<shared-secret>', 'note');
+-- test now:  select public.paciolan_wake_drivers();
+```
+
+The kick body is `{source:'paciolan', reason, enqueued, at}` with
+`Authorization: Bearer <shared-secret>`; your runner verifies it and calls
+`paciolan_next_pull`. The URL is **your** runner (never an `evenue.net` host) —
+RULE 2 is untouched, and the pull queue stays the fallback if the ping fails.
+
 ## Export-health indicator
 
 A successful HTTP 200 isn't the same as a *good* export, so the popup shows a
