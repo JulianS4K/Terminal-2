@@ -85,14 +85,17 @@
     }
     const n = v => T.fmtNum(v || 0);
     const errs = (h.error_24h || 0) + (h.expired_24h || 0);
+    const drift = h.drift_24h || 0;
     // badge classes: pos (green) for healthy, plain for neutral, muted for zero-ish
     const cards = [
       { lbl: 'Targets active', val: n(h.targets_active), cls: (h.targets_active > 0 ? 'pos' : 'muted') },
       { lbl: 'Captures', val: n(h.captures_total), cls: 'muted' },
+      { lbl: 'Raw kept', val: n(h.raw_captures_total), cls: (h.raw_captures_total > 0 ? '' : 'muted') },
       { lbl: 'Pending', val: n(h.pending), cls: (h.pending > 0 ? '' : 'muted') },
       { lbl: 'In-flight', val: n(h.inflight), cls: (h.inflight > 0 ? '' : 'muted') },
       { lbl: 'OK / 24h', val: n(h.ok_24h), cls: (h.ok_24h > 0 ? 'pos' : 'muted') },
       { lbl: 'Empty / 24h', val: n(h.empty_24h), cls: (h.empty_24h > 0 ? 'warn' : 'muted') },
+      { lbl: 'Drift / 24h', val: n(drift), cls: (drift > 0 ? 'neg' : 'muted') },
       { lbl: 'Error / 24h', val: n(h.error_24h), cls: (h.error_24h > 0 ? 'neg' : 'muted') },
       { lbl: 'Expired / 24h', val: n(h.expired_24h), cls: (h.expired_24h > 0 ? 'neg' : 'muted') },
     ];
@@ -104,7 +107,8 @@
     // Overall verdict + freshness line.
     if (when) {
       const last = h.last_resolved_at ? fmtDateTime(h.last_resolved_at) : 'never';
-      const verdict = errs > 0 ? '🔴 errors in last 24h'
+      const verdict = drift > 0 ? '🟣 format drift — parser needs update (raw saved)'
+        : errs > 0 ? '🔴 errors in last 24h'
         : (h.ok_24h > 0 ? '🟢 healthy' : (h.targets_active > 0 ? '🟠 armed, no pulls yet' : '⚪ idle'));
       when.textContent = `${verdict} · last pull ${last}`;
     }
@@ -129,11 +133,13 @@
     _rows = (data && data.events) || [];
     const summaryEl = document.getElementById('pacEventsSummary');
     if (summaryEl) {
+      const driftN = _rows.filter(r => r.format_drift).length;
       summaryEl.innerHTML = _rows.length
         ? `<span class="badge">${data.count} captured</span> ` +
           `<span class="badge">${data.mapped} mapped → TEvo/EVO</span> ` +
           `<span class="badge pos">${data.pulling} auto-pulling</span> ` +
-          (data.stale ? `<span class="badge neg">${data.stale} last pull failed</span>` : '')
+          (data.stale ? `<span class="badge neg">${data.stale} last pull failed</span> ` : '') +
+          (driftN ? `<span class="badge neg" title="Raw saved but parser found 0 rows — format changed">${driftN} format drift</span>` : '')
         : '';
     }
     renderTable();
@@ -210,6 +216,10 @@
         ? `<a href="event.html?event=${r.map_tevo_event_id}">${escapeHtml(name)}</a>`
         : escapeHtml(name);
       const tenantChip = ` <span class="muted small">${escapeHtml(r.tenant || '')}</span>`;
+      // Format-drift flag: raw was saved but the parser found 0 rows.
+      const driftChip = r.format_drift
+        ? ` <span class="badge neg" title="Format changed — parser found 0 sections/seats; raw kept for re-parse">drift</span>`
+        : '';
 
       const band = (r.getin != null && r.price_max != null)
         ? `$${T.fmtNum(Math.round(r.getin))}–$${T.fmtNum(Math.round(r.price_max))}` : '—';
@@ -236,7 +246,7 @@
       if (r.map_tevo_event_id) links.push(`<a href="event.html?event=${r.map_tevo_event_id}">EVENT</a>`);
 
       tr.innerHTML = `
-        <td>${nameCell}${tenantChip}</td>
+        <td>${nameCell}${tenantChip}${driftChip}</td>
         <td>${escapeHtml(r.venue_name || '—')}</td>
         <td class="num">${r.occurs_at ? T.temporalChipHtml(r.occurs_at) : '<span class="muted small">—</span>'}</td>
         <td class="num">${r.getin != null ? '$' + T.fmtNum(Math.round(r.getin)) : '—'}</td>

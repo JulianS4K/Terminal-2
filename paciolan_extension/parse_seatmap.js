@@ -176,8 +176,42 @@ function parseEventMeta(root) {
   return meta;
 }
 
+// --- raw capture (format-drift safety net) ---------------------------------
+// Formats change: rather than trust the parser is right forever, keep the WHOLE
+// rendered page + every inline JSON blob with each pull, so we can always
+// re-parse history server-side after a layout change (and flag drift = raw
+// present but nothing parsed). Twin: paciolan_raw_captures + paciolan_ingest.
+const RAW_HTML_CAP = 2000000;  // ~2 MB hard cap so one pull can't balloon
+
+function collectRaw(root) {
+  root = root || document;
+  const el = root.documentElement;
+  const html = (el && el.outerHTML) || "";
+  const truncated = html.length > RAW_HTML_CAP;
+  const blobs = [];
+  const sel = 'script[type="application/json"], script[type="application/ld+json"], script#__NEXT_DATA__';
+  (root.querySelectorAll ? root.querySelectorAll(sel) : []).forEach((s) => {
+    const text = s.textContent || "";
+    if (!text.trim()) return;
+    let json = null;
+    try { json = JSON.parse(text); } catch (_) { /* keep as text */ }
+    blobs.push({
+      id: s.id || null,
+      type: s.getAttribute("type") || null,
+      json: json,
+      text: json == null ? text.slice(0, RAW_HTML_CAP) : null,
+    });
+  });
+  return {
+    raw_html: truncated ? html.slice(0, RAW_HTML_CAP) : html,
+    raw_html_truncated: truncated,
+    raw_html_bytes: html.length,
+    raw_blobs: blobs,
+  };
+}
+
 if (typeof self !== "undefined") {
   self.PaciolanParse = { parseSeatmap, groupConsecutive, splitLevelSection,
                          parseSeatKey, classifySeatType, parseEventMeta,
-                         splitTeams };
+                         splitTeams, collectRaw };
 }

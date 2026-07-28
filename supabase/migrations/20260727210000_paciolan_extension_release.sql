@@ -21,7 +21,7 @@ comment on table public.paciolan_extension_release is
 
 -- seed with the current shipped version
 insert into public.paciolan_extension_release (id, version, notes)
-values (1, '0.3.0', 'autonomous SQL-driven pull loop (chrome.alarms driver)')
+values (1, '0.4.0', 'raw-capture format-drift safety net (pull all site data)')
 on conflict (id) do nothing;
 
 -- public read (version numbers aren't secret) — the popup polls this

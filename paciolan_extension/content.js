@@ -24,13 +24,21 @@ function eventCodeFromPath() {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
-function buildCapture() {
+// withRaw: attach the full raw page + inline JSON. Only true for captures that
+// UPLOAD (button / autonomous driver) — passive buffer refreshes skip raw so the
+// local ring-buffer (chrome.storage.local) never holds megabytes of HTML.
+function buildCapture(withRaw) {
   const { sections, seats } = self.PaciolanParse.parseSeatmap(document);
-  if (!sections.length && !seats.length) return null;
+  const raw = withRaw ? self.PaciolanParse.collectRaw(document) : null;
+  // Keep capturing even when parsing yields nothing: as long as the page
+  // rendered (raw present), upload it so the server can flag format drift and
+  // hold the raw for re-parsing — never a silent no-op on a format change.
+  const rendered = !!(document.documentElement && document.documentElement.outerHTML);
+  if (!sections.length && !seats.length && !(withRaw && rendered)) return null;
   // Event metadata (name/date/venue/teams) so the server can map this to the
   // canonical AQ event → EVO/SeatGeek/StubHub (paciolan_aq_match).
   const meta = self.PaciolanParse.parseEventMeta(document);
-  return {
+  const cap = {
     platform: "paciolan",
     tenant: tenantFromHost(),
     event_code: eventCodeFromPath(),
@@ -44,13 +52,20 @@ function buildCapture() {
     sections,
     seats,
   };
+  if (raw) {
+    cap.raw_html = raw.raw_html;
+    cap.raw_html_truncated = raw.raw_html_truncated;
+    cap.raw_html_bytes = raw.raw_html_bytes;
+    cap.raw_blobs = raw.raw_blobs;
+  }
+  return cap;
 }
 
 // Passive refresh (no upload), de-duped on the available-seat fingerprint.
 let lastSig = "";
 function passiveCapture(reason) {
   let payload;
-  try { payload = buildCapture(); } catch (e) { return; }
+  try { payload = buildCapture(false); } catch (e) { return; }
   if (!payload) return;
   const sig = JSON.stringify([
     payload.sections.length,
@@ -75,7 +90,7 @@ new MutationObserver(() => schedulePassive("mutation"))
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "paciolan_capture_now") {
     let payload;
-    try { payload = buildCapture(); } catch (e) { payload = null; }
+    try { payload = buildCapture(true); } catch (e) { payload = null; }
     if (!payload) {
       sendResponse({ ok: false, error: "No seat map found on this page. Open an eVenue event and expand a section." });
       return true;

@@ -24,6 +24,7 @@ const BADGE = {
   good:  { color: "#2e7d32", text: (n) => String(n) },
   thin:  { color: "#b8860b", text: (n) => String(n) },
   empty: { color: "#b8860b", text: () => "0" },
+  drift: { color: "#8e24aa", text: () => "⚑" },  // format changed, raw saved
   fail:  { color: "#c62828", text: () => "!" },
   idle:  { color: "#616161", text: (n) => (n > 0 ? String(n) : "") },
 };
@@ -40,14 +41,21 @@ function setBadge(level, count) {
 function assessQuality(payload, ship, uploaded) {
   const available = payload.seats.filter((s) => s.available).length;
   const hasMeta = !!(payload.event_name && payload.occurs_at && payload.venue_name);
+  // Format drift: the page rendered (raw captured) but the parser found no
+  // sections AND no seats — the layout likely changed. Raw is saved server-side
+  // for re-parsing; flag it loudly rather than reporting a benign "0 seats".
+  const parsed = payload.sections.length + payload.seats.length;
+  const drift = parsed === 0 && !!payload.raw_html;
   let level;
   if (!uploaded) level = "idle";
   else if (!ship.shipped) level = "fail";
+  else if (drift) level = "drift";
   else if (available === 0) level = "empty";
   else if (!hasMeta) level = "thin";
   else level = "good";
   return {
-    level, available, hasMeta,
+    level, available, hasMeta, drift,
+    raw_bytes: payload.raw_html_bytes || (payload.raw_html ? payload.raw_html.length : 0),
     meta: {
       name: !!payload.event_name, date: !!payload.occurs_at,
       venue: !!payload.venue_name,
@@ -113,8 +121,12 @@ async function handleCapture(msg) {
 
   // Export-health verdict → colored badge + stored for the popup.
   record.quality = assessQuality(payload, record.ship, !!msg.upload);
+  // Strip the raw page/blobs from the LOCALLY-STORED copy — the upload already
+  // carried them to Supabase; keeping 100 × ~2 MB in chrome.storage would blow
+  // the quota. The buffer keeps only the light, parsed summary.
+  const { raw_html, raw_blobs, ...lightPayload } = payload;  // eslint-disable-line no-unused-vars
   const { captures = [] } = await getLocal(["captures"]);
-  captures.unshift({ ...record, payload });
+  captures.unshift({ ...record, payload: lightPayload });
   await setLocal({ captures: captures.slice(0, RING_MAX) });
   setBadge(record.quality.level, availed);
   return record;

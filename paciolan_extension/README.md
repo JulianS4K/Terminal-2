@@ -107,6 +107,27 @@ Capture payload (`p_payload`) shape:
                   "seat_type": "premium", "is_ga": false, "available": true } ] }
 ```
 
+## Raw capture — format-drift safety net
+
+Paciolan/eVenue markup changes over time, and a parser that's right today can go
+silently blind after a layout change. So every **upload** capture also carries
+the **whole rendered page** (`document.documentElement.outerHTML`, capped ~2 MB)
+plus every inline JSON blob (`ld+json` / `application/json` / `__NEXT_DATA__`).
+The server keeps them in `paciolan_raw_captures`, so:
+
+- **Nothing is lost to a format change** — history can be re-parsed server-side
+  from the stored raw after the parser is updated.
+- **Drift is a loud signal, not a silent zero** — a capture that renders (raw
+  present) but yields **0 sections and 0 seats** is flagged `format_drift`
+  (purple ⚑ badge / verdict, a *Drift / 24h* card on the terminal health screen,
+  a `drift` row badge). That's the tell the parser needs a look — the raw is
+  already safe.
+
+Raw is attached **only on uploads** (button / autonomous driver), never the
+local buffer, so `chrome.storage` never holds megabytes; the server prunes raw
+to 14 days. The secret-gated ingest now accepts a raw-only capture (the drift
+case) — it's only rejected when there's *neither* parsed rows *nor* raw.
+
 ## Export-health indicator
 
 A successful HTTP 200 isn't the same as a *good* export, so the popup shows a

@@ -41,13 +41,18 @@ function renderVerdict(record, scraped) {
   const ship = record.ship || {};
   const m = q.meta || {};
   const el = $("verdict");
-  const cls = q.level === "good" ? "v-good" : q.level === "fail" ? "v-fail" : "v-warn";
-  const icon = q.level === "good" ? "✅" : q.level === "fail" ? "❌" : "⚠️";
+  const cls = q.level === "good" ? "v-good" : q.level === "fail" ? "v-fail"
+            : q.level === "drift" ? "v-drift" : "v-warn";
+  const icon = q.level === "good" ? "✅" : q.level === "fail" ? "❌"
+             : q.level === "drift" ? "⚑" : "⚠️";
+  const kb = q.raw_bytes ? ` (${Math.round(q.raw_bytes / 1024)} KB raw saved)` : "";
   let head;
   if (q.level === "good")
     head = `Export good — ${q.available} available seats uploaded (snapshot #${ship.snapshot_id ?? "?"})`;
   else if (q.level === "fail")
     head = `Upload failed — ${ship.error || ship.status || "unknown error"}`;
+  else if (q.level === "drift")
+    head = `Format change? Page saved${kb}, but the parser found 0 sections/seats — raw kept for re-parsing`;
   else if (q.level === "empty")
     head = "Uploaded, but 0 available seats — expand a section on the page and retry";
   else
@@ -69,7 +74,8 @@ function renderRecent(caps) {
   if (!caps.length) { el.innerHTML = '<div class="muted">No captures yet.</div>'; return; }
   el.innerHTML = caps.slice(0, 20).map((c) => {
     const lvl = (c.quality && c.quality.level) || "idle";
-    const dot = lvl === "good" ? "🟢" : lvl === "fail" ? "🔴" : lvl === "idle" ? "⚪" : "🟠";
+    const dot = lvl === "good" ? "🟢" : lvl === "fail" ? "🔴" : lvl === "idle" ? "⚪"
+      : lvl === "drift" ? "🟣" : "🟠";
     const s = c.ship || {};
     const tail = s.shipped ? `#${s.snapshot_id ?? "?"}` : s.error ? "failed" : "buffered";
     return `<div class="cap">${dot} <b>${c.tenant || "?"}</b> ${c.event_code || ""}
