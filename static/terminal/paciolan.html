@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Paciolan / eVenue</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260721a" />
+</head>
+<body data-page="paciolan">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap movers">
+
+    <!-- HEALTH SCREEN — autonomous pull-loop status. Paciolan/eVenue is
+         browser-extension-sourced (this env can't reach evenue.net), so the
+         extension's autonomous driver polls a SQL pull queue and refreshes due
+         events. This strip is the at-a-glance health of that loop, backed by
+         /api/paciolan/health (v_paciolan_pull_health; service-role read). -->
+    <section id="paciolan-health">
+      <div class="panel-title row">
+        <span>PACIOLAN — PULL-LOOP HEALTH</span>
+        <span class="muted small" id="pacHealthWhen"></span>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">
+        The Chrome extension's autonomous driver polls <code>paciolan_pull_queue</code>
+        and refreshes due eVenue events on its own (SQL enqueues, the browser
+        pulls — eVenue can't be fetched server-side). This is the loop's health.
+      </div>
+      <div id="pacHealthCards" class="ctrl-row"><div class="empty">loading…</div></div>
+    </section>
+
+    <!-- URL LAYER — every captured Paciolan/eVenue event with its latest
+         snapshot (face get-in / band / availability), AQ mapping to the
+         canonical hub (→ EVO/SeatGeek/StubHub), and per-event pull status.
+         Backed by /api/paciolan/events (v_paciolan_events; service-role read,
+         paciolan_* tables are RLS-locked). Paciolan is a PRIMARY box office. -->
+    <section id="paciolan-events" style="margin-top:18px">
+      <div class="panel-title row">
+        <span>PACIOLAN EVENTS — TRACKED BOX OFFICE</span>
+        <span class="muted small" id="pacEventsCount"></span>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">
+        Every event captured from <code>&lt;tenant&gt;.evenue.net</code> (platform
+        <code>paciolan</code>), collapsed to consecutive-seat <em>N&nbsp;together</em>
+        blocks — a sold/missing seat is the qty break, same model as AXS. Face is
+        the box-office get-in; click an event for its terminal page (when mapped
+        to a TEvo id) or the live eVenue listing.
+      </div>
+      <div class="ctrl-row">
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">SHOW</span>
+          <button class="ctrl-btn is-active" data-pac-active="0">All</button>
+          <button class="ctrl-btn"           data-pac-active="1">Auto-pulling</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">DATE</span>
+          <button class="ctrl-btn is-active" data-pac-past="0">Upcoming</button>
+          <button class="ctrl-btn"           data-pac-past="1">All</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">MAPPING</span>
+          <button class="ctrl-btn is-active" data-pac-mapped="0">All</button>
+          <button class="ctrl-btn"           data-pac-mapped="1">Mapped only</button>
+        </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">FILTER</span>
+          <input type="search" id="pacFilter" class="ctrl-input"
+                 placeholder="event / venue / tenant…" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+      <div id="pacEventsSummary" class="muted small" style="margin-bottom:6px"></div>
+      <div id="pacEventsBody"><div class="empty">loading…</div></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <!-- Cache-busting: bump ?v=<token> on any first-party asset change. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260727pac"></script>
+  <script src="paciolan.js?v=20260727pac"></script>
+</body>
+</html>

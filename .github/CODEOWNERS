@@ -65,3 +65,10 @@
 /supabase/functions/exos-mail-drain/        @JulianS4K
 /supabase/functions/exos-webhook-drain/     @JulianS4K
 /docs/d4_bridge_charter.md                  @JulianS4K
+
+# D6 — Paciolan/eVenue primary box-office ingest (browser-extension-sourced).
+# The normalizer, Chrome collector, /api/paciolan route block, and paciolan_*
+# schema. Auto-labelled `area:d6` via .github/labeler.yml (PROJECT_BIBLE §2.3).
+/paciolan_client.py                         @JulianS4K
+/paciolan_extension/                        @JulianS4K
+/routers/paciolan.py                        @JulianS4K
