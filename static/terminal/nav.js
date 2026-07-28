@@ -77,6 +77,11 @@
     // its latest snapshot get-in / price band / listing depth. Backed by
     // /api/axs/events (service-role read; axs_* tables are RLS-locked). 2026-06-20.
     { id: 'axs',       label: 'AXS',       href: 'axs.html' },
+    // Paciolan / eVenue — every event captured from <tenant>.evenue.net (PRIMARY
+    // box office), with face band + AQ mapping + the autonomous pull-loop health.
+    // Browser twin of the AXS tab. Backed by /api/paciolan/events + /health
+    // (service-role read; paciolan_* tables are RLS-locked). 2026-07-27.
+    { id: 'paciolan',  label: 'PACIOLAN',  href: 'paciolan.html' },
     // Eventbrite — organizer events discovered via the TicketsData /events feed
     // (td_discovered_events, platform=eventbrite) with face price band +
     // sold-out / availability. Backed by /api/eventbrite/events (service-role

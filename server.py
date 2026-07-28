@@ -1146,6 +1146,15 @@ from routers.axs import build_axs_router  # noqa: E402
 
 app.include_router(build_axs_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
+# routers/paciolan.py — Paciolan/eVenue primary box-office inventory, browser-
+# extension-sourced (paciolan_extension/). POST /api/paciolan/ingest gated by a
+# shared X-Ingest-Secret (never service_role); read routes serve
+# v_paciolan_listings (consecutive-seat blocks) + section availability.
+# Service-role reads of paciolan_* (RLS service-only). Wired 2026-07-27.
+from routers.paciolan import build_paciolan_router  # noqa: E402
+
+app.include_router(build_paciolan_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+
 # routers/eventbrite.py — Eventbrite organizer discovered events (TicketsData
 # /events feed). Service-role read of td_discovered_events (RLS service-only),
 # mirroring the AXS route. Wired 2026-07-08.

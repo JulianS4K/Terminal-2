@@ -66,6 +66,12 @@ FORBIDDEN_HOSTS = (
     # call to axs.com is forbidden outright. Bare "axs.com" substring-matches
     # www.axs.com / api.axs.com / any future subdomain.
     "axs.com",
+    # Paciolan / eVenue primary box-office (live purchase flow with order/hold
+    # endpoints). Collection is browser-extension-sourced (read-only DOM scrape,
+    # see paciolan_extension/ + paciolan_client.py); a direct write to any
+    # eVenue host is forbidden. Bare "evenue.net" substring-matches
+    # <tenant>.evenue.net / any future subdomain, same as seatdata.io / axs.com.
+    "evenue.net",
 )
 
 # Client modules that legitimately reference these hosts, mapped to the HTTP
@@ -86,6 +92,10 @@ CLIENT_FILES = {
     "broadway_client.py": frozenset({"GET"}),
     "axs_client.py": frozenset({"GET"}),
     "bandsintown_client.py": frozenset({"GET"}),
+    # Paciolan/eVenue normalizer — makes NO network calls (browser-extension-
+    # sourced), but declares the canonical GET-only guard so the new upstream is
+    # locked by the same mechanical audit as every other source.
+    "paciolan_client.py": frozenset({"GET"}),
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
