@@ -166,7 +166,12 @@ def _distill_v2(body: dict, doc: dict) -> dict:
             price = pl_price.get(str(it.get("priceLevelID")))
             if price is None and it.get("originalPrice") is not None:
                 price = float(it["originalPrice"])
-            is_resale = "resale" in offer_type.get(str(it.get("offerID")), "").lower()
+            # FlashSeats is AXS's resale/transfer channel — count it as resale even
+            # when offerType reads 'Single' (operator directive 2026-08-03).
+            is_resale = (
+                "resale" in offer_type.get(str(it.get("offerID")), "").lower()
+                or it.get("seatType") == "FLASHSEATS"
+            )
             if is_resale:
                 seats_resale += 1
             else:

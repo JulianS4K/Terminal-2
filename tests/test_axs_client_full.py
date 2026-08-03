@@ -342,6 +342,37 @@ def test_distill_v2_full():
     assert secs[-1]["price_min"] is None
 
 
+def test_distill_v2_flashseats_is_resale():
+    """FlashSeats is AXS's resale/transfer channel: a seat with
+    seatType='FLASHSEATS' is classified resale even when its offerType reads
+    'Single' (operator directive 2026-08-03, verified on FFDP @ Red Rocks)."""
+    doc = {
+        "body": {
+            "status": "ok", "exit_code": 0,
+            "event": {"title": "FFDP", "venue": {"name": "Red Rocks"}},
+            "offers": [],
+            "inventory": {
+                "inventory_v4": [{"offerPrices": [
+                    {"offerID": "OF1", "offerType": "Single", "zonePrices": [{"priceLevels": [
+                        {"priceLevelID": "PL", "prices": [{"base": 15050}]},  # $150.50
+                    ]}]},
+                ]}],
+                "offer_search": [{"offers": [{"items": [
+                    _v2_item("Right", "25", "13", "PL", offer_id="OF1", seat_type="FLASHSEATS"),
+                    _v2_item("Floor", "1", "1", "PL", offer_id="OF1", seat_type="STANDARD"),
+                ]}]}],
+            },
+        },
+    }
+    s = ax.distill(doc)
+    assert s["totals"]["seats_resale"] == 1    # the FLASHSEATS seat
+    assert s["totals"]["seats_primary"] == 1   # the STANDARD seat
+    right = next(r for r in s["sections"] if r["section"] == "Right")
+    floor = next(r for r in s["sections"] if r["section"] == "Floor")
+    assert right["has_resale"] is True
+    assert floor["has_resale"] is False
+
+
 def test_distill_v2_fallbacks():
     # venue name absent -> None; event tz absent -> venue tz; currency absent -> USD;
     # status 'success' + string exit_code still dispatch to v2.
