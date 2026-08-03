@@ -2767,3 +2767,13 @@ a.txn-team:hover { color: var(--accent); text-decoration: underline; }
   border: 1px solid var(--line-2); border-radius: 3px; color: var(--text);
 }
 .txn-player:hover { border-color: var(--accent); color: var(--accent); }
+
+/* AXS box-office per-listing buy hand-off (offer-level deep-link → AXS seat picker) */
+a.axs-buy {
+  display: inline-block; padding: 1px 8px; border: 1px solid var(--accent);
+  border-radius: 4px; color: var(--accent); font-size: 11px; font-weight: 600;
+  white-space: nowrap; line-height: 1.6;
+}
+a.axs-buy:hover { background: var(--accent); color: #fff; }
+td.axs-lid { font-family: var(--mono, monospace); font-size: 11px; color: var(--muted, #888); cursor: help; }
+td.axs-seats { font-family: var(--mono, monospace); font-variant-numeric: tabular-nums; cursor: help; }

@@ -244,6 +244,189 @@ def test_distill_empty_doc():
     assert s["sections"] == []
 
 
+# ---------- distill: new v2 harvest envelope ----------
+
+def _v2_item(section, row, num, pl, offer_id="45672539", seat_type="STANDARD",
+             ga=False, nbhd="Admissions", orig=None):
+    it = {"sectionLabel": section, "rowLabel": row, "number": num,
+          "priceLevelID": pl, "offerID": offer_id, "seatType": seat_type,
+          "isGASection": ga, "neighborhoodPrintDescription": nbhd}
+    if orig is not None:
+        it["originalPrice"] = orig
+    return it
+
+
+def _v2_doc():
+    """A representative NEW-format (2026-07) AXS document — the seat manifest lives
+    at body.inventory.offer_search[0].offers[].items[], priced via
+    body.inventory.inventory_v4[0].offerPrices (priceLevelID -> prices[0].base cents).
+    Exercises: primary vs resale (offerID '9…'), price hit vs originalPrice fallback
+    vs no-price, GA flag, missing seat_type, section aggregation, and sort order."""
+    return {
+        "response_s": 66.0,
+        "quota_remaining": 142231,
+        "body": {
+            "status": "ok", "exit_code": 0,
+            "event": {
+                "title": "ENHYPEN", "currency": "USD",
+                "starts_local": "2026-08-01T19:30:00-07:00",
+                "timezone": "America/Los_Angeles",
+                "venue": {"name": "T-Mobile Arena", "timezone": "America/Los_Angeles"},
+            },
+            "onsale": {"status": {
+                "onSaleNow": True,
+                "onSaleDate": "2026-04-24 23:00:00 +0000",
+                "offSaleDate": "2026-08-02 02:30:00 +0000",
+            }},
+            "offers": [{"name": "GA"}, {"name": "Dash Pass"}],  # event-level offers count = 2
+            "inventory": {
+                "inventory_v4": [{"offerPrices": [
+                    {"offerID": "45672539", "offerType": "Single", "zonePrices": [{"priceLevels": [
+                        {"priceLevelID": "PL_A", "prices": [{"base": 26706}]},   # $267.06
+                        {"priceLevelID": "PL_A", "prices": [{"base": 20000}]},   # dup -> max() wins ($267.06)
+                        {"priceLevelID": "PL_B", "prices": [{"base": 7086}]},    # $70.86
+                        {"priceLevelID": "PL_NOBASE", "prices": [{}]},           # no base -> skipped
+                    ]}]},
+                    # a resale offer — flagged by offerType, NOT the offerID prefix
+                    {"offerID": "90001", "offerType": "AXS Marketplace Resale", "zonePrices": []},
+                ]}],
+                "offer_search": [{"offers": [
+                    {"items": [
+                        _v2_item("4", "Q", "1", "PL_A"),                     # $267.06 STANDARD
+                        _v2_item("4", "Q", "2", "PL_A", seat_type=None),    # no seat_type
+                        _v2_item("226", "A", "1", "PL_B", ga=True),         # $70.86, GA, cheapest primary
+                        _v2_item("GA2", "GA", "1", "PL_MISSING", orig="55.5"),  # price via originalPrice
+                        _v2_item("NP", "Z", "1", "PL_NOBASE", seat_type=None),  # no price, no seat_type
+                        # offerID starts with '9' but offerType is Resale -> resale via offerType
+                        _v2_item("RS", "R", "1", "PL_A", offer_id="90001"),
+                    ]},
+                ]}],
+            },
+        },
+    }
+
+
+def test_distill_v2_full():
+    s = ax.distill(_v2_doc())
+    assert s["event"] == "ENHYPEN"
+    assert s["venue"] == "T-Mobile Arena"
+    assert s["event_date"] == "2026-08-01T19:30:00-07:00"
+    assert s["tz"] == "America/Los_Angeles"
+    assert s["api"] == "veritix"
+    assert s["currency"] == "USD"
+    assert s["response_s"] == 66.0 and s["quota_remaining"] == 142231
+    assert s["onsale_status"]["onSaleNow"] is True
+    t = s["totals"]
+    assert t["listings"] == 6          # total seat items (5 primary + 1 resale)
+    assert t["sections"] == 5          # 4, 226, GA2, NP, RS
+    assert t["offers"] == 2            # body.offers length
+    assert t["seats_primary"] == 5
+    assert t["seats_resale"] == 1
+    assert t["price_min"] == 55.5      # cheapest priced seat (originalPrice fallback)
+    assert t["price_max"] == 267.06
+    assert t["get_in_available"] == 55.5   # cheapest PRIMARY priced seat
+    secs = s["sections"]
+    sec4 = next(r for r in secs if r["section"] == "4")
+    assert sec4["avail_qty"] == 2 and sec4["price_min"] == 267.06 and sec4["price_max"] == 267.06
+    assert sec4["seat_types"] == ["STANDARD"]     # None seat_type dropped
+    assert sec4["ga"] is False and sec4["has_resale"] is False
+    assert sec4["neighborhood"] == "Admissions"
+    s226 = next(r for r in secs if r["section"] == "226")
+    assert s226["price_min"] == 70.86 and s226["ga"] is True
+    rs = next(r for r in secs if r["section"] == "RS")
+    assert rs["has_resale"] is True and rs["avail_qty"] == 1
+    np = next(r for r in secs if r["section"] == "NP")
+    assert np["price_min"] is None and np["seat_types"] is None
+    # cheapest section first; None-priced sections sort last
+    assert secs[0]["section"] == "GA2"   # $55.50
+    assert secs[-1]["price_min"] is None
+
+
+def test_distill_v2_flashseats_is_resale():
+    """FlashSeats is AXS's resale/transfer channel: a seat with
+    seatType='FLASHSEATS' is classified resale even when its offerType reads
+    'Single' (operator directive 2026-08-03, verified on FFDP @ Red Rocks)."""
+    doc = {
+        "body": {
+            "status": "ok", "exit_code": 0,
+            "event": {"title": "FFDP", "venue": {"name": "Red Rocks"}},
+            "offers": [],
+            "inventory": {
+                "inventory_v4": [{"offerPrices": [
+                    {"offerID": "OF1", "offerType": "Single", "zonePrices": [{"priceLevels": [
+                        {"priceLevelID": "PL", "prices": [{"base": 15050}]},  # $150.50
+                    ]}]},
+                ]}],
+                "offer_search": [{"offers": [{"items": [
+                    _v2_item("Right", "25", "13", "PL", offer_id="OF1", seat_type="FLASHSEATS"),
+                    _v2_item("Floor", "1", "1", "PL", offer_id="OF1", seat_type="STANDARD"),
+                ]}]}],
+            },
+        },
+    }
+    s = ax.distill(doc)
+    assert s["totals"]["seats_resale"] == 1    # the FLASHSEATS seat
+    assert s["totals"]["seats_primary"] == 1   # the STANDARD seat
+    right = next(r for r in s["sections"] if r["section"] == "Right")
+    floor = next(r for r in s["sections"] if r["section"] == "Floor")
+    assert right["has_resale"] is True
+    assert floor["has_resale"] is False
+
+
+def test_distill_v2_fallbacks():
+    # venue name absent -> None; event tz absent -> venue tz; currency absent -> USD;
+    # status 'success' + string exit_code still dispatch to v2.
+    doc = {"body": {
+        "status": "success", "exit_code": "0",
+        "event": {"title": "X", "venue": {"timezone": "America/New_York"}},
+        "inventory": {
+            "inventory_v4": [{"offerPrices": [
+                {"zonePrices": [{"priceLevels": [{"priceLevelID": "1", "prices": [{"base": 1000}]}]}]}]}],
+            "offer_search": [{"offers": [{"items": [_v2_item("A", "1", "1", "1")]}]}],
+        },
+    }}
+    s = ax.distill(doc)
+    assert s["venue"] is None
+    assert s["tz"] == "America/New_York"
+    assert s["currency"] == "USD"
+    assert s["totals"]["get_in_available"] == 10.0
+    assert s["sections"][0]["avail_qty"] == 1
+
+
+def test_distill_v2_empty():
+    # empty event dict still dispatches to v2; no inventory -> all Nones / zeros
+    s = ax.distill({"body": {"status": "ok", "exit_code": 0, "event": {}}})
+    assert s["event"] is None and s["venue"] is None
+    assert s["totals"]["listings"] is None
+    assert s["totals"]["sections"] is None
+    assert s["totals"]["offers"] is None
+    assert s["totals"]["price_min"] is None
+    assert s["totals"]["get_in_available"] is None
+    assert s["totals"]["seats_primary"] == 0
+    assert s["totals"]["seats_resale"] == 0
+    assert s["sections"] == []
+
+
+def test_normalize_v2_round_trip():
+    n = ax.normalize(
+        _v2_doc(),
+        event_url="https://www.axs.com/events/1380757/enhypen-tickets",
+        tevo_venue_id=101949, tevo_event_id=3359535,
+    )
+    es = n["event_snapshot"]
+    assert es["axs_event_id"] == "1380757"
+    assert es["event_name"] == "ENHYPEN"
+    assert es["venue_name"] == "T-Mobile Arena"
+    assert es["occurs_at_local"] == "2026-08-01T19:30:00-07:00"
+    assert es["api"] == "veritix"
+    assert es["onsale_now"] is True
+    assert es["getin"] == 55.5
+    assert es["seats_primary"] == 5
+    assert es["seats_resale"] == 1
+    assert es["quota_remaining"] == 142231
+    assert len(n["sections"]) == 5
+
+
 # ---------- axs_event_id_from_url ----------
 
 def test_axs_event_id_from_url():

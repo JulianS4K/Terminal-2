@@ -168,22 +168,27 @@ def build_axs_router(get_require_sb: Callable[[], Callable], require_auth: Calla
         ).data or []
         if not snap:
             return {"event_id": event_id, "count": 0, "listings": [], "summary": None,
-                    "captured_at": None}
+                    "captured_at": None, "buy_url": None}
         s0 = snap[0]
         rows = (
             db.table("v_axs_listings")
             .select("section,row,quantity,retail_price,type,format,wheelchair,seat_numbers,"
-                    "src,neighborhood,is_ga,seat_from,seat_to")
+                    "src,neighborhood,is_ga,seat_from,seat_to,listing_id")
             .eq("snapshot_id", s0["id"])
             .order("section").order("row").order("seat_from")
             .limit(limit).execute()
         ).data or []
+        # Offer-level AXS buy deep-link (shop.axs.com/?c=axs&e=<onsale_id>) — the
+        # closest hand-off AXS primary allows (no per-seat deep-link). Same link for
+        # every reserved-seat listing; None for legacy veritix snapshots.
+        buy_url = (db.rpc("axs_event_buy_url", {"p_snapshot_id": s0["id"]}).execute()).data or None
         prices = [r["retail_price"] for r in rows if r.get("retail_price") is not None]
         return {
             "event_id": event_id,
             "captured_at": s0["captured_at"],
             "event_name": s0.get("event_name"),
             "venue_name": s0.get("venue_name"),
+            "buy_url": buy_url,
             "count": len(rows),
             "listings": rows,
             "summary": {
