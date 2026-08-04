@@ -41,12 +41,14 @@
 -- APPLY / GO-LIVE ORDER (this migration is authored, NOT yet applied):
 --   On apply, gotickets_event is empty, so gt_listings_poll_tick() no-ops (it
 --   polls only MAPPED events) until the catalog populates — the firehose ramps
---   naturally, it does not burst. To bootstrap immediately after apply, run:
---     SELECT public.gt_catalog_sync();   -- fire /rest/events (async)
+--   naturally, it does not burst. To bootstrap after apply, seed a wide delta
+--   window (the full /rest/events dump is rate-limited; delta is not):
+--     SELECT public.gt_catalog_sync(interval '45 days');  -- fire delta (async)
 --     -- wait for the response, then:
---     SELECT public.gt_catalog_drain();  -- upsert ~302k events
+--     SELECT public.gt_catalog_drain();  -- upsert changed events
 --     SELECT public.gt_map_events();     -- resolve tevo_event_id (~81%)
---   Then the 2-min poll begins covering mapped events at the EVO cadence.
+--   Then the 2-min poll covers mapped events at the EVO cadence, and
+--   gt_catalog_sync_hourly maintains the catalog incrementally (2h overlap).
 --   To stage instead, cron.alter_job('gt_listings_poll_2min', active:=false)
 --   before verifying, then re-enable.
 --
@@ -120,9 +122,12 @@ CREATE TABLE IF NOT EXISTS public.gt_listings_inflight (
 REVOKE ALL ON TABLE public.gt_listings_inflight FROM anon;
 
 CREATE TABLE IF NOT EXISTS public.gt_catalog_sync_state (
-  request_id bigint PRIMARY KEY,
-  fired_at   timestamptz NOT NULL DEFAULT now(),
-  drained_at timestamptz
+  request_id       bigint PRIMARY KEY,
+  fired_at         timestamptz NOT NULL DEFAULT now(),
+  update_time_from timestamptz,          -- delta window start (logging)
+  update_time_to   timestamptz,          -- delta window end
+  events_upserted  integer,
+  drained_at       timestamptz
 );
 REVOKE ALL ON TABLE public.gt_catalog_sync_state FROM anon;
 
@@ -159,24 +164,34 @@ $function$;
 REVOKE ALL ON FUNCTION public._gotickets_pro_token() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public._gotickets_pro_token() TO service_role;
 
--- ── 8. Catalog sync — fire GET /rest/events (broker host, dual-header) ───────
-CREATE OR REPLACE FUNCTION public.gt_catalog_sync()
+-- ── 8. Catalog sync — fire the DELTA endpoint over an overlapping window ─────
+--   The full /rest/events dump (313k rows) is heavily rate-limited (429 after a
+--   few pulls, verified 2026-08-04), so the recurring sync uses the incremental
+--   /rest/events/delta?updateTimeFrom=&updateTimeTo= (both required, NOT
+--   rate-limited). p_lookback is the window width; running hourly at a 2h
+--   lookback gives 1h of overlap, so a single failed run self-heals on the next
+--   (upserts are idempotent). Seed the catalog once with a wide window, e.g.
+--   SELECT public.gt_catalog_sync('45 days').
+CREATE OR REPLACE FUNCTION public.gt_catalog_sync(p_lookback interval DEFAULT interval '2 hours')
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp'
 AS $function$
-DECLARE v_req bigint;
+DECLARE v_req bigint; v_to timestamptz := now(); v_from timestamptz := now() - p_lookback;
 BEGIN
   SELECT net.http_get(
-    url := 'https://sc.gotickets.com/rest/events',
+    url := 'https://sc.gotickets.com/rest/events/delta'
+           || '?updateTimeFrom=' || to_char(v_from AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"')
+           || '&updateTimeTo='   || to_char(v_to   AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),
     headers := jsonb_build_object(
       'X-Api-Access-Id',     trim((SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='GOTICKETS_ACCESS_ID')),
       'X-Api-Access-Secret', trim((SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name='GOTICKETS_API_SECRET')),
       'Accept','application/json'),
-    timeout_milliseconds := 60000
+    timeout_milliseconds := 90000
   ) INTO v_req;
-  INSERT INTO public.gt_catalog_sync_state(request_id, fired_at) VALUES (v_req, now());
+  INSERT INTO public.gt_catalog_sync_state(request_id, fired_at, update_time_from, update_time_to)
+    VALUES (v_req, now(), v_from, v_to);
   RETURN v_req;
 END $function$;
-REVOKE ALL ON FUNCTION public.gt_catalog_sync() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.gt_catalog_sync(interval) FROM PUBLIC, anon, authenticated;
 
 -- ── 9. Catalog drain — parse the /rest/events response, upsert gotickets_event
 CREATE OR REPLACE FUNCTION public.gt_catalog_drain()
@@ -211,8 +226,11 @@ BEGIN
         venue_state = EXCLUDED.venue_state, event_time_utc = EXCLUDED.event_time_utc,
         status = EXCLUDED.status, updated_at = now();
       GET DIAGNOSTICS v_n = ROW_COUNT;
+    ELSE
+      v_n := 0;
     END IF;
-    UPDATE public.gt_catalog_sync_state SET drained_at = now() WHERE request_id = r.request_id;
+    UPDATE public.gt_catalog_sync_state
+       SET drained_at = now(), events_upserted = v_n WHERE request_id = r.request_id;
   END LOOP;
   RETURN v_n;
 END $function$;
@@ -359,16 +377,18 @@ DO $sched$
 DECLARE j text;
 BEGIN
   FOREACH j IN ARRAY ARRAY['gt_catalog_sync_daily','gt_catalog_drain_daily',
+    'gt_catalog_sync_hourly','gt_catalog_drain_hourly',
     'gt_map_events_hourly','gt_listings_poll_2min','gt_listings_drain_1min']
   LOOP
     IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = j) THEN PERFORM cron.unschedule(j); END IF;
   END LOOP;
 END $sched$;
 
--- catalog: pull once daily (08:15 UTC), drain 10 min later, remap hourly at :35
-SELECT cron.schedule('gt_catalog_sync_daily',  '15 8 * * *', $c$SELECT public.gt_catalog_sync();$c$);
-SELECT cron.schedule('gt_catalog_drain_daily', '25 8 * * *', $c$SELECT public.gt_catalog_drain();$c$);
-SELECT cron.schedule('gt_map_events_hourly',   '35 * * * *', $c$SELECT public.gt_map_events();$c$);
+-- catalog: incremental delta every hour (2h overlapping window, rate-limit-safe),
+-- drain 5 min later, remap at :35
+SELECT cron.schedule('gt_catalog_sync_hourly',  '15 * * * *', $c$SELECT public.gt_catalog_sync();$c$);
+SELECT cron.schedule('gt_catalog_drain_hourly', '20 * * * *', $c$SELECT public.gt_catalog_drain();$c$);
+SELECT cron.schedule('gt_map_events_hourly',    '35 * * * *', $c$SELECT public.gt_map_events();$c$);
 -- listings: fire every 2 min (mirror evo_listings_poll_2min), drain every minute
 SELECT cron.schedule('gt_listings_poll_2min',  '*/2 * * * *', $c$SELECT public.gt_listings_poll_tick(120);$c$);
 SELECT cron.schedule('gt_listings_drain_1min', '* * * * *',   $c$SELECT public.gt_listings_drain(1000);$c$);
