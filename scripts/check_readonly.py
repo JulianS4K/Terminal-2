@@ -10,6 +10,8 @@ sales / listings feeds:
   - api.tickpick.com                  (TickPick broker orders)
   - brokers.vividseats.com            (Vivid Seats broker orders)
   - sc.gotickets.com                  (GoTickets broker sales)
+  - gotickets.com                     (GoTickets Pro API — listings read; its
+                                       POST /orders purchase endpoint is locked)
   - seatdata.io                       (SeatData market analytics)
   - ticketsdata.com                   (TicketsData cross-platform feed)
   - www.broadway.com / checkout.broadway.com  (Broadway.com availability)
@@ -52,6 +54,12 @@ FORBIDDEN_HOSTS = (
     "api.tickpick.com",
     "brokers.vividseats.com",
     "sc.gotickets.com",
+    # GoTickets Pro API host (gotickets.com/rest/pro/api). It has a real
+    # purchase endpoint (POST /orders) that must NEVER be written; we only read
+    # GET /events/{id}/listings via gotickets_client.GoTicketsProClient. Bare
+    # "gotickets.com" substring-matches gotickets.com AND sc.gotickets.com / any
+    # future subdomain, same pattern as axs.com / seatdata.io / evenue.net.
+    "gotickets.com",
     "seatdata.io",
     "ticketsdata.com",
     "www.broadway.com",
