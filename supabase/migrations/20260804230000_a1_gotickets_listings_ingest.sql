@@ -132,16 +132,19 @@ CREATE TABLE IF NOT EXISTS public.gt_catalog_sync_state (
 REVOKE ALL ON TABLE public.gt_catalog_sync_state FROM anon;
 
 -- ── 5. Cadence config — GT ladder, mirrors the current EVO listings ladder ───
+-- owned_kind='any' matches the 3-arg collector_band('GT','listings',hte) the
+-- poll tick calls (collector_cadence PK is (source,scope,band,owned_kind); EVO
+-- listings rows are all 'any').
 INSERT INTO public.collector_cadence
-  (source, scope, band, min_hours, max_hours, peak_interval_min, offpeak_interval_min, sort_order, notes) VALUES
-  ('GT','listings','le3d',    0,   72,    5,    5, 1, 'GoTickets listings — mirrors EVO le3d cadence'),
-  ('GT','listings','le7d',   72,  168,   15,   15, 2, NULL),
-  ('GT','listings','d8_14', 168,  336,   30,   60, 3, NULL),
-  ('GT','listings','d15_30',336,  720,   60,   60, 4, NULL),
-  ('GT','listings','d31_60',720, 1440,  240,  240, 5, NULL),
-  ('GT','listings','d61p', 1440, 4320,  720,  720, 6, '12h far-out'),
-  ('GT','listings','d181p',4320, NULL, 1440, 1440, 7, '24h very-far')
-ON CONFLICT (source, scope, band) DO NOTHING;
+  (source, scope, band, owned_kind, min_hours, max_hours, peak_interval_min, offpeak_interval_min, sort_order, notes) VALUES
+  ('GT','listings','le3d','any',    0,   72,    5,    5, 1, 'GoTickets listings — mirrors EVO le3d cadence'),
+  ('GT','listings','le7d','any',   72,  168,   15,   15, 2, NULL),
+  ('GT','listings','d8_14','any', 168,  336,   30,   60, 3, NULL),
+  ('GT','listings','d15_30','any',336,  720,   60,   60, 4, NULL),
+  ('GT','listings','d31_60','any',720, 1440,  240,  240, 5, NULL),
+  ('GT','listings','d61p','any', 1440, 4320,  720,  720, 6, '12h far-out'),
+  ('GT','listings','d181p','any',4320, NULL, 1440, 1440, 7, '24h very-far')
+ON CONFLICT (source, scope, band, owned_kind) DO NOTHING;
 
 -- ── 6. Retention — 15 days, identical window/engine to the EVO firehose ──────
 INSERT INTO public.retention_policy
