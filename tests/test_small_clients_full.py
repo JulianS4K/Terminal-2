@@ -489,6 +489,52 @@ def test_gotickets_timeout_error_wrapped(monkeypatch):
     assert "Timeout" in str(exc.value)
 
 
+# ---- events-controller (sc.gotickets.com/rest/events*) ----
+
+def test_gotickets_get_events_list_and_params(monkeypatch):
+    captured = []
+    events = [{"id": 1}, {"id": 2}]
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload=events), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    out = c.get_events({"page": 1, "skip": None})
+    assert out == events
+    url, kwargs = captured[0]
+    assert url.endswith("/rest/events")
+    assert kwargs["params"] == {"page": 1}  # None dropped
+
+
+def test_gotickets_get_event_detail_and_non_dict(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload={"id": 9, "name": "X"}), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    assert c.get_event(9) == {"id": 9, "name": "X"}
+    assert captured[0][0].endswith("/rest/events/9")
+    # non-dict body -> {}
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload=[1, 2]))
+    assert c.get_event(9) == {}
+
+
+def test_gotickets_get_events_venues(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload=[{"venue": "MSG"}]), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    assert c.get_events_venues() == [{"venue": "MSG"}]
+    assert captured[0][0].endswith("/rest/events/venues")
+
+
+def test_gotickets_get_events_delta(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload={"changed": []}), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    assert c.get_events_delta({"since": "2026-08-01T00:00:00Z"}) == {"changed": []}
+    url, kwargs = captured[0]
+    assert url.endswith("/rest/events/delta")
+    assert kwargs["params"] == {"since": "2026-08-01T00:00:00Z"}
+
+
 # ====================================================================
 # gotickets_client — Pro API (GoTicketsProClient, listings read slice)
 # ====================================================================

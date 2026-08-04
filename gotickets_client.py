@@ -127,6 +127,48 @@ class GoTicketsClient:
         body = self._get(f"/rest/sales/{order_id}")
         return body if isinstance(body, dict) else {}
 
+    # ---------- Events (events-controller, sc.gotickets.com/rest/events*) ----------
+    # The read surface that makes a systematic GoTickets ingest possible: a
+    # catalog list + venue directory + incremental delta. Enumerate here, match
+    # to our AQ hub (PROJECT_BIBLE §0) by name/date/venue via the same 4-tier
+    # match_to_aq_event_id path other sources use, then the GoTickets eventId
+    # feeds GoTicketsProClient.get_event_listings for live prices. All GET-only.
+
+    def get_events(self, params: dict | None = None) -> Any:
+        """GET /rest/events — the GoTickets event catalog (discovery list).
+
+        The event-discovery endpoint whose absence earlier blocked a
+        catalog-wide ingest. `params` passes query filters through (pagination /
+        date window — exact names TBD, verify on first live pull). Returns the
+        parsed body as-is (list, or a paginated wrapper — shape verify-on-pull).
+        """
+        return self._get("/rest/events", params)
+
+    def get_event(self, event_id: str | int) -> dict[str, Any]:
+        """GET /rest/events/{id} — one GoTickets event's detail.
+
+        Returns the event dict, or {} if the response is not a JSON object.
+        """
+        body = self._get(f"/rest/events/{event_id}")
+        return body if isinstance(body, dict) else {}
+
+    def get_events_venues(self, params: dict | None = None) -> Any:
+        """GET /rest/events/venues — GoTickets venue directory.
+
+        Feeds venue resolution (→ our `venue_short_id`) when mapping GoTickets
+        events into the AQ hub. `params` passes through; body returned as-is.
+        """
+        return self._get("/rest/events/venues", params)
+
+    def get_events_delta(self, params: dict | None = None) -> Any:
+        """GET /rest/events/delta — events changed since a checkpoint.
+
+        Lets an ingest cron pull only what changed instead of re-listing the
+        full catalog. `params` carries the since-token / cursor (exact name TBD,
+        verify on first live pull). Returns the parsed body as-is.
+        """
+        return self._get("/rest/events/delta", params)
+
 
 class GoTicketsProClient:
     """GoTickets **Pro API** — read-only slice (live event listings).
