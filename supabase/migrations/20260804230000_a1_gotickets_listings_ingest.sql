@@ -178,7 +178,9 @@ GRANT EXECUTE ON FUNCTION public._gotickets_pro_token() TO service_role;
 CREATE OR REPLACE FUNCTION public.gt_catalog_sync(p_lookback interval DEFAULT interval '2 hours')
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public','pg_temp'
 AS $function$
-DECLARE v_req bigint; v_to timestamptz := now(); v_from timestamptz := now() - p_lookback;
+DECLARE v_req bigint; v_to timestamptz := now();
+        -- the delta endpoint rejects windows > 7 days (400), so clamp.
+        v_from timestamptz := now() - least(p_lookback, interval '7 days');
 BEGIN
   SELECT net.http_get(
     url := 'https://sc.gotickets.com/rest/events/delta'
