@@ -32,6 +32,16 @@ import requests
 from core.http_retry import fetch_with_retry
 
 
+# Canonical platform code for GoTickets across our data plane: **GOT**.
+# Deliberately NOT "GT" — TicketsData already uses GT for *GameTime*
+# (ticketsdata_client.SUPPORTED_PLATFORMS + the sg_market_chart td_gt_* columns
+# are GameTime, not GoTickets). Any GoTickets-native table / column / enum keys
+# off GOT / a got_ prefix so it never collides with GameTime. When the deferred
+# GoTickets listings ingest lands, its snapshot table + platform-breadth term
+# use this code.
+PLATFORM_CODE = "GOT"
+
+
 # RULE 2 — READ-ONLY against sc.gotickets.com.
 # GoTickets sales sit in the same orders/sales bucket as Evo, SG,
 # TickPick, Vivid. Any non-GET attempt raises before a network call is
