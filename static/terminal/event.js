@@ -3480,17 +3480,22 @@
     // Update the TD fr-chips in the hero
     const tdMap = { 'td-sh': snap?.td_sh_listings, 'td-gt': snap?.td_gt_listings, 'td-vd': snap?.td_vd_listings };
     for (const [src, listings] of Object.entries(tdMap)) {
+      const label = chipLabel(src);
+      const ageMin = snapTs ? Math.round((Date.now() - new Date(snapTs).getTime()) / 60000) : null;
+      const noData = listings == null || listings === 0;
+      // Coverage light (hero COVERAGE row) mirrors the chip: lit only when the
+      // snapshot is fresh AND the platform has a book; stale when it aged out or
+      // the book is empty; off (dim) when there's no snapshot at all. Set before
+      // the chip-element guard so the light reflects state even if the chip is absent.
+      setLight(src, snapTs == null ? null : (ageMin <= staleLimit(src) && !noData));
       const el = document.querySelector(`.fr-chip[data-src="${src}"]`);
       if (!el) continue;
-      const label = chipLabel(src);
       el.classList.remove('fresh', 'stale', 'dim');
       if (!snapTs) {
         el.textContent = `${label} —`;
         el.classList.add('dim');
         continue;
       }
-      const ageMin = Math.round((Date.now() - new Date(snapTs).getTime()) / 60000);
-      const noData = listings == null || listings === 0;
       el.textContent = `${label} ${formatAge(ageMin)}${noData ? ' ∅' : ''}`;
       el.classList.add(ageMin > staleLimit(src) ? 'stale' : 'fresh');
       el.title = `${label}: snapshot ${snap.snapshot_date} ${snap.snapshot_slot}${noData ? ' (no listings)' : ` — ${listings} listings`}`;
