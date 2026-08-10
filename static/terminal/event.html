@@ -82,6 +82,7 @@
       <button class="event-tab" data-tab="sh-listings" role="tab" aria-selected="false">SH Listings <span class="tab-count" id="tabCountShListings"></span></button>
       <button class="event-tab" data-tab="gt-listings" role="tab" aria-selected="false">GT Listings <span class="tab-count" id="tabCountGtListings"></span></button>
       <button class="event-tab" data-tab="vd-listings" role="tab" aria-selected="false">VD Listings <span class="tab-count" id="tabCountVdListings"></span></button>
+      <button class="event-tab" data-tab="got-listings" role="tab" aria-selected="false">GoTickets Listings <span class="tab-count" id="tabCountGotListings"></span></button>
       <!-- TP Listings tab removed 2026-06-07 (D0): TickPick demoted to per-event opt-in;
            TM Listings is its replacement. Opted-in TP rows still surface in the TD Markets tab. -->
       <button class="event-tab" data-tab="tm-listings" role="tab" aria-selected="false">TM Listings <span class="tab-count" id="tabCountTmListings"></span></button>
@@ -346,6 +347,19 @@
           <span class="muted small" id="tdListingsVdMeta">tap tab to load</span>
         </div>
         <div id="tdListingsVdBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <!-- GoTickets (GOT) listings — the Pro-API firehose (gotickets_listings_snapshots),
+         latest capture batch via get_gotickets_event_listings. Distinct source from
+         GameTime (the GT Listings tab above). Lazy-loads on first activation. -->
+    <div class="tab-pane" id="paneGotListings" role="tabpanel" hidden>
+      <section id="td-listings-got" class="td-platform-section td-got-section">
+        <div class="panel-title row">
+          <span><span class="badge td-got">GOT</span> LISTINGS — GoTickets (latest capture batch)</span>
+          <span class="muted small" id="tdListingsGotMeta">tap tab to load</span>
+        </div>
+        <div id="tdListingsGotBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 

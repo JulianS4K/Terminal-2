@@ -2254,6 +2254,7 @@ body[data-page="login"] {
 .badge.td-vd { background: rgba(192,132,252,.15); color: #c084fc; }
 .badge.td-tp { background: rgba(244,114,182,.16); color: #f472b6; }
 .badge.td-tm { background: rgba(129,140,248,.16); color: #818cf8; }
+.badge.td-got { background: rgba(20,184,166,.16); color: #2dd4bf; }  /* GoTickets (GOT) — teal; NOT GameTime/GT */
 
 /* ---------- Data freshness table (#data-freshness section) ---------- */
 .data-freshness-tbl { width: 100%; border-collapse: collapse; font-size: 0.83em; }

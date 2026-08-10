@@ -60,3 +60,46 @@ GRANT EXECUTE ON FUNCTION public.get_gotickets_event_series(bigint, int) TO auth
 
 COMMENT ON FUNCTION public.get_gotickets_event_series(bigint, int) IS
   'GoTickets (GOT) per-event listings time series for the D0 terminal chart + coverage light: listing_count, min_price, median_price (display/list price) per capture, keyed on tevo_event_id over gotickets_listings_snapshots. SECURITY DEFINER (reads past the table anon REVOKE); EXECUTE = authenticated only. GOT ≠ GameTime/GT. Mig 20260810160000.';
+
+-- ── 2. Per-event LATEST-batch listings — feeds the D0 "GoTickets Listings" tab.
+--   Mirrors get_event_td_listings: returns each individual listing from the most
+--   recent capture batch (max captured_at within p_hours), price-sorted. Same
+--   security posture (SECURITY DEFINER, authenticated-only) as the series RPC.
+CREATE OR REPLACE FUNCTION public.get_gotickets_event_listings(
+  p_tevo_event_id bigint,
+  p_hours         int DEFAULT 26)
+RETURNS TABLE (
+  captured_at       timestamptz,
+  section           text,
+  "row"             text,
+  quantity          integer,
+  display_price     numeric,
+  all_in_price      numeric,
+  service_fee       numeric,
+  face_value        numeric,
+  stock_type        text,
+  general_admission boolean,
+  notes             text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH latest AS (
+    SELECT max(s.captured_at) AS mx
+    FROM public.gotickets_listings_snapshots s
+    WHERE s.tevo_event_id = p_tevo_event_id
+      AND s.captured_at >= now() - make_interval(hours => greatest(p_hours, 1))
+  )
+  SELECT s.captured_at, s.section, s."row", s.quantity,
+         s.display_price, s.all_in_price, s.service_fee,
+         s.face_value, s.stock_type, s.general_admission, s.notes
+  FROM public.gotickets_listings_snapshots s, latest
+  WHERE s.tevo_event_id = p_tevo_event_id
+    AND latest.mx IS NOT NULL
+    AND s.captured_at = latest.mx
+  ORDER BY s.display_price NULLS LAST, s.section, s."row";
+$function$;
+
+REVOKE ALL ON FUNCTION public.get_gotickets_event_listings(bigint, int) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_gotickets_event_listings(bigint, int) TO authenticated;
+
+COMMENT ON FUNCTION public.get_gotickets_event_listings(bigint, int) IS
+  'GoTickets (GOT) latest-capture individual listings for the D0 GoTickets Listings tab: one row per listing in the most recent capture batch (max captured_at within p_hours), price-sorted, keyed on tevo_event_id. SECURITY DEFINER; EXECUTE = authenticated only. GOT ≠ GameTime/GT. Mig 20260810160000.';

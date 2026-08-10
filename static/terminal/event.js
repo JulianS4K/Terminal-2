@@ -4077,6 +4077,7 @@
   const _tabState = { loaded: {
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
+    'got-listings': false,  // GoTickets (GOT) — distinct from GameTime (gt-listings)
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
     'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
     'our-orders': false, 'alerts': false, 'cast': false, 'predictions': false,
@@ -4106,6 +4107,9 @@
         _tabState.loaded['vd-listings'] = true;
         await loadTdPlatformListings(eventId, 'VD');
         updateTdListingsTabCount();
+      } else if (tabId === 'got-listings' && !_tabState.loaded['got-listings']) {
+        _tabState.loaded['got-listings'] = true;
+        await loadGoticketsListings(eventId);
       } else if (tabId === 'tm-listings' && !_tabState.loaded['tm-listings']) {
         _tabState.loaded['tm-listings'] = true;
         await loadTdPlatformListings(eventId, 'TM');
@@ -4165,6 +4169,7 @@
       'sh-listings':  'paneShListings',
       'gt-listings':  'paneGtListings',
       'vd-listings':  'paneVdListings',
+      'got-listings': 'paneGotListings',
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'seatdata-sales': 'paneSeatdataSales',
@@ -5497,6 +5502,70 @@
         <td class="num">${$p(r.list_price)}</td>
         <td class="num">${$p(r.price_with_fees)}</td>
         ${invCell}
+        <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    if (body) { body.innerHTML = ''; body.appendChild(host); }
+  }
+
+  // ---------- GoTickets (GOT) Listings tab ----------
+  // Latest capture batch from the GoTickets Pro-API firehose
+  // (gotickets_listings_snapshots) via get_gotickets_event_listings — a DISTINCT
+  // source from GameTime (loadTdPlatformListings 'GT'). The RPC is REVOKEd from
+  // anon, so this needs the signed-in user's JWT (rpcOrNull). Lazy, renders once.
+  async function loadGoticketsListings(eventId) {
+    const body = document.getElementById('tdListingsGotBody');
+    const meta = document.getElementById('tdListingsGotMeta');
+    const countChip = document.getElementById('tabCountGotListings');
+    if (body) body.innerHTML = '<div class="empty">Loading GoTickets listings…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_gotickets_event_listings', { p_tevo_event_id: eventId, p_hours: 26 });
+    const elapsed = performance.now() - t0;
+    if (res.error) {
+      // RPC not applied yet, or no auth → honest empty state (no half-feature).
+      const missing = /does not exist/i.test(res.error.message || '') || res.error.code === '42883';
+      if (body) body.innerHTML = `<div class="empty">${missing ? 'GoTickets read RPC not applied yet (pending apply).' : 'error: ' + escapeHtml(res.error.message || '')}</div>`;
+      if (meta) meta.textContent = missing ? 'pending apply' : 'error';
+      return;
+    }
+    const rows = res.data || [];
+    if (countChip) countChip.textContent = rows.length ? String(rows.length) : '';
+    if (!rows.length) {
+      if (body) body.innerHTML = '<div class="empty">No GoTickets listings in the latest capture batch (last 26h).</div>';
+      if (meta) meta.textContent = '0 rows';
+      return;
+    }
+    const batchDate = T.fmtDate ? T.fmtDate(rows[0].captured_at) : rows[0].captured_at;
+    const prices = rows.map(r => +r.display_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+    const getIn = prices.length ? prices[0] : null;
+    const med = prices.length ? prices[Math.floor(prices.length / 2)] : null;
+    const $r = v => (v != null ? '$' + Math.round(v) : '—');
+    if (meta) meta.textContent = `${rows.length} rows · get-in ${$r(getIn)} · med ${$r(med)} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl td-listings-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        <th>Stock</th><th>Captured</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    const $p = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const sec = r.general_admission ? `${r.section || 'GA'} (GA)` : (r.section || '—');
+      tr.innerHTML = `
+        <td>${escapeHtml(sec)}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${r.quantity != null ? T.fmtNum(+r.quantity) : '—'}</td>
+        <td class="num">${$p(r.display_price)}</td>
+        <td class="num">${$p(r.all_in_price)}</td>
+        <td class="muted small">${escapeHtml(r.stock_type || '—')}</td>
         <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
       tb.appendChild(tr);
     });
