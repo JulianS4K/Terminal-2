@@ -76,11 +76,16 @@
   // (started 2026-05-27) so depth is shallow today and deepens as it fills.
   // Shape: { med:{evo_owned,evo_mkt,sg_list,sg_own,sh,gt,vd}, cnt:{evo_own,evo_tix,sg_tix,sh,gt,vd} }.
   let _dailyDurable = null;
+  // GoTickets (source GOT — NOT GameTime/GT) per-event series from the Pro-API
+  // firehose (gotickets_listings_snapshots), read via the get_gotickets_event_series
+  // RPC. Populated by loadGoticketsSeries(); shape { med:[{t,v}], cnt:[{t,v}] }.
+  let _gotSeries = null;
   // TD inv listing-count series: StubHub shows by default; the other five
   // (GT/VD/TP/TM/TMr) start hidden and are user-togglable in the legend
   // (operator request 2026-06-08 — keep first paint clean, SH as the reference).
+  // GoTickets' count (got_cnt) joins them hidden-by-default; its median shows.
   ['td-gt-cnt', 'td-vd-cnt',
-   'td-tp-cnt', 'td-tm-cnt', 'td-tmr-cnt'].forEach(k => _chartVisible.set(k, false));
+   'td-tp-cnt', 'td-tm-cnt', 'td-tmr-cnt', 'got_cnt'].forEach(k => _chartVisible.set(k, false));
   // Declutter the default view (UI rebuild 2026-06-03): the redundant/secondary
   // medians start hidden — the user opts them in from the legend. Keeps the
   // first paint to one clean line per source instead of 9 overlapping lines.
@@ -757,6 +762,7 @@
       loadAxsChartSeries(eventId).catch(e => console.error('[axs-series]', e));
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
+      loadGoticketsSeries(eventId).catch(e => console.error('[gotickets]', e));
       // Prediction markets (Kalshi/Polymarket) — fire-and-forget; hides itself
       // when the event has no matched markets or the pipeline isn't applied yet.
       loadPredictionMarkets(eventId).catch(e => console.error('[prediction-markets]', e));
@@ -1363,6 +1369,7 @@
     tm:   _tok('--src-tm',       '#d55181'),
     axs:  _tok('--src-axs',      '#d95926'),
     tp:   _tok('--src-tp',       '#8a8a8a'),
+    got:  _tok('--src-got',      '#14b8a6'),   // GoTickets (GOT) — teal; distinct from GameTime's green (gt)
     hero: _tok('--series-hero',  '#f5f5f5'),
   };
   const X_AXIS = {
@@ -1494,6 +1501,12 @@
       if (famMed('tp').length)  specs.push({ key: 'td_tp_med',  label: 'TickPick',     color: SRC.tp, width: 1.25, dash: null,   data: famMed('tp') });
       if (famMed('tm').length)  specs.push({ key: 'td_tm_med',  label: 'Ticketmaster', color: SRC.tm, width: 1.5,  dash: null,   data: famMed('tm') });
       if (famMed('tmr').length) specs.push({ key: 'td_tmr_med', label: 'TM resale',    color: SRC.tm, width: 1.25, dash: [5, 3], data: famMed('tmr') });
+    }
+    // GoTickets (GOT) median list price — from the Pro-API firehose via
+    // loadGoticketsSeries(). A distinct source from GameTime (td_gt). Conditional
+    // push: absent until the read RPC is applied to prod + the event has polled.
+    if (_gotSeries && _gotSeries.med.length) {
+      specs.push({ key: 'got_med', label: 'GoTickets', color: SRC.got, width: 1.5, dash: null, data: _gotSeries.med });
     }
     const { xs } = buildSeriesData(specs);
 
@@ -1779,6 +1792,9 @@
       if (famCnt('tmr').length) specs.push(
         { key: 'td-tmr-cnt', label: 'TMr listings', color: SRC.tm, width: 1, dash: [2, 3], scale: 'y', data: famCnt('tmr') });
     }
+    // GoTickets (GOT) listing-count overlay (hidden by default, user-togglable).
+    if (_gotSeries && _gotSeries.cnt.length) specs.push(
+      { key: 'got_cnt', label: 'GoTickets listings', color: SRC.got, width: 1, dash: [4, 3], scale: 'y', data: _gotSeries.cnt });
     const { xs } = buildSeriesData(specs);
     // Stack the two market-sales bar series (SeatData on top of SG): SeatData's
     // DRAWN value becomes SG+SeatData while SG keeps its own; with opaque fills
@@ -2110,6 +2126,7 @@
     { src: 'SH',   color: SRC.sh,   keys: ['td_sh_med', 'td-sh-cnt'] },
     { src: 'GT',   color: SRC.gt,   keys: ['td_gt_med', 'td-gt-cnt'] },
     { src: 'VD',   color: SRC.vd,   keys: ['td_vd_med', 'td-vd-cnt'] },
+    { src: 'GOT',  color: SRC.got,  keys: ['got_med', 'got_cnt'] },
     { src: 'AXS',  color: SRC.axs,  keys: ['prices_axs', 'counts_axs'] },
     { src: 'TP',   color: SRC.tp,   keys: ['td_tp_med', 'td-tp-cnt'] },
     { src: 'TM',   color: SRC.tm,   keys: ['td_tm_med', 'td-tm-cnt'] },
@@ -3070,13 +3087,13 @@
     return {
       tevo: 'TEvo', 'sg-lst': 'SG L', 'sg-sales': 'SG S',
       weather: 'Wx', espn: 'ESPN',
-      'td-sh': 'SH', 'td-gt': 'GT', 'td-vd': 'VD',
+      'td-sh': 'SH', 'td-gt': 'GT', 'td-vd': 'VD', got: 'GoT',
     }[src] || src;
   }
   function staleLimit(src) {
     return {
       tevo: 180, 'sg-lst': 60, 'sg-sales': 30, weather: 360, espn: 1440,
-      'td-sh': 1440, 'td-gt': 1440, 'td-vd': 1440,
+      'td-sh': 1440, 'td-gt': 1440, 'td-vd': 1440, got: 180,
     }[src] || 360;
   }
   function formatAge(min) {
@@ -3586,6 +3603,69 @@
     // (SH/GT/VD) paint now that _lastTdSnap is cached (WP-2). No new
     // fetch — feeds the cached daily snapshot into the Listings/Price section.
     try { rerenderCrossSource(); } catch (e) { console.error('[td-crosssource-rerender]', e); }
+  }
+
+  // ---------- GoTickets (GOT) per-event series ----------
+  // Reads the Pro-API listings firehose (gotickets_listings_snapshots, keyed on
+  // tevo_event_id) via the get_gotickets_event_series SECURITY DEFINER RPC. That
+  // table is REVOKEd from anon, so the read needs the signed-in user's JWT
+  // (rpcOrNull). Builds _gotSeries { med, cnt }, drives the GOT coverage light +
+  // freshness chip, and repaints the price + inventory charts — the same shape as
+  // loadTdFreshness. Graceful no-op until the RPC is applied to prod (42883 /
+  // "does not exist") or when there's no auth: the GOT light/chip stay dim.
+  async function loadGoticketsSeries(eventId) {
+    const res = await rpcOrNull('get_gotickets_event_series', { p_tevo_event_id: eventId, p_hours: 720 });
+    if (res.error) {
+      setGotChip(null, null);
+      setLight('got', null);
+      return;
+    }
+    const rows = Array.isArray(res.data) ? res.data : [];
+    const med = [], cnt = [];
+    for (const r of rows) {
+      const ts = r.captured_at;
+      if (r.median_price  != null) med.push({ t: ts, v: +r.median_price });
+      if (r.listing_count != null) cnt.push({ t: ts, v: +r.listing_count });
+    }
+    _gotSeries = { med, cnt };
+
+    // Latest capture drives the coverage light + freshness chip (rows are ORDER BY
+    // captured_at ASC, so the last row is newest).
+    const last = rows.length ? rows[rows.length - 1] : null;
+    const lastTs = last ? last.captured_at : null;
+    const lastCount = last ? last.listing_count : null;
+    setGotChip(lastTs, lastCount);
+    if (!lastTs) {
+      setLight('got', null);
+    } else {
+      const ageMin = Math.round((Date.now() - new Date(lastTs).getTime()) / 60000);
+      setLight('got', ageMin <= staleLimit('got') && lastCount > 0);
+    }
+
+    // Repaint the charts now that GOT series exist (same hook loadTdFreshness uses).
+    if (_gotSeries.med.length && _lastPayload && _lastPayload.chart_data) {
+      try {
+        const chart = adaptChart(_lastPayload.chart_data);
+        renderChartPrice(chart, _chartExtAlerts);
+        renderChartInventory(chart);
+        refreshChartLegends();
+      } catch (e) { console.error('[gotickets-chart]', e); }
+    }
+  }
+
+  // Paint the GOT freshness chip — mirror of the TD chip block in loadTdFreshness
+  // (fresh when the latest capture is recent AND has a book; ∅ flags an empty book).
+  function setGotChip(ts, count) {
+    const el = document.querySelector('.fr-chip[data-src="got"]');
+    if (!el) return;
+    const label = chipLabel('got');
+    el.classList.remove('fresh', 'stale', 'dim');
+    if (!ts) { el.textContent = `${label} —`; el.classList.add('dim'); return; }
+    const ageMin = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
+    const noData = count == null || count === 0;
+    el.textContent = `${label} ${formatAge(ageMin)}${noData ? ' ∅' : ''}`;
+    el.classList.add(ageMin > staleLimit('got') ? 'stale' : 'fresh');
+    el.title = `${label}: last capture ${T.fmtDate(ts)}${noData ? ' (no listings)' : ` — ${count} listings`}`;
   }
 
   function renderDataFreshness(tdSnap, tdTs) {
