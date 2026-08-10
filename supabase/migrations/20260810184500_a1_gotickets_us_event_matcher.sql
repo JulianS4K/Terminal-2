@@ -1,17 +1,22 @@
 -- Migration 20260810184500 · lane:A1 (data plane — GoTickets↔tevo mapping scope)
---   writes (DDL): gotickets_attempt_event_xref(...) [fn], match_gotickets_us_events(...) [fn]
+--   writes (DDL): gotickets_attempt_event_xref(...) [fn], match_gotickets_us_events(...) [fn],
+--                 cron.job 'gotickets_match_us_6h' (@ '23 */6 * * *'), cron_policy row (W)
 --   writes on run: gotickets_event.tevo_event_id / mapped_via / map_score / mapped_at
 --                  (ONLY for currently-unmapped rows; never overwrites an existing map)
---   reads: gotickets_event, events, event_lifecycle, cross_source_venue_resolve (matcher v3)
+--   reads: gotickets_event, events, event_lifecycle, cross_source_venue_resolve +
+--          cross_source_venue_map (matcher v3)
 --   pre: 20260516240000 (matcher v3 — cross_source_venue_map + cross_source_venue_resolve),
---        gotickets_event/gotickets_listings_snapshots (external collector-owned tables)
+--        cron_should_fire + cron_policy, gotickets_event/gotickets_listings_snapshots
+--        (external collector-owned tables)
 --   auth: operator directive 2026-08-10 (julian@s4kent.com — "poll go tickets for all the
---         us based events"); phased rollout, stay within current collector capacity
+--         us based events" + "set cron cadence"); stay within current collector capacity
 --
--- ## NOT YET APPLIED — apply is operator-gated (CLAUDE.md §1). Phased: apply, run
---    match_gotickets_us_events(p_horizon_days => 60) for a first batch, confirm the
---    external collector starts polling the newly-mapped events + spot-check precision,
---    THEN widen the horizon. No cron is scheduled here on purpose (see WHY §3).
+-- ## NOT YET APPLIED — apply is operator-gated (CLAUDE.md §1). The cron SELF-GATES
+--    (cron_should_fire + a work_check_sql that only fires when unmapped tracked-venue US
+--    work exists), so applying is safe: it no-ops when there's nothing to map. Suggested
+--    first step after apply — a manual dry-run to eyeball volume before the cron takes over:
+--      SELECT * FROM match_gotickets_us_events(p_horizon_days => 180, p_apply => false);
+--    then let gotickets_match_us_6h run, and confirm the collector polls the new maps.
 --
 -- WHY ─────────────────────────────────────────────────────────────────────────
 -- 1. The GoTickets listings feed (gotickets_event 60k rows + gotickets_listings_
@@ -37,11 +42,18 @@
 --    is an INCREMENTAL lift over the tevo-overlapping subset — NOT a path to all ~38k.
 --    Polling GoTickets' full US long tail would require the EXTERNAL collector to poll
 --    by gt_event_id WITHOUT a tevo map — an operator-side change outside this repo.
---    A cron is intentionally omitted until the phased first batch confirms (a) mapping
---    actually drives collector polling and (b) precision holds on fresh (non-truth) rows.
 --
--- ROLLBACK: DROP FUNCTION match_gotickets_us_events(int,int,numeric,boolean);
---           DROP FUNCTION gotickets_attempt_event_xref(bigint,text,text,timestamptz,text,text,text,boolean);
+-- 4. CRON + why the sweep is venue-gated. The sweep (§2) is restricted to events at a
+--    venue we track (cross_source_venue_map): that collapses the ~18k unmapped US ≤180d
+--    backlog to the ~1,008 tevo-overlapping candidates, so a bounded sweep PROGRESSES
+--    through the mappable set instead of re-scanning the unmappable long tail every run.
+--    gotickets_match_us_6h runs it 6-hourly (see §3 cron block for the full cadence
+--    rationale). The external 'instant_performer' matcher still runs; this is additive.
+--
+-- ROLLBACK: SELECT cron.unschedule('gotickets_match_us_6h');
+--           DELETE FROM public.cron_policy WHERE jobname='gotickets_match_us_6h';
+--           DROP FUNCTION match_gotickets_us_events(int,int,numeric,boolean);
+--           DROP FUNCTION gotickets_attempt_event_xref(bigint,text,text,timestamptz,text,text,text,boolean,numeric);
 --   To unwind maps this wrote: UPDATE gotickets_event SET tevo_event_id=NULL, mapped_via=NULL,
 --           map_score=NULL, mapped_at=NULL WHERE mapped_via='matcher_v3_got';
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -179,6 +191,13 @@ BEGIN
       AND coalesce(performer,'')  !~* 'parking'
       AND coalesce(name,'')       !~* 'parking'
       AND coalesce(venue_name,'') !~* 'parking'
+      -- Only attempt events at a venue we actually track (cross_source_venue_map).
+      -- Collapses the ~18k unmapped US backlog to the ~1k tevo-overlapping set, so a
+      -- bounded sweep PROGRESSES through mappable events each run instead of re-scanning
+      -- the unmappable small-venue long tail (which has no tevo row) forever. Uses the
+      -- resolver's tier-1 canonical-name key; alias/prefix-only venues are the rare miss.
+      AND lower(regexp_replace(coalesce(venue_name,''), '[^a-z0-9]+', '', 'gi'))
+          IN (SELECT canonical_name FROM public.cross_source_venue_map WHERE canonical_name <> '')
     ORDER BY event_time_utc
     LIMIT greatest(p_max, 1)
   LOOP
@@ -204,4 +223,47 @@ REVOKE EXECUTE ON FUNCTION public.match_gotickets_us_events(int,int,numeric,bool
 GRANT EXECUTE ON FUNCTION public.match_gotickets_us_events(int,int,numeric,boolean) TO service_role;
 
 COMMENT ON FUNCTION public.match_gotickets_us_events(int,int,numeric,boolean) IS
-  'Bounded, wall-clock-budgeted sweep mapping unmapped US-upcoming GoTickets events to tevo via gotickets_attempt_event_xref (matcher v3 reuse). Phased rollout: run with a small p_horizon_days first, confirm the external collector starts polling the new maps, then widen. No cron scheduled (see mig header). Mig 20260810184500.';
+  'Bounded, wall-clock-budgeted (45s) sweep mapping unmapped US-upcoming GoTickets events to tevo via gotickets_attempt_event_xref (matcher v3 reuse). Restricted to events at tracked venues (cross_source_venue_map) so it progresses through the mappable set. Scheduled by gotickets_match_us_6h. Mig 20260810184500.';
+
+
+-- 3. Cron — 6-hourly supplementary matcher.
+--
+-- CADENCE RATIONALE (investigated 2026-08-10, live):
+--   * GoTickets inflow ≈ 8.6k new events/day, but the tevo-mappable subset is small.
+--   * The EXTERNAL collector already maps ≈127/day (mapped_via='instant_performer',
+--     last map minutes ago) — this cron is SUPPLEMENTARY, catching the venue-anchored
+--     matches that performer-only external matcher misses.
+--   * Standing candidate set = unmapped US-upcoming events AT TRACKED VENUES ≈ 1,008
+--     (≤180d; 273 ≤60d) — clearable in ~1 pass, so a 6-hourly sweep keeps mappings
+--     fresh with negligible load. Major events carry long runway, so ≤6h latency from
+--     "GoTickets event appears" → "mapped → collector polls it" is ample. Tighten later
+--     if late-announced events need faster pickup.
+--   * Minute :23 avoids the saturated :00/:02/:05/:07 marks and the :17/:40 clusters.
+--
+-- Wrapped in cron_should_fire + a top-level statement_timeout (a per-iteration SET LOCAL
+-- is a no-op; the fn's own 45s loop budget is the real bound). PROJECT_BIBLE §3 / §5.
+SELECT cron.schedule(
+  'gotickets_match_us_6h',
+  '23 */6 * * *',
+  $cron$BEGIN; SET LOCAL statement_timeout='90s'; DO $b$ BEGIN
+    IF NOT public.cron_should_fire('gotickets_match_us_6h') THEN RETURN; END IF;
+    PERFORM public.match_gotickets_us_events(
+      p_max => 1500, p_horizon_days => 180, p_min_score => 0.80, p_apply => true);
+  END $b$; COMMIT;$cron$
+);
+
+INSERT INTO public.cron_policy (jobname, peak_hours_et, peak_min_interval_min,
+  offpeak_min_interval_min, work_check_sql, daily_max_fires, enabled, notes)
+VALUES ('gotickets_match_us_6h', ARRAY[]::int[], 360, 360,
+  -- only fire when there is unmapped tracked-venue US work to do
+  $q$SELECT EXISTS (
+       SELECT 1 FROM public.gotickets_event g
+       WHERE g.tevo_event_id IS NULL AND g.event_time_utc > now()
+         AND g.event_time_utc < now() + interval '180 days'
+         AND coalesce(g.venue_name,'') !~* 'parking'
+         AND lower(regexp_replace(coalesce(g.venue_name,''),'[^a-z0-9]+','','gi'))
+             IN (SELECT canonical_name FROM public.cross_source_venue_map WHERE canonical_name <> ''))$q$,
+  4, true,
+  'Supplementary GoTickets→tevo matcher (matcher_v3_got): maps unmapped US-upcoming events at tracked venues so the external collector polls them. 6-hourly @ :23. Mig 20260810184500.')
+ON CONFLICT (jobname) DO UPDATE
+  SET enabled = EXCLUDED.enabled, notes = EXCLUDED.notes, updated_at = now();
