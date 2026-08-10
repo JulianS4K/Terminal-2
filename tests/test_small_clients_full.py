@@ -487,3 +487,149 @@ def test_gotickets_timeout_error_wrapped(monkeypatch):
     with pytest.raises(gotickets.GoTicketsError) as exc:
         c.get_sale("x")
     assert "Timeout" in str(exc.value)
+
+
+# ---- events-controller (sc.gotickets.com/rest/events*) ----
+
+def test_gotickets_get_events_list_and_params(monkeypatch):
+    captured = []
+    events = [{"id": 1}, {"id": 2}]
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload=events), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    out = c.get_events({"page": 1, "skip": None})
+    assert out == events
+    url, kwargs = captured[0]
+    assert url.endswith("/rest/events")
+    assert kwargs["params"] == {"page": 1}  # None dropped
+
+
+def test_gotickets_get_event_detail_and_non_dict(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload={"id": 9, "name": "X"}), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    assert c.get_event(9) == {"id": 9, "name": "X"}
+    assert captured[0][0].endswith("/rest/events/9")
+    # non-dict body -> {}
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload=[1, 2]))
+    assert c.get_event(9) == {}
+
+
+def test_gotickets_get_events_venues(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload=[{"venue": "MSG"}]), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    assert c.get_events_venues() == [{"venue": "MSG"}]
+    assert captured[0][0].endswith("/rest/events/venues")
+
+
+def test_gotickets_get_events_delta(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload={"changed": []}), captured)
+    c = gotickets.GoTicketsClient("id", "sec")
+    assert c.get_events_delta({"since": "2026-08-01T00:00:00Z"}) == {"changed": []}
+    url, kwargs = captured[0]
+    assert url.endswith("/rest/events/delta")
+    assert kwargs["params"] == {"since": "2026-08-01T00:00:00Z"}
+
+
+# ====================================================================
+# gotickets_client — Pro API (GoTicketsProClient, listings read slice)
+# ====================================================================
+
+import base64 as _base64  # noqa: E402  (module-scope import mirrors gotickets)
+
+
+def test_gotickets_pro_requires_both_creds():
+    with pytest.raises(gotickets.GoTicketsError):
+        gotickets.GoTicketsProClient("", "secret")
+    with pytest.raises(gotickets.GoTicketsError):
+        gotickets.GoTicketsProClient("id", "")
+
+
+def test_gotickets_pro_creds_stripped_and_token():
+    c = gotickets.GoTicketsProClient("  id  ", "  sec  ")
+    assert c.access_id == "id"
+    assert c.api_secret == "sec"
+    # X-Broker-Api-Token = base64("id:sec"), no trailing newline.
+    assert c.api_token == _base64.b64encode(b"id:sec").decode("ascii")
+
+
+def test_gotickets_pro_listings_happy_and_headers(monkeypatch):
+    captured = []
+    listings = [{"displayPrice": 100.0, "tax": 5.0, "quantity": 2}]
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload=listings), captured)
+    c = gotickets.GoTicketsProClient("id", "sec")
+    out = c.get_event_listings(123456)
+    assert out == listings
+    url, kwargs = captured[0]
+    assert url.endswith("/rest/pro/api/events/123456/listings")
+    assert kwargs["headers"]["X-Broker-Api-Token"] == c.api_token
+    # payment_method_token omitted by default -> dropped from params.
+    assert kwargs["params"] == {}
+
+
+def test_gotickets_pro_listings_with_payment_method_token(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload=[]), captured)
+    c = gotickets.GoTicketsProClient("id", "sec")
+    c.get_event_listings(7, payment_method_token="abc123xyz")
+    assert captured[0][1]["params"] == {"paymentMethodToken": "abc123xyz"}
+
+
+def test_gotickets_pro_listings_non_list_returns_empty(monkeypatch):
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload={"err": 1}))
+    c = gotickets.GoTicketsProClient("id", "sec")
+    assert c.get_event_listings("x") == []
+
+
+def test_gotickets_pro_non_200_raises(monkeypatch):
+    _patch_get(monkeypatch, gotickets, _FakeResp(403))
+    c = gotickets.GoTicketsProClient("id", "sec")
+    with pytest.raises(gotickets.GoTicketsError) as exc:
+        c.get_event_listings("x")
+    assert "HTTP 403" in str(exc.value)
+
+
+def test_gotickets_pro_json_fallback_to_raw_text(monkeypatch):
+    # Exercise _get's ValueError branch directly (get_event_listings would
+    # coerce the dict to []).
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_raises=True, text="oops"))
+    c = gotickets.GoTicketsProClient("id", "sec")
+    assert c._get("/events/1/listings") == {"raw_text": "oops"}
+
+
+def test_gotickets_pro_retry_on_429_then_ok(monkeypatch):
+    monkeypatch.setattr(gotickets.time, "sleep", lambda *_: None)
+    responses = [
+        _FakeResp(429, headers={"Retry-After": "3"}),
+        _FakeResp(200, json_payload=[{"ok": 1}]),
+    ]
+    _patch_get(monkeypatch, gotickets, responses)
+    c = gotickets.GoTicketsProClient("id", "sec")
+    assert c.get_event_listings("x") == [{"ok": 1}]
+
+
+def test_gotickets_pro_network_error_wrapped(monkeypatch):
+    def boom(*a, **k):
+        raise gotickets.requests.ConnectionError("down")
+    monkeypatch.setattr(gotickets.requests, "get", boom)
+    c = gotickets.GoTicketsProClient("id", "sec")
+    with pytest.raises(gotickets.GoTicketsError) as exc:
+        c.get_event_listings("x")
+    assert "network error" in str(exc.value)
+    assert "ConnectionError" in str(exc.value)
+
+
+def test_gotickets_pro_timeout_error_wrapped(monkeypatch):
+    def boom(*a, **k):
+        raise gotickets.requests.Timeout("slow")
+    monkeypatch.setattr(gotickets.requests, "get", boom)
+    c = gotickets.GoTicketsProClient("id", "sec")
+    with pytest.raises(gotickets.GoTicketsError) as exc:
+        c.get_event_listings("x")
+    assert "Timeout" in str(exc.value)

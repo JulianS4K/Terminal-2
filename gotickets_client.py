@@ -23,12 +23,23 @@ appears in CLIENT_FILES.
 """
 from __future__ import annotations
 
+import base64
 import time
 from typing import Any
 
 import requests
 
 from core.http_retry import fetch_with_retry
+
+
+# Canonical platform code for GoTickets across our data plane: **GOT**.
+# Deliberately NOT "GT" — TicketsData already uses GT for *GameTime*
+# (ticketsdata_client.SUPPORTED_PLATFORMS + the sg_market_chart td_gt_* columns
+# are GameTime, not GoTickets). Any GoTickets-native table / column / enum keys
+# off GOT / a got_ prefix so it never collides with GameTime. When the deferred
+# GoTickets listings ingest lands, its snapshot table + platform-breadth term
+# use this code.
+PLATFORM_CODE = "GOT"
 
 
 # RULE 2 — READ-ONLY against sc.gotickets.com.
@@ -115,3 +126,151 @@ class GoTicketsClient:
         """
         body = self._get(f"/rest/sales/{order_id}")
         return body if isinstance(body, dict) else {}
+
+    # ---------- Events (events-controller, sc.gotickets.com/rest/events*) ----------
+    # The read surface that makes a systematic GoTickets ingest possible: a
+    # catalog list + venue directory + incremental delta. Enumerate here, match
+    # to our AQ hub (PROJECT_BIBLE §0) by name/date/venue via the same 4-tier
+    # match_to_aq_event_id path other sources use, then the GoTickets eventId
+    # feeds GoTicketsProClient.get_event_listings for live prices. All GET-only.
+
+    def get_events(self, params: dict | None = None) -> Any:
+        """GET /rest/events — the GoTickets event catalog (discovery list).
+
+        The event-discovery endpoint whose absence earlier blocked a
+        catalog-wide ingest. `params` passes query filters through (pagination /
+        date window — exact names TBD, verify on first live pull). Returns the
+        parsed body as-is (list, or a paginated wrapper — shape verify-on-pull).
+        """
+        return self._get("/rest/events", params)
+
+    def get_event(self, event_id: str | int) -> dict[str, Any]:
+        """GET /rest/events/{id} — one GoTickets event's detail.
+
+        Returns the event dict, or {} if the response is not a JSON object.
+        """
+        body = self._get(f"/rest/events/{event_id}")
+        return body if isinstance(body, dict) else {}
+
+    def get_events_venues(self, params: dict | None = None) -> Any:
+        """GET /rest/events/venues — GoTickets venue directory.
+
+        Feeds venue resolution (→ our `venue_short_id`) when mapping GoTickets
+        events into the AQ hub. `params` passes through; body returned as-is.
+        """
+        return self._get("/rest/events/venues", params)
+
+    def get_events_delta(self, params: dict | None = None) -> Any:
+        """GET /rest/events/delta — events changed since a checkpoint.
+
+        Lets an ingest cron pull only what changed instead of re-listing the
+        full catalog. `params` carries the since-token / cursor (exact name TBD,
+        verify on first live pull). Returns the parsed body as-is.
+        """
+        return self._get("/rest/events/delta", params)
+
+
+class GoTicketsProClient:
+    """GoTickets **Pro API** — read-only slice (live event listings).
+
+    Host: ``https://gotickets.com/rest/pro/api`` — a DIFFERENT API from
+    ``GoTicketsClient`` (which reads sales off ``sc.gotickets.com`` with dual
+    ``X-Api-Access-*`` headers). The Pro API authenticates with a single
+    ``X-Broker-Api-Token`` header whose value is the Base64 of
+    ``accessId:accessSecret`` — the SAME credentials, just joined + encoded.
+    The API key must have "Pro Access" enabled.
+
+    Only the READ slice is surfaced:
+      GET /events/{eventId}/listings    live listings for one event
+
+    Deliberately NOT implemented — CLAUDE.md §2 (upstream APIs are read-only):
+      - POST /orders           order creation / purchase — FORBIDDEN, never add
+      - GET /payment-methods   wallet endpoints that exist only to feed the
+      - GET /gift-cards        forbidden checkout flow; no read-only use for us
+
+    The purchase half is locked out MECHANICALLY, not just by omission: the
+    module-level RULE-2 guard (``_assert_readonly_method``) raises on any
+    non-GET before a network call, and ``gotickets.com`` is on the
+    ``scripts/check_readonly.py`` FORBIDDEN_HOSTS allowlist (CI static audit).
+
+    ``eventId`` is GoTickets-internal and does NOT resolve through our AQ hub
+    (PROJECT_BIBLE §0 — source event ids never line up). The Pro API has no
+    event-discovery endpoint, so this is a by-id spot-pull: the caller supplies
+    a known GoTickets ``eventId`` out-of-band, mirroring
+    ``GoTicketsClient.get_sale``. A systematic, catalog-wide ingest would need
+    an ``eventId`` → hub mapping that does not exist yet (deferred — see KANBAN).
+    """
+
+    BASE_URL = "https://gotickets.com/rest/pro/api"
+
+    def __init__(self, access_id: str, api_secret: str, *, timeout: int = 30):
+        if not access_id or not api_secret:
+            raise GoTicketsError(
+                "GoTickets access_id and api_secret are required"
+            )
+        self.access_id = (access_id or "").strip()
+        self.api_secret = (api_secret or "").strip()
+        self.timeout = timeout
+        # X-Broker-Api-Token = base64(accessId:accessSecret), no trailing
+        # newline (the vendor's `base64 -w 0`). Built once at construction.
+        raw = f"{self.access_id}:{self.api_secret}".encode()
+        self.api_token = base64.b64encode(raw).decode("ascii")
+
+    # ---------- transport ----------
+
+    def _get(self, path: str, params: dict | None = None) -> Any:
+        _assert_readonly_method("GET")  # RULE 2 enforcement
+        url = f"{self.BASE_URL}{path}"
+        headers = {
+            "X-Broker-Api-Token": self.api_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        clean = {k: v for k, v in (params or {}).items() if v is not None}
+        # Shared 429/503 Retry-After backoff (core/http_retry.py, BR-CODE-2);
+        # same loop GoTicketsClient._get uses. Network failures raised inside
+        # the thunk propagate out and are re-raised as GoTicketsError so callers
+        # see one exception class at the module boundary.
+        try:
+            r = fetch_with_retry(
+                lambda: requests.get(url, headers=headers, params=clean, timeout=self.timeout),
+                max_retries=4, retry_statuses=frozenset({429, 503}),
+                base_backoff=0.5, max_backoff=30.0, sleep=time.sleep,
+            )
+        except (requests.ConnectionError, requests.Timeout) as e:
+            raise GoTicketsError(f"network error: {type(e).__name__}") from e
+        if not r.ok:
+            raise GoTicketsError(f"HTTP {r.status_code}")
+        try:
+            return r.json()
+        except ValueError:
+            return {"raw_text": r.text}
+
+    # ---------- Listings ----------
+
+    def get_event_listings(
+        self, event_id: str | int, *, payment_method_token: str | None = None
+    ) -> list[dict[str, Any]]:
+        """GET /events/{eventId}/listings — live listings for one event.
+
+        ``event_id`` is the GoTickets-internal event id (supplied out-of-band;
+        it does NOT map to our ``tevo_event_id`` / AQ hub).
+
+        ``payment_method_token`` is optional and defaults to omitted. When
+        provided, the API returns a ``transactionRatePercentage`` per listing
+        (a credit-card processing-fee estimate). We leave it off for read-only
+        market observation — we want raw ``displayPrice`` / ``tax``, not
+        buyer-side fee math (which only matters for the forbidden checkout).
+
+        Per-listing fields to expect (verify on first live pull, may vary):
+          ``displayPrice``, ``tax``, quantity / section / row, and
+          ``transactionRatePercentage`` only when ``payment_method_token`` is
+          passed.
+
+        Returns the listings array, or ``[]`` if the response is not a JSON list.
+        """
+        body = self._get(
+            f"/events/{event_id}/listings",
+            {"paymentMethodToken": payment_method_token},
+        )
+        return body if isinstance(body, list) else []
