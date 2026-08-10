@@ -20,7 +20,7 @@
        style.css so its var() refs resolve (same as index.html). Without it the
        event page renders on a white background. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260721a" />
+  <link rel="stylesheet" href="style.css?v=20260810a" />
 </head>
 <body data-page="event">
 
@@ -84,6 +84,7 @@
       <button class="event-tab" data-tab="seatdata-sales" role="tab" aria-selected="false">SeatData Sales <span class="tab-count" id="tabCountSeatdataSales"></span></button>
       <button class="event-tab" data-tab="axs-sections" role="tab" aria-selected="false">AXS Box Office <span class="tab-count" id="tabCountAxsSections"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
+      <button class="event-tab" data-tab="outliers" role="tab" aria-selected="false">🎯 Outliers <span class="tab-count" id="tabCountOutliers"></span></button>
       <button class="event-tab" data-tab="cast" role="tab" aria-selected="false" id="tabBtnCast" hidden style="display:none">Cast <span class="tab-count" id="tabCountCast"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="predictions" role="tab" aria-selected="false">🔮 Predictions <span class="tab-count" id="tabCountPredictions"></span></button>
@@ -309,6 +310,21 @@
           <span class="muted small" id="evoListingsFullMeta">tap tab to load</span>
         </div>
         <div id="evoListingsFullBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <!-- Price-outlier engine (mig 20260810180000 / get_event_listing_outliers).
+         Event-level robust (median+MAD) detection over the FULL market book for
+         EVO + GoTickets; non-seating (parking) excluded from the baseline via the
+         zone map; each source's summary + the flagged rows render below. -->
+    <div class="tab-pane" id="paneOutliers" role="tabpanel" hidden>
+      <section id="listing-outliers">
+        <div class="panel-title row">
+          <span>🎯 PRICE OUTLIERS — EVO &amp; GOTICKETS · EVENT-LEVEL · LATEST BOOK</span>
+          <span class="muted small" id="outliersMeta">tap tab to load</span>
+        </div>
+        <div id="outliersSummary" class="outliers-summary"></div>
+        <div id="outliersBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 
@@ -581,6 +597,6 @@
   <script src="nav.js?v=20260716help"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="event.js?v=20260708zones"></script>
+  <script src="event.js?v=20260810outliers"></script>
 </body>
 </html>
