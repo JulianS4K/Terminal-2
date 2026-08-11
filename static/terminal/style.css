@@ -2832,3 +2832,11 @@ tr.deals-row-new > td { animation: deals-flash 5s ease-out forwards; }
 table.deals-tbl td.deals-when { white-space:nowrap; color:#8a929e; }
 table.deals-tbl td.deals-ev a { font-weight:600; }
 @media (prefers-reduced-motion: reduce) { .live-dot.pulse, tr.deals-row-new > td { animation:none; } }
+
+/* ---------- Deals feed table sizing (mig 20260811232000) ---------- */
+.wrap.deals #deals-table { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.deals-tbl { min-width: 960px; }
+table.deals-tbl th, table.deals-tbl td { white-space: nowrap; padding: 5px 9px; }
+table.deals-tbl td.deals-ev { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+table.deals-tbl td.deals-ev a { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+table.deals-tbl .muted.small { font-size: 10px; }

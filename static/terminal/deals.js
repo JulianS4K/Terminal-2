@@ -122,7 +122,8 @@
     dot.classList.remove('pulse'); void dot.offsetWidth; dot.classList.add('pulse');
   }
 
-  function roiClass(roi) { return roi >= 60 ? 'good' : (roi >= 25 ? 'warn' : 'neutral'); }
+  function winClass(p) { return p >= 0.85 ? 'good' : (p >= 0.70 ? 'warn' : 'neutral'); }
+  function confClass(c) { return c === 'high' ? 'good' : (c === 'med' ? 'warn' : 'neutral'); }
 
   function ago(iso) {
     if (!iso) return '';
@@ -156,27 +157,30 @@
       return;
     }
     const html = rows.map(d => {
-      const rc = roiClass(+d.roi_pct || 0);
+      const wc = winClass(+d.win_prob || 0);
+      const cc = confClass(d.confidence);
       const acc = d.is_accessible ? ' <span class="deals-acc" title="accessible / wheelchair">♿</span>' : '';
       const evLink = `event.html?event=${encodeURIComponent(d.tevo_event_id)}`;
       const dt = d.event_date ? ` <span class="muted">· ${esc(fmtDate(d.event_date))}</span>` : '';
+      const winPct = d.win_prob != null ? Math.round(d.win_prob * 100) + '%' : '—';
       return `<tr class="${d._new ? 'deals-row-new' : ''}">
         <td class="deals-when num">${d._new ? '<span class="deals-new-chip">NEW</span> ' : ''}${esc(ago(d.first_seen_at))}</td>
         <td class="deals-ev"><a href="${evLink}">${esc(d.event_name || ('event ' + d.tevo_event_id))}</a>${dt}</td>
         <td>${esc(d.section || '')}${d.row ? ' · ' + esc(String(d.row)) : ''}${acc}</td>
         <td class="num">${d.quantity != null ? esc(String(d.quantity)) : '—'}</td>
         <td class="num"><b>${$r(d.gt_price)}</b></td>
-        <td class="num">${$r(d.section_median)}</td>
-        <td class="num">${$r(d.est_resale)}</td>
-        <td class="num"><span class="badge regime-${rc}">${d.roi_pct != null ? '+' + d.roi_pct + '%' : '—'}</span></td>
-        <td class="num deals-below">${d.mod_z != null ? d.mod_z : '—'}</td>
+        <td class="num">${$r(d.realized_median)}${d.realized_n != null ? ' <span class="muted small">n' + d.realized_n + (d.resale_basis === 'historic_realized' ? '·hist' : '·live') + '</span>' : ''}</td>
+        <td class="num">${$r(d.est_net_resale)}</td>
+        <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
+        <td class="num"><span class="badge regime-${wc}">${winPct}</span></td>
+        <td><span class="badge regime-${cc}">${esc(d.confidence || '')}</span></td>
       </tr>`;
     }).join('');
     body.innerHTML = `<table class="deals-tbl">
       <thead><tr>
         <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
-        <th class="num">GT price</th><th class="num">Section med</th><th class="num">Est. resale</th>
-        <th class="num">Profit</th><th class="num">z</th>
+        <th class="num">Buy (GT)</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
+        <th class="num">Net profit</th><th class="num">Win odds</th><th>Conf</th>
       </tr></thead>
       <tbody>${html}</tbody></table>`;
     setTimeout(() => { state.deals.forEach(d => { d._new = false; }); }, 6000);

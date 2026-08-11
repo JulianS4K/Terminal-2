@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Deals (live)</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260811feed" />
+  <link rel="stylesheet" href="style.css?v=20260811tbl" />
 </head>
 <body data-page="deals">
 
@@ -56,7 +56,7 @@
 
     <section id="deals-note">
       <div class="muted small">
-        <b>Live feed.</b> GoTickets-only. A deal is a listing priced as a robust <b>low outlier within its section</b> (median + MAD, z ≤ −3.5) that also clears a <b>≥15% projected profit</b> — resale estimated at the section median, discounted to event day by the measured price-degradation curve. A background scanner re-checks the freshest-scanned events every ~5 min and streams new deals in at the top (flashed <span class="deals-new-chip">NEW</span>). ♿ = accessible seat. Backed by <span class="num">get_deals_feed</span> / <span class="num">scan_gotickets_deals</span> (mig 20260811210000) — shows an RPC-error state until the migration lands.
+        <b>Live feed — realized-calibrated.</b> GoTickets buy-side only. A deal must clear three gates: (1) a robust <b>low outlier within its section</b> on GoTickets (median + MAD, z ≤ −3.5); (2) a <b>realized resale anchor</b> from actual SeatGeek sales for the same event × section number (17.7M sales); and (3) <b>≥70% win odds</b> of a ≥15% net flip — i.e. ≥70% of realized comparable sales, discounted to event day and <b>net of the ~10% resale fee</b>, clear the 15% hurdle. Each row shows the buy price, the realized median (with sample size), estimated net resale, net profit, <b>win odds</b>, and a confidence tag. Genuine ≥70% deals are rare by design — quality over quantity. Scanner re-checks freshest events every ~5 min; new deals flash <span class="deals-new-chip">NEW</span>. Backed by <span class="num">get_deals_feed</span> / <span class="num">scan_gotickets_deals</span> / <span class="num">get_deal_backtest</span> (mig 20260811220000).
       </div>
     </section>
   </main>
@@ -67,6 +67,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="deals.js?v=20260811profit"></script>
+  <script src="deals.js?v=20260811hist"></script>
 </body>
 </html>
