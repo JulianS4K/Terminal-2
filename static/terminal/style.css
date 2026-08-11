@@ -2768,3 +2768,75 @@ a.txn-team:hover { color: var(--accent); text-decoration: underline; }
   border: 1px solid var(--line-2); border-radius: 3px; color: var(--text);
 }
 .txn-player:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Price Outliers tab (event page) ──────────────────────────────────────────
+   get_event_listing_outliers RPC surface (mig 20260810180000). Per-source summary
+   cards + a flagged-rows table. Source/direction colour off the shared tokens. */
+.badge.src-evo { background: rgba(251,191,36,.15); color: var(--accent); }
+.badge.src-gt  { background: rgba(52,211,153,.15); color: #34d399; }
+
+.outliers-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 14px; }
+.outlier-src-card {
+  flex: 1 1 200px; min-width: 190px;
+  border: 1px solid var(--border, #262626); border-radius: 8px;
+  background: var(--panel-2, #1a1a1a); padding: 10px 12px;
+}
+.outlier-src-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.outlier-src-stats { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+.outlier-src-stats b { color: var(--text); font-weight: 600; }
+.outlier-src-counts { display: flex; gap: 8px; margin-top: 8px; }
+.outlier-src-counts .pill {
+  font-size: 10px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--dim);
+}
+.outlier-src-counts .pill.low  { color: var(--info); border-color: rgba(96,165,250,.4); }
+.outlier-src-counts .pill.high { color: var(--neg);  border-color: rgba(239,68,68,.4); }
+
+.outliers-tbl .dir-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; white-space: nowrap;
+}
+.outliers-tbl .dir-badge.high { color: var(--neg);  background: rgba(239,68,68,.12); }
+.outliers-tbl .dir-badge.low  { color: var(--info); background: rgba(96,165,250,.12); }
+.outliers-tbl td.num.high { color: var(--neg); }
+.outliers-tbl td.num.low  { color: var(--info); }
+.outliers-tbl tr.outlier-row.owned { box-shadow: inset 2px 0 0 0 var(--accent); }
+.outliers-tbl .own-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: .04em;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px;
+}
+
+/* ---------- Deals page (GoTickets vs market) — mig 20260811203000 ---------- */
+.wrap.deals #deals-controls { margin-bottom: 10px; }
+.deals-search { position: relative; display: inline-block; }
+.deals-search .term-search-input { min-width: 260px; }
+.deals-search .term-search-suggest { position: absolute; top: 100%; left: 0; z-index: 20; min-width: 340px; }
+.deals-market-banner { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; flex-wrap: wrap; }
+.deals-ev-name { font-weight: 600; font-size: 14px; }
+.badge.regime-good    { color: #34d399; border: 1px solid rgba(52,211,153,.45); }
+.badge.regime-warn    { color: #f5a524; border: 1px solid rgba(245,165,36,.45); }
+.badge.regime-neutral { color: #98a2af; border: 1px solid rgba(152,162,175,.45); }
+table.deals-tbl { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+table.deals-tbl th { text-align: left; color: #8a929e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+table.deals-tbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+table.deals-tbl td.num, table.deals-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.deals-below { color: #34d399; font-weight: 600; }
+.deals-acc { color: #7dd3fc; cursor: help; }
+
+/* ---------- Deals live feed (mig 20260811210000) ---------- */
+.live-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#34d399; margin-left:6px; vertical-align:middle; box-shadow:0 0 0 0 rgba(52,211,153,.6); }
+.live-dot.paused { background:#8a929e; box-shadow:none; }
+@keyframes deals-pulse { 0%{ box-shadow:0 0 0 0 rgba(52,211,153,.6);} 70%{ box-shadow:0 0 0 7px rgba(52,211,153,0);} 100%{ box-shadow:0 0 0 0 rgba(52,211,153,0);} }
+.live-dot.pulse { animation: deals-pulse .9s ease-out; }
+.deals-new-chip { font-size:9px; font-weight:800; letter-spacing:.05em; color:#0a0a0a; background:#34d399; border-radius:3px; padding:0 4px; vertical-align:middle; }
+@keyframes deals-flash { from{ background:rgba(52,211,153,.22);} to{ background:transparent;} }
+tr.deals-row-new > td { animation: deals-flash 5s ease-out forwards; }
+table.deals-tbl td.deals-when { white-space:nowrap; color:#8a929e; }
+table.deals-tbl td.deals-ev a { font-weight:600; }
+@media (prefers-reduced-motion: reduce) { .live-dot.pulse, tr.deals-row-new > td { animation:none; } }
+
+/* ---------- Deals feed table sizing (mig 20260811232000) ---------- */
+.wrap.deals #deals-table { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.deals-tbl { min-width: 960px; }
+table.deals-tbl th, table.deals-tbl td { white-space: nowrap; padding: 5px 9px; }
+table.deals-tbl td.deals-ev { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+table.deals-tbl td.deals-ev a { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+table.deals-tbl .muted.small { font-size: 10px; }

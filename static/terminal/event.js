@@ -4152,6 +4152,9 @@
         await loadCastTab(eventId);
       } else if (tabId === 'predictions' && !_tabState.loaded['predictions']) {
         await loadPredictions(eventId);
+      } else if (tabId === 'outliers' && !_tabState.loaded['outliers']) {
+        _tabState.loaded['outliers'] = true;
+        await loadListingOutliers(eventId);
       }
     });
   }
@@ -4180,6 +4183,7 @@
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
       'predictions':  'panePredictions',
+      'outliers':     'paneOutliers',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -5588,6 +5592,110 @@
       }
       chip.textContent = n ? String(n) : '';
     }
+  }
+
+  // ---------- Price Outliers (Outliers tab) ----------
+  // Event-level robust price-outlier engine over the FULL market book for EVO +
+  // GoTickets. One SECDEF RPC (get_event_listing_outliers, mig 20260810180000)
+  // returns per-source summary + the flagged rows; non-seating (parking) is
+  // excluded from the baseline via the zone map. See the migration header for the
+  // median+MAD / IQR-fallback algorithm.
+  async function loadListingOutliers(eventId) {
+    const summaryEl = document.getElementById('outliersSummary');
+    const body = document.getElementById('outliersBody');
+    const meta = document.getElementById('outliersMeta');
+    if (body) body.innerHTML = '<div class="empty">Scanning the latest book for outliers…</div>';
+    if (summaryEl) summaryEl.innerHTML = '';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_listing_outliers', { p_event_id: Number(eventId) });
+    if (!res || res.error) {
+      const msg = res && res.error ? (res.error.message || '') : 'unavailable';
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(msg)}</div>`;
+      return;
+    }
+    const data = res.data || {};
+    const sources = data.sources || [];
+    const outliers = data.outliers || [];
+    const elapsed = performance.now() - t0;
+    const $r = v => (v != null && isFinite(+v) ? '$' + T.fmtNum(Math.round(+v)) : '—');
+
+    // Per-source summary cards: get-in / median / zones-scored + LOW/HIGH counts.
+    // Detection is ZONE-level, so the source median/get-in are context only — the
+    // flags come from per-zone baselines (zones_scored = zones with enough listings).
+    if (summaryEl) {
+      if (!sources.length) {
+        summaryEl.innerHTML = '<div class="empty">No seating listings in the latest EVO/GoTickets book for this event.</div>';
+      } else {
+        summaryEl.innerHTML = sources.map(s => {
+          const lo = +s.low_count || 0, hi = +s.high_count || 0;
+          const excl = +s.n_nonseating_excluded || 0;
+          const zs = +s.zones_scored || 0;
+          return `<div class="outlier-src-card">
+            <div class="outlier-src-head"><span class="badge src-${escapeHtml((s.source||'').toLowerCase())}">${escapeHtml(s.source||'')}</span>
+              <span class="muted small">${(+s.n_seating||0)} seating${excl ? ` · ${excl} parking/anc. excluded` : ''}</span></div>
+            <div class="outlier-src-stats">
+              <span>get-in <b>${$r(s.getin)}</b></span>
+              <span>median <b>${$r(s.median)}</b></span>
+              <span>zones scored <b>${zs}</b></span>
+            </div>
+            <div class="outlier-src-counts">
+              <span class="pill low">${lo} low</span>
+              <span class="pill high">${hi} high</span>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    if (meta) {
+      meta.textContent = `${outliers.length} outlier${outliers.length === 1 ? '' : 's'} · ${sources.length} source${sources.length === 1 ? '' : 's'} · ${elapsed.toFixed(0)}ms`;
+    }
+    const chip = document.getElementById('tabCountOutliers');
+    if (chip) chip.textContent = outliers.length ? String(outliers.length) : '';
+
+    if (!outliers.length) {
+      if (body) body.innerHTML = '<div class="empty">No price outliers — every seating listing sits within the robust band of its <b>zone</b>.</div>';
+      return;
+    }
+
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl outliers-tbl';
+    // Price is compared to the listing's ZONE peers: "vs zone" = price vs zone median,
+    // "zone n" = how many seating listings formed that zone's baseline.
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Src</th><th>Dir</th><th>Section</th><th>Row</th><th>Zone</th>
+        <th class="num">Zone n</th><th class="num">Qty</th><th class="num">Price</th>
+        <th class="num">vs zone</th><th class="num">rob-z</th><th>Own</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    outliers.forEach(o => {
+      const tr = document.createElement('tr');
+      const dir = o.direction === 'HIGH' ? 'high' : 'low';
+      const dev = (o.deviation_pct != null && isFinite(+o.deviation_pct))
+        ? (o.deviation_pct > 0 ? '+' : '') + T.fmtNum(+o.deviation_pct) + '%' : '—';
+      const z = (o.mod_z != null && isFinite(+o.mod_z)) ? T.fmtNum(+o.mod_z) : '—';
+      tr.className = 'outlier-row ' + dir + (o.is_owned ? ' owned' : '');
+      tr.innerHTML = `
+        <td><span class="badge src-${escapeHtml((o.source||'').toLowerCase())}">${escapeHtml(o.source||'')}</span></td>
+        <td><span class="dir-badge ${dir}">${o.direction === 'HIGH' ? '▲ HIGH' : '▼ LOW'}</span></td>
+        <td>${escapeHtml(o.section || '—')}</td>
+        <td>${escapeHtml(o.row || '—')}</td>
+        <td class="muted small">${escapeHtml(o.zone || '—')}</td>
+        <td class="num muted">${o.zone_n != null ? T.fmtNum(+o.zone_n) : '—'}</td>
+        <td class="num">${o.quantity != null ? T.fmtNum(+o.quantity) : '—'}</td>
+        <td class="num"><b>${$r(o.price)}</b></td>
+        <td class="num ${dir}">${dev}</td>
+        <td class="num muted">${z}</td>
+        <td>${o.is_owned ? '<span class="own-badge">OURS</span>' : ''}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    if (body) { body.innerHTML = ''; body.appendChild(host); }
   }
 
   // ---------- Cross-Platform Sales panel (Overview tab) ----------
