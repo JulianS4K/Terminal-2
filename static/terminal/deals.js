@@ -163,6 +163,9 @@
       const evLink = `event.html?event=${encodeURIComponent(d.tevo_event_id)}`;
       const dt = d.event_date ? ` <span class="muted">· ${esc(fmtDate(d.event_date))}</span>` : '';
       const winPct = d.win_prob != null ? Math.round(d.win_prob * 100) + '%' : '—';
+      const gtBtn = d.gt_event_id != null
+        ? `<a class="gt-open-btn" href="https://gotickets.com/tickets/${encodeURIComponent(d.gt_event_id)}" target="_blank" rel="noopener noreferrer" title="Open this event on GoTickets">GT&nbsp;↗</a>`
+        : '<span class="muted">—</span>';
       return `<tr class="${d._new ? 'deals-row-new' : ''}">
         <td class="deals-when num">${d._new ? '<span class="deals-new-chip">NEW</span> ' : ''}${esc(ago(d.first_seen_at))}</td>
         <td class="deals-ev"><a href="${evLink}">${esc(d.event_name || ('event ' + d.tevo_event_id))}</a>${dt}</td>
@@ -174,13 +177,14 @@
         <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
         <td class="num"><span class="badge regime-${wc}">${winPct}</span></td>
         <td><span class="badge regime-${cc}">${esc(d.confidence || '')}</span></td>
+        <td class="deals-open">${gtBtn}</td>
       </tr>`;
     }).join('');
     body.innerHTML = `<table class="deals-tbl">
       <thead><tr>
         <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
         <th class="num">Buy (GT)</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
-        <th class="num">Net profit</th><th class="num">Win odds</th><th>Conf</th>
+        <th class="num">Net profit</th><th class="num">Win odds</th><th>Conf</th><th>Open</th>
       </tr></thead>
       <tbody>${html}</tbody></table>`;
     setTimeout(() => { state.deals.forEach(d => { d._new = false; }); }, 6000);
