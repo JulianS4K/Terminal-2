@@ -14,9 +14,9 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — Deals</title>
+  <title>Terminal — Deals (live)</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260811deals" />
+  <link rel="stylesheet" href="style.css?v=20260811feed" />
 </head>
 <body data-page="deals">
 
@@ -28,44 +28,35 @@
   <main class="wrap deals">
     <section id="deals-controls">
       <div class="panel-title row">
-        <span>DEALS · GoTickets vs market</span>
-        <span class="muted small" id="dealsCount"></span>
+        <span>DEALS · live feed
+          <span id="liveDot" class="live-dot" title="live — polling every 20s"></span>
+        </span>
+        <span class="muted small" id="dealsScanMeta"></span>
       </div>
       <div class="ctrl-row">
-        <div class="ctrl-group" style="position:relative">
-          <span class="ctrl-lbl">EVENT</span>
-          <div class="deals-search">
-            <input id="dealsEventSearch" type="search" class="term-search-input"
-                   placeholder="search event / team / performer…" autocomplete="off" spellcheck="false" />
-            <div id="dealsEventSuggest" class="term-search-suggest" hidden></div>
-          </div>
+        <div class="ctrl-group">
+          <span class="ctrl-lbl">MIN PROFIT</span>
+          <button class="ctrl-btn is-active" data-roi="0.15">15%</button>
+          <button class="ctrl-btn" data-roi="0.30">30%</button>
+          <button class="ctrl-btn" data-roi="0.50">50%</button>
+          <button class="ctrl-btn" data-roi="1.00">100%</button>
         </div>
         <div class="ctrl-group">
-          <span class="ctrl-lbl">MIN BELOW MARKET</span>
-          <button class="ctrl-btn" data-disc="0.10">10%</button>
-          <button class="ctrl-btn is-active" data-disc="0.20">20%</button>
-          <button class="ctrl-btn" data-disc="0.35">35%</button>
-          <button class="ctrl-btn" data-disc="0.50">50%</button>
+          <input id="dealsFilter" type="search" class="term-search-input" placeholder="filter event / section…" autocomplete="off" spellcheck="false" style="min-width:220px" />
+        </div>
+        <div class="ctrl-group">
+          <button id="livePause" class="ctrl-btn is-active" title="pause / resume live polling">⏸ Pause</button>
         </div>
       </div>
-    </section>
-
-    <section id="deals-market">
-      <div id="dealsMarket"></div>
     </section>
 
     <section id="deals-table">
-      <div id="dealsBody"><div class="empty">Search an event above to see GoTickets deals priced below the cross-market book.</div></div>
+      <div id="dealsBody"><div class="empty">Connecting to the live deal feed…</div></div>
     </section>
 
     <section id="deals-note">
       <div class="muted small">
-        GoTickets is the only <b>buyable</b> inventory shown; the benchmark is the other sources' (EVO) zone median for the
-        same event × zone (common key via <span class="num">derive_zone_fallback</span>). The event <b>regime</b>
-        (DUMPING / SOFTENING / STABLE / RISING) comes from the 7-day moving average vs the DTE clearing curve, so a deep
-        discount reads as <b>OPPORTUNITY</b> in a firm market or <b>CAUTION</b> (falling knife) in a dumping one.
-        Accessible / wheelchair seats are marked ♿ (they legitimately price low). Backed by
-        <span class="num">get_gotickets_deals</span> (mig 20260811203000) — shows an RPC-error state until the migration lands.
+        <b>Live feed.</b> GoTickets-only. A deal is a listing priced as a robust <b>low outlier within its section</b> (median + MAD, z ≤ −3.5) that also clears a <b>≥15% projected profit</b> — resale estimated at the section median, discounted to event day by the measured price-degradation curve. A background scanner re-checks the freshest-scanned events every ~5 min and streams new deals in at the top (flashed <span class="deals-new-chip">NEW</span>). ♿ = accessible seat. Backed by <span class="num">get_deals_feed</span> / <span class="num">scan_gotickets_deals</span> (mig 20260811210000) — shows an RPC-error state until the migration lands.
       </div>
     </section>
   </main>
@@ -73,10 +64,9 @@
   <script src="lib/supabase.js"></script>
   <script src="lib/render.js"></script>
   <script src="pwa.js?v=20260702"></script>
-  <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="deals.js?v=20260811deals"></script>
+  <script src="deals.js?v=20260811profit"></script>
 </body>
 </html>

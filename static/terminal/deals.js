@@ -1,193 +1,185 @@
-// D0 Terminal — Deals page.
+// D0 Terminal — Deals LIVE FEED (GoTickets-only section outliers, ≥15% profit).
 //
-// GoTickets-EXCLUSIVE buyable deals, benchmarked against the OTHER sources'
-// prices (EVO zone median). One SECDEF RPC:
-//   get_gotickets_deals(p_event_id, p_max_age_hours, p_min_discount, p_min_zone_n, p_limit)
-//   (mig 20260811203000). A GoTickets listing priced below the cross-market zone
-//   median for the same event × zone is a deal; the event's 7-day-MA/DTE-curve
-//   regime tags each OPPORTUNITY vs CAUTION (falling knife). Operator directive
-//   2026-08-11: "deals should be exclusive to GoTickets for now, just use the data
-//   from the other sites for metrics."
-//
-// Event is chosen via a search box (terminal_search RPC) or an ?event= param, so
-// the same page deep-links from the global search / event page.
+// A background scanner (scan_gotickets_deals, mig 20260811210000, 5-min cron)
+// re-checks the freshest-scanned GoTickets events, flags section-level robust low
+// outliers (median+MAD z≤-3.5) that clear a ≥15% projected profit (resale = section
+// median discounted to event day by the clearing curve), and upserts
+// gotickets_deals_feed. This page polls get_deals_feed and prepends new deals.
+// Operator directives 2026-08-11: live feed · outliers not a majority · GoTickets
+// only · ≥15% profit given assumed price degradation.
 
 (function () {
   'use strict';
   const T = window.Terminal;
   const esc = window.TermRender.escapeHtml;
+  const POLL_MS = 20000;
+  const FULL_EVERY = 9;   // full resync every ~3 min to retire gone deals
 
-  const state = { eventId: null, minDiscount: 0.20 };
+  const state = {
+    minRoi: 0.15,
+    filter: '',
+    live: true,
+    deals: [],
+    newestSeen: null,
+    pollCount: 0,
+    timer: 0,
+  };
 
   const $r = v => (v != null && isFinite(+v) ? '$' + T.fmtNum(Math.round(+v)) : '—');
+  const keyOf = d => d.tevo_event_id + ':' + d.gt_listing_id;
 
   async function init() {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     wireControls();
-    wireEventSearch();
-    // Deep-link support: ?event=<tevo id> loads immediately.
-    const q = new URLSearchParams(location.search);
-    const ev = q.get('event');
-    if (ev && /^\d+$/.test(ev)) { state.eventId = Number(ev); loadDeals(); }
-    else if (T && T.setStatus) T.setStatus('Pick an event', 'ok');
+    await fullRefresh();
+    startPolling();
   }
 
   function wireControls() {
-    document.querySelectorAll('[data-disc]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-disc]').forEach(b => b.classList.remove('is-active'));
-        btn.classList.add('is-active');
-        state.minDiscount = parseFloat(btn.dataset.disc);
-        if (state.eventId) loadDeals();
-      });
+    document.querySelectorAll('[data-roi]').forEach(btn => btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-roi]').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      state.minRoi = parseFloat(btn.dataset.roi);
+      fullRefresh();
+    }));
+    const f = document.getElementById('dealsFilter');
+    if (f) f.addEventListener('input', () => { state.filter = f.value.trim().toLowerCase(); render(); });
+    const pause = document.getElementById('livePause');
+    if (pause) pause.addEventListener('click', () => {
+      state.live = !state.live;
+      pause.textContent = state.live ? '⏸ Pause' : '▶ Resume';
+      pause.classList.toggle('is-active', state.live);
+      const dot = document.getElementById('liveDot');
+      if (dot) dot.classList.toggle('paused', !state.live);
+      if (state.live) startPolling(); else stopPolling();
     });
   }
 
-  // ---------- Event search (reuses terminal_search) ----------
-  function wireEventSearch() {
-    const input = document.getElementById('dealsEventSearch');
-    const sugg = document.getElementById('dealsEventSuggest');
-    if (!input || !sugg) return;
-    let debounceT = 0, lastQ = '';
+  function startPolling() { stopPolling(); state.timer = setInterval(poll, POLL_MS); }
+  function stopPolling() { if (state.timer) { clearInterval(state.timer); state.timer = 0; } }
 
-    function close() { sugg.setAttribute('hidden', ''); }
-    function open() { sugg.removeAttribute('hidden'); }
+  async function callFeed(params) {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return { error: { message: 'not signed in' } };
+    return Auth.client.rpc('get_deals_feed', params);
+  }
 
-    async function run(qstr) {
-      if (qstr === lastQ) return;
-      lastQ = qstr;
-      if (qstr.length < 2) { close(); return; }
-      const Auth = window.TerminalAuth;
-      if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-        sugg.innerHTML = '<div class="ts-empty">search needs auth — sign in with @s4kent.com</div>'; open(); return;
+  async function fullRefresh() {
+    const body = document.getElementById('dealsBody');
+    if (!state.deals.length && body) body.innerHTML = '<div class="empty">Connecting to the live deal feed…</div>';
+    if (T && T.setStatus) T.setStatus('Loading…', '');
+    const res = await callFeed({ p_limit: 200, p_min_roi: state.minRoi });
+    if (res.error) { showError(res.error); return; }
+    const d = res.data || {};
+    state.deals = (d.deals || []).map(x => ({ ...x, _new: false }));
+    state.newestSeen = state.deals.length ? state.deals[0].first_seen_at : state.newestSeen;
+    state.pollCount = 0;
+    if (T && T.setStatus) T.setStatus('Live', 'ok');
+    updateScanMeta(d);
+    render();
+  }
+
+  async function poll() {
+    if (!state.live) return;
+    state.pollCount++;
+    if (state.pollCount % FULL_EVERY === 0) { await fullRefresh(); return; }
+    const res = await callFeed({ p_limit: 100, p_since: state.newestSeen, p_min_roi: state.minRoi });
+    if (res.error) { showError(res.error); return; }
+    const d = res.data || {};
+    updateScanMeta(d);
+    const fresh = (d.deals || []);
+    if (fresh.length) {
+      const have = new Set(state.deals.map(keyOf));
+      const add = fresh.filter(x => !have.has(keyOf(x))).map(x => ({ ...x, _new: true }));
+      if (add.length) {
+        state.deals = add.concat(state.deals);
+        state.newestSeen = add[0].first_seen_at;
+        pulseDot();
+        render();
       }
-      sugg.innerHTML = '<div class="ts-empty">searching…</div>'; open();
-      const res = await Auth.client.rpc('terminal_search', { p_q: qstr, p_limit: 8 });
-      if (res.error) { sugg.innerHTML = `<div class="ts-empty err">${esc(res.error.message || 'search error')}</div>`; return; }
-      const evs = (res.data && res.data.events) || [];
-      const players = (res.data && res.data.players) || [];
-      // Flatten player→events too, so "Yankees" surfaces their games.
-      const merged = [];
-      evs.forEach(e => merged.push(e));
-      players.forEach(pl => (pl.events || []).forEach(e => merged.push(e)));
-      if (!merged.length) { sugg.innerHTML = `<div class="ts-empty">no events for &ldquo;${esc(qstr)}&rdquo;</div>`; return; }
-      const seen = new Set();
-      const rows = merged.filter(e => {
-        const id = e.tevo_event_id; if (!id || seen.has(id)) return false; seen.add(id); return true;
-      }).slice(0, 10).map(e => {
-        const meta = [e.venue_name, fmtDate(e.occurs_at_local)].filter(Boolean).join(' · ');
-        return `<a class="ts-row" href="#" data-ev="${e.tevo_event_id}">
-            <span class="ts-name">${esc(e.name || '(unnamed)')}</span>
-            <span class="ts-meta">${esc(meta)}</span></a>`;
-      }).join('');
-      sugg.innerHTML = rows;
-      sugg.querySelectorAll('[data-ev]').forEach(a => {
-        a.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          state.eventId = Number(a.dataset.ev);
-          input.value = a.querySelector('.ts-name').textContent;
-          close();
-          loadDeals();
-        });
-      });
     }
-
-    input.addEventListener('input', () => {
-      clearTimeout(debounceT);
-      const qstr = input.value.trim();
-      debounceT = setTimeout(() => run(qstr), 250);
-    });
-    input.addEventListener('focus', () => { if (lastQ.length >= 2 && sugg.innerHTML) open(); });
-    document.addEventListener('click', (e) => { if (!sugg.contains(e.target) && e.target !== input) close(); });
   }
 
+  function showError(err) {
+    const body = document.getElementById('dealsBody');
+    const msg = err.code === '42883'
+      ? 'DEALS feed RPC not deployed yet — pending migration 20260811210000'
+      : (err.message || 'unavailable');
+    if (T && T.setStatus) T.setStatus('error', 'err');
+    if (body && !state.deals.length) body.innerHTML = `<div class="empty">RPC error: ${esc(msg)}</div>`;
+  }
+
+  function updateScanMeta(d) {
+    const el = document.getElementById('dealsScanMeta');
+    if (!el) return;
+    const active = d.active_deals != null ? d.active_deals : '—';
+    el.textContent = `${active} live deals · last scan ${ago(d.last_scan_at) || '—'}`;
+  }
+
+  function pulseDot() {
+    const dot = document.getElementById('liveDot');
+    if (!dot) return;
+    dot.classList.remove('pulse'); void dot.offsetWidth; dot.classList.add('pulse');
+  }
+
+  function roiClass(roi) { return roi >= 60 ? 'good' : (roi >= 25 ? 'warn' : 'neutral'); }
+
+  function ago(iso) {
+    if (!iso) return '';
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return Math.floor(s) + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
   function fmtDate(iso) {
     if (!iso) return '';
-    try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
+    try { return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
     catch (_) { return ''; }
   }
 
-  // ---------- Load + render ----------
-  async function loadDeals() {
-    const body = document.getElementById('dealsBody');
-    const marketEl = document.getElementById('dealsMarket');
-    const countEl = document.getElementById('dealsCount');
-    if (body) body.innerHTML = '<div class="empty">Scanning GoTickets vs the cross-market book…</div>';
-    if (marketEl) marketEl.innerHTML = '';
-    if (countEl) countEl.textContent = '';
-    if (T && T.setStatus) T.setStatus('Loading…', '');
-
-    const Auth = window.TerminalAuth;
-    const res = (Auth && Auth.client && Auth.getAccessToken())
-      ? await Auth.client.rpc('get_gotickets_deals', { p_event_id: state.eventId, p_min_discount: state.minDiscount })
-      : { error: { message: 'not signed in' } };
-
-    if (res.error) {
-      const code = res.error.code || '';
-      const msg = code === '42883'
-        ? 'DEALS RPC not deployed yet — pending migration 20260811203000'
-        : (res.error.message || 'unavailable');
-      if (T && T.setStatus) T.setStatus('error', 'err');
-      if (body) body.innerHTML = `<div class="empty">RPC error: ${esc(msg)}</div>`;
-      return;
-    }
-    if (T && T.setStatus) T.setStatus('Loaded', 'ok');
-    render(res.data || {});
+  function visible() {
+    if (!state.filter) return state.deals;
+    const q = state.filter;
+    return state.deals.filter(d =>
+      (d.event_name || '').toLowerCase().includes(q) ||
+      (d.section || '').toLowerCase().includes(q) ||
+      (d.zone || '').toLowerCase().includes(q));
   }
 
-  const REGIME_CLASS = { DUMPING: 'warn', SOFTENING: 'warn', STABLE: 'neutral', RISING: 'good', UNKNOWN: 'neutral' };
-
-  function render(d) {
-    const marketEl = document.getElementById('dealsMarket');
+  function render() {
     const body = document.getElementById('dealsBody');
-    const countEl = document.getElementById('dealsCount');
-    const deals = d.deals || [];
-    const m = d.market || {};
-
-    if (countEl) countEl.textContent = `${d.n_deals || 0} deal${(d.n_deals === 1) ? '' : 's'}`;
-
-    if (marketEl) {
-      const nm = d.event_name || ('event ' + (d.event_id || ''));
-      const reg = m.regime || 'UNKNOWN';
-      const rc = REGIME_CLASS[reg] || 'mid';
-      const bits = [];
-      if (m.category) bits.push(esc(m.category));
-      if (m.days_to_event != null) bits.push(`${m.days_to_event}d out`);
-      if (m.actual_7d_pct != null) bits.push(`7d move ${m.actual_7d_pct > 0 ? '+' : ''}${m.actual_7d_pct}% (curve ${m.expected_7d_pct != null ? m.expected_7d_pct + '%' : '—'})`);
-      marketEl.innerHTML = `<div class="deals-market-banner">
-          <span class="deals-ev-name">${esc(nm)}</span>
-          <span class="badge regime-${rc}">${esc(reg)}</span>
-          <span class="muted small">${bits.join(' · ')}</span>
-        </div>`;
-    }
-
-    if (!deals.length) {
-      if (body) body.innerHTML = `<div class="empty">No GoTickets listing is priced ≥${Math.round(state.minDiscount * 100)}% below the market book for this event${d.n_deals === 0 ? '' : ''}. Try a lower threshold, or GoTickets may not cover this event.</div>`;
+    if (!body) return;
+    const rows = visible();
+    if (!rows.length) {
+      body.innerHTML = `<div class="empty">${state.deals.length ? 'No deals match the filter.' : 'No live deals yet — the scanner runs every ~5 min. Lower the profit threshold or check back shortly.'}</div>`;
       return;
     }
-
-    const rows = deals.map(x => {
-      const verdictCls = x.verdict === 'OPPORTUNITY' ? 'good' : (x.verdict === 'CAUTION' ? 'warn' : 'neutral');
-      const acc = x.is_accessible ? ' <span class="deals-acc" title="accessible / wheelchair">♿</span>' : '';
-      return `<tr>
-        <td>${esc(x.zone || '')}</td>
-        <td>${esc(x.section || '')}${x.row ? ' · ' + esc(String(x.row)) : ''}${acc}</td>
-        <td class="num">${x.quantity != null ? esc(String(x.quantity)) : '—'}</td>
-        <td class="num"><b>${$r(x.gt_price)}</b></td>
-        <td class="num">${$r(x.market_median)}</td>
-        <td class="num deals-below">${x.vs_market_pct != null ? x.vs_market_pct + '%' : '—'}</td>
-        <td><span class="badge regime-${verdictCls}">${esc(x.verdict || '')}</span></td>
+    const html = rows.map(d => {
+      const rc = roiClass(+d.roi_pct || 0);
+      const acc = d.is_accessible ? ' <span class="deals-acc" title="accessible / wheelchair">♿</span>' : '';
+      const evLink = `event.html?event=${encodeURIComponent(d.tevo_event_id)}`;
+      const dt = d.event_date ? ` <span class="muted">· ${esc(fmtDate(d.event_date))}</span>` : '';
+      return `<tr class="${d._new ? 'deals-row-new' : ''}">
+        <td class="deals-when num">${d._new ? '<span class="deals-new-chip">NEW</span> ' : ''}${esc(ago(d.first_seen_at))}</td>
+        <td class="deals-ev"><a href="${evLink}">${esc(d.event_name || ('event ' + d.tevo_event_id))}</a>${dt}</td>
+        <td>${esc(d.section || '')}${d.row ? ' · ' + esc(String(d.row)) : ''}${acc}</td>
+        <td class="num">${d.quantity != null ? esc(String(d.quantity)) : '—'}</td>
+        <td class="num"><b>${$r(d.gt_price)}</b></td>
+        <td class="num">${$r(d.section_median)}</td>
+        <td class="num">${$r(d.est_resale)}</td>
+        <td class="num"><span class="badge regime-${rc}">${d.roi_pct != null ? '+' + d.roi_pct + '%' : '—'}</span></td>
+        <td class="num deals-below">${d.mod_z != null ? d.mod_z : '—'}</td>
       </tr>`;
     }).join('');
-
-    if (body) {
-      body.innerHTML = `<table class="deals-tbl">
-        <thead><tr>
-          <th>Zone</th><th>Section · Row</th><th class="num">Qty</th>
-          <th class="num">GT price</th><th class="num">Market med</th><th class="num">Below</th><th>Verdict</th>
-        </tr></thead>
-        <tbody>${rows}</tbody></table>`;
-    }
+    body.innerHTML = `<table class="deals-tbl">
+      <thead><tr>
+        <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
+        <th class="num">GT price</th><th class="num">Section med</th><th class="num">Est. resale</th>
+        <th class="num">Profit</th><th class="num">z</th>
+      </tr></thead>
+      <tbody>${html}</tbody></table>`;
+    setTimeout(() => { state.deals.forEach(d => { d._new = false; }); }, 6000);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
