@@ -2846,3 +2846,15 @@ table.deals-tbl th, table.deals-tbl td { white-space: nowrap; padding: 5px 9px; 
 table.deals-tbl td.deals-ev { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 table.deals-tbl td.deals-ev a { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 table.deals-tbl .muted.small { font-size: 10px; }
+
+/* "Open on GoTickets" per-row button (mig 20260811240000) */
+table.deals-tbl td.deals-open { text-align: center; }
+.gt-open-btn {
+  display: inline-block; white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; font-weight: 600; line-height: 1;
+  color: var(--text); text-decoration: none;
+  border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px;
+  background: var(--panel, transparent);
+}
+.gt-open-btn:hover { border-color: var(--muted); color: #7dd3fc; }
+.gt-open-btn:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 1px; }
