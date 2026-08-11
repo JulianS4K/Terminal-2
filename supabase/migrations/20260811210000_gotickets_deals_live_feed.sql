@@ -316,8 +316,11 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_cron') THEN
     PERFORM cron.unschedule('gotickets_deals_scan_5min')
       WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname='gotickets_deals_scan_5min');
+    -- batch 20/run: measured safe (~fast); 40+ can exceed the 55s budget on
+    -- big-inventory events (e.g. US Open ~16k GT listings), which would roll the
+    -- run back and never advance the watermark. Freshest-captured events first.
     PERFORM cron.schedule('gotickets_deals_scan_5min', '*/5 * * * *',
-      $$SELECT public.scan_gotickets_deals();$$);
+      $$SELECT public.scan_gotickets_deals(20);$$);
   END IF;
 END;
 $cron$;
