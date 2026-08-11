@@ -1,12 +1,18 @@
 // D0 Terminal — Deals LIVE FEED (GoTickets-only section outliers, ≥15% profit).
 //
-// A background scanner (scan_gotickets_deals, mig 20260811210000, 5-min cron)
-// re-checks the freshest-scanned GoTickets events, flags section-level robust low
-// outliers (median+MAD z≤-3.5) that clear a ≥15% projected profit (resale = section
-// median discounted to event day by the clearing curve), and upserts
-// gotickets_deals_feed. This page polls get_deals_feed and prepends new deals.
+// A background scanner (scan_gotickets_deals, 1-min cascade cron) re-checks the
+// freshest-scanned GoTickets events, flags section-level robust low outliers
+// (median+MAD z≤-3.5) whose realized-sales resale clears the profit + win-prob
+// gates, and upserts gotickets_deals_feed. This page polls get_deals_feed.
 // Operator directives 2026-08-11: live feed · outliers not a majority · GoTickets
-// only · ≥15% profit given assumed price degradation.
+// only · ≥15% profit given price degradation.
+//
+// EVENT DEGRADATION (mig 20260811290000): each event carries a 14d-MA price regime
+// vs the category clearing curve (DUMPING/SOFTENING/STABLE/RISING). The resale is
+// projected forward to event day by a degr_factor (excess-over-curve); est_net_resale,
+// net_profit_pct and win_prob shown here are the ADJUSTED values, with the pre-degrade
+// figure surfaced as "(raw …)". The Trend column shows the regime; a DUMPING event's
+// falling-knife deals are filtered out before they reach the feed.
 
 (function () {
   'use strict';
@@ -124,6 +130,30 @@
 
   function winClass(p) { return p >= 0.85 ? 'good' : (p >= 0.70 ? 'warn' : 'neutral'); }
   function confClass(c) { return c === 'high' ? 'good' : (c === 'med' ? 'warn' : 'neutral'); }
+  function regimeClass(r) {
+    switch (r) {
+      case 'RISING': return 'good';
+      case 'DUMPING': return 'bad';
+      case 'SOFTENING': return 'warn';
+      default: return 'neutral'; // STABLE, UNKNOWN, null
+    }
+  }
+  function regimeBadge(d) {
+    if (!d.regime) return '<span class="muted">—</span>';
+    const label = d.regime.charAt(0) + d.regime.slice(1).toLowerCase();
+    const ex = d.degr_excess_pct != null ? (d.degr_excess_pct > 0 ? '+' : '') + d.degr_excess_pct + '% vs curve' : '';
+    const dte = d.dte_now != null ? d.dte_now + 'd to event' : '';
+    const fac = d.degr_factor != null ? '×' + (+d.degr_factor).toFixed(2) + ' resale' : '';
+    const tip = [d.regime + ' (14d MA)', ex, fac, dte].filter(Boolean).join(' · ');
+    return `<span class="badge regime-${regimeClass(d.regime)}" title="${esc(tip)}">${esc(label)}</span>`;
+  }
+  // Show the pre-degradation net profit when the event-specific factor moved it.
+  function rawNote(d) {
+    if (d.net_profit_pct_raw == null || d.degr_factor == null) return '';
+    if (Math.abs(+d.degr_factor - 1) < 0.005 || d.net_profit_pct_raw === d.net_profit_pct) return '';
+    const sign = d.net_profit_pct_raw >= 0 ? '+' : '';
+    return ` <span class="muted small" title="net profit before event degradation">(raw ${sign}${d.net_profit_pct_raw}%)</span>`;
+  }
 
   function ago(iso) {
     if (!iso) return '';
@@ -174,7 +204,8 @@
         <td class="num"><b>${$r(d.gt_price)}</b></td>
         <td class="num">${$r(d.realized_median)}${d.realized_n != null ? ' <span class="muted small">n' + d.realized_n + (d.resale_basis === 'historic_realized' ? '·hist' : '·live') + '</span>' : ''}</td>
         <td class="num">${$r(d.est_net_resale)}</td>
-        <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
+        <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}${rawNote(d)}</td>
+        <td>${regimeBadge(d)}</td>
         <td class="num"><span class="badge regime-${wc}">${winPct}</span></td>
         <td><span class="badge regime-${cc}">${esc(d.confidence || '')}</span></td>
         <td class="deals-open">${gtBtn}</td>
@@ -184,7 +215,7 @@
       <thead><tr>
         <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
         <th class="num">Buy (GT)</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
-        <th class="num">Net profit</th><th class="num">Win odds</th><th>Conf</th><th>Open</th>
+        <th class="num">Net profit</th><th>Trend</th><th class="num">Win odds</th><th>Conf</th><th>Open</th>
       </tr></thead>
       <tbody>${html}</tbody></table>`;
     setTimeout(() => { state.deals.forEach(d => { d._new = false; }); }, 6000);
