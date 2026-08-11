@@ -5467,7 +5467,9 @@
     const elapsed = performance.now() - t0;
     const $r = v => (v != null && isFinite(+v) ? '$' + T.fmtNum(Math.round(+v)) : '—');
 
-    // Per-source summary cards: get-in / median / MAD + LOW/HIGH counts.
+    // Per-source summary cards: get-in / median / zones-scored + LOW/HIGH counts.
+    // Detection is ZONE-level, so the source median/get-in are context only — the
+    // flags come from per-zone baselines (zones_scored = zones with enough listings).
     if (summaryEl) {
       if (!sources.length) {
         summaryEl.innerHTML = '<div class="empty">No seating listings in the latest EVO/GoTickets book for this event.</div>';
@@ -5475,13 +5477,14 @@
         summaryEl.innerHTML = sources.map(s => {
           const lo = +s.low_count || 0, hi = +s.high_count || 0;
           const excl = +s.n_nonseating_excluded || 0;
+          const zs = +s.zones_scored || 0;
           return `<div class="outlier-src-card">
             <div class="outlier-src-head"><span class="badge src-${escapeHtml((s.source||'').toLowerCase())}">${escapeHtml(s.source||'')}</span>
               <span class="muted small">${(+s.n_seating||0)} seating${excl ? ` · ${excl} parking/anc. excluded` : ''}</span></div>
             <div class="outlier-src-stats">
               <span>get-in <b>${$r(s.getin)}</b></span>
               <span>median <b>${$r(s.median)}</b></span>
-              <span>MAD <b>${$r(s.mad)}</b></span>
+              <span>zones scored <b>${zs}</b></span>
             </div>
             <div class="outlier-src-counts">
               <span class="pill low">${lo} low</span>
@@ -5499,7 +5502,7 @@
     if (chip) chip.textContent = outliers.length ? String(outliers.length) : '';
 
     if (!outliers.length) {
-      if (body) body.innerHTML = '<div class="empty">No price outliers in the latest book — every seating listing sits within the robust band of its source.</div>';
+      if (body) body.innerHTML = '<div class="empty">No price outliers — every seating listing sits within the robust band of its <b>zone</b>.</div>';
       return;
     }
 
@@ -5507,11 +5510,13 @@
     host.className = 'full-list-host';
     const tbl = document.createElement('table');
     tbl.className = 'full-list-tbl outliers-tbl';
+    // Price is compared to the listing's ZONE peers: "vs zone" = price vs zone median,
+    // "zone n" = how many seating listings formed that zone's baseline.
     tbl.innerHTML = `
       <thead><tr>
         <th>Src</th><th>Dir</th><th>Section</th><th>Row</th><th>Zone</th>
-        <th class="num">Qty</th><th class="num">Price</th><th class="num">vs median</th>
-        <th class="num">rob-z</th><th>Own</th>
+        <th class="num">Zone n</th><th class="num">Qty</th><th class="num">Price</th>
+        <th class="num">vs zone</th><th class="num">rob-z</th><th>Own</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
     outliers.forEach(o => {
@@ -5527,6 +5532,7 @@
         <td>${escapeHtml(o.section || '—')}</td>
         <td>${escapeHtml(o.row || '—')}</td>
         <td class="muted small">${escapeHtml(o.zone || '—')}</td>
+        <td class="num muted">${o.zone_n != null ? T.fmtNum(+o.zone_n) : '—'}</td>
         <td class="num">${o.quantity != null ? T.fmtNum(+o.quantity) : '—'}</td>
         <td class="num"><b>${$r(o.price)}</b></td>
         <td class="num ${dir}">${dev}</td>
