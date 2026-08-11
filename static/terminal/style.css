@@ -2820,3 +2820,15 @@ table.deals-tbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
 table.deals-tbl td.num, table.deals-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .deals-below { color: #34d399; font-weight: 600; }
 .deals-acc { color: #7dd3fc; cursor: help; }
+
+/* ---------- Deals live feed (mig 20260811210000) ---------- */
+.live-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#34d399; margin-left:6px; vertical-align:middle; box-shadow:0 0 0 0 rgba(52,211,153,.6); }
+.live-dot.paused { background:#8a929e; box-shadow:none; }
+@keyframes deals-pulse { 0%{ box-shadow:0 0 0 0 rgba(52,211,153,.6);} 70%{ box-shadow:0 0 0 7px rgba(52,211,153,0);} 100%{ box-shadow:0 0 0 0 rgba(52,211,153,0);} }
+.live-dot.pulse { animation: deals-pulse .9s ease-out; }
+.deals-new-chip { font-size:9px; font-weight:800; letter-spacing:.05em; color:#0a0a0a; background:#34d399; border-radius:3px; padding:0 4px; vertical-align:middle; }
+@keyframes deals-flash { from{ background:rgba(52,211,153,.22);} to{ background:transparent;} }
+tr.deals-row-new > td { animation: deals-flash 5s ease-out forwards; }
+table.deals-tbl td.deals-when { white-space:nowrap; color:#8a929e; }
+table.deals-tbl td.deals-ev a { font-weight:600; }
+@media (prefers-reduced-motion: reduce) { .live-dot.pulse, tr.deals-row-new > td { animation:none; } }
