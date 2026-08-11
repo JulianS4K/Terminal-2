@@ -1,26 +1,26 @@
-// D0 Terminal — Deals LIVE FEED.
+// D0 Terminal — Deals LIVE FEED (GoTickets-only section outliers, ≥15% profit).
 //
-// GoTickets-exclusive buyable deals benchmarked against the other sources' (EVO)
-// zone median, streamed as a live feed. A background scanner (scan_gotickets_deals,
-// mig 20260811210000, 5-min cron) re-checks the freshest-scanned GoTickets events
-// and upserts gotickets_deals_feed; this page polls get_deals_feed and prepends new
-// deals at the top. Operator directive 2026-08-11: "have it be a feed that adds
-// tickets that are deemed a deal live as the event is scanned."
+// A background scanner (scan_gotickets_deals, mig 20260811210000, 5-min cron)
+// re-checks the freshest-scanned GoTickets events, flags section-level robust low
+// outliers (median+MAD z≤-3.5) that clear a ≥15% projected profit (resale = section
+// median discounted to event day by the clearing curve), and upserts
+// gotickets_deals_feed. This page polls get_deals_feed and prepends new deals.
+// Operator directives 2026-08-11: live feed · outliers not a majority · GoTickets
+// only · ≥15% profit given assumed price degradation.
 
 (function () {
   'use strict';
   const T = window.Terminal;
   const esc = window.TermRender.escapeHtml;
-  const POLL_MS = 20000;           // live poll cadence
-  const FULL_EVERY = 9;            // full resync every N polls (~3 min) to retire gone deals
+  const POLL_MS = 20000;
+  const FULL_EVERY = 9;   // full resync every ~3 min to retire gone deals
 
   const state = {
-    minDiscount: 0.20,
-    regime: '',
+    minRoi: 0.15,
     filter: '',
     live: true,
-    deals: [],            // accumulated feed rows (newest first)
-    newestSeen: null,     // max first_seen_at we've rendered (ISO)
+    deals: [],
+    newestSeen: null,
     pollCount: 0,
     timer: 0,
   };
@@ -36,16 +36,10 @@
   }
 
   function wireControls() {
-    document.querySelectorAll('[data-disc]').forEach(btn => btn.addEventListener('click', () => {
-      document.querySelectorAll('[data-disc]').forEach(b => b.classList.remove('is-active'));
+    document.querySelectorAll('[data-roi]').forEach(btn => btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-roi]').forEach(b => b.classList.remove('is-active'));
       btn.classList.add('is-active');
-      state.minDiscount = parseFloat(btn.dataset.disc);
-      fullRefresh();
-    }));
-    document.querySelectorAll('[data-regime]').forEach(btn => btn.addEventListener('click', () => {
-      document.querySelectorAll('[data-regime]').forEach(b => b.classList.remove('is-active'));
-      btn.classList.add('is-active');
-      state.regime = btn.dataset.regime || '';
+      state.minRoi = parseFloat(btn.dataset.roi);
       fullRefresh();
     }));
     const f = document.getElementById('dealsFilter');
@@ -70,12 +64,11 @@
     return Auth.client.rpc('get_deals_feed', params);
   }
 
-  // Full (re)load — on init, filter change, and periodic resync (retires gone deals).
   async function fullRefresh() {
     const body = document.getElementById('dealsBody');
     if (!state.deals.length && body) body.innerHTML = '<div class="empty">Connecting to the live deal feed…</div>';
     if (T && T.setStatus) T.setStatus('Loading…', '');
-    const res = await callFeed({ p_limit: 200, p_min_discount: state.minDiscount, p_regime: state.regime || null });
+    const res = await callFeed({ p_limit: 200, p_min_roi: state.minRoi });
     if (res.error) { showError(res.error); return; }
     const d = res.data || {};
     state.deals = (d.deals || []).map(x => ({ ...x, _new: false }));
@@ -86,12 +79,11 @@
     render();
   }
 
-  // Incremental poll — append deals newer than newestSeen, flashed NEW.
   async function poll() {
     if (!state.live) return;
     state.pollCount++;
     if (state.pollCount % FULL_EVERY === 0) { await fullRefresh(); return; }
-    const res = await callFeed({ p_limit: 100, p_since: state.newestSeen, p_min_discount: state.minDiscount, p_regime: state.regime || null });
+    const res = await callFeed({ p_limit: 100, p_since: state.newestSeen, p_min_roi: state.minRoi });
     if (res.error) { showError(res.error); return; }
     const d = res.data || {};
     updateScanMeta(d);
@@ -130,7 +122,7 @@
     dot.classList.remove('pulse'); void dot.offsetWidth; dot.classList.add('pulse');
   }
 
-  const REGIME_CLS = { OPPORTUNITY: 'good', CAUTION: 'warn', REVIEW: 'neutral' };
+  function roiClass(roi) { return roi >= 60 ? 'good' : (roi >= 25 ? 'warn' : 'neutral'); }
 
   function ago(iso) {
     if (!iso) return '';
@@ -151,8 +143,8 @@
     const q = state.filter;
     return state.deals.filter(d =>
       (d.event_name || '').toLowerCase().includes(q) ||
-      (d.zone || '').toLowerCase().includes(q) ||
-      (d.section || '').toLowerCase().includes(q));
+      (d.section || '').toLowerCase().includes(q) ||
+      (d.zone || '').toLowerCase().includes(q));
   }
 
   function render() {
@@ -160,39 +152,34 @@
     if (!body) return;
     const rows = visible();
     if (!rows.length) {
-      body.innerHTML = `<div class="empty">${state.deals.length ? 'No deals match the filter.' : 'No live deals yet — the scanner runs every ~5 min. Lower the threshold or check back shortly.'}</div>`;
+      body.innerHTML = `<div class="empty">${state.deals.length ? 'No deals match the filter.' : 'No live deals yet — the scanner runs every ~5 min. Lower the profit threshold or check back shortly.'}</div>`;
       return;
     }
     const html = rows.map(d => {
-      const vc = REGIME_CLS[d.verdict] || 'neutral';
+      const rc = roiClass(+d.roi_pct || 0);
       const acc = d.is_accessible ? ' <span class="deals-acc" title="accessible / wheelchair">♿</span>' : '';
       const evLink = `event.html?event=${encodeURIComponent(d.tevo_event_id)}`;
       const dt = d.event_date ? ` <span class="muted">· ${esc(fmtDate(d.event_date))}</span>` : '';
       return `<tr class="${d._new ? 'deals-row-new' : ''}">
         <td class="deals-when num">${d._new ? '<span class="deals-new-chip">NEW</span> ' : ''}${esc(ago(d.first_seen_at))}</td>
         <td class="deals-ev"><a href="${evLink}">${esc(d.event_name || ('event ' + d.tevo_event_id))}</a>${dt}</td>
-        <td>${esc(d.zone || '')}</td>
         <td>${esc(d.section || '')}${d.row ? ' · ' + esc(String(d.row)) : ''}${acc}</td>
         <td class="num">${d.quantity != null ? esc(String(d.quantity)) : '—'}</td>
         <td class="num"><b>${$r(d.gt_price)}</b></td>
-        <td class="num">${$r(d.market_median)}</td>
-        <td class="num deals-below">${d.vs_market_pct != null ? d.vs_market_pct + '%' : '—'}</td>
-        <td><span class="badge regime-${vc}">${esc(d.verdict || '')}</span> <span class="muted small">${esc(d.regime || '')}</span></td>
+        <td class="num">${$r(d.section_median)}</td>
+        <td class="num">${$r(d.est_resale)}</td>
+        <td class="num"><span class="badge regime-${rc}">${d.roi_pct != null ? '+' + d.roi_pct + '%' : '—'}</span></td>
+        <td class="num deals-below">${d.mod_z != null ? d.mod_z : '—'}</td>
       </tr>`;
     }).join('');
     body.innerHTML = `<table class="deals-tbl">
       <thead><tr>
-        <th>Seen</th><th>Event</th><th>Zone</th><th>Section · Row</th><th class="num">Qty</th>
-        <th class="num">GT price</th><th class="num">Market med</th><th class="num">Below</th><th>Verdict</th>
+        <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
+        <th class="num">GT price</th><th class="num">Section med</th><th class="num">Est. resale</th>
+        <th class="num">Profit</th><th class="num">z</th>
       </tr></thead>
       <tbody>${html}</tbody></table>`;
-    // clear the NEW flash after a short delay so subsequent renders don't keep flashing
-    setTimeout(() => {
-      let changed = false;
-      state.deals.forEach(d => { if (d._new) { d._new = false; changed = true; } });
-      // do not re-render solely to clear flags; next natural render drops the chip
-      if (changed) { /* flags cleared; DOM chip fades via CSS animation */ }
-    }, 6000);
+    setTimeout(() => { state.deals.forEach(d => { d._new = false; }); }, 6000);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
