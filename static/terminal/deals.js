@@ -169,7 +169,7 @@
         <td>${esc(d.section || '')}${d.row ? ' · ' + esc(String(d.row)) : ''}${acc}</td>
         <td class="num">${d.quantity != null ? esc(String(d.quantity)) : '—'}</td>
         <td class="num"><b>${$r(d.gt_price)}</b></td>
-        <td class="num">${$r(d.realized_median)}${d.realized_n != null ? ' <span class="muted small">n' + d.realized_n + '</span>' : ''}</td>
+        <td class="num">${$r(d.realized_median)}${d.realized_n != null ? ' <span class="muted small">n' + d.realized_n + (d.resale_basis === 'historic_realized' ? '·hist' : '·live') + '</span>' : ''}</td>
         <td class="num">${$r(d.est_net_resale)}</td>
         <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
         <td class="num"><span class="badge regime-${wc}">${winPct}</span></td>
