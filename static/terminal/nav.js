@@ -57,6 +57,13 @@
     // (mig 20260714220000).
     { id: 'cast-watch', label: 'CAST WATCH', href: 'cast-watch.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    // Deals — GoTickets BUYABLE deals, benchmarked against the OTHER sources'
+    // prices (EVO/amalgam) for the same event×zone: a GoTickets listing priced
+    // well below the cross-market zone median = an arbitrage opportunity. Zone is
+    // the common key via derive_zone_fallback (both sides). GoTickets-exclusive
+    // for now; the other sites are the metric, not the inventory. Sits in the
+    // movers "what to trade" cluster. Wired 2026-08-11.
+    { id: 'deals',     label: 'DEALS',     href: 'deals.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
     // owned-vs-market, price distribution, top sections). Backed by
     // /api/d0/sales/* over the d0_sales_fact snapshot. See docs/d0-sales-reports.md.

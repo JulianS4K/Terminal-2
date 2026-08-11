@@ -2802,3 +2802,20 @@ a.txn-team:hover { color: var(--accent); text-decoration: underline; }
   font-size: 9px; font-weight: 700; letter-spacing: .04em;
   color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px;
 }
+
+/* ---------- Deals page (GoTickets vs market) — mig 20260811203000 ---------- */
+.wrap.deals #deals-controls { margin-bottom: 10px; }
+.deals-search { position: relative; display: inline-block; }
+.deals-search .term-search-input { min-width: 260px; }
+.deals-search .term-search-suggest { position: absolute; top: 100%; left: 0; z-index: 20; min-width: 340px; }
+.deals-market-banner { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px; flex-wrap: wrap; }
+.deals-ev-name { font-weight: 600; font-size: 14px; }
+.badge.regime-good    { color: #34d399; border: 1px solid rgba(52,211,153,.45); }
+.badge.regime-warn    { color: #f5a524; border: 1px solid rgba(245,165,36,.45); }
+.badge.regime-neutral { color: #98a2af; border: 1px solid rgba(152,162,175,.45); }
+table.deals-tbl { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+table.deals-tbl th { text-align: left; color: #8a929e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+table.deals-tbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+table.deals-tbl td.num, table.deals-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.deals-below { color: #34d399; font-weight: 600; }
+.deals-acc { color: #7dd3fc; cursor: help; }
