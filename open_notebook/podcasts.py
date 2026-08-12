@@ -8,6 +8,7 @@ mp3 turns are concatenated, and the result is uploaded to Supabase Storage
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 from . import config, prompts, providers, repository as repo
@@ -15,12 +16,19 @@ from . import config, prompts, providers, repository as repo
 # OpenAI TTS voice pool — speakers without an explicit voice_id cycle through these.
 _VOICE_POOL = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 
+# OpenAI TTS caps a single request near 4096 input chars; chunk long text and
+# stitch the mp3 parts so a full note/answer/transcript narrates in one file.
+_TTS_CHAR_LIMIT = 3500
 
-def build_podcast_content(db, notebook_id: str, *, char_budget: int = 40000,
-                          per_source: int = 12000) -> str:
+
+def build_podcast_content(db, notebook_id: str, *, char_budget: int | None = None,
+                          per_source: int | None = None) -> str:
     """Flatten a notebook's sources/insights/notes into source material. Budgets
-    are generous so a rich performer digest (many enrichment sections) reaches
-    the outline/transcript stages instead of being truncated to a snapshot."""
+    are generous (env-tunable, see config.ONB_PODCAST_*) so a rich performer
+    digest (many enrichment sections) reaches the outline/transcript stages
+    instead of being truncated to a snapshot."""
+    char_budget = char_budget or config.ONB_PODCAST_CONTENT_BUDGET
+    per_source = per_source or config.ONB_PODCAST_PER_SOURCE
     parts: list[str] = []
     used = 0
     for s in repo.list_sources(db, notebook_id=notebook_id):
@@ -66,7 +74,7 @@ def generate_episode(db, episode_id: str, *, job_id: str | None = None) -> dict:
         # Stage 1 — outline
         outline_raw = providers.chat(
             [{"role": "user", "content": prompts.podcast_outline_user(briefing, content, num_segments)}],
-            max_tokens=1500, temperature=0.4,
+            max_tokens=config.ONB_PODCAST_OUTLINE_TOKENS, temperature=0.4,
         )
         outline = _extract_json(outline_raw, default=[])
 
@@ -75,7 +83,7 @@ def generate_episode(db, episode_id: str, *, job_id: str | None = None) -> dict:
         transcript_raw = providers.chat(
             [{"role": "user", "content": prompts.podcast_transcript_user(
                 json.dumps(outline), speakers, briefing)}],
-            max_tokens=4000, temperature=0.6,
+            max_tokens=config.ONB_PODCAST_SCRIPT_TOKENS, temperature=0.6,
         )
         transcript = _extract_json(transcript_raw, default=[])
         if not transcript:
@@ -119,6 +127,77 @@ def generate_episode(db, episode_id: str, *, job_id: str | None = None) -> dict:
         return repo.get_episode(db, episode_id) or {}
     except Exception as e:
         msg = str(e)
+        repo.update_episode(db, episode_id, {"status": "error", "error": msg})
+        if job_id:
+            repo.update_job(db, job_id, {"status": "error", "error": msg})
+        raise
+
+
+def _narration_voice(ep: dict) -> str:
+    """Voice for a single-voice narration — first explicit speaker voice_id, then
+    the episode_profile 'voice', else the pool default."""
+    for sp in ((ep.get("speaker_profile") or {}).get("speakers") or []):
+        if sp.get("voice_id"):
+            return sp["voice_id"]
+    return (ep.get("episode_profile") or {}).get("voice") or _VOICE_POOL[0]
+
+
+def _chunk_for_tts(text: str, limit: int = _TTS_CHAR_LIMIT) -> list[str]:
+    """Split text into <=limit-char chunks on paragraph/sentence boundaries so
+    each TTS call stays under the provider's input cap. A single piece longer than
+    the limit (e.g. a run-on with no breaks) is hard-sliced."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    buf = ""
+    # re.split keeps the delimiters (captured group); on already-stripped,
+    # whitespace-delimited text it never yields empty pieces, and the final
+    # comprehension filters any stray empties from the assembled chunks.
+    for piece in re.split(r"(\n\n+|(?<=[.!?])\s+)", text):
+        if len(buf) + len(piece) <= limit:
+            buf += piece
+            continue
+        if buf:
+            chunks.append(buf.strip())
+            buf = ""
+        while len(piece) > limit:  # a single unbreakable piece → hard-slice
+            chunks.append(piece[:limit].strip())
+            piece = piece[limit:]
+        buf = piece
+    chunks.append(buf.strip())  # flush the tail; empties are filtered below
+    return [c for c in chunks if c]
+
+
+def generate_narration(db, episode_id: str, *, job_id: str | None = None) -> dict:
+    """Single-voice narration — synthesize an episode's `content` text straight to
+    audio (no outline/transcript LLM stages) and upload a shareable mp3. Unlike a
+    podcast, narration IS the audio: with no TTS provider it fails with a clear
+    error rather than degrading to transcript-only."""
+    ep = repo.get_episode(db, episode_id)
+    if not ep:
+        raise ValueError("episode not found")
+    if job_id:
+        repo.update_job(db, job_id, {"status": "processing"})
+    repo.update_episode(db, episode_id, {"status": "processing", "error": None})
+    try:
+        text = (ep.get("content") or "").strip()
+        if not text:
+            raise ValueError("no text to narrate")
+        voice = _narration_voice(ep)
+        audio = bytearray()
+        for chunk in _chunk_for_tts(text):
+            audio.extend(providers.tts(chunk, voice=voice))
+        audio_url = _upload_audio(db, episode_id, bytes(audio))
+        repo.update_episode(db, episode_id, {"status": "done", "audio_url": audio_url, "error": None})
+        if job_id:
+            repo.update_job(db, job_id, {"status": "done"})
+        return repo.get_episode(db, episode_id) or {}
+    except Exception as e:
+        msg = (f"Narration needs a TTS provider — set OPENAI_API_KEY to generate audio. ({e})"
+               if isinstance(e, providers.ProviderError) else str(e))
         repo.update_episode(db, episode_id, {"status": "error", "error": msg})
         if job_id:
             repo.update_job(db, job_id, {"status": "error", "error": msg})

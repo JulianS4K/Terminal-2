@@ -53,6 +53,22 @@ ONB_CHUNK_OVERLAP = int(os.environ.get("ONB_CHUNK_OVERLAP", "150"))
 # Supabase Storage bucket for generated podcast audio.
 ONB_AUDIO_BUCKET = os.environ.get("ONB_AUDIO_BUCKET", "onb-audio")
 
+# Generation budgets — how much source material feeds the LLM and how long the
+# output may run. Raised from the initial conservative defaults so episodes,
+# scripts, and reports are richer; all overridable per env. Output-token caps are
+# kept <= the edge (Haiku) fallback path's limit so BOTH transports are safe.
+# Podcast: source-material budget (total / per-source chars) + outline/script caps.
+ONB_PODCAST_CONTENT_BUDGET = int(os.environ.get("ONB_PODCAST_CONTENT_BUDGET", "120000"))
+ONB_PODCAST_PER_SOURCE = int(os.environ.get("ONB_PODCAST_PER_SOURCE", "40000"))
+ONB_PODCAST_OUTLINE_TOKENS = int(os.environ.get("ONB_PODCAST_OUTLINE_TOKENS", "4000"))
+ONB_PODCAST_SCRIPT_TOKENS = int(os.environ.get("ONB_PODCAST_SCRIPT_TOKENS", "8000"))
+# Ask (RAG report) synthesis cap.
+ONB_ASK_SYNTH_TOKENS = int(os.environ.get("ONB_ASK_SYNTH_TOKENS", "3000"))
+# Chat: stuffed-context budget (total / per-source chars) + reply cap.
+ONB_CHAT_CONTEXT_BUDGET = int(os.environ.get("ONB_CHAT_CONTEXT_BUDGET", "60000"))
+ONB_CHAT_PER_SOURCE = int(os.environ.get("ONB_CHAT_PER_SOURCE", "12000"))
+ONB_CHAT_REPLY_TOKENS = int(os.environ.get("ONB_CHAT_REPLY_TOKENS", "4000"))
+
 # Auto-attach Wikipedia sources (performer article + recent season pages for
 # sports) when a performer notebook is created. On by default.
 ONB_WIKI_SOURCES = _flag("ONB_WIKI_SOURCES", True)

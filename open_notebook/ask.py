@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from . import prompts, providers, repository as repo
+from . import config, prompts, providers, repository as repo
 from .providers import ProviderError
 
 MAX_QUERIES = 5
@@ -111,7 +111,7 @@ def ask(db, *, question: str, notebook_id: str | None = None,
     texts = [p.get("content") or "" for p in passages]
     answer = providers.chat(
         [{"role": "user", "content": prompts.ask_synthesize_user(question, texts)}],
-        system=prompts.ASK_SYNTHESIZE_SYSTEM, max_tokens=1500, temperature=0.2,
+        system=prompts.ASK_SYNTHESIZE_SYSTEM, max_tokens=config.ONB_ASK_SYNTH_TOKENS, temperature=0.2,
     ).strip()
 
     return {

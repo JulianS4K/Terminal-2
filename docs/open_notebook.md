@@ -1,6 +1,6 @@
 # open-notebook subsystem
 
-**Doc version:** v1.7.0 (2026-07-07)
+**Doc version:** v1.9.0 (2026-07-13)
 
 On-demand reference for the open-notebook subsystem — an operator-directed port of
 [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook) (a self-hosted
@@ -12,7 +12,8 @@ Create **notebooks**, add **sources** (text / URL / PDF), which are extracted,
 chunked, and embedded; run **transformations** (reusable prompts → insights);
 **search** sources (full-text + vector); **ask** questions with RAG (decompose →
 parallel vector search → cited synthesis); **chat** grounded in the whole notebook
-context; and generate multi-speaker **podcasts** (outline → transcript → TTS).
+context; generate multi-speaker **podcasts** (outline → transcript → TTS); and
+**narrate** any text to a shareable single-voice mp3 (TTS only, no LLM stages).
 
 ## Architecture
 - **Storage** — Supabase Postgres, `onb_*` tables in `public` (migration
@@ -94,9 +95,9 @@ Sources folded in (all already ingested by the platform — no external API call
   So the digest (and therefore Ask / Chat / Podcast, which build on it) points at every
   performer-tied source — ESPN, Reddit, and X included.
 
-Podcast content budgets (`build_podcast_content`) are generous (40k total / 12k per
-source) so the full digest reaches the outline/transcript stages instead of being
-truncated to a snapshot. One call —
+Podcast content budgets (`build_podcast_content`) are generous (120k total / 40k per
+source by default, env-tunable — see *Config / env*) so the full digest reaches the
+outline/transcript stages instead of being truncated to a snapshot. One call —
 `POST /api/notebook/performers/notebook {"name": "New York Yankees"}` (or
 `{"performer_id": N}`) — resolves the performer, creates a notebook, ingests the
 digest, and it's ready for Ask/Chat/Podcast. The terminal's **+ Performer** button
@@ -134,6 +135,14 @@ pre-deduped so the raw sales firehose is never read.
   `ONB_STT_MODEL`, `ONB_TTS_MODEL`, `ONB_CHUNK_SIZE`/`ONB_CHUNK_OVERLAP`,
   `ONB_AUDIO_BUCKET` (default `onb-audio`, a public Supabase Storage bucket for
   podcast audio).
+- **Generation budgets** (env-tunable; raised defaults for richer episodes /
+  scripts / reports) — how much source material feeds the LLM and how long the
+  output may run. Podcast: `ONB_PODCAST_CONTENT_BUDGET` (120k chars) /
+  `ONB_PODCAST_PER_SOURCE` (40k) + `ONB_PODCAST_OUTLINE_TOKENS` (4k) /
+  `ONB_PODCAST_SCRIPT_TOKENS` (8k). Ask report: `ONB_ASK_SYNTH_TOKENS` (3k).
+  Chat: `ONB_CHAT_CONTEXT_BUDGET` (60k) / `ONB_CHAT_PER_SOURCE` (12k) +
+  `ONB_CHAT_REPLY_TOKENS` (4k). Output-token caps are kept ≤ the edge (Haiku)
+  fallback path's limit so both the direct-key (Opus) and edge transports stay safe.
 
 ## Deploy notes
 - Deps: `openai`, `pypdf` (both lazily imported).
@@ -141,6 +150,20 @@ pre-deduped so the raw sales firehose is never read.
   by any session under operator direction — no A1 gate). pgvector embedding dim is fixed at DDL time — changing the
   embedding model's dimension requires a follow-up migration.
 - Podcast audio needs a **public** Storage bucket named per `ONB_AUDIO_BUCKET`.
+
+## Narration (text → shareable mp3)
+A lightweight companion to podcasts: `POST /api/notebook/notebooks/{id}/narrate
+{"text": "...", "name?": "...", "voice?": "alloy"}` synthesizes the given text
+**straight to audio** — no outline/transcript LLM stages — with a single voice,
+chunking long text under the OpenAI TTS input cap and stitching the mp3 parts
+(`open_notebook/podcasts.py:generate_narration`). It reuses the podcast surface
+end-to-end: the result is an `onb_episodes` row (job `kind='narration'`) with a
+public `audio_url`, so it lists, plays, and deletes through the same
+`/api/notebook/episodes*` endpoints and the NOTEBOOK tab's Podcasts panel (which
+also exposes a **Narrate** card + per-episode **Copy link / Download**). Unlike a
+podcast — which degrades to transcript-only without OpenAI — narration *is* the
+audio, so with no TTS provider the episode ends `status='error'` with a
+"set OPENAI_API_KEY" note rather than producing an empty file.
 
 ## Graceful degradation without OpenAI
 The subsystem is fully usable on a Claude key alone. Where OpenAI would add a
