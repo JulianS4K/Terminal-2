@@ -4495,8 +4495,9 @@
   // and the */10 refresh cron cannot clobber them (mig 20260620130000).
   let _seatmapManual = {};
   let _seatmapZones = [];   // curated zones for this event: [{zone_id, name, keys:[lc polygon keys]}]
-  // Frontend source key → venue_section_map.platform. GT is absent (the crosswalk's CHECK
-  // allows only evo/sg/tp/vd/sh), so GameTime sections can be TRACKED but not manually mapped.
+  // Frontend source key → venue_section_map.platform. GT and GOT are absent (the
+  // crosswalk's CHECK allows only evo/sg/tp/vd/sh), so GameTime and GoTickets sections
+  // can be TRACKED (colored by the heuristic matcher) but not manually mapped.
   const _SM_PLATFORM = { EVO: 'evo', SG: 'sg', SH: 'sh', VD: 'vd', TP: 'tp' };
   const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
   // Source registry — TM excluded (primary/box-office, no section-level resale
@@ -4511,6 +4512,7 @@
     { key: 'GT',  label: 'GameTime' },
     { key: 'VD',  label: 'VividSeats' },
     { key: 'TP',  label: 'TickPick' },
+    { key: 'GOT', label: 'GoTickets' },
   ];
   // Sources whose `section` is a ZONE label, not a seat section — colored by
   // expanding each zone to the manifest sections it covers (TickPick only today).
@@ -4532,6 +4534,20 @@
         section: x.section, row: x.row, quantity: x.quantity,
         retail_price: (x.retail_price_all_in != null ? x.retail_price_all_in : x.broadcast_price),
         is_owned: !!x.is_broker_owned,
+      }));
+    }
+    // GoTickets (GOT — NOT GameTime/GT) via its own Pro-API firehose. Separate
+    // read RPC (get_gotickets_event_listings) over gotickets_listings_snapshots,
+    // keyed on tevo_event_id; latest capture batch only. all_in_price is the
+    // fee-inclusive price (mirrors the SG/TD all-in preference); fall back to the
+    // pre-fee display_price. GoTickets is external inventory → never broker-owned.
+    if (key === 'GOT') {
+      const r = await rpcOrNull('get_gotickets_event_listings', { p_tevo_event_id: eventId, p_hours: 26 });
+      const rows = Array.isArray(r && r.data) ? r.data : [];
+      return rows.map(x => ({
+        section: x.section, row: x.row, quantity: x.quantity,
+        retail_price: (x.all_in_price != null && Number(x.all_in_price) > 0 ? x.all_in_price : x.display_price),
+        is_owned: false,
       }));
     }
     // SH / GT / VD via TicketsData
