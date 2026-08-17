@@ -23,8 +23,11 @@ and `evenue.net` is a FORBIDDEN_HOST in that audit like every other source.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
+from collections import Counter
 from typing import Any, Iterable
 
 # Mirrors the other *_client.py modules + scripts/check_readonly.py +
@@ -293,3 +296,181 @@ def group_consecutive(seats: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         b.pop("_key", None)
         b["seat_numbers"] = ",".join(x for x in b["seat_numbers"] if x)
     return blocks
+
+
+# --- eVenue inventory CSV (the box-office export) -------------------------
+# The operator's canonical Paciolan/eVenue source is the "evenue_<org>_<season>_
+# <item>_<ts>.csv" inventory export (e.g. evenue_343_FB26_FB01_...csv). Unlike
+# the DOM scrape above, every row is an ALREADY-GROUPED consecutive-seat block
+# (row/qty/seat_first/seat_last) carrying full pricing + fees, so no
+# gaps-and-islands pass is needed — the export already did it. This parser is
+# the server-side normalizer that turns that (messy) CSV into the payload the
+# paciolan_csv_ingest() RPC saves. It makes NO network calls (RULE 2).
+#
+# The export is quirky and we defend against all of it, positionally (the header
+# has DUPLICATE column names — opponent/venue/event_date/event_time repeat — so
+# a name→index map is unsafe; the layout is a fixed 41 columns):
+#   * cols 25..40 (the block payload) are CLEAN and identically aligned in every
+#     data row — this is the reliable inventory.
+#   * every OTHER data row has its first 20 columns overwritten with the literal
+#     header strings ('host','org_id',…); those "header-junk" rows still carry a
+#     valid block in 25..40, so we keep them.
+#   * org_id (col 1) and event_url (col 8) are row-index-CORRUPTED (they drift
+#     343,344,… / FB01,FB02,…) — we DERIVE org_id from the event_id prefix and
+#     reconstruct the canonical event_url from host/season/item instead.
+#   * the stable event identity (event_id, name, opponent, venue, date, season,
+#     item) is read from the "clean" rows (col 0 ends in 'evenue.net') by mode.
+_CSV_N_COLS = 41
+# Fixed positional indices (do NOT map by header name — names duplicate).
+_C_HOST, _C_ORG, _C_DIST, _C_POLICY, _C_GROUP, _C_SEASON, _C_ITEM = 0, 1, 2, 3, 4, 5, 6
+_C_EVENT_ID, _C_TYPE, _C_EVENT_NAME = 7, 9, 10
+_C_TIME_TBD, _C_DT_LOCAL, _C_DT_UTC, _C_SALE_FROM, _C_SOLD_OUT = 15, 16, 17, 18, 19
+_C_OPPONENT, _C_VENUE, _C_EVENT_DATE, _C_EVENT_TIME = 20, 21, 22, 24
+# Block payload (reliable in every data row).
+_C_ROW, _C_QTY, _C_SEAT_FIRST, _C_SEAT_LAST, _C_SEATS_RANGE = 25, 26, 27, 28, 29
+_C_PRICE_LEVEL, _C_PL_DESC, _C_PRICE_TYPE, _C_PT_DESC = 30, 31, 32, 33
+_C_PRICE, _C_FACILITY_FEE, _C_PER_TICKET_FEE, _C_ALL_IN = 34, 35, 36, 37
+_C_SEAT_KEY_FIRST, _C_SEAT_KEY_LAST, _C_VIEW_URL = 38, 39, 40
+
+
+def _num(v: str | None) -> float | None:
+    """'125' / '17.5' -> float; '' / None / junk -> None."""
+    if v is None:
+        return None
+    v = v.strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+def _int(v: str | None) -> int | None:
+    n = _num(v)
+    return int(n) if n is not None and n == int(n) else None
+
+
+def _bool(v: str | None) -> bool | None:
+    """eVenue writes TRUE/FALSE; be liberal, return None when absent/unknown."""
+    s = (v or "").strip().lower()
+    if s in ("true", "t", "1", "yes", "y"):
+        return True
+    if s in ("false", "f", "0", "no", "n"):
+        return False
+    return None
+
+
+def parse_csv_seat_key(key: str | None) -> dict[str, str | None]:
+    """`100:101:10:1` -> {level:'100', section:'101', row:'10', seat:'1'}.
+
+    The eVenue seat key is `<level>:<section>:<row>:<seat>` (the view-from image
+    p_101 and pl_desc 'Corners 100' confirm 101 = section, 100 = level/deck).
+    Missing trailing parts come back as None; a fully-empty key -> all None."""
+    parts = (key or "").split(":")
+    parts += [None] * (4 - len(parts)) if len(parts) < 4 else []
+    return {"level": parts[0] or None, "section": parts[1] or None,
+            "row": parts[2] or None, "seat": parts[3] or None}
+
+
+def _is_clean_row(row: list[str]) -> bool:
+    """A 'clean' data row starts with the real host (…evenue.net); a
+    'header-junk' row starts with the literal 'host'. Both carry a valid block."""
+    return bool(row) and row[_C_HOST].strip().lower().endswith("evenue.net")
+
+
+def _mode(values: Iterable[str | None]) -> str | None:
+    """Most-common non-empty value (defensive against stray per-row corruption)."""
+    c = Counter(v.strip() for v in values if v and v.strip())
+    return c.most_common(1)[0][0] if c else None
+
+
+def parse_inventory_csv(text: str) -> dict[str, Any]:
+    """Normalize an eVenue inventory CSV into the paciolan_csv_ingest payload.
+
+    Returns {"event": {...}, "blocks": [ {...}, ... ]} where `event` is the
+    single stable event header (identity read from clean rows by mode; org_id
+    derived from the event_id prefix; event_url reconstructed canonically) and
+    `blocks` is one row per already-grouped consecutive-seat block, with the
+    level/section split out of the seat key. Rows without a usable block (no
+    seat_key + no seats_range) are skipped. Raises ValueError on an empty file
+    or a header that isn't the 41-column eVenue layout."""
+    reader = csv.reader(io.StringIO(text))
+    all_rows = [r for r in reader if any((c or "").strip() for c in r)]
+    if not all_rows:
+        raise ValueError("empty CSV")
+    header = all_rows[0]
+    if len(header) != _CSV_N_COLS or header[_C_HOST].strip() != "host":
+        raise ValueError(
+            f"unexpected eVenue layout: {len(header)} cols, "
+            f"col0={header[_C_HOST]!r} (expected 41 cols, 'host')")
+
+    data = [r for r in all_rows[1:] if len(r) == _CSV_N_COLS]
+    clean = [r for r in data if _is_clean_row(r)]
+    # Identity from clean rows (fall back to all data rows if none are clean).
+    ident_src = clean or data
+
+    def col(idx: int) -> str | None:
+        return _mode(r[idx] for r in ident_src)
+
+    event_id = col(_C_EVENT_ID)
+    host = col(_C_HOST)
+    season_cd = col(_C_SEASON)
+    item_cd = col(_C_ITEM)
+    # org_id / event_url are corrupted in the source — derive them.
+    org_id = (event_id.split(":", 1)[0] if event_id and ":" in event_id
+              else col(_C_ORG))
+    event_url = (f"https://{host}/event/{season_cd}/{item_cd}"
+                 if host and season_cd and item_cd else None)
+
+    event = {
+        "host": host,
+        "org_id": org_id,
+        "distributor_id": col(_C_DIST),
+        "policy_cd": col(_C_POLICY),
+        "group_code": col(_C_GROUP),
+        "season_cd": season_cd,
+        "item_cd": item_cd,
+        "event_id": event_id,
+        "event_url": event_url,
+        "type": col(_C_TYPE),
+        "event_name": col(_C_EVENT_NAME),
+        "opponent": col(_C_OPPONENT),
+        "venue": col(_C_VENUE),
+        "event_date": col(_C_EVENT_DATE),
+        "event_time": col(_C_EVENT_TIME),
+        "time_tbd": _bool(col(_C_TIME_TBD)),
+        "event_dt_local": col(_C_DT_LOCAL),
+        "event_dt_utc": col(_C_DT_UTC),
+        "sale_from_dt": col(_C_SALE_FROM),
+        "sold_out": _bool(col(_C_SOLD_OUT)),
+    }
+
+    blocks: list[dict[str, Any]] = []
+    for r in data:
+        seat_key_first = (r[_C_SEAT_KEY_FIRST] or "").strip()
+        seats_range = (r[_C_SEATS_RANGE] or "").strip()
+        if not seat_key_first and not seats_range:
+            continue  # no usable block on this row
+        sk = parse_csv_seat_key(seat_key_first)
+        blocks.append({
+            "level": sk["level"],
+            "section": sk["section"],
+            "row": (r[_C_ROW] or "").strip() or sk["row"],
+            "qty": _int(r[_C_QTY]),
+            "seat_first": (r[_C_SEAT_FIRST] or "").strip() or None,
+            "seat_last": (r[_C_SEAT_LAST] or "").strip() or None,
+            "seats_range": seats_range or None,
+            "price_level": (r[_C_PRICE_LEVEL] or "").strip() or None,
+            "pl_desc": (r[_C_PL_DESC] or "").strip() or None,
+            "price_type": (r[_C_PRICE_TYPE] or "").strip() or None,
+            "pt_desc": (r[_C_PT_DESC] or "").strip() or None,
+            "price_usd": _num(r[_C_PRICE]),
+            "facility_fee_usd": _num(r[_C_FACILITY_FEE]),
+            "per_ticket_fee_usd": _num(r[_C_PER_TICKET_FEE]),
+            "all_in_price_usd": _num(r[_C_ALL_IN]),
+            "seat_key_first": seat_key_first or None,
+            "seat_key_last": (r[_C_SEAT_KEY_LAST] or "").strip() or None,
+            "view_from_section_url": (r[_C_VIEW_URL] or "").strip() or None,
+        })
+    return {"event": event, "blocks": blocks}
