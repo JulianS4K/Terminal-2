@@ -5587,21 +5587,22 @@
   // DB surface; reuses the five existing signed-in RPCs (SH/GT/VD via
   // get_event_td_listings, GOT via get_gotickets_event_listings, EVO via
   // get_event_evo_listings_full). Evidence tiers, strongest first:
+  // The rule (operator definition): fans list on ONE source; brokers distribute
+  // to most or all. So classification is purely cross-source identity:
   //   S  ours          — key matches an EVO row with is_owned
   //   A  broker        — key present on TEvo or GoTickets (broker-only channels;
   //                      fans cannot list there)
   //   B  broker        — same key live on ≥2 of SH/GT/VD (POS multi-market
   //                      distribution footprint)
-  //   P  broker        — SH price-cluster: ≥3 listings at one EXACT price across
-  //                      ≥2 sections (one seller's portfolio/spec pricing — a fan
-  //                      cannot hold inventory in multiple sections)
-  //   C  broker        — 8+ seat block
-  //   D  unknown       — 5-7 seats, no other evidence (broker-shaped)
-  //   E  fan-likely    — single market, ≤4 seats, no broker evidence
-  // Fan is inferred from ABSENCE of broker evidence, so E is a CEILING: each
-  // broker channel added historically reclaimed ~10% of it. GameTime quantities
-  // understate real seat counts (lot size, not seats — the raw seat_numbers array
-  // is not exposed by the RPC), which only makes B-matches rarer = conservative.
+  //   E  fan-likely    — the remains: listed on a single source only
+  // Behavioral tells that LOOK broker but don't prove cross-listing (SH exact
+  // price repeated across ≥2 sections = one seller's portfolio/spec book; 8+
+  // blocks; 5-7 blocks) are surfaced as WARNING FLAGS on fan-likely rows — they
+  // no longer reclassify. Fan is inferred from ABSENCE of cross-source evidence,
+  // so E is a CEILING: each channel added historically reclaimed ~10% of it.
+  // GameTime quantities understate real seat counts (lot size, not seats — the
+  // raw seat_numbers array is not exposed by the RPC) = fewer B-matches =
+  // conservative.
   // Match key = (normalized section, row, qty): section normalized to its
   // trailing numeric token ("Lower 101" / "PRESS 203" → "101" / "203") so the
   // GOT/EVO naming vocabularies join the TD ones.
@@ -5609,10 +5610,14 @@
     S: { label: 'OURS',        cls: 'owned',  group: 'ours',   why: 'matches our own EVO inventory' },
     A: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: 'listed on broker-only channel (TEvo/GoTickets)' },
     B: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: 'same seats live on 2+ retail markets' },
-    P: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: 'identical price across multiple sections (portfolio/spec)' },
-    C: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: '8+ seat block' },
-    D: { label: 'UNKNOWN',     cls: 'warn',   group: 'unknown', why: '5-7 seats, no channel evidence' },
-    E: { label: 'FAN-LIKELY',  cls: 'pos',    group: 'fan',    why: 'single market, small, no broker evidence' },
+    E: { label: 'FAN-LIKELY',  cls: 'pos',    group: 'fan',    why: 'single source only' },
+  };
+  // Warning flags on fan-likely rows: broker-shaped behavior that stops short of
+  // proven cross-listing. Shown in the evidence column, never reclassifies.
+  const FB_FLAGS = {
+    cluster: 'same exact price in 2+ sections (portfolio/spec?)',
+    block8:  '8+ seat block',
+    block5:  '5-7 seat block',
   };
 
   function fbNormSec(s) {
@@ -5692,12 +5697,16 @@
         if (evoKeys.get(k) === true) tier = 'S';
         else if (evoKeys.has(k) || gotKeys.has(k)) tier = 'A';
         else if (onOthers >= 1) tier = 'B';
-        else if (pxe && pxe.n >= 3 && pxe.secs.size >= 2) tier = 'P';
-        else if (+r.quantity >= 8) tier = 'C';
-        else if (+r.quantity >= 5) tier = 'D';
         else tier = 'E';
+        // Broker-shaped tells on the single-source remains — flags, not classes.
+        const flags = [];
+        if (tier === 'E') {
+          if (pxe && pxe.n >= 3 && pxe.secs.size >= 2) flags.push('cluster');
+          if (+r.quantity >= 8) flags.push('block8');
+          else if (+r.quantity >= 5) flags.push('block5');
+        }
         out.push({ src: p, sec: r.section, row: r.row, qty: r.quantity,
-                   px: r.list_price, allin: r.price_with_fees, tier });
+                   px: r.list_price, allin: r.price_with_fees, tier, flags });
       });
     }
     _fbState.rows = out;
@@ -5729,9 +5738,12 @@
     const bySrc = {};
     rows.forEach(r => {
       const g = FB_TIERS[r.tier].group;
-      const e = bySrc[r.src] || (bySrc[r.src] = { n: 0, tix: 0, fan: 0, broker: 0, unknown: 0, ours: 0, fanTix: 0 });
+      const e = bySrc[r.src] || (bySrc[r.src] = { n: 0, tix: 0, fan: 0, broker: 0, ours: 0, fanTix: 0, flagged: 0 });
       e.n++; e.tix += (+r.qty || 0); e[g]++;
-      if (g === 'fan') e.fanTix += (+r.qty || 0);
+      if (g === 'fan') {
+        e.fanTix += (+r.qty || 0);
+        if (r.flags && r.flags.length) e.flagged++;
+      }
     });
     const cards = ['SH', 'GT', 'VD'].filter(p => bySrc[p]).map(p => {
       const e = bySrc[p];
@@ -5740,18 +5752,20 @@
       return `<div class="fb-card">
         <div class="fb-card-head"><span class="badge td-${p.toLowerCase()}">${p}</span>
           <span class="muted small">${e.n} listings · ${T.fmtNum(e.tix)} tix</span></div>
-        <div class="fb-bar">${seg('fb-ours', e.ours)}${seg('fb-broker', e.broker)}${seg('fb-unknown', e.unknown)}${seg('fb-fan', e.fan)}</div>
+        <div class="fb-bar">${seg('fb-ours', e.ours)}${seg('fb-broker', e.broker)}${seg('fb-fan', e.fan)}</div>
         <div class="fb-legend muted small">
-          broker <b>${pct(e.broker)}%</b> · fan-likely <b>${pct(e.fan)}%</b>` +
+          cross-listed (broker) <b>${pct(e.broker)}%</b> · single-source (fan-likely) <b>${pct(e.fan)}%</b>` +
           (e.ours ? ` · ours <b>${pct(e.ours)}%</b>` : '') +
-          (e.unknown ? ` · unk <b>${pct(e.unknown)}%</b>` : '') +
+          (e.flagged ? ` · <span class="fb-flag-note">⚠ ${e.flagged} flagged</span>` : '') +
         `</div></div>`;
     }).join('');
     summary.innerHTML = `<div class="fb-cards">${cards}</div>
-      <div class="fb-caveat muted small">Fan-likely = <b>no broker evidence found</b> (absent from TEvo + GoTickets,
-      single retail market, unclustered price, &lt;5 seats) — a ceiling, not a confirmation. EVO listings are broker
-      by construction and are used as ground truth, not classified. GameTime quantities are lot sizes (understated),
-      so its cross-market matches run conservative. TM/TP/SG excluded (operator).</div>`;
+      <div class="fb-caveat muted small"><b>Rule:</b> fans list on one source; brokers distribute to most or all.
+      Cross-listed (same section·row·qty on TEvo, GoTickets, or 2+ of SH/GT/VD) = <b>broker</b>; the remains =
+      <b>fan-likely</b> — a ceiling, not a confirmation (each source added reclaims part of it). ⚠ flags mark
+      single-source rows with broker-shaped behavior (portfolio pricing, big blocks) that stops short of proven
+      cross-listing. EVO is broker by construction (ground truth, not classified). GameTime qty = lot size
+      (understated → conservative matches). TM/TP/SG excluded (operator).</div>`;
   }
 
   function renderFanBrokerFilters() {
@@ -5764,7 +5778,7 @@
     host.innerHTML = `<div class="fb-chiprow">
       ${btn('src', 'all', 'All sources')}${btn('src', 'SH', 'SH')}${btn('src', 'GT', 'GT')}${btn('src', 'VD', 'VD')}
       <span class="fb-chip-gap"></span>
-      ${btn('tier', 'all', 'All tiers')}${btn('tier', 'fan', 'Fan-likely')}${btn('tier', 'broker', 'Broker')}${btn('tier', 'unknown', 'Unknown')}${btn('tier', 'ours', 'Ours')}
+      ${btn('tier', 'all', 'All')}${btn('tier', 'fan', 'Fan-likely')}${btn('tier', 'broker', 'Broker')}${btn('tier', 'ours', 'Ours')}
     </div>`;
     if (!host.dataset.wired) {
       host.dataset.wired = '1';
@@ -5785,10 +5799,13 @@
       (_fbState.src === 'all' || r.src === _fbState.src) &&
       (_fbState.tier === 'all' || FB_TIERS[r.tier].group === _fbState.tier));
     if (!rows.length) { body.innerHTML = '<div class="empty">No listings match the current filter.</div>'; return; }
-    // Fan-likely first (that's what the tab is for), then unknown, broker, ours;
-    // price ascending within a group.
-    const gOrder = { fan: 0, unknown: 1, broker: 2, ours: 3 };
-    rows.sort((a, b) => (gOrder[FB_TIERS[a.tier].group] - gOrder[FB_TIERS[b.tier].group]) || (+a.px - +b.px));
+    // Fan-likely first (that's what the tab is for) — unflagged (cleanest fan
+    // candidates) ahead of flagged — then broker, ours; price ascending within.
+    const gOrder = { fan: 0, broker: 1, ours: 2 };
+    rows.sort((a, b) =>
+      (gOrder[FB_TIERS[a.tier].group] - gOrder[FB_TIERS[b.tier].group]) ||
+      ((a.flags && a.flags.length ? 1 : 0) - (b.flags && b.flags.length ? 1 : 0)) ||
+      (+a.px - +b.px));
     const host = document.createElement('div');
     host.className = 'full-list-host';
     const tbl = document.createElement('table');
@@ -5813,7 +5830,8 @@
         <td class="num">${$p(r.px)}</td>
         <td class="num">${$p(r.allin)}</td>
         <td><span class="pill fb-pill-${t.group}">${t.label}</span></td>
-        <td class="muted small">${t.why}</td>`;
+        <td class="muted small">${t.why}${(r.flags || []).map(f =>
+          ` <span class="pill fb-pill-flag" title="${FB_FLAGS[f]}">⚠ ${FB_FLAGS[f]}</span>`).join('')}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
