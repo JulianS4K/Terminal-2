@@ -4078,6 +4078,7 @@
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'got-listings': false,  // GoTickets (GOT) — distinct from GameTime (gt-listings)
+    'fan-broker': false,    // per-source fan/broker classifier (client-side, 5 RPCs)
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
     'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
     'our-orders': false, 'alerts': false, 'cast': false, 'predictions': false,
@@ -4110,6 +4111,9 @@
       } else if (tabId === 'got-listings' && !_tabState.loaded['got-listings']) {
         _tabState.loaded['got-listings'] = true;
         await loadGoticketsListings(eventId);
+      } else if (tabId === 'fan-broker' && !_tabState.loaded['fan-broker']) {
+        _tabState.loaded['fan-broker'] = true;
+        await loadFanBroker(eventId);
       } else if (tabId === 'tm-listings' && !_tabState.loaded['tm-listings']) {
         _tabState.loaded['tm-listings'] = true;
         await loadTdPlatformListings(eventId, 'TM');
@@ -4173,6 +4177,7 @@
       'gt-listings':  'paneGtListings',
       'vd-listings':  'paneVdListings',
       'got-listings': 'paneGotListings',
+      'fan-broker':   'paneFanBroker',
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'seatdata-sales': 'paneSeatdataSales',
@@ -5575,6 +5580,245 @@
     });
     host.appendChild(tbl);
     if (body) { body.innerHTML = ''; body.appendChild(host); }
+  }
+
+  // ---------- Fan vs Broker (fan-broker tab) ----------
+  // Client-side seller-type classifier over the per-source listing feeds — no new
+  // DB surface; reuses the five existing signed-in RPCs (SH/GT/VD via
+  // get_event_td_listings, GOT via get_gotickets_event_listings, EVO via
+  // get_event_evo_listings_full). Evidence tiers, strongest first:
+  //   S  ours          — key matches an EVO row with is_owned
+  //   A  broker        — key present on TEvo or GoTickets (broker-only channels;
+  //                      fans cannot list there)
+  //   B  broker        — same key live on ≥2 of SH/GT/VD (POS multi-market
+  //                      distribution footprint)
+  //   P  broker        — SH price-cluster: ≥3 listings at one EXACT price across
+  //                      ≥2 sections (one seller's portfolio/spec pricing — a fan
+  //                      cannot hold inventory in multiple sections)
+  //   C  broker        — 8+ seat block
+  //   D  unknown       — 5-7 seats, no other evidence (broker-shaped)
+  //   E  fan-likely    — single market, ≤4 seats, no broker evidence
+  // Fan is inferred from ABSENCE of broker evidence, so E is a CEILING: each
+  // broker channel added historically reclaimed ~10% of it. GameTime quantities
+  // understate real seat counts (lot size, not seats — the raw seat_numbers array
+  // is not exposed by the RPC), which only makes B-matches rarer = conservative.
+  // Match key = (normalized section, row, qty): section normalized to its
+  // trailing numeric token ("Lower 101" / "PRESS 203" → "101" / "203") so the
+  // GOT/EVO naming vocabularies join the TD ones.
+  const FB_TIERS = {
+    S: { label: 'OURS',        cls: 'owned',  group: 'ours',   why: 'matches our own EVO inventory' },
+    A: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: 'listed on broker-only channel (TEvo/GoTickets)' },
+    B: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: 'same seats live on 2+ retail markets' },
+    P: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: 'identical price across multiple sections (portfolio/spec)' },
+    C: { label: 'BROKER',      cls: 'neg',    group: 'broker', why: '8+ seat block' },
+    D: { label: 'UNKNOWN',     cls: 'warn',   group: 'unknown', why: '5-7 seats, no channel evidence' },
+    E: { label: 'FAN-LIKELY',  cls: 'pos',    group: 'fan',    why: 'single market, small, no broker evidence' },
+  };
+
+  function fbNormSec(s) {
+    const up = String(s == null ? '' : s).trim().toUpperCase();
+    if (!up) return '';
+    const m = /\d/.test(up) ? up.match(/(\d+[A-Z]?)\s*$/) : null;
+    return m ? m[1] : up;
+  }
+  function fbKey(sec, row, qty) {
+    return fbNormSec(sec) + '|' + String(row == null ? '' : row).trim().toUpperCase() + '|' + (+qty || 0);
+  }
+
+  const _fbState = { rows: [], src: 'all', tier: 'all' };
+
+  async function loadFanBroker(eventId) {
+    const body = document.getElementById('fanBrokerBody');
+    const meta = document.getElementById('fanBrokerMeta');
+    const summary = document.getElementById('fanBrokerSummary');
+    if (body) body.innerHTML = '<div class="empty">Classifying listings across sources…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      return;
+    }
+    const t0 = performance.now();
+    // All five feeds in parallel. Each failure degrades to an empty set (the
+    // classifier stays honest: fewer channels = more fan-likely = wider ceiling,
+    // and the caveat line names any source that was unavailable).
+    const td = (plat) => Auth.client
+      .rpc('get_event_td_listings', { p_tevo_event_id: eventId, p_platform: plat, p_hours: 26 })
+      .then(r => ({ plat, rows: r.error ? null : (r.data || []) }));
+    const [sh, gt, vd, got, evo] = await Promise.all([
+      td('SH'), td('GT'), td('VD'),
+      rpcOrNull('get_gotickets_event_listings', { p_tevo_event_id: eventId, p_hours: 26 })
+        .then(r => (r.error ? null : (r.data || []))),
+      rpcOrNull('get_event_evo_listings_full', { p_event_id: eventId })
+        .then(r => (r.error ? null : ((r.data && r.data.rows) || []))),
+    ]);
+    const elapsed = performance.now() - t0;
+
+    // Broker-channel key sets. EVO rows span 7d — dedupe on key; owned wins.
+    const evoKeys = new Map();
+    (evo || []).forEach(r => {
+      if (String(r.row || '').trim().toLowerCase() === 'parking') return;
+      const k = fbKey(r.section, r.row, r.quantity);
+      if (!evoKeys.get(k)) evoKeys.set(k, !!r.is_owned);
+      else if (r.is_owned) evoKeys.set(k, true);
+    });
+    const gotKeys = new Set((got || []).map(r => fbKey(r.section, r.row, r.quantity)));
+
+    // Retail keys per source (for the multi-market test).
+    const srcRows = { SH: sh.rows, GT: gt.rows, VD: vd.rows };
+    const srcKeys = {};
+    for (const p of ['SH', 'GT', 'VD']) {
+      srcKeys[p] = new Set((srcRows[p] || [])
+        .filter(r => !r.is_parking)
+        .map(r => fbKey(r.section, r.row, r.quantity)));
+    }
+    // SH price clusters: exact list_price shared by ≥3 listings across ≥2 sections.
+    const shPx = new Map();
+    (sh.rows || []).filter(r => !r.is_parking).forEach(r => {
+      const px = String(r.list_price);
+      const e = shPx.get(px) || { n: 0, secs: new Set() };
+      e.n++; e.secs.add(fbNormSec(r.section));
+      shPx.set(px, e);
+    });
+
+    const out = [];
+    for (const p of ['SH', 'GT', 'VD']) {
+      (srcRows[p] || []).forEach(r => {
+        if (r.is_parking) return;
+        const k = fbKey(r.section, r.row, r.quantity);
+        const onOthers = ['SH', 'GT', 'VD'].filter(q => q !== p && srcKeys[q].has(k)).length;
+        const pxe = p === 'SH' ? shPx.get(String(r.list_price)) : null;
+        let tier;
+        if (evoKeys.get(k) === true) tier = 'S';
+        else if (evoKeys.has(k) || gotKeys.has(k)) tier = 'A';
+        else if (onOthers >= 1) tier = 'B';
+        else if (pxe && pxe.n >= 3 && pxe.secs.size >= 2) tier = 'P';
+        else if (+r.quantity >= 8) tier = 'C';
+        else if (+r.quantity >= 5) tier = 'D';
+        else tier = 'E';
+        out.push({ src: p, sec: r.section, row: r.row, qty: r.quantity,
+                   px: r.list_price, allin: r.price_with_fees, tier });
+      });
+    }
+    _fbState.rows = out;
+    _fbState.src = 'all'; _fbState.tier = 'all';
+
+    const chip = document.getElementById('tabCountFanBroker');
+    if (chip) chip.textContent = out.length ? String(out.length) : '';
+    if (!out.length) {
+      if (body) body.innerHTML = '<div class="empty">No SH/GT/VD listings in the latest batches (last 26h) to classify.</div>';
+      if (meta) meta.textContent = '0 rows';
+      if (summary) summary.innerHTML = '';
+      return;
+    }
+    const missing = [];
+    if (evo == null) missing.push('EVO');
+    if (got == null) missing.push('GoTickets');
+    for (const s of [sh, gt, vd]) if (s.rows == null) missing.push(s.plat);
+    if (meta) {
+      meta.textContent = `${out.length} listings · ${elapsed.toFixed(0)}ms` +
+        (missing.length ? ` · ${missing.join('/')} unavailable — fan ceiling widens` : '');
+    }
+    renderFanBrokerSummary(summary, out);
+    renderFanBrokerFilters();
+    renderFanBrokerTable();
+  }
+
+  function renderFanBrokerSummary(summary, rows) {
+    if (!summary) return;
+    const bySrc = {};
+    rows.forEach(r => {
+      const g = FB_TIERS[r.tier].group;
+      const e = bySrc[r.src] || (bySrc[r.src] = { n: 0, tix: 0, fan: 0, broker: 0, unknown: 0, ours: 0, fanTix: 0 });
+      e.n++; e.tix += (+r.qty || 0); e[g]++;
+      if (g === 'fan') e.fanTix += (+r.qty || 0);
+    });
+    const cards = ['SH', 'GT', 'VD'].filter(p => bySrc[p]).map(p => {
+      const e = bySrc[p];
+      const pct = (x) => Math.round(100 * x / e.n);
+      const seg = (cls, n) => (n ? `<span class="fb-seg ${cls}" style="flex:${n}" title="${n}"></span>` : '');
+      return `<div class="fb-card">
+        <div class="fb-card-head"><span class="badge td-${p.toLowerCase()}">${p}</span>
+          <span class="muted small">${e.n} listings · ${T.fmtNum(e.tix)} tix</span></div>
+        <div class="fb-bar">${seg('fb-ours', e.ours)}${seg('fb-broker', e.broker)}${seg('fb-unknown', e.unknown)}${seg('fb-fan', e.fan)}</div>
+        <div class="fb-legend muted small">
+          broker <b>${pct(e.broker)}%</b> · fan-likely <b>${pct(e.fan)}%</b>` +
+          (e.ours ? ` · ours <b>${pct(e.ours)}%</b>` : '') +
+          (e.unknown ? ` · unk <b>${pct(e.unknown)}%</b>` : '') +
+        `</div></div>`;
+    }).join('');
+    summary.innerHTML = `<div class="fb-cards">${cards}</div>
+      <div class="fb-caveat muted small">Fan-likely = <b>no broker evidence found</b> (absent from TEvo + GoTickets,
+      single retail market, unclustered price, &lt;5 seats) — a ceiling, not a confirmation. EVO listings are broker
+      by construction and are used as ground truth, not classified. GameTime quantities are lot sizes (understated),
+      so its cross-market matches run conservative. TM/TP/SG excluded (operator).</div>`;
+  }
+
+  function renderFanBrokerFilters() {
+    const host = document.getElementById('fanBrokerFilters');
+    if (!host) return;
+    const btn = (kind, val, label) => {
+      const on = _fbState[kind] === val;
+      return `<button class="fb-chip${on ? ' active' : ''}" data-kind="${kind}" data-val="${val}">${label}</button>`;
+    };
+    host.innerHTML = `<div class="fb-chiprow">
+      ${btn('src', 'all', 'All sources')}${btn('src', 'SH', 'SH')}${btn('src', 'GT', 'GT')}${btn('src', 'VD', 'VD')}
+      <span class="fb-chip-gap"></span>
+      ${btn('tier', 'all', 'All tiers')}${btn('tier', 'fan', 'Fan-likely')}${btn('tier', 'broker', 'Broker')}${btn('tier', 'unknown', 'Unknown')}${btn('tier', 'ours', 'Ours')}
+    </div>`;
+    if (!host.dataset.wired) {
+      host.dataset.wired = '1';
+      host.addEventListener('click', (e) => {
+        const b = e.target.closest('.fb-chip');
+        if (!b) return;
+        _fbState[b.dataset.kind] = b.dataset.val;
+        renderFanBrokerFilters();
+        renderFanBrokerTable();
+      });
+    }
+  }
+
+  function renderFanBrokerTable() {
+    const body = document.getElementById('fanBrokerBody');
+    if (!body) return;
+    const rows = _fbState.rows.filter(r =>
+      (_fbState.src === 'all' || r.src === _fbState.src) &&
+      (_fbState.tier === 'all' || FB_TIERS[r.tier].group === _fbState.tier));
+    if (!rows.length) { body.innerHTML = '<div class="empty">No listings match the current filter.</div>'; return; }
+    // Fan-likely first (that's what the tab is for), then unknown, broker, ours;
+    // price ascending within a group.
+    const gOrder = { fan: 0, unknown: 1, broker: 2, ours: 3 };
+    rows.sort((a, b) => (gOrder[FB_TIERS[a.tier].group] - gOrder[FB_TIERS[b.tier].group]) || (+a.px - +b.px));
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl td-listings-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Src</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        <th>Class</th><th>Evidence</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    const $p = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    rows.forEach(r => {
+      const t = FB_TIERS[r.tier];
+      const tr = document.createElement('tr');
+      if (r.tier === 'S') tr.className = 'owned-row';
+      tr.innerHTML = `
+        <td><span class="badge td-${r.src.toLowerCase()}">${r.src}</span></td>
+        <td>${escapeHtml(r.sec || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${r.qty != null ? T.fmtNum(+r.qty) : '—'}</td>
+        <td class="num">${$p(r.px)}</td>
+        <td class="num">${$p(r.allin)}</td>
+        <td><span class="pill fb-pill-${t.group}">${t.label}</span></td>
+        <td class="muted small">${t.why}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
   }
 
   // Per-source row-count chips for the 3 top-level TD tabs (SH/GT/VD). Reads the

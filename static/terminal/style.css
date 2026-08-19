@@ -2858,3 +2858,30 @@ table.deals-tbl td.deals-open { text-align: center; }
 }
 .gt-open-btn:hover { border-color: var(--muted); color: #7dd3fc; }
 .gt-open-btn:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 1px; }
+
+/* ---------- Fan vs Broker tab (event.js loadFanBroker) ---------- */
+.fb-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 10px 0 4px; }
+.fb-card { border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 10px 12px; }
+.fb-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.fb-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--panel-2); }
+.fb-seg { display: block; min-width: 2px; }
+.fb-seg.fb-ours    { background: var(--accent); }
+.fb-seg.fb-broker  { background: var(--neg); opacity: .75; }
+.fb-seg.fb-unknown { background: var(--warn); opacity: .6; }
+.fb-seg.fb-fan     { background: var(--pos); opacity: .8; }
+.fb-legend { margin-top: 6px; }
+.fb-legend b { color: var(--text); font-family: var(--mono); }
+.fb-caveat { border-left: 3px solid var(--warn); background: var(--shade); border-radius: 0 6px 6px 0;
+             padding: 8px 12px; margin: 10px 0 4px; line-height: 1.5; max-width: 90ch; }
+.fb-caveat b { color: var(--text); }
+.fb-chiprow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0; }
+.fb-chip-gap { width: 14px; }
+.fb-chip { font-family: var(--mono); font-size: 11px; font-weight: 600; line-height: 1;
+           color: var(--muted); background: var(--panel); border: 1px solid var(--line);
+           border-radius: 12px; padding: 5px 10px; cursor: pointer; }
+.fb-chip:hover { border-color: var(--muted); color: var(--text); }
+.fb-chip.active { color: var(--accent); border-color: var(--accent); background: var(--shade); }
+.full-list-tbl .pill.fb-pill-fan     { color: var(--pos); border-color: var(--pos); }
+.full-list-tbl .pill.fb-pill-broker  { color: var(--neg); border-color: var(--neg); }
+.full-list-tbl .pill.fb-pill-unknown { color: var(--warn); border-color: var(--warn); }
+.full-list-tbl .pill.fb-pill-ours    { color: var(--accent); border-color: var(--accent); }
