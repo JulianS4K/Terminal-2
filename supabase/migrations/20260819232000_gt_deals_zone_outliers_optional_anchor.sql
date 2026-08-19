@@ -46,8 +46,8 @@
 -- the 13-arg signature exactly — replacing rather than overloading, so `scan_gotickets_deals(30)`
 -- stays unambiguous. Applying this file also brings the tree back in sync with prod.
 --
--- Already applied to prod · via MCP 2026-08-19 23:16 UTC + the emeta name/date amendment at
---   23:22 UTC (operator-directed). Deployed scan_gotickets_deals md5 7ca714b66293b158dd137fbd2c49a2dc
+-- Already applied to prod · via MCP 2026-08-19 23:16 UTC, + the emeta name/date fallback at
+--   23:22 UTC and the upsert name/date refresh at 23:26 UTC. Deployed scan_gotickets_deals md5 da949a2506380bdc6fec661473b3f795
 --   and get_deals_feed md5 abaf9a4f467fdb863a372b01d708d02a both match the locally tested build
 --   byte-for-byte. First prod run: 30 events scanned in 3.2s (was timing out at 50s), 24 zone
 --   outliers, all 24 anchor-less — i.e. every one of them invisible under the old rule.
@@ -380,6 +380,10 @@ BEGIN
     FROM _deals
     ON CONFLICT (tevo_event_id, gt_listing_id) DO UPDATE SET
       gt_event_id=excluded.gt_event_id,
+      -- name/date must refresh too: they were INSERT-only, so a row that first appeared while
+      -- its event had no SG canonical row (or was renamed/rescheduled) kept a stale value for
+      -- the life of the row — the upsert path is the only one a re-seen listing ever takes.
+      event_name=excluded.event_name, event_date=excluded.event_date,
       gt_price=excluded.gt_price,
       zone_median=excluded.zone_median, zone_n=excluded.zone_n, vs_zone_pct=excluded.vs_zone_pct,
       section_median=excluded.section_median, section_n=excluded.section_n,
