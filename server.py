@@ -1146,6 +1146,14 @@ from routers.axs import build_axs_router  # noqa: E402
 
 app.include_router(build_axs_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
+# routers/fan_listings.py — outward fan-listings API: cross-source seller-type
+# classification (fans list on one source; brokers on most/all) served as JSON.
+# Read-only over our own snapshot tables; twin of the terminal's Fan vs Broker
+# tab (event.js computeFanBroker — keep the rules in sync).
+from routers.fan_listings import build_fan_listings_router  # noqa: E402
+
+app.include_router(build_fan_listings_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+
 # routers/paciolan.py — Paciolan/eVenue primary box-office inventory, browser-
 # extension-sourced (paciolan_extension/). POST /api/paciolan/ingest gated by a
 # shared X-Ingest-Secret (never service_role); read routes serve

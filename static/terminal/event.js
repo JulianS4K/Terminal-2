@@ -4079,6 +4079,7 @@
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
     'got-listings': false,  // GoTickets (GOT) — distinct from GameTime (gt-listings)
     'fan-broker': false,    // per-source fan/broker classifier (client-side, 5 RPCs)
+    'fan-listings': false,  // fan-likely set alone (mirrors /api/event/{id}/fan-listings)
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
     'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
     'our-orders': false, 'alerts': false, 'cast': false, 'predictions': false,
@@ -4114,6 +4115,9 @@
       } else if (tabId === 'fan-broker' && !_tabState.loaded['fan-broker']) {
         _tabState.loaded['fan-broker'] = true;
         await loadFanBroker(eventId);
+      } else if (tabId === 'fan-listings' && !_tabState.loaded['fan-listings']) {
+        _tabState.loaded['fan-listings'] = true;
+        await loadFanListings(eventId);
       } else if (tabId === 'tm-listings' && !_tabState.loaded['tm-listings']) {
         _tabState.loaded['tm-listings'] = true;
         await loadTdPlatformListings(eventId, 'TM');
@@ -4178,6 +4182,7 @@
       'vd-listings':  'paneVdListings',
       'got-listings': 'paneGotListings',
       'fan-broker':   'paneFanBroker',
+      'fan-listings': 'paneFanListings',
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'seatdata-sales': 'paneSeatdataSales',
@@ -5889,6 +5894,80 @@
         <td><span class="pill fb-pill-${t.group}">${t.label}</span></td>
         <td class="muted small">${t.why}${(r.flags || []).map(f =>
           ` <span class="pill fb-pill-flag" title="${FB_FLAGS[f]}">⚠ ${FB_FLAGS[f]}</span>`).join('')}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
+  // ---------- Fan Listings (fan-listings tab) ----------
+  // The fan-likely set alone — the single-source remains of the classifier —
+  // cleanest candidates (no warning flags) first. This section mirrors the
+  // outward API (GET /api/event/{id}/fan-listings, routers/fan_listings.py):
+  // same rule, same flags, so what external consumers pull is what shows here.
+  async function loadFanListings(eventId) {
+    const body = document.getElementById('fanListingsBody');
+    const meta = document.getElementById('fanListingsMeta');
+    const apiEl = document.getElementById('fanListingsApi');
+    if (body) body.innerHTML = '<div class="empty">Finding fan-likely listings…</div>';
+    if (meta) meta.textContent = 'loading…';
+    if (apiEl) {
+      const apiPath = `/api/event/${encodeURIComponent(eventId)}/fan-listings`;
+      apiEl.innerHTML = `<div class="fb-caveat muted small"><b>Outward API:</b>
+        <code>GET ${apiPath}</code> — same classification as this table (auth
+        required; <code>?include=all</code> for every class). Read-only serve of
+        our own snapshot data; nothing is pushed to any marketplace.</div>`;
+    }
+    const d = await computeFanBroker(eventId).catch(() => null);
+    if (!d) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    const fans = d.rows.filter(r => r.tier === 'E');
+    const chip = document.getElementById('tabCountFanListings');
+    if (chip) chip.textContent = fans.length ? String(fans.length) : '';
+    if (!fans.length) {
+      if (body) body.innerHTML = '<div class="empty">No fan-likely listings — every classified listing has cross-source (broker) evidence.</div>';
+      if (meta) meta.textContent = '0 fan-likely';
+      return;
+    }
+    const tix = fans.reduce((s, r) => s + (+r.qty || 0), 0);
+    const clean = fans.filter(r => !(r.flags && r.flags.length)).length;
+    if (meta) {
+      meta.textContent = `${fans.length} fan-likely · ${T.fmtNum(tix)} tix · ` +
+        `${clean} clean / ${fans.length - clean} flagged` +
+        (d.missing.length ? ` · ${d.missing.join('/')} unavailable — ceiling widens` : '');
+    }
+    fans.sort((a, b) =>
+      ((a.flags && a.flags.length ? 1 : 0) - (b.flags && b.flags.length ? 1 : 0)) ||
+      (+a.px - +b.px));
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl td-listings-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Src</th><th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        <th>Flags</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    const $p = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    fans.forEach(r => {
+      const tr = document.createElement('tr');
+      const flagHtml = (r.flags || []).length
+        ? r.flags.map(f => `<span class="pill fb-pill-flag" title="${FB_FLAGS[f]}">⚠ ${FB_FLAGS[f]}</span>`).join(' ')
+        : '<span class="pill fb-pill-fan">clean</span>';
+      tr.innerHTML = `
+        <td><span class="badge td-${r.src.toLowerCase()}">${r.src}</span></td>
+        <td>${escapeHtml(r.sec || '—')}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${r.qty != null ? T.fmtNum(+r.qty) : '—'}</td>
+        <td class="num">${$p(r.px)}</td>
+        <td class="num">${$p(r.allin)}</td>
+        <td class="muted small">${flagHtml}</td>`;
       tb.appendChild(tr);
     });
     host.appendChild(tbl);
