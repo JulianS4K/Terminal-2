@@ -5441,12 +5441,17 @@
       return;
     }
     const t0 = performance.now();
+    // Shared fan/broker classification kicked in parallel (SH/GT/VD only — TM is
+    // excluded from the classifier). Failure degrades to no Class column.
+    const fbPromise = (platform === 'SH' || platform === 'GT' || platform === 'VD')
+      ? computeFanBroker(eventId).catch(() => null) : null;
     // ticketsdata_listings_snapshots is keyed by each platform's OWN TD event id, not tevo.
     // RPC maps tevo -> TD-event-id (ticketsdata_event_xref <- aq_event_map <- sg_events_canonical)
     // and returns the latest 15-min batch, non-parking, price-sorted. (RPC get_event_td_listings)
     const res = await Auth.client.rpc('get_event_td_listings', {
       p_tevo_event_id: eventId, p_platform: platform, p_hours: 26
     });
+    const fb = fbPromise ? await fbPromise : null;
     const elapsed = performance.now() - t0;
     if (res.error) {
       if (body) body.innerHTML = `<div class="empty">error: ${escapeHtml(res.error.message)}</div>`;
@@ -5483,7 +5488,16 @@
         const s = statFor(rows);
         line = `${rows.length} rows · get-in ${$r(s.getIn)} · med ${$r(s.med)}`;
       }
-      meta.textContent = `${line} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+      let fbLine = '';
+      if (fb) {
+        let fan = 0, broker = 0, oursN = 0;
+        rows.forEach(r => {
+          const t = fb.byKey.get(platform + '|' + fbKey(r.section, r.row, r.quantity));
+          if (t === 'E') fan++; else if (t === 'A' || t === 'B') broker++; else if (t === 'S') oursN++;
+        });
+        fbLine = ` · broker ${broker} / fan-likely ${fan}` + (oursN ? ` / ours ${oursN}` : '');
+      }
+      meta.textContent = `${line}${fbLine} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
     }
 
     const host = document.createElement('div');
@@ -5495,6 +5509,7 @@
         <th>Section</th><th>Row</th>
         <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
         ${hasInv ? '<th>Inv</th>' : ''}
+        ${fb ? '<th>Class</th>' : ''}
         <th>Captured</th>
       </tr></thead><tbody></tbody>`;
     const tb = tbl.querySelector('tbody');
@@ -5504,6 +5519,24 @@
       // Inv column: only when the platform carries the split (TM). Mapped to two
       // safe literals (Face/Resale) — not raw data — so no escaping needed.
       const invCell = hasInv ? `<td>${r.inventory_type === 'resale' ? 'Resale' : 'Face'}</td>` : '';
+      // Class column (SH/GT/VD): tier from the shared fan/broker classifier —
+      // pill + flag literals only, no raw data. See computeFanBroker.
+      let fbCell = '';
+      if (fb) {
+        const tier = fb.byKey.get(platform + '|' + fbKey(r.section, r.row, r.quantity));
+        if (!tier) fbCell = '<td class="muted">—</td>';
+        else {
+          const t = FB_TIERS[tier];
+          let flagHtml = '';
+          if (tier === 'E') {
+            const fl = [];
+            if (platform === 'SH' && fb.shClusters.has(String(r.list_price))) fl.push('cluster');
+            if (+r.quantity >= 8) fl.push('block8'); else if (+r.quantity >= 5) fl.push('block5');
+            flagHtml = fl.map(f => ` <span class="pill fb-pill-flag" title="${FB_FLAGS[f]}">⚠</span>`).join('');
+          }
+          fbCell = `<td><span class="pill fb-pill-${t.group}">${t.label}</span>${flagHtml}</td>`;
+        }
+      }
       tr.innerHTML = `
         <td>${escapeHtml(r.section || '—')}</td>
         <td>${escapeHtml(r.row || '—')}</td>
@@ -5511,6 +5544,7 @@
         <td class="num">${$p(r.list_price)}</td>
         <td class="num">${$p(r.price_with_fees)}</td>
         ${invCell}
+        ${fbCell}
         <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
       tb.appendChild(tr);
     });
@@ -5630,19 +5664,18 @@
     return fbNormSec(sec) + '|' + String(row == null ? '' : row).trim().toUpperCase() + '|' + (+qty || 0);
   }
 
-  const _fbState = { rows: [], src: 'all', tier: 'all' };
+  const _fbState = { rows: [], src: 'all', tier: 'all', eventId: null, promise: null };
 
-  async function loadFanBroker(eventId) {
-    const body = document.getElementById('fanBrokerBody');
-    const meta = document.getElementById('fanBrokerMeta');
-    const summary = document.getElementById('fanBrokerSummary');
-    if (body) body.innerHTML = '<div class="empty">Classifying listings across sources…</div>';
-    if (meta) meta.textContent = 'loading…';
+  // Shared classification — computed ONCE per event and reused by the Fan vs
+  // Broker tab AND the per-source listing tabs (their Class column). Returns a
+  // cached promise; resolves null when not signed in, else
+  // { rows, byKey, shClusters, missing, elapsed }.
+  function computeFanBroker(eventId) {
+    if (_fbState.promise && _fbState.eventId === eventId) return _fbState.promise;
+    _fbState.eventId = eventId;
+    _fbState.promise = (async () => {
     const Auth = window.TerminalAuth;
-    if (!Auth || !Auth.client || !Auth.getAccessToken()) {
-      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
-      return;
-    }
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return null;
     const t0 = performance.now();
     // All five feeds in parallel. Each failure degrades to an empty set (the
     // classifier stays honest: fewer channels = more fan-likely = wider ceiling,
@@ -5709,6 +5742,34 @@
                    px: r.list_price, allin: r.price_with_fees, tier, flags });
       });
     }
+    const missing = [];
+    if (evo == null) missing.push('EVO');
+    if (got == null) missing.push('GoTickets');
+    for (const s of [sh, gt, vd]) if (s.rows == null) missing.push(s.plat);
+    // Key-level class lookup for the per-source tabs; the SH cluster price set
+    // is kept so those tabs can compute exact per-row flags.
+    const byKey = new Map();
+    out.forEach(r => byKey.set(r.src + '|' + fbKey(r.sec, r.row, r.qty), r.tier));
+    const shClusters = new Set();
+    shPx.forEach((e, px) => { if (e.n >= 3 && e.secs.size >= 2) shClusters.add(px); });
+    return { rows: out, byKey, shClusters, missing, elapsed };
+    })();
+    return _fbState.promise;
+  }
+
+  async function loadFanBroker(eventId) {
+    const body = document.getElementById('fanBrokerBody');
+    const meta = document.getElementById('fanBrokerMeta');
+    const summary = document.getElementById('fanBrokerSummary');
+    if (body) body.innerHTML = '<div class="empty">Classifying listings across sources…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const d = await computeFanBroker(eventId).catch(() => null);
+    if (!d) {
+      if (body) body.innerHTML = '<div class="empty">not signed in</div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    const out = d.rows;
     _fbState.rows = out;
     _fbState.src = 'all'; _fbState.tier = 'all';
 
@@ -5720,13 +5781,9 @@
       if (summary) summary.innerHTML = '';
       return;
     }
-    const missing = [];
-    if (evo == null) missing.push('EVO');
-    if (got == null) missing.push('GoTickets');
-    for (const s of [sh, gt, vd]) if (s.rows == null) missing.push(s.plat);
     if (meta) {
-      meta.textContent = `${out.length} listings · ${elapsed.toFixed(0)}ms` +
-        (missing.length ? ` · ${missing.join('/')} unavailable — fan ceiling widens` : '');
+      meta.textContent = `${out.length} listings · ${d.elapsed.toFixed(0)}ms` +
+        (d.missing.length ? ` · ${d.missing.join('/')} unavailable — fan ceiling widens` : '');
     }
     renderFanBrokerSummary(summary, out);
     renderFanBrokerFilters();
