@@ -1,5 +1,8 @@
 -- Migration 20260819213700 · level:data-collection · lane:D0 · writes:gt_deals_retire_tick(int)[new],gotickets_deals_feed(gone_at),cron.schedule(gt_ingest_cascade_1min)[replace] · reads:gotickets_listings_snapshots · pre:20260811280000 (cascade body replaced), 20260811264000 (<14d rule folded in), 20260811240000 (gotickets_deals_feed.gt_event_id) · auth:OPERATOR-APPROVAL REQUIRED before apply (cron.schedule + SECDEF fn)
 -- fix (2026-08-19) — GoTickets deal feed reads as frozen/paused.
+-- Already applied to prod · via MCP 2026-08-19 22:02 UTC (operator-approved). This file is the
+--   idempotent codification; re-apply is a no-op (CREATE OR REPLACE + cron.schedule upsert by
+--   name + the retire tick, which finds nothing left to retire).
 --
 -- Lane:     D0 (terminal — GoTickets deal feed)
 -- Touches:  gotickets_deals_feed (W), gotickets_listings_snapshots (R),
