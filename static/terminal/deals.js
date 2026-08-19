@@ -1,12 +1,14 @@
-// D0 Terminal — Deals LIVE FEED (GoTickets-only section outliers, ≥15% profit).
+// D0 Terminal — Deals LIVE FEED (GoTickets-only ZONE outliers; realized anchor optional).
 //
-// A background scanner (scan_gotickets_deals, mig 20260811210000, 5-min cron)
-// re-checks the freshest-scanned GoTickets events, flags section-level robust low
-// outliers (median+MAD z≤-3.5) that clear a ≥15% projected profit (resale = section
-// median discounted to event day by the clearing curve), and upserts
-// gotickets_deals_feed. This page polls get_deals_feed and prepends new deals.
-// Operator directives 2026-08-11: live feed · outliers not a majority · GoTickets
-// only · ≥15% profit given assumed price degradation.
+// A background scanner (scan_gotickets_deals, cron gt_deals_scan_odd_min) re-checks
+// the freshest-polled curated-zone GoTickets events, flags robust low outliers within
+// their CURATED ZONE (median+MAD z≤-3.5), and upserts gotickets_deals_feed. Realized
+// SeatGeek/SeatData comps are an enrichment, not a gate: rows without them show — for
+// realized/net-profit/win-odds and carry confidence 'outlier'. This page polls
+// get_deals_feed and prepends new rows.
+// Operator directives 2026-08-11: live feed · outliers not a majority · GoTickets only.
+// Operator directive 2026-08-19: outlier scope is the ZONE, not the section; the
+// realized anchor is optional — report the outliers (migs 20260819232000).
 
 (function () {
   'use strict';
@@ -153,7 +155,7 @@
     if (!body) return;
     const rows = visible();
     if (!rows.length) {
-      body.innerHTML = `<div class="empty">${state.deals.length ? 'No deals match the filter.' : 'No live deals yet — the scanner runs every ~5 min. Lower the profit threshold or check back shortly.'}</div>`;
+      body.innerHTML = `<div class="empty">${state.deals.length ? 'No deals match the filter.' : 'No live outliers yet — the scanner runs every ~2 min. Lower the profit threshold or check back shortly.'}</div>`;
       return;
     }
     const html = rows.map(d => {
@@ -172,6 +174,7 @@
         <td>${esc(d.section || '')}${d.row ? ' · ' + esc(String(d.row)) : ''}${acc}</td>
         <td class="num">${d.quantity != null ? esc(String(d.quantity)) : '—'}</td>
         <td class="num"><b>${$r(d.gt_price)}</b></td>
+        <td class="num deals-below">${d.vs_zone_pct != null ? d.vs_zone_pct + '%' : '—'}${d.zone_n != null ? ' <span class="muted small">n' + d.zone_n + '</span>' : ''}</td>
         <td class="num">${$r(d.realized_median)}${d.realized_n != null ? ' <span class="muted small">n' + d.realized_n + (d.resale_basis === 'historic_realized' ? '·hist' : '·live') + '</span>' : ''}</td>
         <td class="num">${$r(d.est_net_resale)}</td>
         <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
@@ -183,7 +186,7 @@
     body.innerHTML = `<table class="deals-tbl">
       <thead><tr>
         <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
-        <th class="num">Buy (GT)</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
+        <th class="num">Buy (GT)</th><th class="num">vs zone</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
         <th class="num">Net profit</th><th class="num">Win odds</th><th>Conf</th><th>Open</th>
       </tr></thead>
       <tbody>${html}</tbody></table>`;
