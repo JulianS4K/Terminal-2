@@ -1,3 +1,4 @@
+-- Migration 20260825185620 · lane:A1 · writes:evd_event_id_crosswalk · reads:aq_event_map,ticketsdata_event_xref,sg_events_canonical,seatgeek_event_xref,gotickets_event,events · pre:none
 -- ============================================================================
 -- Migration 20260825185620 — eVenue Desk event-ID crosswalk (evd_event_id_crosswalk)
 --
