@@ -31,11 +31,18 @@
 -- Coverage of the 145 seeded rows: SeatGeek 58, Vivid 56, StubHub 55, Ticketmaster 47,
 -- GoTickets 17, Ticket Evolution 14, TickPick 0, Gametime 0; 72 rows carry >= 1 id.
 --
--- TickPick/Gametime stay 0 after a live pull round (2026-08-25): TicketsData /match is the
--- only source for them and the vendor returns 402 "Credits is not enough" (28-68/hr for 6h+)
--- under heavy 429 saturation; /match landed only 2 successful calls in 24h. A constructed
--- seatgeek.com/e/events/<id> URL is rejected (500 "could not resolve performer cluster") --
--- /match needs the stored slug URL, which sg_events_canonical has for only 21 of the 58.
+-- TickPick/Gametime stay 0 after a live pull round (2026-08-25), and NOT for quota reasons.
+-- TicketsData /match is their only source; the account is healthy (1,463/2,000 reports and
+-- 132,392/250,000 credits at the time of the run, confirmed inside the /match response body).
+-- Two independent /match calls at match_confidence 100.0 - one MLB (Cardinals at Phillies,
+-- req 9116503) and one NCAA with the venue correctly resolved to Acrisure Stadium (Miami OH
+-- at Pittsburgh, req 9121752) - each returned a `matches` object containing ONLY `seatgeek`.
+-- The cross-market resolver has no TickPick/Gametime counterpart for this event set, so
+-- spending the remaining reports on the other ~18 slug-URL rows has a demonstrated null yield.
+-- Two operational notes for whoever retries: /match must be fired strictly ONE at a time
+-- (three fired concurrently returned 200/429/429), and a constructed seatgeek.com/e/events/<id>
+-- URL is rejected with 500 "could not resolve performer cluster" - it needs the stored slug
+-- URL, which sg_events_canonical carries for only 21 of the 58 SG-mapped rows.
 -- The 73 unmapped rows are Group-of-5 / FCS home games (Glass Bowl, Yulman, Brooks,
 -- Gesa, Canvas, Centreville, Houck, Homer Bryce ...) that are absent from every event
 -- universe in this database - they need upstream discovery, not a better matcher.
