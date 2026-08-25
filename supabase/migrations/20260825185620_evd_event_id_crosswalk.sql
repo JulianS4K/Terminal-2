@@ -66,6 +66,16 @@
 -- so it is never mistaken for a distinct listing. The Group-of-5 / FCS home games unmapped in
 -- the first pass were closed by SeatGeek performer discovery, not by a better matcher.
 --
+-- COMPANION DATA LOAD (operational, not codified here): the 86 SeatGeek events discovered by
+-- the performer sweep were absent from every table in this database - only 57-59 of the 145
+-- sg_event_ids existed anywhere - which is why an sg-anchored roll-up across all 22 tables
+-- carrying sg_event_id yielded zero additional ids. Those 86 were inserted into
+-- sg_events_canonical (full venue/date/url/raw payload, match_status='pending'), taking our
+-- coverage there to 145/145. Effect: 86 of them are now candidates for
+-- sg_to_tevo_search_bridge_30min, which queries the live TEvo API, so tevo_event_id can fill in
+-- on its own. sg_attempt_event_xref_v3 still matched 0 of 130 against the local events mirror -
+-- that mirror simply does not carry these college-football games.
+--
 -- Backend-only: RLS on with a service_role policy, anon/authenticated REVOKEd.
 -- Idempotent: CREATE TABLE IF NOT EXISTS + INSERT ... ON CONFLICT DO UPDATE.
 -- Applied to production 2026-08-25 (operator-authorised this session); re-running is a no-op.
