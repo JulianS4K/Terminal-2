@@ -132,7 +132,10 @@ $function$;
 --
 -- Step 4 — capture ONE live /fetch envelope (1 credit) and only then author the
 --          ticketsdata_normalize_listings('DI', …) branch from the real shape.
---          Dice.fm accepts a bare event ID as well as a full event URL.
+--          LANDMINE: /fetch needs a FULL 'https://dice.fm/event/<perm_name>'
+--          URL. A bare event ID returns HTTP 400 {"error":"invalid_dice_url"}
+--          (verified live 2026-08-26) even though the vendor docs list Dice.fm
+--          alongside Gametime as accepting a bare ID.
 --
 -- Step 5 — once the envelopes are confirmed + coverage looks right, schedule a
 --          recurring pull (weekly here; tune cadence to budget). Uncomment:

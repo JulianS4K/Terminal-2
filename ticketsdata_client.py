@@ -58,9 +58,12 @@ NATIVE_PLATFORMS = frozenset({"seatgeek"})
 # live. The gate stays in place (not deleted) so a market can be parked again
 # with a one-token edit.
 #   - dice: disabled 2026-06-09 → RE-ENABLED 2026-08-26 (operator directive).
-#     Dice.fm takes a bare event ID as well as a full event URL on /fetch (same
-#     as Gametime); venue/promoter pages go to /events via venue_url. DB gates
-#     widened in 20260826140000_a1_td_dice_platform_enable.sql (code 'DI').
+#     DB gates widened in 20260826140000_a1_td_dice_platform_enable.sql ('DI').
+#     LANDMINE — /fetch requires a FULL `https://dice.fm/event/<perm_name>` URL.
+#     A bare event ID is rejected with HTTP 400 {"error":"invalid_dice_url"},
+#     verified live 2026-08-26, despite the vendor docs listing Dice.fm (with
+#     Gametime) as accepting a bare ID. Do NOT pass an ID here.
+#     Venue/promoter pages go to /events via venue_url.
 #   - eventbrite: RE-ENABLED 2026-07-08 (operator directive) — wiring in the
 #     Eventbrite organizer feed via /events + /fetch, starting with organizer
 #     https://www.eventbrite.com/o/105655500371 (see migration
