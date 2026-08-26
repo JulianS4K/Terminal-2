@@ -177,11 +177,18 @@ class TicketsDataClient:
 
         # Per docs: retry 429 (back off), 503 (service_unavailable) and 504
         # (timeout); do NOT retry 400/401/402/404 (deterministic).
+        # 502 added 2026-08-26 from live evidence: a 30-way parallel Dice
+        # /fetch burst returned 4x HTTP 502 {"error":"service_unavailable",
+        # "message":"DICE dedicated worker unavailable"} — same transient
+        # service_unavailable class as 503, just a different status, and the
+        # per-platform worker pool is the thing that ran out. Retrying is
+        # correct AND saves money: a failed call still burns a credit, so a
+        # non-retried 502 is a credit spent for nothing.
         r = None
         delays = [1.5, 3.0]
         for attempt in range(len(delays) + 1):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < len(delays) is False there)
             r = requests.get(url, params=clean, timeout=self.timeout)
-            if r.status_code in (429, 503, 504) and attempt < len(delays):
+            if r.status_code in (429, 502, 503, 504) and attempt < len(delays):
                 retry_after = r.headers.get("Retry-After")
                 try:
                     delay = float(retry_after) if retry_after else delays[attempt]

@@ -130,6 +130,19 @@ def test_get_retries_503_then_succeeds(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_get_retries_502_dice_worker_unavailable(monkeypatch):
+    # Live 2026-08-26: a 30-way parallel Dice /fetch burst returned 4x HTTP 502
+    # {"error":"service_unavailable","message":"DICE dedicated worker unavailable"}.
+    # Same transient class as 503, so it must retry rather than burn the credit.
+    calls = _seq_get(monkeypatch, [
+        _FakeResp(502, json_data={"error": "service_unavailable",
+                                  "message": "DICE dedicated worker unavailable"}),
+        _FakeResp(200, json_data={"ok": True}),
+    ])
+    assert _client()._get("/fetch", {"platform": "dice"}) == {"ok": True}
+    assert calls["n"] == 2
+
+
 def test_get_retry_after_header_parsed(monkeypatch):
     sleeps = []
     calls = {"n": 0}
