@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Flights (ticket search)</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20260826flights" />
+</head>
+<body data-page="flights">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap flights">
+
+    <!-- ── Search card — the Google Flights "route + dates" box ───────── -->
+    <section id="fl-search" class="fl-card">
+      <div class="fl-searchbar">
+        <label class="fl-field fl-field-who">
+          <span class="fl-lbl">WHO / WHAT</span>
+          <input id="flWho" type="search" class="fl-input" placeholder="Team, artist, show…"
+                 autocomplete="off" spellcheck="false" />
+          <div id="flSuggest" class="fl-suggest" hidden></div>
+        </label>
+        <label class="fl-field">
+          <span class="fl-lbl">WHERE</span>
+          <input id="flWhere" type="search" class="fl-input" placeholder="City or venue"
+                 autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="fl-field fl-field-date">
+          <span class="fl-lbl">FROM</span>
+          <input id="flFrom" type="date" class="fl-input" />
+        </label>
+        <label class="fl-field fl-field-date">
+          <span class="fl-lbl">TO</span>
+          <input id="flTo" type="date" class="fl-input" />
+        </label>
+        <label class="fl-field fl-field-qty">
+          <span class="fl-lbl">TICKETS</span>
+          <select id="flQty" class="fl-input">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+          </select>
+        </label>
+        <button id="flGo" class="fl-go" type="button">Search</button>
+      </div>
+      <div class="fl-quickrow">
+        <span class="fl-lbl">WHEN</span>
+        <button class="ctrl-btn is-active" data-span="30">Next 30 days</button>
+        <button class="ctrl-btn" data-span="7">This week</button>
+        <button class="ctrl-btn" data-span="90">Next 3 months</button>
+        <button class="ctrl-btn" data-span="365">Anytime</button>
+        <span class="fl-sep"></span>
+        <span class="fl-lbl">MAX PRICE</span>
+        <input id="flMax" type="number" min="0" step="10" class="fl-input fl-input-sm" placeholder="any" />
+        <span class="fl-lbl">SITES</span>
+        <select id="flMinSrc" class="fl-input fl-input-sm">
+          <option value="1">1+</option>
+          <option value="2">2+</option>
+          <option value="3">3+</option>
+        </select>
+        <span class="fl-sep"></span>
+        <button id="flTracked" class="ctrl-btn" type="button">☆ Tracked <span id="flTrackedN" class="fl-count"></span></button>
+      </div>
+    </section>
+
+    <!-- ── Price graph — cheapest event per date across the matched set ─ -->
+    <section id="fl-graph" class="fl-card">
+      <div class="panel-title row">
+        <span>PRICE GRAPH · cheapest get-in per date</span>
+        <span class="muted small" id="flGraphMeta"></span>
+      </div>
+      <div id="flGraph" class="fl-graph"><div class="empty">Run a search to see the date grid.</div></div>
+    </section>
+
+    <!-- ── Sort strip + results ───────────────────────────────────────── -->
+    <section id="fl-results" class="fl-card">
+      <div class="panel-title row">
+        <span class="fl-sortrow">
+          <span class="fl-lbl">SORT</span>
+          <button class="ctrl-btn is-active" data-sort="best">Best</button>
+          <button class="ctrl-btn" data-sort="price">Cheapest</button>
+          <button class="ctrl-btn" data-sort="date">Soonest</button>
+          <button class="ctrl-btn" data-sort="deal">Biggest drop</button>
+        </span>
+        <span class="muted small" id="flResultMeta"></span>
+      </div>
+      <div id="flResults"><div class="empty">Search a team, artist or show to compare prices across marketplaces.</div></div>
+    </section>
+
+    <section id="fl-note">
+      <div class="muted small">
+        <b>How the price is built.</b> Each row's headline number is the cheapest <b>get-in</b> we can see
+        for that event across every marketplace in the daily cross-source snapshot
+        (<span class="num">event_listing_snapshot_daily</span> — EVO, StubHub, Gametime, VividSeats,
+        TickPick, Ticketmaster, SeatGeek). <b>vs usual</b> compares it against that event's own trailing
+        30-day median get-in — the same idea as Google Flights' "prices are currently low", but per event
+        rather than per route, and drawn from an indefinitely-retained history. Expanding a row adds the
+        <b>live</b> layer: per-marketplace inventory landed by the TicketsData pollers
+        (<span class="num">ticketsdata_listings_snapshots</span>) plus our own EVO book, and the cheapest
+        real listings that seat your ticket count. Live coverage is credit-budgeted, so events without a
+        recent poll fall back to their daily snapshot prices and say so. Read-only — this page never
+        triggers an upstream fetch.
+      </div>
+    </section>
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <script src="pwa.js?v=20260702"></script>
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260608"></script>
+  <script src="nav.js?v=20260826flights"></script>
+  <script src="flights.js?v=20260826flights"></script>
+</body>
+</html>

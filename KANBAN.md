@@ -1219,6 +1219,14 @@ UI surfaces:
 
 ## DONE (last 10)
 
+### DONE — D0-FLIGHTS-1 · FLIGHTS tab — Google-Flights-shaped ticket search (buy side)
+- **Backend**: new `routers/flights.py` (`/api/broker/flights/{search,event/{id},suggest}`), read-only, service-role. `search` returns ranked events + the per-date price graph in one round-trip: cheapest cross-source get-in from the latest `event_listing_snapshot_daily` row, a "vs usual" verdict against the event's OWN trailing-30d median (deal / low / typical / high + rising/falling trend), and a Best score (price rank + discount + marketplace breadth). `event/{id}` adds the live layer — per-marketplace booking options and the cheapest listings seating N, reached tevo → `aq_event_map` → `ticketsdata_event_xref` → `ticketsdata_listings_snapshots` (never joined on a tevo id, §0), with EVO from `latest_event_metrics` and a daily-snapshot fallback for un-polled marketplaces.
+- **Terminal UI**: `static/terminal/flights.{html,js}` + FLIGHTS nav tab + `style.css` block. Search box (who/where/when/tickets, performer typeahead), clickable per-date price-graph strip, ranked result rows with reason chips + sparkline + verdict, expandable booking-options / cheapest-listings / price-history panel, localStorage price tracking (★ shows the move since you starred it). No `innerHTML` — the page builds DOM nodes.
+- **No schema change** — reads existing tables only; no migration, cron, or upstream fetch. Price tracking is client-side; a durable alerting watchlist would be a separate data-plane change.
+- **Tests**: `tests/test_flights_routes.py` (31 cases, 100% line+branch on the new module) + the page added to the Playwright smoke inventory.
+- by: D0 · landed: 2026-08-26
+
+
 ### DONE — `7413ede` · feat(d0): multi-source data model — movers v2, market carpet, discovery gaps, TD freshness
 - **Migrations (4)**:
   - `20260527200000` — TD owned-tickets fix + reschedule cron 4×/day
