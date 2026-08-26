@@ -1,10 +1,10 @@
 # Open Distribution in Primary Ticketing — Research Proposal
 
-**Doc version:** v1.0.0 (2026-08-26)
+**Doc version:** v1.1.0 (2026-08-26)
 
 **Status:** DRAFT — for committee recruitment. Not defended, not pre-registered yet.
 **Instrument under test:** the Bridge ([`d4_bridge_charter.md`](d4_bridge_charter.md)) · **Endgame this formalizes:** [`d_tier_goals.md`](d_tier_goals.md) ("an open-distribution Ticketmaster")
-**Governed by:** [`../CLAUDE.md`](../CLAUDE.md) rule 2 — upstream APIs are read-only until the operator authorizes a per-platform write carve-out. That rule is the field study's critical path (§10), not a footnote.
+**Governed by:** [`../CLAUDE.md`](../CLAUDE.md) rule 2 — upstream APIs are read-only. Distribution runs on S4K's company-internal systems, so the study never needs an upstream write; the binding dependency is measurement, not permission (§10).
 
 ---
 
@@ -101,16 +101,29 @@ The hard constraint is N. A realistic pilot is **6–12 venues × 8–20 events 
 
 **(c) Cannibalization vs. incrementality.** A buyer who would have bought on the venue's own page for a 0% fee, but instead buys on a channel at 15%, is a revenue *loss* dressed as a distribution win. Distinguish the two by buyer-record capture (new-to-venue vs. known-to-venue purchasers — the Bridge captures buyer identity on every channel by design) and by whether the venue's direct-channel volume falls in treated events.
 
-## 10. Critical path — upstream write authorization
+## 10. Critical path — measuring what we sell
 
-The distribution arm of the field study requires **creating listings on upstream platforms**. Repo-wide policy makes every upstream client GET-only by construction, and the Bridge charter §6.1 records the operator's status: *upstream stays read-only for now; revisit the carve-out when we decide to proceed.*
+Distribution of AXS and other venue inventory runs through **S4K's company-internal systems**, not through listing writes against upstream marketplace APIs. The read-only posture in `CLAUDE.md` rule 2 — every client GET-only by construction — is therefore untouched by this research, and the per-platform carve-out contemplated in `d4_bridge_charter.md` §6.1 is *not* on Ch. 5's critical path.
 
-**No carve-out, no Ch. 5.** This is not a risk to monitor; it is a gate with a date attached:
+The dependency that replaces it is harder to wave away, because it is already failing:
 
-- **Now → week 4:** decide the carve-out in principle, per-platform, with the operator. The engineering shape is already specified (sibling `*_listing_client.py` modules with the narrowest possible method allowlist, original read-only guards and their tests untouched, per-platform authorization).
-- **If the answer is no by month 3:** Ch. 5 degrades to the observational arm — a matched-panel study of venues that already distribute openly versus those that don't. Weaker identification, still a thesis, and the degradation is declared in advance rather than improvised at the defense.
+**We cannot currently measure our own sales at the venues this study is about.** The realized-sales fact table (`d0_sales_fact`) gates its entire universe to six ESPN leagues (`performer_metadata.espn_league IN (MLB,NBA,NFL,NHL,MLS,WNBA)`). Every event outside those leagues — comedy, community events, mid-tier music, and precisely the venue-distributed inventory the pilot will sell — is invisible to it.
 
-Ch. 4 and Ch. 6 have **no** dependency on the carve-out. They proceed regardless, which is why Ch. 4 is the qualifying exam.
+Measured on prod, 2026-08-26:
+
+| Owned sale lines | Count | Status |
+|---|---|---|
+| EVO order items (succeeded) | 1,413 | 553 fall outside the league gate |
+| SeatGeek orders (fulfilled) | 200 | all carry a null event id — unmappable |
+| TickPick / Vivid (succeeded) | 0 | no volume yet |
+| **Actually in `d0_sales_fact`** | **856** | all EVO; ~53% of owned lines |
+
+So the primary outcome of this thesis — net revenue per available seat — is not computable today for the venue class under study, for reasons that have nothing to do with permissions and everything to do with instrumentation.
+
+- **Now → week 4:** extend the owned-sales universe past the league gate, so venue and non-sports sales are recorded at all. *(In flight — migration `20260826120000_d0_sales_fact_owned_universe`.)*
+- **Then:** repair the order→event mapping that strands the 200 SeatGeek orders and 68 EVO lines, and add fee netting so `gross` becomes `net`. Until both land, the outcome variable is measurable in principle and wrong in practice.
+
+Ch. 4 and Ch. 6 depend on the listings tape and the market panel, not on this pipeline, so they proceed in parallel — which is why Ch. 4 remains the qualifying exam.
 
 ## 11. Falsification
 
@@ -131,7 +144,7 @@ The thesis is committed to these in advance:
 | 4 | This proposal defended | Live session, written plan circulated in advance |
 | 6 | Pre-registration filed (design, MDE, outcomes, analysis plan) | Timestamped, sent to committee |
 | 8–14 | Ch. 3 (data + methods) and Ch. 4 (models) | Ch. 4 presented at the qualifying exam |
-| 12–20 | Pilot venues signed; carve-out resolved (§10) | Status memo to committee |
+| 12–20 | Pilot venues signed; owned-sales instrumentation green (§10) | Status memo to committee |
 | 20–44 | Ch. 5 field study runs | Interim results at the mid-point review |
 | 44–50 | Ch. 6 mechanism findings | Circulated |
 | 52 | Defense — committee plus one investor | Full document sent 2 weeks prior |
@@ -171,8 +184,8 @@ The thesis is committed to these in advance:
 3. **Outcomes.** Primary: net-RevPAS. Secondary: sell-through at door, time-to-50%, price realization vs. model clearing price, buyer-capture rate, direct-channel volume (cannibalization check).
 4. **Sample and power.** Target N venues and events; stated MDE; stopping rule.
 5. **Analysis.** Two-way fixed effects with staggered-adoption-robust estimator; venue-clustered inference; pre-specified covariates (capacity, genre, lead time, day-of-week, local demand index).
-6. **Deviations.** Any departure logged, dated, and reported in Ch. 5 — including the §10 degradation path if the write carve-out is refused.
+6. **Deviations.** Any departure logged, dated, and reported in Ch. 5 — including any period in which the §10 instrumentation was incomplete and which events were affected.
 
 ---
 
-**Open items for the operator before week 4:** (i) the §10 carve-out decision; (ii) whether pilot venue identities and transaction-level results may appear in a document that leaves the company, and under what aggregation; (iii) whether the panel's proprietary detail (source list, coverage, retention) is disclosed at the level of Ch. 3 above or held back to a committee-only appendix.
+**Open items for the operator before week 4:** (i) the §10 instrumentation work — universe extension, order mapping, fee netting; (ii) whether pilot venue identities and transaction-level results may appear in a document that leaves the company, and under what aggregation; (iii) whether the panel's proprietary detail (source list, coverage, retention) is disclosed at the level of Ch. 3 above or held back to a committee-only appendix.
