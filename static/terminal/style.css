@@ -2820,6 +2820,7 @@ a.txn-team:hover { color: var(--accent); text-decoration: underline; }
 .badge.regime-good    { color: #34d399; border: 1px solid rgba(52,211,153,.45); }
 .badge.regime-warn    { color: #f5a524; border: 1px solid rgba(245,165,36,.45); }
 .badge.regime-neutral { color: #98a2af; border: 1px solid rgba(152,162,175,.45); }
+.badge.regime-bad     { color: #f87171; border: 1px solid rgba(248,113,113,.5); }
 table.deals-tbl { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
 table.deals-tbl th { text-align: left; color: #8a929e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 10px; border-bottom: 1px solid var(--line); }
 table.deals-tbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
