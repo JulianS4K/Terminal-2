@@ -54,13 +54,18 @@ NATIVE_PLATFORMS = frozenset({"seatgeek"})
 
 # Operator-disabled markets: not pulled on any source sweep. /fetch rejects
 # them; /match callers should filter them from the comparison via
-# OPERATOR_DISABLED_PLATFORMS.
-#   - dice: disabled 2026-06-09.
+# OPERATOR_DISABLED_PLATFORMS. Currently EMPTY — every supported platform is
+# live. The gate stays in place (not deleted) so a market can be parked again
+# with a one-token edit.
+#   - dice: disabled 2026-06-09 → RE-ENABLED 2026-08-26 (operator directive).
+#     Dice.fm takes a bare event ID as well as a full event URL on /fetch (same
+#     as Gametime); venue/promoter pages go to /events via venue_url. DB gates
+#     widened in 20260826140000_a1_td_dice_platform_enable.sql (code 'DI').
 #   - eventbrite: RE-ENABLED 2026-07-08 (operator directive) — wiring in the
 #     Eventbrite organizer feed via /events + /fetch, starting with organizer
 #     https://www.eventbrite.com/o/105655500371 (see migration
 #     20260708180000_td_eventbrite_organizer_discovery.sql).
-OPERATOR_DISABLED_PLATFORMS = frozenset({"dice"})
+OPERATOR_DISABLED_PLATFORMS: frozenset[str] = frozenset()
 
 EXCLUDED_PLATFORMS = NATIVE_PLATFORMS | OPERATOR_DISABLED_PLATFORMS
 
@@ -107,7 +112,8 @@ def _validate_platform(platform: str) -> str:
         )
     if plat in OPERATOR_DISABLED_PLATFORMS:
         raise TicketsDataError(
-            f"{plat} is operator-disabled (2026-06-09) — not pulled on any source sweep."
+            f"{plat} is operator-disabled — not pulled on any source sweep. "
+            "See OPERATOR_DISABLED_PLATFORMS for when and why it was parked."
         )
     return plat
 
