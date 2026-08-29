@@ -237,7 +237,10 @@ class S4KMarketplaceClient:
             except ValueError as e:
                 raise S4KMarketplaceError(f"GET {path} returned non-JSON body") from e
 
-        raise S4KMarketplaceError(f"GET {path} exhausted retries")
+        # Unreachable: every branch above either returns or raises on the final
+        # attempt. Kept as a belt-and-braces guard against a future edit adding
+        # a `continue` without a terminal case.
+        raise S4KMarketplaceError(f"GET {path} exhausted retries")  # pragma: no cover
 
     # ---- cheap metadata (general 120/min bucket) ---------------------------
 
