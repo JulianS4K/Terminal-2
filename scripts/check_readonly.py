@@ -80,6 +80,12 @@ FORBIDDEN_HOSTS = (
     # eVenue host is forbidden. Bare "evenue.net" substring-matches
     # <tenant>.evenue.net / any future subdomain, same as seatdata.io / axs.com.
     "evenue.net",
+    # eVenue Desk marketplace API — a SEPARATE source from the Paciolan
+    # pipeline above (own host, own auth, own event-ID scheme, own
+    # evenuedesk_* tables). It aggregates primary box-office inventory, so a
+    # write here would reach the same live ticketing systems evenue.net does.
+    # Read-only via evenuedesk_client.EVenueDeskClient; never written.
+    "crm.s4kcs.com",
 )
 
 # Client modules that legitimately reference these hosts, mapped to the HTTP
@@ -104,6 +110,9 @@ CLIENT_FILES = {
     # sourced), but declares the canonical GET-only guard so the new upstream is
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
+    # eVenue Desk marketplace API (crm.s4kcs.com). Separate source from
+    # paciolan_client.py — shares no tables, no cron, no code with it.
+    "evenuedesk_client.py": frozenset({"GET"}),
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which

@@ -5,7 +5,7 @@
 > the desk's API reference. Read this **before** authoring the client, the ingest RPC, or any
 > `evd_*` table — every claim below is measured from the samples, not assumed from the docs.
 >
-> **Doc version:** v1.0.0 (2026-08-25) — initial mapping from the four sample workbooks.
+> **Doc version:** v1.1.0 (2026-08-29) — §9: base URL + auth answered by the operator (`https://crm.s4kcs.com`, `X-API-Key`); flagged the `s4k_`/`evd_` key-prefix mismatch and the session-container egress block. · v1.0.0 (2026-08-25) — initial mapping from the four sample workbooks.
 
 Upstream contract: the desk's consumer plane `GET /api/v1/*` (bearer `evd_…`), read-only by
 construction — every endpoint is a GET and there is no write surface. RULE 2 (CLAUDE.md §2)
@@ -185,8 +185,13 @@ and a normalized `event_start` only where `event_time` is present (60%).
 
 1. Is `max_contiguous` coming to the API `FEED_COLUMNS`, and what does it mean when populated?
 2. Can our `internal_id` values be loaded into Map IDs — and do we push them, or does the desk pull?
-3. What is the desk's reachable base URL from our infrastructure? The reference documents
-   `localhost:5000`; the management plane demotes any request carrying `X-Forwarded-For`, so a
-   tunnelled deployment needs the `X-Admin-Key` path or a token-only `/api/v1` exposure.
+3. ~~What is the desk's reachable base URL?~~ **Answered 2026-08-29 (operator):**
+   `https://crm.s4kcs.com`, consumer plane `/api/v1/*`, auth `X-API-Key: s4k_…`. Note the key
+   prefix is `s4k_`, not the `evd_` this reference documents — so the marketplace plane may not
+   be endpoint-identical to §2 below. Only `GET /api/v1/ping` is confirmed; everything else is
+   still transcribed-not-verified, which is why the poller lands responses raw (see §8).
+   The desk is **not** reachable from the Claude Code session container — its egress policy
+   returns a gateway 403 for `crm.s4kcs.com` — so live verification must run from prod or from
+   an environment whose network policy allows the host.
 4. Expected `/feed/changes` poll cadence, and whether a missed poll can be recovered without a
    full baseline reset (a `/feed/full` call **rewrites** the token's baseline).

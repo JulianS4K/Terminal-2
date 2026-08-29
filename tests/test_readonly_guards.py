@@ -323,6 +323,86 @@ def test_bandsintown_allowlist_constant_is_get_only():
     assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
 
 
+# ---------- evenuedesk_client ----------
+
+def test_evenuedesk_assert_readonly_raises_on_post():
+    from evenuedesk_client import _assert_readonly_method, EVenueDeskReadOnlyError
+    with pytest.raises(EVenueDeskReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+    assert "RULE 2" in str(exc.value)
+
+
+def test_evenuedesk_assert_readonly_raises_on_put_patch_delete():
+    from evenuedesk_client import _assert_readonly_method, EVenueDeskReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
+        with pytest.raises(EVenueDeskReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_evenuedesk_assert_readonly_allows_get():
+    from evenuedesk_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_evenuedesk_allowlist_constant_is_get_only():
+    from evenuedesk_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
+def test_evenuedesk_request_refuses_without_key(monkeypatch):
+    """No key configured must fail closed BEFORE any socket is opened, and the
+    error must not be silently swallowed into an empty pull."""
+    from evenuedesk_client import EVenueDeskClient, EVenueDeskAuthError
+    monkeypatch.delenv("EVENUEDESK_API_KEY", raising=False)
+    client = EVenueDeskClient(db=None)
+    with pytest.raises(EVenueDeskAuthError):
+        client.ping()
+
+
+def test_evenuedesk_key_never_appears_in_url_or_params(monkeypatch):
+    """The API key travels in a header only — never the URL or query string,
+    so it cannot leak into a redirect, access log, or exception repr."""
+    from evenuedesk_client import EVenueDeskClient
+    monkeypatch.setenv("EVENUEDESK_API_KEY", "s4k_TESTKEY_NOT_REAL")
+    client = EVenueDeskClient()
+    seen: dict = {}
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ok": True}
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        seen["url"] = url
+        seen["headers"] = headers or {}
+        seen["params"] = params
+        return _Resp()
+
+    monkeypatch.setattr(client._session, "get", _fake_get)
+    client.ping()
+
+    assert "s4k_TESTKEY_NOT_REAL" not in seen["url"]
+    assert "s4k_TESTKEY_NOT_REAL" not in str(seen["params"])
+    assert seen["headers"]["X-API-Key"] == "s4k_TESTKEY_NOT_REAL"
+
+
+def test_evenuedesk_is_not_wired_to_paciolan_tables():
+    """The desk is a separate source. If this module ever references the
+    paciolan_* tables or the eVenue box-office host, the two pipelines have
+    been conflated — which is exactly what the operator ruled out."""
+    src = (Path(__file__).resolve().parent.parent / "evenuedesk_client.py").read_text()
+    # `evenue.net` and `paciolan_` may appear in prose explaining the
+    # separation, but never in a table name or URL the client actually uses.
+    assert "paciolan_event_snapshots" not in src
+    assert "paciolan_ingest" not in src
+    assert "https://evenue.net" not in src
+    assert "https://crm.s4kcs.com" in src
+
+
 # ---------- audit script catches synthetic violations ----------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
