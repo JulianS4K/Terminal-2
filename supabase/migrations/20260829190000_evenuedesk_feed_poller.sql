@@ -109,39 +109,67 @@ language plpgsql security definer set search_path = public, net as $$
 declare
   r record;
   v_body jsonb;
+  v_status int;
   v_count int := 0;
 begin
   for r in
-    select p.id, p.request_id
+    select p.id, p.request_id, p.queued_at
       from public.evenuedesk_raw_pulls p
      where p.landed_at is null and p.request_id is not null
+       -- Give up on anything older than the retention window; a request that
+       -- never landed in 24h is not going to.
+       and p.queued_at > now() - interval '24 hours'
      order by p.queued_at
      limit 50
   loop
+    -- PERFORMANCE-CRITICAL: net._http_response is ~58 GB on this project and
+    -- its ONLY index is on `created` — there is NO index on `id`. A bare
+    -- `where id = ...` is a full seq scan of 58 GB and will hang the poller
+    -- (verified 2026-08-29: such a query timed out repeatedly, while the same
+    -- lookup with a `created` predicate returned instantly). ALWAYS constrain
+    -- `created` first so the btree drives the scan, then filter on id. Do not
+    -- "simplify" this back to a plain id lookup.
+    v_status := null;
+    v_body := null;
     begin
-      select
-        case when rr.content is not null and rr.content <> ''
-             then rr.content::jsonb else null end,
-        rr.status_code
-        into v_body, r.request_id
+      select rr.status_code,
+             case when rr.content is not null and rr.content <> ''
+                  then rr.content::jsonb else null end
+        into v_status, v_body
         from net._http_response rr
-       where rr.id = r.request_id;
+       where rr.created >= r.queued_at - interval '1 minute'
+         and rr.created <= r.queued_at + interval '24 hours'
+         and rr.id = r.request_id;
     exception when others then
-      v_body := null;   -- non-JSON body; keep the row, record the failure
+      -- Non-JSON body (HTML error page, truncated payload). Keep the row and
+      -- record the failure rather than discarding the evidence.
+      v_body := null;
     end;
+
+    -- Response not landed yet: pg_net is async and this project runs a deep
+    -- request backlog, so a pull can legitimately still be in flight. Leave
+    -- landed_at null and pick it up on the next tick.
+    if v_status is null and v_body is null then
+      continue;
+    end if;
 
     update public.evenuedesk_raw_pulls p
        set landed_at     = now(),
            payload       = v_body,
            payload_bytes = length(coalesce(v_body::text, '')),
-           http_status   = (select status_code from net._http_response where id = p.request_id),
+           http_status   = v_status,
            -- Best-effort delta counts. Null (not 0) when the shape is
            -- unrecognized, so "shape drifted" never masquerades as "no changes".
            added_count   = jsonb_array_length(v_body->'added'),
            changed_count = jsonb_array_length(v_body->'changed'),
            removed_count = jsonb_array_length(v_body->'removed'),
-           error         = case when v_body is null
-                                then 'empty or non-JSON response' else null end
+           error         = case
+                             when v_status is not null and v_status >= 400
+                               then 'HTTP ' || v_status
+                             when v_body is null
+                               then 'empty or non-JSON response'
+                             else null
+                           end
      where p.id = r.id;
 
     v_count := v_count + 1;
