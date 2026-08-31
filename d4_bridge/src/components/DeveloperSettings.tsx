@@ -96,7 +96,8 @@ export default function DeveloperSettings({ orgId, canEdit }: { orgId: string; c
           <span className="text-[11px] font-black uppercase tracking-widest">API keys</span>
         </div>
         <p className="text-white/40 text-xs">
-          Authenticate the read-only REST API with <code className="text-brand-primary">Authorization: Bearer &lt;key&gt;</code>.
+          Authenticate the REST API (event/attendee/order reads + programmatic
+          door check-in) with <code className="text-brand-primary">Authorization: Bearer &lt;key&gt;</code>.
           Shown once at creation — store it safely.
         </p>
 

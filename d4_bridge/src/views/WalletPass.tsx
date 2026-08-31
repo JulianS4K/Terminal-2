@@ -26,11 +26,15 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ArrowLeft, Sun, Lock } from 'lucide-react';
+import TicketPhaseCountdown, { type CountdownPhase } from '../components/TicketPhaseCountdown';
+import { qrStyleFromBranding } from '../lib/qrStyle';
+import { livenessCue } from '../lib/livenessCue';
 import { motion } from 'motion/react';
 import { getTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { signBarcode, currentBucket } from '../lib/barcode';
+import { signBarcode, signBarcodeV2, currentBucket } from '../lib/barcode';
+import { issueV2 } from '../lib/barcodeFlags';
 import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
 
 export default function WalletPass() {
@@ -90,7 +94,12 @@ export default function WalletPass() {
       lastBucket = bucket;
       if (barcodeSecret) {
         try {
-          const signed = await signBarcode(ticketId2, uid, barcodeSecret, bucket);
+          // v2 issuance (flag-gated) emits the compact binary `T2-` code; the
+          // client can only sign the symmetric hmac scheme (ed25519 signing is
+          // a server-side concern). Default stays on the v1 `T-` HMAC code.
+          const signed = issueV2
+            ? await signBarcodeV2({ ticketId: ticketId2, ownerId: uid, scheme: 'hmac', secret: barcodeSecret, bucket })
+            : await signBarcode(ticketId2, uid, barcodeSecret, bucket);
           if (!cancelled) setBarcode(signed);
           return;
         } catch (err) {
@@ -184,6 +193,36 @@ export default function WalletPass() {
   const muted = isUsed || isVoided || isInTransfer;
   // Entry QR only renders within 24h of the event (unknown date → unlocked).
   const qrUnlocked = isWithinHoursBefore(event?.date?.toDate?.(), 24);
+
+  // Milestone chain for the evolving pass countdown: reveal → doors → show
+  // start → set times. `revealAt` mirrors the qrUnlocked 24h window. Doors +
+  // show-start come from event.timing when present (fall back start → date).
+  // Set times aren't in the event model yet — when a `timing.setTimes` field is
+  // added, map it into `setTimePhases` and the post-reveal chain lights up with
+  // zero further wiring.
+  const REVEAL_HOURS_BEFORE = 24;
+  const eventStart = event?.date?.toDate?.() ?? null;
+  const revealAt = eventStart
+    ? new Date(eventStart.getTime() - REVEAL_HOURS_BEFORE * 60 * 60 * 1000)
+    : null;
+  const doorsAt = event?.timing?.doorsOpen?.toDate?.() ?? null;
+  const showStartAt = event?.timing?.startTime?.toDate?.() ?? eventStart;
+  // Brand-customizable QR (org color + center logo), contrast-guarded so it
+  // stays scannable. See lib/qrStyle.ts.
+  const qrStyle = qrStyleFromBranding(event?.branding, 260);
+  const setTimePhases: CountdownPhase[] = (event?.timing?.setTimes ?? [])
+    .map((s, i): CountdownPhase | null => {
+      const at = s.at?.toDate?.();
+      return at && !Number.isNaN(at.getTime())
+        ? { key: `set-${i}`, label: `${s.label} in`, at }
+        : null;
+    })
+    .filter((p): p is CountdownPhase => p !== null);
+  const postRevealPhases: CountdownPhase[] = [
+    ...(doorsAt ? [{ key: 'doors', label: 'Doors open in', at: doorsAt }] : []),
+    ...(showStartAt ? [{ key: 'start', label: 'Show starts in', at: showStartAt }] : []),
+    ...setTimePhases,
+  ];
   const stamp = isVoided
     ? {
         text: 'REFUNDED',
@@ -261,13 +300,33 @@ export default function WalletPass() {
           <div className="relative flex flex-col items-center">
             <div className={`p-4 bg-white border-[3px] border-black rounded-2xl ${muted ? 'opacity-20 grayscale' : ''}`}>
               {qrUnlocked ? (
-                <QRCodeSVG value={barcode || ticket.id} size={260} level="H" includeMargin={false} fgColor="#000000" />
+                <QRCodeSVG
+                  value={barcode || ticket.id}
+                  size={260}
+                  level="H"
+                  marginSize={4}
+                  fgColor={qrStyle.fgColor}
+                  imageSettings={qrStyle.imageSettings}
+                />
               ) : (
                 <div className="w-[260px] h-[260px] flex flex-col items-center justify-center text-center px-6">
-                  <Lock className="w-10 h-10 text-black/30 mb-4" aria-hidden="true" />
+                  <Lock className="w-9 h-9 text-black/30 mb-3" aria-hidden="true" />
                   <p className="type text-[11px] uppercase tracking-widest text-black/50">Entry code locked</p>
-                  <p className="type text-[11px] text-black/40 mt-1">
-                    Unlocks 24h before{event?.date ? ` · ${formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ' the event'}
+                  {revealAt ? (
+                    <TicketPhaseCountdown
+                      className="mt-3"
+                      phases={[{ key: 'reveal', label: 'Unlocks in', at: revealAt }]}
+                    />
+                  ) : null}
+                  <p className="type text-[11px] text-black/40 mt-3">
+                    {event?.date
+                      ? formatInTz(event.date.toDate(), event.timezone, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })
+                      : 'Date TBA'}
                   </p>
                 </div>
               )}
@@ -286,6 +345,12 @@ export default function WalletPass() {
               </div>
             ) : null}
           </div>
+
+          {!muted && qrUnlocked && postRevealPhases.length > 0 ? (
+            <div className="mt-6 flex flex-col items-center text-center">
+              <TicketPhaseCountdown phases={postRevealPhases} doneLabel="Enjoy the show ✦" />
+            </div>
+          ) : null}
 
           <div className="mt-6 pt-6 border-t border-dashed border-black/20 flex justify-between items-end">
             <div className="text-left">
@@ -312,6 +377,26 @@ export default function WalletPass() {
                   style={{ width: `${(timeLeft / 30) * 100}%` }}
                 />
               </div>
+              {/* Liveness cue — a rotating color+code derived from the current
+                  barcode, changing every 30s in lockstep with it. A screenshot
+                  freezes it; a live pass keeps cycling. Human-glanceable
+                  anti-screenshot tell for door staff. See lib/livenessCue.ts. */}
+              {barcode ? (
+                (() => {
+                  const cue = livenessCue(barcode);
+                  return (
+                    <div
+                      className="mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full"
+                      style={{ backgroundColor: cue.hex }}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      <span className="type text-[10px] font-black uppercase tracking-widest text-white">
+                        Live · {cue.label}
+                      </span>
+                    </div>
+                  );
+                })()
+              ) : null}
             </div>
           ) : null}
 
