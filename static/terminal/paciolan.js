@@ -22,6 +22,7 @@
   function init() {
     wireControls();
     loadHealth().catch(e => console.error('[paciolan-health]', e));
+    loadDrivers().catch(e => console.error('[paciolan-drivers]', e));
     refreshEvents().catch(e => console.error('[paciolan]', e));
     setStatus('');
   }
@@ -112,6 +113,72 @@
         : (h.ok_24h > 0 ? '🟢 healthy' : (h.targets_active > 0 ? '🟠 armed, no pulls yet' : '⚪ idle'));
       when.textContent = `${verdict} · last pull ${last}`;
     }
+  }
+
+  // ---------- Chrome instances (drivers) ----------
+  async function loadDrivers() {
+    const body    = document.getElementById('pacDriversBody');
+    const countEl = document.getElementById('pacDriversCount');
+    if (!body) return;
+    let data;
+    try {
+      data = await T.api('/api/paciolan/drivers');
+    } catch (e) {
+      body.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+      return;
+    }
+    const rows = (data && data.drivers) || [];
+    if (countEl) {
+      countEl.textContent = rows.length
+        ? `${data.online}/${rows.length} online${data.erroring ? ` · ${data.erroring} erroring` : ''}`
+        : '';
+    }
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no Chrome instances yet — install the extension, name it, and arm auto-pull</div>';
+      return;
+    }
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Instance</th>
+        <th title="Seen in the last 5 minutes">State</th>
+        <th class="num" title="Pulls completed in 24h">Pulls</th>
+        <th class="num" title="Good pulls / 24h">OK</th>
+        <th class="num" title="Empty pulls / 24h">Empty</th>
+        <th class="num" title="Errored pulls / 24h">Err</th>
+        <th class="num" title="Expired (never completed) / 24h">Exp</th>
+        <th>Last status</th>
+        <th class="num" title="Last seen">Seen</th>
+      </tr></thead>
+      <tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const name = r.label || r.driver_id || '(unknown)';
+      const state = r.online
+        ? '<span class="badge pos">online</span>'
+        : '<span class="badge muted">offline</span>';
+      const st = r.last_status;
+      const statusCell = st
+        ? `<span class="badge ${st === 'ok' ? 'pos' : (st === 'empty' ? 'warn' : 'neg')}"
+             title="${escapeHtml(r.last_error || st)}">${escapeHtml(st)}</span>`
+        : '<span class="muted small">—</span>';
+      const errCell = (r.error_24h || 0) > 0
+        ? `<span class="neg">${T.fmtNum(r.error_24h)}</span>` : T.fmtNum(r.error_24h || 0);
+      tr.innerHTML = `
+        <td>${escapeHtml(name)}${r.label ? ` <span class="muted small">${escapeHtml((r.driver_id || '').slice(0, 8))}</span>` : ''}</td>
+        <td>${state}</td>
+        <td class="num">${T.fmtNum(r.pulls_24h || 0)}</td>
+        <td class="num">${T.fmtNum(r.ok_24h || 0)}</td>
+        <td class="num">${T.fmtNum(r.empty_24h || 0)}</td>
+        <td class="num">${errCell}</td>
+        <td class="num">${T.fmtNum(r.expired_24h || 0)}</td>
+        <td class="small">${statusCell}</td>
+        <td class="num muted small">${fmtDateTime(r.last_seen)}</td>`;
+      tb.appendChild(tr);
+    });
+    body.replaceChildren(tbl);
   }
 
   // ---------- events URL layer ----------
