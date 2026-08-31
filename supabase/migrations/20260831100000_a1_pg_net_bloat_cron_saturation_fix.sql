@@ -17,11 +17,17 @@
 --     bloated 61 GB table. Measured: 204,764 seq scans reading 14.2 BILLION tuples; a single
 --     `WHERE id = <literal>` EXPLAIN did not return inside 60 s.
 --   * That is why ~10 unrelated jobs all die identically in a `FOR over SELECT rows` loop at
---     the 900 s `statement_timeout` backstop (mig 20260701213000), then are immediately
---     restarted by the next tick — pg_cron does not dedupe overlapping runs. 24 h failure
---     counts: reddit 528/529, x_news 558/572, sg_seller 95/96, espn_scoreboard 95/96,
---     sg_priority_sales 95/96, sg-match-map 95/96, td_match_drain 95/96, compute_alerts 96/96,
---     sweep_expired_pg_net_pending 24/24, venue_section_rollup 24/24, listings_deltas 15/15.
+--     the 900 s `statement_timeout` backstop (mig 20260701213000), and are re-launched on the
+--     next tick after the failure. 24 h failure counts: reddit 528/529, x_news 558/572,
+--     sg_seller 95/96, espn_scoreboard 95/96, sg_priority_sales 95/96, sg-match-map 95/96,
+--     td_match_drain 95/96, compute_alerts 96/96, sweep_expired_pg_net_pending 24/24,
+--     venue_section_rollup 24/24, listings_deltas 15/15.
+--   * NB — the saturation is BREADTH, not depth: ~20 DISTINCT jobs each running continuously,
+--     NOT one job stacked on itself. pg_cron already skips a tick whose job is still running
+--     (verified: `max_same_job_concurrent` = 1 for every job over 24 h, and `td_match_drain`
+--     on `*/5` logged 95 runs against 288 ticks — 193 ticks self-skipped). An earlier read of
+--     this incident blamed overlapping runs; that was wrong, and the guard added below is
+--     defense-in-depth, not the fix. The fix is the bloat.
 --   * The cycle closes: 900 s transactions hold back the xmin horizon → autovacuum cannot
 --     reclaim dead tuples → the table bloats further → the scans get slower.
 --
@@ -31,14 +37,18 @@
 -- VACUUM (FULL) + an aggressive reaper, both of which this migration establishes.
 --
 -- FIX (this migration; the one-off VACUUM FULL is applied out-of-band — see ROLLBACK note):
---   1. cron_try_lock()   — transaction-scoped advisory-lock helper. MUST be xact-scoped, not
---                          session-scoped: with use_background_workers=off pg_cron reuses
---                          PERSISTENT pooled connections across jobs, so a session lock would
---                          leak onto unrelated later jobs (same mechanism as the SET leak,
+--   1. cron_try_lock()   — transaction-scoped advisory-lock helper. DEFENSE-IN-DEPTH ONLY (see
+--                          the NB above): pg_cron already self-skips a tick whose job is
+--                          running, so this only covers a manual/RPC invocation racing a live
+--                          cron run. MUST be xact-scoped, not session-scoped: with
+--                          use_background_workers=off pg_cron reuses PERSISTENT pooled
+--                          connections across jobs, so a session lock would leak onto
+--                          unrelated later jobs (same mechanism as the SET leak,
 --                          PROJECT_BIBLE §3 landmine (d)).
---   2. cron_should_fire() — takes that lock, so every job already behind the gate gets overlap
---                          protection for free with no command rewrite. New decision value
---                          'skip_overlap' (cron_gate_decisions has no CHECK on `decision`).
+--   2. cron_should_fire() — takes that lock, so every job behind the gate inherits it with no
+--                          command rewrite. New decision value 'skip_overlap'
+--                          (cron_gate_decisions has no CHECK on `decision`). Expect this
+--                          decision to be RARE — near-zero is correct, not a bug.
 --                          The mig 20260708042000 statement_timeout capture/restore is
 --                          preserved verbatim — do not re-clamp (§3 landmine (e)).
 --   3. reddit_news_process() — real, deterministic bug, unrelated to the above: a Reddit feed
@@ -49,7 +59,8 @@
 --                          which is what let it reach 61 GB; this reaps to 2 h and VACUUMs.
 --   5. Disabled jobs     — the redundant TD-match trio + the four 100%-failure jobs (below).
 --   6. Overlap guards    — wrapped onto the 9 hot jobs that do NOT route through
---                          cron_should_fire (bare `SELECT fn();` commands).
+--                          cron_should_fire (bare `SELECT fn();` commands). Same
+--                          defense-in-depth caveat as (1).
 --
 -- ROLLBACK: re-enable the jobs listed in step 5 with cron.alter_job(<id>, active := true) and
 --   restore the two functions from their prior definitions. The one-off
@@ -69,9 +80,11 @@ AS $function$
 $function$;
 
 COMMENT ON FUNCTION public.cron_try_lock(text) IS
-  'Cron overlap guard. Returns false when a prior run holding the same key is still in '
-  'flight, so the tick can no-op instead of piling up. Transaction-scoped (see mig '
-  '20260831100000) — never convert to pg_try_advisory_lock.';
+  'Cron overlap guard (defense-in-depth — pg_cron already self-skips a tick whose job is '
+  'still running; this covers a manual/RPC call racing a live cron run). Returns false when '
+  'a prior holder of the same key is in flight. Transaction-scoped (see mig 20260831100000) '
+  '— never convert to pg_try_advisory_lock: pg_cron pools connections and a session lock '
+  'would leak onto unrelated jobs.';
 
 -- ---------------------------------------------------------------------------
 -- 2. cron_should_fire(): add the overlap guard ahead of every other check, so a
@@ -98,9 +111,10 @@ DECLARE
 BEGIN
   v_hour_et := EXTRACT(hour FROM (v_now AT TIME ZONE 'America/New_York'))::int;
 
-  -- OVERLAP GUARD (mig 20260831100000). pg_cron does not dedupe overlapping runs, so a job
-  -- whose body outlives its own interval piles a new backend on top of the old one every
-  -- tick. Held for the life of the cron command's implicit transaction.
+  -- OVERLAP GUARD (mig 20260831100000). Defense-in-depth: pg_cron ALREADY skips a tick whose
+  -- job is still running, so this fires only when something outside pg_cron (a manual call, an
+  -- RPC) races a live cron run. 'skip_overlap' being ~always zero is the expected state.
+  -- Held for the life of the cron command's implicit transaction.
   IF NOT public.cron_try_lock(p_jobname) THEN
     INSERT INTO public.cron_gate_decisions(jobname, decided_at, decision, hour_et)
       VALUES (p_jobname, v_now, 'skip_overlap', v_hour_et);
