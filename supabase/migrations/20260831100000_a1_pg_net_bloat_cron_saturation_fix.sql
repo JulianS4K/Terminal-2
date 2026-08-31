@@ -240,6 +240,10 @@ COMMENT ON FUNCTION public.pg_net_reap(integer) IS
   'Bounds net._http_response (unindexed on id, so its size directly sets the cost of every '
   'pg_net consumer). See mig 20260831100000.';
 
+-- It DELETEs, so lock it to the intended callers (the body already asserts current_user).
+REVOKE ALL ON FUNCTION public.pg_net_reap(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.pg_net_reap(integer) TO service_role;
+
 -- ---------------------------------------------------------------------------
 -- 5. Turn off redundant + wholly-failing jobs.
 -- ---------------------------------------------------------------------------
