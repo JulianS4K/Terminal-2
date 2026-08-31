@@ -1,0 +1,25 @@
+{
+  "name": "terminal-2-mcp-apps",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only MCP Apps (ext-apps) for the Terminal-2 lanes: d0-data (sales), d1-concierge (reuses the retail chat), d4-events (Exos/Bridge, read-only; create/sell deferred).",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "dev": "tsx server.ts",
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.4",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "vite": "6.0.5",
+    "vite-plugin-singlefile": "2.3.3"
+  }
+}

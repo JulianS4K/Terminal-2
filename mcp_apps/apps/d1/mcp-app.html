@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>D1 · Ticket concierge</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 0; padding: 16px; color: #16181d; background: #fff;
+        display: flex; flex-direction: column; height: 100vh; max-height: 100vh;
+      }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+      .msg { padding: 8px 12px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word; }
+      .user { align-self: flex-end; background: #2563eb; color: #fff; }
+      .bot { align-self: flex-start; background: #eef1f6; color: #16181d; }
+      form { display: flex; gap: 8px; margin-top: 12px; }
+      input { flex: 1; font: inherit; padding: 8px 12px; border-radius: 10px; border: 1px solid #c7ccd6; background: transparent; color: inherit; }
+      button { font: inherit; padding: 8px 14px; border-radius: 10px; border: 0; background: #2563eb; color: #fff; cursor: pointer; }
+      button:disabled { opacity: .5; cursor: default; }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e7e9ee; background: #16181d; }
+        .bot { background: #232730; color: #e7e9ee; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Ticket concierge</h1>
+    <div id="log"></div>
+    <form id="form">
+      <input id="input" type="text" placeholder="Find me two seats for…" autocomplete="off" />
+      <button id="send" type="submit">Send</button>
+    </form>
+    <script type="module" src="./src/mcp-app.ts"></script>
+  </body>
+</html>

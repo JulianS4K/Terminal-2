@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>D0 · Sales by league</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 0; padding: 16px;
+        color: #16181d; background: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e7e9ee; background: #16181d; }
+        tr:nth-child(even) td { background: #1e2128; }
+        th { border-color: #2a2e37; }
+      }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      h1 { font-size: 16px; margin: 0; }
+      button {
+        font: inherit; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+        border: 1px solid #c7ccd6; background: transparent; color: inherit;
+      }
+      button:hover { border-color: #8b93a3; }
+      #status { color: #6b7280; margin-bottom: 10px; min-height: 1em; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #e6e8ec; }
+      th { font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: #6b7280; }
+      td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .wrap { overflow-x: auto; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Sales by league</h1>
+      <button id="refresh" type="button">Refresh</button>
+    </header>
+    <div id="status">Loading…</div>
+    <div class="wrap">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th>League</th>
+            <th class="num">Revenue</th>
+            <th class="num">Tickets</th>
+            <th class="num">Wtd. median</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <script type="module" src="./src/mcp-app.ts"></script>
+  </body>
+</html>
