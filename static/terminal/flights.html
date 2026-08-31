@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Flights (ticket search)</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260826flights" />
+  <link rel="stylesheet" href="style.css?v=20260831basis" />
 </head>
 <body data-page="flights">
 
@@ -109,16 +109,21 @@
     <section id="fl-note">
       <div class="muted small">
         <b>How the price is built.</b> Each row's headline number is the cheapest <b>get-in</b> we can see
-        for that event across every marketplace in the daily cross-source snapshot
+        for that event in the daily cross-source snapshot
         (<span class="num">event_listing_snapshot_daily</span> — EVO, StubHub, Gametime, VividSeats,
-        TickPick, Ticketmaster, SeatGeek). <b>vs usual</b> compares it against that event's own trailing
-        30-day median get-in — the same idea as Google Flights' "prices are currently low", but per event
-        rather than per route, and drawn from an indefinitely-retained history. Expanding a row adds the
-        <b>live</b> layer: per-marketplace inventory landed by the TicketsData pollers
-        (<span class="num">ticketsdata_listings_snapshots</span>) plus our own EVO book, and the cheapest
-        real listings that seat your ticket count. Live coverage is credit-budgeted, so events without a
-        recent poll fall back to their daily snapshot prices and say so. Read-only — this page never
-        triggers an upstream fetch.
+        TickPick, Ticketmaster, SeatGeek), compared only <b>within one fee basis</b>: the live listing
+        layer and TickPick are <b>all-in</b> (what you pay at checkout), while the TEvo exchange, SeatGeek
+        and the other TicketsData columns are <b>pre-fee</b> asks. Every price on this page carries its
+        basis tag, and an all-in number never races a pre-fee one — that comparison is meaningless.
+        <b>vs usual</b> compares today against that event's own trailing 30-day history on a single
+        <b>anchor marketplace</b> (the one with the most days of coverage in the window, named on the
+        chip). Cross-marketplace coverage is ragged — TicketsData polling is credit-budgeted, and ~98% of
+        daily rows carry one source — so a per-day "cheapest of whatever we had" would move when coverage
+        moved, not when the price did. Expanding a row adds the <b>live</b> layer: per-marketplace
+        inventory landed by the pollers (<span class="num">ticketsdata_listings_snapshots</span>) plus our
+        own EVO book, and the cheapest real listings that seat your ticket count. Events without a recent
+        poll fall back to their daily snapshot prices and say so. Read-only — this page never triggers an
+        upstream fetch.
       </div>
     </section>
   </main>
@@ -129,6 +134,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260826flights"></script>
-  <script src="flights.js?v=20260826flights"></script>
+  <script src="flights.js?v=20260831basis"></script>
 </body>
 </html>

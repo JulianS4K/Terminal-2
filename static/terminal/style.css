@@ -2955,6 +2955,15 @@ table.deals-tbl td.deals-open { text-align: center; }
 .fl-v-typical { color: var(--muted); }
 .fl-v-high { color: var(--warn); }
 .fl-v-unknown { color: var(--dim); }
+.badge-link { color: var(--accent); border-color: rgba(251, 191, 36, .45); text-decoration: none; }
+.badge-link:hover { background: var(--shade); text-decoration: none; }
+.fl-basis { font-family: var(--mono); font-size: 9px; color: var(--dim); margin-top: 1px; }
+.fl-basis-tag {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .03em;
+  border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--muted);
+}
+.fl-basis-all_in { color: var(--pos); border-color: rgba(74, 222, 128, .35); }
+.fl-basis-pre_fee { color: var(--warn); border-color: rgba(245, 158, 11, .35); }
 .fl-move { display: block; font-family: var(--mono); font-size: 10px; margin-top: 2px; }
 .fl-move.down { color: var(--pos); }
 .fl-move.up { color: var(--neg); }

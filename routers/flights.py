@@ -48,16 +48,28 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from core.concurrency import run_parallel
 
+# What a price INCLUDES. The daily snapshot table is not one basis: its
+# populate function (`compute_event_listing_snapshot`) computes every TD column
+# from `list_price` EXCEPT TickPick, which uses `price_with_fees`
+#   eff_price = CASE WHEN platform = 'TP' THEN price_with_fees ELSE list_price END
+# (mig 20260606160000 — TickPick is an all-in marketplace, its list_price is a
+# seller base value that ran 5.6x low). The TEvo exchange get-in and the SG
+# broker feed are likewise pre-fee. The LIVE listing layer, by contrast, reads
+# `price_with_fees` for every platform. So "cheapest" is only meaningful WITHIN
+# a basis — comparing an all-in $43 against a pre-fee $38 says nothing.
+BASIS_ALL_IN = "all_in"      # what a buyer actually pays at checkout
+BASIS_PRE_FEE = "pre_fee"    # list/ask before checkout fees
+
 # One entry per marketplace we can price from the daily snapshot table:
-#   key, display label, get-in column, median column, depth column
-DAILY_SOURCES: tuple[tuple[str, str, str, str, str], ...] = (
-    ("evo", "EVO", "evo_retail_getin", "evo_retail_median", "evo_tickets_count"),
-    ("sh", "StubHub", "td_sh_getin", "td_sh_median", "td_sh_listings"),
-    ("gt", "Gametime", "td_gt_getin", "td_gt_median", "td_gt_listings"),
-    ("vd", "VividSeats", "td_vd_getin", "td_vd_median", "td_vd_listings"),
-    ("tp", "TickPick", "td_tp_getin", "td_tp_median", "td_tp_listings"),
-    ("tm", "Ticketmaster", "td_tm_getin", "td_tm_median", "td_tm_listings"),
-    ("sg", "SeatGeek", "sg_all_getin", "sg_all_median", "sg_all_listings"),
+#   key, display label, get-in column, median column, depth column, fee basis
+DAILY_SOURCES: tuple[tuple[str, str, str, str, str, str], ...] = (
+    ("evo", "EVO", "evo_retail_getin", "evo_retail_median", "evo_tickets_count", BASIS_PRE_FEE),
+    ("sh", "StubHub", "td_sh_getin", "td_sh_median", "td_sh_listings", BASIS_PRE_FEE),
+    ("gt", "Gametime", "td_gt_getin", "td_gt_median", "td_gt_listings", BASIS_PRE_FEE),
+    ("vd", "VividSeats", "td_vd_getin", "td_vd_median", "td_vd_listings", BASIS_PRE_FEE),
+    ("tp", "TickPick", "td_tp_getin", "td_tp_median", "td_tp_listings", BASIS_ALL_IN),
+    ("tm", "Ticketmaster", "td_tm_getin", "td_tm_median", "td_tm_listings", BASIS_PRE_FEE),
+    ("sg", "SeatGeek", "sg_all_getin", "sg_all_median", "sg_all_listings", BASIS_PRE_FEE),
 )
 
 # TicketsData platform code → display label, for the live booking-options rows.
@@ -69,7 +81,7 @@ TD_PLATFORM_LABELS = {
 _DAILY_COLS = ",".join(
     ["event_id", "snapshot_date", "snapshot_slot", "captured_at",
      "amalgam_getin", "amalgam_median", "amalgam_source_count"]
-    + [c for _k, _l, g, m, d in DAILY_SOURCES for c in (g, m, d)]
+    + [c for _k, _l, g, m, d, _b in DAILY_SOURCES for c in (g, m, d)]
 )
 
 _EVENT_COLS = ("id,name,occurs_at_local,venue_name,venue_location,"
@@ -161,27 +173,65 @@ def _event_day(occurs_at_local: str | None) -> str | None:
 def _row_sources(row: dict) -> list[dict]:
     """Per-marketplace prices present on one daily snapshot row."""
     out = []
-    for key, label, getin_col, median_col, depth_col in DAILY_SOURCES:
+    for key, label, getin_col, median_col, depth_col, basis in DAILY_SOURCES:
         getin = _num(row.get(getin_col))
         median = _num(row.get(median_col))
         if getin is None and median is None:
             continue
         depth = row.get(depth_col)
         out.append({
-            "source": key, "label": label,
+            "source": key, "label": label, "basis": basis,
             "getin": getin, "median": median,
             "depth": int(depth) if isinstance(depth, (int, float)) else None,
         })
     return out
 
 
-def _best_of(sources: list[dict]) -> tuple[float | None, str | None]:
-    """Cheapest get-in across a row's marketplaces + which one it came from."""
-    priced = [s for s in sources if s["getin"] is not None]
+def _best_of(sources: list[dict]) -> tuple[float | None, str | None, str | None]:
+    """Cheapest get-in — compared only WITHIN one fee basis.
+
+    All-in prices win the tie-break when any are present: that is what a buyer
+    pays, and every pre-fee number in the same row would only grow at checkout.
+    Ranking across bases is the bug this exists to prevent — it would let a
+    $43 all-in price lose to a $38 pre-fee one that costs $46 at the door.
+    """
+    priced = [s for s in sources if s.get("getin") is not None]
     if not priced:
-        return None, None
-    best = min(priced, key=lambda s: s["getin"])
-    return best["getin"], best["source"]
+        return None, None, None
+    all_in = [s for s in priced if s.get("basis") == BASIS_ALL_IN]
+    best = min(all_in or priced, key=lambda s: s["getin"])
+    return best["getin"], best["source"], best.get("basis")
+
+
+def _anchor_source(rows: list[dict]) -> str | None:
+    """The one marketplace a price HISTORY should be measured on.
+
+    Cross-source coverage is ragged — TicketsData polling is credit-budgeted, so
+    a given event has StubHub/Vivid/Gametime prices on some days and not others
+    (98.5% of daily rows carry a single source at all). Taking min-across-
+    whatever-exists per day makes the series jump when a marketplace appears or
+    disappears, and the verdict then fires "great price" on a coverage change
+    rather than a price move. Anchoring the series to the source with the most
+    days in the window (ties broken by DAILY_SOURCES order) keeps every point
+    on one basis and one market, so a move in the line is a move in the price.
+    """
+    counts: dict[str, int] = {}
+    for row in rows:
+        for s in _row_sources(row):
+            if s["getin"] is not None:
+                counts[s["source"]] = counts.get(s["source"], 0) + 1
+    if not counts:
+        return None
+    order = {entry[0]: i for i, entry in enumerate(DAILY_SOURCES)}
+    return min(counts, key=lambda k: (-counts[k], order[k]))
+
+
+def _source_price(row: dict | None, source: str | None) -> float | None:
+    """That one anchor source's get-in on a given row (None when absent)."""
+    if row is None or source is None:
+        return None
+    hit = next((s for s in _row_sources(row) if s["source"] == source), None)
+    return hit["getin"] if hit else None
 
 
 def _pick_current(rows: list[dict]) -> dict | None:
@@ -192,8 +242,12 @@ def _pick_current(rows: list[dict]) -> dict | None:
     return max(dated, key=lambda r: (r["snapshot_date"], r.get("captured_at") or ""))
 
 
-def _daily_series(rows: list[dict]) -> list[dict]:
-    """Collapse snapshot rows to one point per day: {date, price, sources}."""
+def _daily_series(rows: list[dict], anchor: str | None) -> list[dict]:
+    """One point per day, all read off the SAME marketplace (`anchor`).
+
+    A day where the anchor has no price is dropped rather than back-filled from
+    another source — a gap is honest, a substituted source is a fake move.
+    """
     by_day: dict[str, dict] = {}
     for r in rows:
         day = r.get("snapshot_date")
@@ -206,25 +260,28 @@ def _daily_series(rows: list[dict]) -> list[dict]:
     for day in sorted(by_day):
         row = by_day[day]
         srcs = _row_sources(row)
-        price, source = _best_of(srcs)
-        if price is None:
+        hit = next((s for s in srcs if s["source"] == anchor), None)
+        if hit is None or hit["getin"] is None:
             continue
         series.append({
-            "date": day, "price": round(price, 2), "source": source,
-            "sources": len(srcs),
-            "median": round(_median([s["median"] for s in srcs
-                                     if s["median"] is not None]) or 0, 2) or None,
+            "date": day, "price": round(hit["getin"], 2), "source": hit["source"],
+            "basis": hit["basis"], "sources": len(srcs),
+            "median": round(hit["median"], 2) if hit["median"] is not None else None,
         })
     return series
 
 
-def _baseline(series: list[dict], current: float | None) -> dict:
+def _baseline(series: list[dict], current: float | None,
+              anchor: str | None = None) -> dict:
     """Price insights for one event, from its OWN trailing price history.
 
     Mirrors the Google Flights verdict ("prices are currently low / typical /
     high") but computed per event rather than per route: the typical price is
     the median of the event's trailing daily get-ins, the band is p25..p75,
     and the trend compares the last week against the week before it.
+
+    `current` MUST be the anchor source's price, not the row's cheapest — the
+    verdict compares like with like or it is noise (see `_anchor_source`).
     """
     prices = [p["price"] for p in series]
     typical = _median(prices)
@@ -256,6 +313,8 @@ def _baseline(series: list[dict], current: float | None) -> dict:
             verdict = "typical"
 
     return {
+        "source": anchor,
+        "basis": next((e[5] for e in DAILY_SOURCES if e[0] == anchor), None),
         "typical": round(typical, 2) if typical else None,
         "band_low": round(low, 2) if low else None,
         "band_high": round(high, 2) if high else None,
@@ -357,6 +416,8 @@ def _live_options(xrefs: list[dict], listing_batches: list[list[dict]]) -> tuple
             "source": platform.lower(),
             "platform": platform,
             "label": TD_PLATFORM_LABELS.get(platform, platform),
+            # the live layer reads price_with_fees for every platform
+            "basis": BASIS_ALL_IN,
             "getin": round(min(prices), 2),
             "median": round(_median(prices) or 0, 2),
             "listings": len(rows),
@@ -493,15 +554,20 @@ def build_flights_router(get_require_sb: Callable[[], Callable],
             if current is None:
                 continue
             sources = _row_sources(current)
-            price, price_source = _best_of(sources)
+            price, price_source, price_basis = _best_of(sources)
             if price is None:
                 continue
             if max_price is not None and price > max_price:
                 continue
             if len(sources) < min_sources:
                 continue
-            series = _daily_series(by_event_history.get(eid, []))
-            insights = _baseline(series, price)
+            # The headline is the cheapest comparable price to BUY at; the
+            # verdict is measured on one anchor market across the window, so
+            # the two can name different sources. Both are labelled.
+            history = by_event_history.get(eid, [])
+            anchor = _anchor_source(history + [current])
+            series = _daily_series(history, anchor)
+            insights = _baseline(series, _source_price(current, anchor), anchor)
             items.append({
                 "event_id": eid,
                 "name": ev.get("name"),
@@ -515,6 +581,7 @@ def build_flights_router(get_require_sb: Callable[[], Callable],
                 "event_type": ev.get("event_type"),
                 "price": round(price, 2),
                 "price_source": price_source,
+                "price_basis": price_basis,
                 "sources": sources,
                 "source_count": len(sources),
                 "priced_at": current.get("captured_at"),
@@ -583,12 +650,12 @@ def build_flights_router(get_require_sb: Callable[[], Callable],
                        .eq("event_id", event_id).limit(1).execute().data or []),
         ])
 
-        series = _daily_series(rows)
         current_row = _pick_current(rows)
+        anchor = _anchor_source(rows)
+        series = _daily_series(rows, anchor)
         daily_sources = _row_sources(current_row) if current_row else []
-        current_price, _src = _best_of(daily_sources)
         insights = _baseline([p for p in series if p["date"] < _iso_day(today)],
-                             current_price)
+                             _source_price(current_row, anchor), anchor)
 
         # Live layer: tevo → aq short ids → TD xrefs → newest listing batch.
         short_ids = [r["aq_short_event_id"] for r in aq_rows if r.get("aq_short_event_id")]
@@ -622,7 +689,8 @@ def build_flights_router(get_require_sb: Callable[[], Callable],
                 continue
             options.append({
                 "source": s["source"], "platform": s["source"].upper(),
-                "label": s["label"], "getin": s["getin"], "median": s["median"],
+                "label": s["label"], "basis": s["basis"],
+                "getin": s["getin"], "median": s["median"],
                 "listings": s["depth"], "tickets": None,
                 "captured_at": current_row.get("captured_at") if current_row else None,
                 "event_url": None, "live": False,
@@ -632,6 +700,7 @@ def build_flights_router(get_require_sb: Callable[[], Callable],
             options = [o for o in options if o["source"] != "evo"]
             options.append({
                 "source": "evo", "platform": "EVO", "label": "EVO (our book)",
+                "basis": BASIS_PRE_FEE,   # TEvo exchange ask, before fees
                 "getin": _num(evo.get("getin_price")),
                 "median": _num(evo.get("retail_median")),
                 "listings": evo.get("groups_count"),
@@ -641,7 +710,7 @@ def build_flights_router(get_require_sb: Callable[[], Callable],
             })
         options.sort(key=lambda o: (o["getin"] is None, o["getin"] or 0))
 
-        best = next((o for o in options if o["getin"] is not None), None)
+        best_price, best_source, best_basis = _best_of(options)
         return {
             "event": {
                 "event_id": event_id,
@@ -654,8 +723,9 @@ def build_flights_router(get_require_sb: Callable[[], Callable],
                 "event_date": _event_day(event.get("occurs_at_local")),
                 "days_out": _days_out(event.get("occurs_at_local"), today),
             },
-            "price": best["getin"] if best else None,
-            "price_source": best["source"] if best else None,
+            "price": best_price,
+            "price_source": best_source,
+            "price_basis": best_basis,
             "options": options,
             "listings": _cheapest_listings(pooled, qty, 30),
             "listings_qty": qty,

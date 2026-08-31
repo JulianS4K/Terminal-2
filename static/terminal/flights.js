@@ -34,6 +34,16 @@
     vd: 'var(--src-vd)', tp: 'var(--src-tp)', tm: 'var(--src-tm)',
     sg: 'var(--src-sg)',
   };
+  // What a price includes. The daily snapshot columns are pre-fee (except
+  // TickPick, which is an all-in market), the live TicketsData listing layer is
+  // all-in. Showing the tag is the difference between a comparison and a
+  // coincidence, so every price on this page carries one.
+  const BASIS_LABEL = { all_in: 'all-in', pre_fee: '+fees at checkout' };
+  const BASIS_SHORT = { all_in: 'ALL-IN', pre_fee: 'PRE-FEE' };
+  const SRC_LABEL = {
+    evo: 'EVO', sh: 'StubHub', gt: 'Gametime', vd: 'VividSeats',
+    tp: 'TickPick', tm: 'Ticketmaster', sg: 'SeatGeek',
+  };
   const VERDICT_LABEL = {
     deal: 'Great price', low: 'Below usual', typical: 'Usual price',
     high: 'Above usual', unknown: 'No history yet',
@@ -42,7 +52,7 @@
   const state = {
     who: '', where: '', from: '', to: '', qty: 2,
     maxPrice: null, minSources: 1, sort: 'best',
-    dayFilter: null, trackedOnly: false,
+    dayFilter: null, trackedOnly: false, focused: null,
     results: [], calendar: [], meta: null,
     expanded: null, details: {},
     busy: false, suggestTimer: 0,
@@ -143,6 +153,11 @@
   async function search() {
     if (state.busy) return;
     readControls();
+    if (state.focused) {
+      state.focused = null;
+      const graph = document.getElementById('fl-graph');
+      if (graph) graph.hidden = false;
+    }
     state.busy = true;
     state.expanded = null;
     state.details = {};
@@ -164,6 +179,45 @@
       state.busy = false;
       render();
     }
+  }
+
+  // Deep link from the event page (flights.html?event=<id>): show that one
+  // event, already expanded, without making the operator re-find it by name.
+  async function focusEvent(id) {
+    T.setStatus('Loading…', '');
+    try {
+      const d = await T.api('/api/broker/flights/event/' + id + '?qty=' + state.qty);
+      const ev = d.event || {};
+      const options = d.options || [];
+      state.details[id] = d;
+      state.results = [{
+        event_id: id, name: ev.name, performer: ev.performer,
+        performer_id: ev.performer_id, venue: ev.venue, location: ev.location,
+        occurs_at_local: ev.occurs_at_local, event_date: ev.event_date,
+        days_out: ev.days_out,
+        price: d.price, price_source: d.price_source, price_basis: d.price_basis,
+        sources: options.map(o => ({
+          source: o.source, label: o.label, getin: o.getin,
+          median: o.median, depth: o.listings, basis: o.basis,
+        })),
+        source_count: options.length,
+        insights: d.insights || {},
+        spark: (d.history || []).slice(-21).map(p => p.price),
+        reasons: [], score: 0,
+      }];
+      state.calendar = [];
+      state.meta = null;
+      state.expanded = id;
+      state.focused = id;
+      // The date grid compares events against each other — meaningless with a
+      // set of one, so it stands down rather than rendering an empty panel.
+      const graph = document.getElementById('fl-graph');
+      if (graph) graph.hidden = true;
+      T.setStatus('Live', 'ok');
+    } catch (e) {
+      T.setStatus(String(e.message || e), 'err');
+    }
+    render();
   }
 
   // ---------- price graph --------------------------------------------------
@@ -232,7 +286,15 @@
     const text = (delta === null || delta === undefined)
       ? label
       : label + ' · ' + (delta < 0 ? '−' : '+') + pct(delta) + ' vs usual';
-    return el('span', { class: 'fl-verdict fl-v-' + v, text: text });
+    // The verdict is measured on ONE anchor market over the window (never a
+    // day-by-day cheapest, which moves when coverage moves) — name it, so a
+    // reader can see the comparison is like-for-like.
+    const srcLabel = SRC_LABEL[insights.source] || insights.source;
+    const title = srcLabel
+      ? 'vs this event\u2019s own ' + srcLabel + ' price over the last '
+        + (insights.days_observed || 0) + ' days'
+      : 'no price history yet';
+    return el('span', { class: 'fl-verdict fl-v-' + v, text: text, title: title });
   }
 
   function sparkline(values) {
@@ -305,6 +367,8 @@
           el('span', { text: money(item.live_price !== undefined ? item.live_price : item.price) }),
           item.live_price !== undefined ? el('span', { class: 'fl-live-tag', text: 'LIVE' }) : null,
         ]),
+        el('div', { class: 'fl-basis', title: 'what this number includes',
+                    text: BASIS_LABEL[item.live_price !== undefined ? 'all_in' : item.price_basis] || '' }),
         item.live_price !== undefined
           ? el('div', { class: 'muted small', text: 'daily snapshot ' + money(item.price) })
           : null,
@@ -382,17 +446,21 @@
     const table = el('table', { class: 'fl-tbl' });
     const head = el('tr', {}, [
       el('th', { text: 'MARKETPLACE' }), el('th', { class: 'num', text: 'GET-IN' }),
+      el('th', { text: 'PRICE IS' }),
       el('th', { class: 'num', text: 'MEDIAN' }), el('th', { class: 'num', text: 'LISTINGS' }),
       el('th', { class: 'num', text: 'TICKETS' }), el('th', { text: 'AS OF' }), el('th', { text: '' }),
     ]);
     table.appendChild(el('thead', {}, [head]));
     const body = el('tbody');
-    options.forEach((o, i) => {
+    const winner = options.find(o => o.getin !== null && o.getin !== undefined
+      && (!options.some(x => x.basis === 'all_in' && x.getin !== null && x.getin !== undefined)
+          || o.basis === 'all_in'));
+    options.forEach((o) => {
       const link = o.event_url
         ? el('a', { href: window.TermRender.safeHref(o.event_url), target: '_blank',
                     rel: 'noopener noreferrer', text: 'open ↗' })
         : el('span', { class: 'muted small', text: '' });
-      body.appendChild(el('tr', { class: i === 0 ? 'fl-best-opt' : '' }, [
+      body.appendChild(el('tr', { class: o === winner ? 'fl-best-opt' : '' }, [
         el('td', {}, [
           el('span', { class: 'fl-dot', style: 'background:' + (SRC_COLOR[o.source] || 'var(--dim)') }),
           el('span', { text: ' ' + o.label }),
@@ -400,6 +468,8 @@
                  : el('span', { class: 'fl-snap-tag', text: 'DAILY' }),
         ]),
         el('td', { class: 'num', text: money(o.getin) }),
+        el('td', {}, [el('span', { class: 'fl-basis-tag fl-basis-' + (o.basis || 'unknown'),
+                                   text: BASIS_SHORT[o.basis] || '—' })]),
         el('td', { class: 'num', text: money(o.median) }),
         el('td', { class: 'num', text: o.listings === null || o.listings === undefined ? '—' : T.fmtNum(o.listings) }),
         el('td', { class: 'num', text: o.tickets === null || o.tickets === undefined ? '—' : T.fmtNum(o.tickets) }),
@@ -493,6 +563,8 @@
 
   function insightLine(insights, price) {
     const bits = [];
+    const srcLabel = SRC_LABEL[insights.source] || insights.source;
+    if (srcLabel) bits.push('measured on ' + srcLabel);
     if (isFinite(insights.typical)) {
       bits.push('Usually ' + money(insights.typical)
         + (isFinite(insights.band_low) && isFinite(insights.band_high)
@@ -618,8 +690,14 @@
     wireSuggest();
     updateTrackedCount();
 
-    // Deep link: flights.html?q=Knicks&city=New+York
+    // Deep links: ?event=<id> (one event, expanded — from the event page's
+    // COMPARE ON FLIGHTS badge) or ?q=Knicks&city=New+York (a pre-run search).
     const qs = new URLSearchParams(location.search);
+    const focusId = parseInt(qs.get('event') || '', 10);
+    if (Number.isFinite(focusId) && focusId > 0) {
+      await focusEvent(focusId);
+      return;
+    }
     if (qs.get('q')) document.getElementById('flWho').value = qs.get('q');
     if (qs.get('city')) document.getElementById('flWhere').value = qs.get('city');
     await search();

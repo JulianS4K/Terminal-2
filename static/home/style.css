@@ -65,6 +65,7 @@ main.grid {
 }
 .card.terminal    { border-top-color: var(--accent); }
 .card.fantasy     { border-top-color: var(--pos); }
+.card.flights     { border-top-color: var(--warn); }
 .card.store       { border-top-color: var(--info); }
 .card.bridge      { border-top-color: #c084fc; }
 .card.locked {
@@ -83,6 +84,7 @@ main.grid {
 }
 .card.terminal    .card-tag { color: var(--accent); }
 .card.fantasy     .card-tag { color: var(--pos); }
+.card.flights     .card-tag { color: var(--warn); }
 .card.store       .card-tag { color: var(--info); }
 .card.bridge      .card-tag { color: #c084fc; }
 
@@ -104,6 +106,7 @@ main.grid {
   color: var(--accent);
 }
 .card.fantasy .card-cta { color: var(--pos); }
+.card.flights .card-cta { color: var(--warn); }
 .card.bridge .card-cta { color: #c084fc; }
 .card-note {
   margin-top: 8px;

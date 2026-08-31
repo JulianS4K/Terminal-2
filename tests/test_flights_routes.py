@@ -181,7 +181,7 @@ def _row(**kw):
     return base
 
 
-def test_row_sources_and_best_of():
+def test_row_sources_carry_a_fee_basis():
     row = _row(evo_retail_getin=100, evo_retail_median=180, evo_tickets_count=40,
                td_sh_getin=90, td_sh_median=None, td_sh_listings="not-a-number",
                td_gt_getin=None, td_gt_median=None)
@@ -190,10 +190,50 @@ def test_row_sources_and_best_of():
     assert keys == {"evo", "sh"}            # gt has neither price → dropped
     sh = next(s for s in srcs if s["source"] == "sh")
     assert sh["depth"] is None              # non-numeric depth degrades to None
-    price, source = fl._best_of(srcs)
-    assert (price, source) == (90.0, "sh")
-    assert fl._best_of([]) == (None, None)
-    assert fl._best_of([{"source": "x", "getin": None}]) == (None, None)
+    # the populate fn computes every TD column from list_price EXCEPT TickPick
+    assert sh["basis"] == fl.BASIS_PRE_FEE
+    assert next(s for s in srcs if s["source"] == "evo")["basis"] == fl.BASIS_PRE_FEE
+    tp = fl._row_sources(_row(td_tp_getin=50, td_tp_median=80))[0]
+    assert tp["basis"] == fl.BASIS_ALL_IN
+
+
+def test_best_of_never_compares_across_fee_bases():
+    # an all-in $43 beats a pre-fee $38: the $38 grows at checkout, so ranking
+    # them together would hand the badge to the more expensive ticket
+    mixed = [
+        {"source": "sh", "getin": 38.0, "basis": fl.BASIS_PRE_FEE},
+        {"source": "tp", "getin": 43.0, "basis": fl.BASIS_ALL_IN},
+        {"source": "vd", "getin": 51.0, "basis": fl.BASIS_ALL_IN},
+    ]
+    assert fl._best_of(mixed) == (43.0, "tp", fl.BASIS_ALL_IN)
+    # no all-in price present → the pre-fee set is ranked on its own
+    pre_only = [s for s in mixed if s["basis"] == fl.BASIS_PRE_FEE]
+    assert fl._best_of(pre_only) == (38.0, "sh", fl.BASIS_PRE_FEE)
+    assert fl._best_of([]) == (None, None, None)
+    assert fl._best_of([{"source": "x", "getin": None}]) == (None, None, None)
+
+
+def test_anchor_source_picks_the_best_covered_market():
+    rows = [
+        _row(snapshot_date="2026-08-01", evo_retail_getin=100, td_sh_getin=90),
+        _row(snapshot_date="2026-08-02", evo_retail_getin=101),
+        _row(snapshot_date="2026-08-03", evo_retail_getin=102),
+        _row(snapshot_date="2026-08-04", td_gt_median=70),   # median only, no get-in
+    ]
+    assert fl._anchor_source(rows) == "evo"        # 3 days vs StubHub's 1
+    assert fl._anchor_source([]) is None
+    assert fl._anchor_source([_row(td_gt_median=70)]) is None   # no priced source
+    # a tie falls to DAILY_SOURCES order (evo first), not dict insertion order
+    tie = [_row(snapshot_date="2026-08-01", td_sh_getin=10, evo_retail_getin=20)]
+    assert fl._anchor_source(tie) == "evo"
+
+
+def test_source_price_reads_one_market_off_a_row():
+    row = _row(evo_retail_getin=100, td_sh_getin=90)
+    assert fl._source_price(row, "sh") == 90.0
+    assert fl._source_price(row, "gt") is None     # market absent that day
+    assert fl._source_price(None, "evo") is None
+    assert fl._source_price(row, None) is None
 
 
 def test_pick_current_prefers_latest_capture():
@@ -217,40 +257,66 @@ def test_daily_series_collapses_to_one_point_per_day():
         _row(snapshot_date="2026-08-03", captured_at="d"),          # no prices → dropped
         _row(snapshot_date=None, evo_retail_getin=1),               # undated → dropped
     ]
-    series = fl._daily_series(rows)
+    series = fl._daily_series(rows, "evo")
     assert [p["date"] for p in series] == ["2026-08-01", "2026-08-02"]
     assert series[0]["price"] == 90          # later capture on the same day wins
+    assert series[0]["basis"] == fl.BASIS_PRE_FEE
     assert series[1]["median"] is None       # no median column present that day
+
+
+def test_daily_series_stays_on_the_anchor_market():
+    """The bug this guards: a cheaper marketplace appearing mid-window used to
+    step the line down and fire a bogus "great price" verdict. A day the anchor
+    does not cover is a gap, never a substituted source."""
+    rows = [
+        _row(snapshot_date="2026-08-01", evo_retail_getin=100),
+        _row(snapshot_date="2026-08-02", evo_retail_getin=101, td_sh_getin=40),
+        _row(snapshot_date="2026-08-03", td_sh_getin=41),          # anchor missing
+    ]
+    series = fl._daily_series(rows, "evo")
+    assert [p["price"] for p in series] == [100.0, 101.0]
+    assert {p["source"] for p in series} == {"evo"}
+    # and with no anchor at all there is no series to speak of
+    assert fl._daily_series(rows, None) == []
 
 
 def _series(prices, start="2026-07-01"):
     d0 = date.fromisoformat(start)
     return [{"date": (d0 + timedelta(days=i)).isoformat(), "price": float(p),
-             "source": "evo", "sources": 1, "median": None}
+             "source": "evo", "basis": fl.BASIS_PRE_FEE, "sources": 1, "median": None}
             for i, p in enumerate(prices)]
 
 
 def test_baseline_verdicts():
     flat = _series([100] * 30)
-    assert fl._baseline(flat, 100)["verdict"] == "typical"
+    assert fl._baseline(flat, 100, "evo")["verdict"] == "typical"
     band = _series([50, 60, 70, 80, 90, 100, 110, 120])
-    assert fl._baseline(band, 55)["verdict"] == "deal"     # at/below p25
-    low = fl._baseline(band, 80)
+    assert fl._baseline(band, 55, "evo")["verdict"] == "deal"   # at/below p25
+    low = fl._baseline(band, 80, "evo")
     assert low["verdict"] == "low" and low["delta_pct"] < 0
-    assert fl._baseline(band, 200)["verdict"] == "high"
+    assert fl._baseline(band, 200, "evo")["verdict"] == "high"
     # exactly between the median and p75 is "typical"
-    assert fl._baseline(_series([10, 20, 30, 40, 50]), 35)["verdict"] == "typical"
+    assert fl._baseline(_series([10, 20, 30, 40, 50]), 35, "evo")["verdict"] == "typical"
     # no history / no current price → unknown
-    assert fl._baseline([], 100)["verdict"] == "unknown"
-    assert fl._baseline(flat, None)["verdict"] == "unknown"
+    assert fl._baseline([], 100, "evo")["verdict"] == "unknown"
+    assert fl._baseline(flat, None, "evo")["verdict"] == "unknown"
+
+
+def test_baseline_names_the_market_it_measured():
+    base = fl._baseline(_series([100] * 10), 100, "sh")
+    assert base["source"] == "sh" and base["basis"] == fl.BASIS_PRE_FEE
+    tp = fl._baseline(_series([100] * 10), 100, "tp")
+    assert tp["basis"] == fl.BASIS_ALL_IN
+    anon = fl._baseline(_series([100] * 10), 100)
+    assert anon["source"] is None and anon["basis"] is None
 
 
 def test_baseline_trend():
-    rising = fl._baseline(_series([50] * 14 + [80] * 7), 80)
+    rising = fl._baseline(_series([50] * 14 + [80] * 7), 80, "evo")
     assert rising["trend"] == "rising" and rising["trend_pct"] > 0
-    assert fl._baseline(_series([100] * 14 + [50] * 7), 50)["trend"] == "falling"
-    assert fl._baseline(_series([100] * 21), 100)["trend"] == "flat"
-    assert fl._baseline(_series([100] * 3), 100)["trend"] == "flat"   # no prior window
+    assert fl._baseline(_series([100] * 14 + [50] * 7), 50, "evo")["trend"] == "falling"
+    assert fl._baseline(_series([100] * 21), 100, "evo")["trend"] == "flat"
+    assert fl._baseline(_series([100] * 3), 100, "evo")["trend"] == "flat"  # no prior window
 
 
 def test_rank_pct_and_score():
@@ -323,6 +389,7 @@ def test_live_options_uses_only_the_newest_capture():
     sh = options[0]
     assert sh["getin"] == 70 and sh["listings"] == 2 and sh["tickets"] == 6
     assert sh["label"] == "StubHub" and sh["live"] is True
+    assert sh["basis"] == fl.BASIS_ALL_IN   # the live layer reads price_with_fees
     assert len(pooled) == 2
 
     # a listing with no fee-inclusive price falls back to the list price
@@ -429,6 +496,41 @@ def test_search_ranks_prices_and_builds_the_date_grid(client, monkeypatch):
     assert _has(ev_q, "gte", "occurs_at_local", TODAY.isoformat())
     assert any(op[0] == "or_" and "Knicks" in op[1] for op in ev_q.ops)
     assert any(op[0] == "or_" and "Boston" in op[1] for op in ev_q.ops)
+
+
+def test_search_verdict_is_not_moved_by_coverage_changes(client, monkeypatch):
+    """Regression: a cheaper marketplace appearing today used to drag the
+    headline AND the baseline, firing "great price" on a coverage change. The
+    verdict is now measured on the anchor market (EVO here) on both sides."""
+    steady = [
+        _row(event_id=1, snapshot_date=(TODAY - timedelta(days=i)).isoformat(),
+             captured_at="x", evo_retail_getin=100)
+        for i in range(4, 25)
+    ]
+    # today EVO is unchanged at 100, but a StubHub price shows up far below it
+    current = [_row(event_id=1, snapshot_date=_day(0), captured_at="c",
+                    evo_retail_getin=100, td_sh_getin=30)]
+    _wire(monkeypatch, _price_resolver(current, steady))
+    row = client.get("/api/broker/flights/search").json()["results"][0]
+
+    assert row["insights"]["source"] == "evo"       # anchored, not "cheapest"
+    assert row["insights"]["verdict"] == "typical"  # EVO 100 vs a 100 baseline
+    assert row["insights"]["delta_pct"] == 0.0
+    # the shopping headline still surfaces the cheaper comparable price…
+    assert row["price"] == 30.0 and row["price_source"] == "sh"
+    # …labelled with what it includes, so it is never read as all-in
+    assert row["price_basis"] == fl.BASIS_PRE_FEE
+
+
+def test_search_prefers_an_all_in_headline_price(client, monkeypatch):
+    # TickPick is the one all-in column in the daily table: $60 all-in must win
+    # over a $45 pre-fee StubHub ask rather than losing on a raw number compare
+    current = [_row(event_id=1, snapshot_date=_day(0), captured_at="c",
+                    evo_retail_getin=120, td_sh_getin=45, td_tp_getin=60)]
+    _wire(monkeypatch, _price_resolver(current, HISTORY))
+    row = client.get("/api/broker/flights/search").json()["results"][0]
+    assert (row["price"], row["price_source"]) == (60.0, "tp")
+    assert row["price_basis"] == fl.BASIS_ALL_IN
 
 
 def test_search_sorts(client, monkeypatch):
@@ -561,6 +663,31 @@ def test_event_detail_prefers_live_listings_over_daily_columns(client, monkeypat
     assert _has(xref_q, "in_", "aq_short_event_id", ["ABC1234"])
     listing_q = next(q for q in sb.seen if q._table == "ticketsdata_listings_snapshots")
     assert _has(listing_q, "order", "captured_at", True)
+
+
+def test_event_detail_labels_each_option_basis(client, monkeypatch):
+    # today's daily row is deliberately CHEAPER (pre-fee $40/$45) than the live
+    # all-in StubHub price ($80 + fees = $90) — the headline must not take it
+    today_row = _row(event_id=1, snapshot_date=_day(0), captured_at="z",
+                     evo_retail_getin=40, sg_all_getin=45)
+    resolver = _detail_resolver(
+        daily=[today_row] + DAILY,
+        aq=[{"aq_short_event_id": "ABC1234"}],
+        xrefs=[{"platform": "SH", "event_id": 111, "event_url": None,
+                "last_fetched_at": "2026-08-26T14:00:00Z"}],
+        listings={111: [_listing(80)]},
+    )
+    _wire(monkeypatch, resolver)
+    body = client.get("/api/broker/flights/event/1").json()
+    by_source = {o["source"]: o for o in body["options"]}
+    # live StubHub is all-in; the daily columns are pre-fee asks
+    assert by_source["sh"]["basis"] == fl.BASIS_ALL_IN
+    assert by_source["sg"]["basis"] == fl.BASIS_PRE_FEE
+    assert by_source["evo"]["basis"] == fl.BASIS_PRE_FEE
+    # the all-in price wins even though two pre-fee numbers are lower
+    assert body["price"] == 90.0 and body["price_basis"] == fl.BASIS_ALL_IN
+    assert by_source["evo"]["getin"] == 40.0 and by_source["sg"]["getin"] == 45.0
+    assert body["insights"]["source"] == "evo"     # the best-covered market
 
 
 def test_event_detail_without_live_coverage(client, monkeypatch):
