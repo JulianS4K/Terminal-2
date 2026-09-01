@@ -889,7 +889,7 @@ def test_order_lookup_reads_the_stored_s4kcs_book_first(client, monkeypatch):
     # Ingested every 10 min, so the table answers without a 10MB live fetch.
     crm = _FakeCRM(row={"source": "StubHub", "id": "644308803"})
     _use_crm(monkeypatch, crm)
-    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_orders": [{
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
         "source": "StubHub", "s4k_order_id": "644308803",
         "order_status": "Upload Transfer Receipts",
         "event_name": "US Open Tennis: Session 11", "event_date": "2026-09-04",
@@ -905,11 +905,25 @@ def test_order_lookup_reads_the_stored_s4kcs_book_first(client, monkeypatch):
     assert crm.asked == []  # the live API was never touched
 
 
+def test_order_lookup_takes_the_vivid_price_from_our_own_book(client, monkeypatch):
+    # The CRM ships Vivid rows with no price; v_s4kcs_orders substitutes the
+    # total from vivid_orders, so the lookup reports real revenue.
+    _use_crm(monkeypatch, _FakeCRM())
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
+        "source": "Vivid Seats", "s4k_order_id": "81252078", "section": "5",
+        "row": "12", "quantity": 2, "price": 240.0, "crm_price": None,
+        "price_source": "vivid_orders", "tevo_event_id": 3100123,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=81252078").json()
+    assert body["revenue"] == 240.0
+    assert body["tevo_event_id"] == 3100123
+
+
 def test_order_lookup_stored_row_carries_a_mapped_event_id(client, monkeypatch):
     # Once the AQ mapper fills tevo_event_id the lookup can search directly,
     # so no "pick the event" note is emitted.
     _use_crm(monkeypatch, _FakeCRM())
-    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_orders": [{
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
         "source": "Gametime", "s4k_order_id": "G1", "section": "12", "row": "4",
         "quantity": 2, "price": 100.0, "tevo_event_id": 3170362,
     }]}))

@@ -404,6 +404,45 @@ UNION ALL
   WHERE o.source IN ('StubHub', 'Gametime');
 
 -- ============================================================
+-- (5b) v_s4kcs_orders — the book with our Vivid data substituted in
+-- ============================================================
+-- The CRM ships Vivid Seats rows with an EMPTY price (0 of 2,891 populated),
+-- so payout math over the raw book silently under-counts Vivid. Our own
+-- vivid_orders book carries the real total and covers 2,885 of those 2,891
+-- ids (99.8%), so it is the better source for that one marketplace — and it
+-- also supplies a tevo_event_id for 1,804 of them, which the CRM never has.
+--
+-- A VIEW, not a backfill of s4kcs_orders.price: the raw table stays a faithful
+-- record of what the CRM sent (its `raw` jsonb has to keep matching its
+-- columns), and the substitution is visible via `price_source` rather than
+-- silently baked in.
+--
+-- ⚠ GoTickets is a SECOND price gap of a different shape: all 2,740 of its
+-- rows carry price = 0.00 exactly (not NULL, so COALESCE can't catch it). We
+-- have no GoTickets *order* book to substitute, so those are left as-is —
+-- do not read a GoTickets payout off this feed.
+CREATE OR REPLACE VIEW public.v_s4kcs_orders AS
+SELECT
+  s.source, s.s4k_order_id, s.order_status, s.seller_status,
+  s.event_name, s.event_date, s.venue_name, s.venue_city, s.venue_state,
+  s.section, s.row, s.seats, s.quantity,
+  COALESCE(s.price, v.total) AS price,
+  s.price AS crm_price,
+  CASE
+    WHEN s.price IS NOT NULL THEN 'crm'
+    WHEN v.total IS NOT NULL  THEN 'vivid_orders'
+    ELSE NULL
+  END AS price_source,
+  s.delivery, s.inhand_date, s.payout_date, s.purchase_date, s.notes,
+  COALESCE(s.tevo_event_id, v.tevo_event_id) AS tevo_event_id,
+  COALESCE(s.aq_short_event_id, v.aq_short_event_id) AS aq_short_event_id,
+  s.venue_short_id, s.performer_short_id,
+  s.pulled_at, s.last_seen_at
+FROM public.s4kcs_orders s
+LEFT JOIN public.vivid_orders v
+  ON s.source = 'Vivid Seats' AND v.vivid_order_id = s.s4k_order_id;
+
+-- ============================================================
 -- (6) Crons — fetch every 10 minutes, drain 3 minutes behind
 -- ============================================================
 -- Minute marks :02/:05/:07 are saturated clusters and are avoided. The live

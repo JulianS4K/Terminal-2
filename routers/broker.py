@@ -651,7 +651,10 @@ def build_broker_router(
         # (mig 20260901180000). Read that before paying for a live fetch: the
         # upstream returns the WHOLE book (~22.7k rows, ~10MB) against a 10/min
         # limit, which is not something a UI click should trigger.
-        stored = (db.table("s4kcs_orders")
+        # Via v_s4kcs_orders, which repairs the feed's Vivid rows from our own
+        # vivid_orders book — the CRM ships them with no price at all, and our
+        # book also supplies the tevo_event_id the CRM lacks.
+        stored = (db.table("v_s4kcs_orders")
                   .select("source,s4k_order_id,order_status,event_name,event_date,"
                           "venue_name,section,row,seats,quantity,price,delivery,"
                           "inhand_date,tevo_event_id")
