@@ -1,4 +1,4 @@
--- Migration 20260901143000 · level:admin · lane:A1 · operator-directed 2026-09-01
+-- Migration 20260901141447 · level:admin · lane:A1 · operator-directed 2026-09-01
 --   ("for go tickets have it poll on events we're polling for evolution and
 --     match polling cadence and data retention schema").
 --
@@ -135,7 +135,7 @@ COMMENT ON FUNCTION public.gt_listings_poll_tick(integer) IS
   'GoTickets listings poller. Scope, cadence ladder and near/tail ordering all mirror '
   'evo_listings_poll_tick: only GT events mapped to an event in the EVO polling set, '
   'banded by collector_band(''EVO'',''listings'',...) on the EVO event''s own clock, '
-  '2/3 of each tick by overdue ratio and 1/3 by absolute age. Mig 20260901143000.';
+  '2/3 of each tick by overdue ratio and 1/3 by absolute age. Mig 20260901141447.';
 
 -- Retune the tick budget to the new scope (2000 was sized for the 64k-event sweep).
 DO $cron$
