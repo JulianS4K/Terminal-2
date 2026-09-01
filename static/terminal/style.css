@@ -2858,3 +2858,148 @@ table.deals-tbl td.deals-open { text-align: center; }
 }
 .gt-open-btn:hover { border-color: var(--muted); color: #7dd3fc; }
 .gt-open-btn:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 1px; }
+
+/* ---------- FLIGHTS — Google-Flights-shaped ticket search (2026-08-26) ----------
+   Three stacked cards: search box, price graph (cheapest per date), results
+   list with an expandable per-marketplace booking panel. Full-width flex
+   column like .wrap.deals — the 12-col grid would shred the search bar. */
+
+.wrap.flights { display: flex; flex-direction: column; gap: 12px; }
+.wrap.flights > section { min-width: 0; }
+.fl-card { background: var(--panel); border: 1px solid var(--line); padding: 12px 16px; }
+
+/* search bar */
+.fl-searchbar { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.fl-field { display: flex; flex-direction: column; gap: 3px; position: relative; flex: 1 1 150px; min-width: 0; }
+.fl-field-who { flex: 2 1 260px; }
+.fl-field-date { flex: 0 0 140px; }
+.fl-field-qty { flex: 0 0 90px; }
+.fl-lbl { font-family: var(--mono); font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.fl-input {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 7px 9px; font-family: var(--sans); font-size: 13px; width: 100%;
+}
+.fl-input:focus { outline: none; border-color: var(--accent); }
+.fl-input-sm { width: 82px; padding: 4px 6px; font-size: 12px; }
+.fl-go {
+  flex: 0 0 auto; background: var(--accent); color: #0a0a0a;
+  border: none; border-radius: 4px; padding: 8px 18px;
+  font-family: var(--mono); font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.fl-go:hover { filter: brightness(1.1); }
+.fl-quickrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.fl-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
+.fl-count { color: var(--muted); }
+
+.fl-suggest {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 30;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
+  max-height: 260px; overflow-y: auto;
+}
+.fl-suggest-item {
+  display: flex; justify-content: space-between; gap: 8px; width: 100%;
+  background: none; border: none; color: var(--text); text-align: left;
+  padding: 6px 9px; font-size: 12px; cursor: pointer;
+}
+.fl-suggest-item:hover { background: var(--shade); }
+
+/* price graph */
+.fl-graph { margin-top: 8px; }
+.fl-bars { display: flex; gap: 3px; align-items: flex-end; overflow-x: auto; padding-bottom: 4px; }
+.fl-bar {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: none; border: none; cursor: pointer; padding: 0 1px; min-width: 46px;
+  font-family: var(--mono); color: var(--muted);
+}
+.fl-bar-fill { width: 22px; background: var(--dim); border-radius: 2px 2px 0 0; }
+.fl-bar:hover .fl-bar-fill { background: var(--muted); }
+.fl-bar.is-cheapest .fl-bar-fill { background: var(--pos); }
+.fl-bar.is-pinned .fl-bar-fill { background: var(--accent); }
+.fl-bar.is-pinned { color: var(--accent); }
+.fl-bar-price { font-size: 10px; }
+.fl-bar-day { font-size: 9px; white-space: nowrap; }
+.fl-clear {
+  margin-top: 6px; background: none; border: 1px solid var(--line); border-radius: 3px;
+  color: var(--muted); font-family: var(--mono); font-size: 10px; padding: 2px 8px; cursor: pointer;
+}
+
+/* results */
+.fl-sortrow { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fl-row { border: 1px solid var(--line); border-radius: 4px; margin-bottom: 8px; background: var(--panel-2); }
+.fl-row.is-open { border-color: var(--accent); }
+.fl-row-head {
+  display: grid; grid-template-columns: 150px minmax(220px, 1fr) 190px 110px 150px 60px;
+  gap: 10px; align-items: center; padding: 10px 12px; cursor: pointer;
+}
+.fl-row-head:hover { background: var(--shade); }
+.fl-when { font-family: var(--mono); font-size: 12px; }
+.fl-ev-name { font-weight: 600; font-size: 14px; }
+.fl-ev-meta { margin-top: 2px; }
+.fl-reasons { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.fl-reason {
+  font-family: var(--mono); font-size: 9px; color: var(--info);
+  border: 1px solid rgba(96, 165, 250, 0.35); border-radius: 3px; padding: 1px 5px;
+}
+.fl-srcs { display: flex; gap: 3px; flex-wrap: wrap; }
+.fl-src {
+  font-family: var(--mono); font-size: 9px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 3px; padding: 0 4px;
+}
+.fl-spark { display: block; }
+.fl-col-price { text-align: right; }
+.fl-price { font-family: var(--mono); font-size: 20px; font-weight: 600; }
+.fl-verdict { display: inline-block; font-family: var(--mono); font-size: 10px; margin-top: 2px; white-space: nowrap; }
+.fl-v-deal { color: var(--pos); font-weight: 700; }
+.fl-v-low { color: var(--pos); }
+.fl-v-typical { color: var(--muted); }
+.fl-v-high { color: var(--warn); }
+.fl-v-unknown { color: var(--dim); }
+.badge-link { color: var(--accent); border-color: rgba(251, 191, 36, .45); text-decoration: none; }
+.badge-link:hover { background: var(--shade); text-decoration: none; }
+.fl-basis { font-family: var(--mono); font-size: 9px; color: var(--dim); margin-top: 1px; }
+.fl-basis-tag {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .03em;
+  border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--muted);
+}
+.fl-basis-all_in { color: var(--pos); border-color: rgba(74, 222, 128, .35); }
+.fl-basis-pre_fee { color: var(--warn); border-color: rgba(245, 158, 11, .35); }
+.fl-move { display: block; font-family: var(--mono); font-size: 10px; margin-top: 2px; }
+.fl-move.down { color: var(--pos); }
+.fl-move.up { color: var(--neg); }
+.fl-col-act { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.fl-star { background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0; }
+.fl-star.on { color: var(--accent); }
+.fl-caret { color: var(--muted); font-family: var(--mono); }
+
+/* expanded booking panel */
+.fl-detail { border-top: 1px solid var(--line); padding: 12px; }
+.fl-detail.err { color: var(--neg); font-family: var(--mono); font-size: 12px; }
+.fl-detail-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; }
+.fl-detail-col { min-width: 0; overflow-x: auto; }
+.fl-sub {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 6px;
+}
+.fl-detail-col > .fl-sub:first-child { margin-top: 0; }
+table.fl-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.fl-tbl th {
+  text-align: left; color: var(--muted); font-family: var(--mono); font-weight: 600;
+  font-size: 10px; letter-spacing: 0.04em; padding: 5px 8px; border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.fl-tbl td { padding: 5px 8px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+table.fl-tbl td.num, table.fl-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.fl-tbl tr.fl-best-opt td { background: rgba(74, 222, 128, 0.07); }
+.fl-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; }
+.fl-live-tag { font-family: var(--mono); font-size: 8px; color: var(--pos); margin-left: 5px; }
+.fl-snap-tag { font-family: var(--mono); font-size: 8px; color: var(--dim); margin-left: 5px; }
+.fl-hist { display: block; margin-bottom: 6px; }
+.fl-insight { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.fl-links { margin-top: 8px; font-size: 11px; }
+
+@media (max-width: 1280px) {
+  .fl-row-head { grid-template-columns: 130px minmax(160px, 1fr) 140px 170px 52px; }
+  .fl-col-spark { display: none; }
+  .fl-detail-grid { grid-template-columns: 1fr; }
+}

@@ -1025,6 +1025,15 @@ from routers.d0_sales import build_d0_sales_router  # noqa: E402
 app.include_router(build_d0_sales_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
 
+# routers/flights.py — D0 FLIGHTS: the Google-Flights-shaped buy-side search
+# (performer/city/date search -> price graph -> per-marketplace booking
+# options) over event_listing_snapshot_daily + the TicketsData live listings.
+# Read-only, service-role require_sb (the TD tables are RLS-locked).
+from routers.flights import build_flights_router  # noqa: E402
+
+app.include_router(build_flights_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+
+
 # /api/watchlist POST + DELETE -> routers/lists.py (BR-CODE-1 slice 35; joins
 # the watchlist GET there — require_sb + require_auth only). The whole
 # /api/watchlist + /api/runs + /api/snapshots/* surface now lives in lists.py.
