@@ -654,6 +654,14 @@ def test_deep_order_helpers_return_first_row():
     sb_vv = type("S", (), {"table": lambda self, n: _DeepQuery([{"vivid_order_id": "V-1"}])})()
     assert d2_main._deep_order_vivid_sql(sb_vv, "V-1")["vivid_order_id"] == "V-1"
 
+    # Reads v_s4kcs_orders, not the raw table, so a Vivid row carries the
+    # price our own book supplies (the CRM ships those with none).
+    tables = []
+    sb_s4 = type("S", (), {"table": lambda self, n: (tables.append(n),
+                                                     _DeepQuery([{"s4k_order_id": "644308803"}]))[1]})()
+    assert d2_main._deep_order_s4kcs_sql(sb_s4, "644308803")["s4k_order_id"] == "644308803"
+    assert tables == ["v_s4kcs_orders"]
+
 
 def test_deep_order_helpers_empty_returns_dict():
     sb = type("S", (), {"table": lambda self, n: _DeepQuery([])})()

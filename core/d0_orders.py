@@ -46,9 +46,14 @@ def _to_float(v: Any) -> float | None:
 # unified_orders view already exposes this as source='seatgeek_sales' with
 # canonical_status hardcoded to 'fulfilled' (terminal) — so Active-pill SG rows
 # will be 0 by construction; All-pill shows the firehose.
-_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid"})
+# 2026-09-01: +s4kcs — the S4K CRM open sell-side book (mig 20260901180000),
+# polled every 10 min. In unified_orders it surfaces StubHub + Gametime ONLY;
+# the CRM's other four markets are already ingested natively and would
+# double-count. Its per-row marketplace rides on unified_orders.source_type.
+_SQL_BACKED_SOURCES = frozenset({"evo", "seatgeek_sales", "seatdata", "tickpick",
+                                 "vivid", "s4kcs"})
 
-_ALL_SOURCES = ("evo", "seatgeek_sales", "seatdata", "tickpick", "vivid")
+_ALL_SOURCES = ("evo", "seatgeek_sales", "seatdata", "tickpick", "vivid", "s4kcs")
 
 
 def _fetch_cron_freshness(sb) -> dict[str, dict]:
@@ -240,7 +245,7 @@ def _fetch_unified_orders_page(sb, per_page: int, page: int = 1, include_termina
 
 # Column projection shared by the unified_orders page fetchers.
 _UO_PAGE_SELECT = (
-    "source,source_order_id,tevo_event_id,source_status,canonical_status,"
+    "source,source_type,source_order_id,tevo_event_id,source_status,canonical_status,"
     "is_terminal,quantity,gross_value,created_at,last_seen_at,event_name,event_date"
 )
 
@@ -272,6 +277,9 @@ def _build_order_rows(sb, all_uo_rows: list[dict]) -> list[dict]:
             event_date = ev.get("event_at_local") or ev.get("event_at_utc")
         rows.append({
             "source": r.get("source") or "",
+            # For s4kcs this is the marketplace (StubHub / Gametime), which the
+            # view has no dedicated column for; evo uses it for its order type.
+            "source_type": r.get("source_type"),
             "order_id": str(r.get("source_order_id") or ""),
             "event_name": event_name,
             "event_date": event_date,
@@ -510,6 +518,13 @@ def _deep_order_gotickets(c, order_id: str) -> dict:
     return c.get_sale(order_id)
 
 
+def _deep_order_s4kcs_sql(sb, order_id: str) -> dict:
+    # Reads the view, not the raw table, so a Vivid row carries the price from
+    # our own vivid_orders book (the CRM ships those with none).
+    res = sb.table("v_s4kcs_orders").select("*").eq("s4k_order_id", order_id).limit(1).execute()
+    return (res.data or [{}])[0]
+
+
 # Dispatch: SQL sources use the "_sb" sentinel (the Supabase client);
 # gotickets keeps the upstream client factory until SQL backing exists.
 # The factory-name strings are resolved by main.py's order_detail route
@@ -520,6 +535,7 @@ _DEEP_ORDER = {
     "seatgeek_sales": ("_sb",               _deep_order_seatgeek_sales_sql),
     "tickpick":       ("_sb",               _deep_order_tickpick_sql),
     "vivid":          ("_sb",               _deep_order_vivid_sql),
+    "s4kcs":          ("_sb",               _deep_order_s4kcs_sql),
     "gotickets":      ("_gotickets_client", _deep_order_gotickets),
 }
 
