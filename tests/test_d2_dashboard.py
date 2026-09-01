@@ -130,7 +130,7 @@ def test_orders_serves_unified_orders_with_per_source_chips(monkeypatch, client)
     monkeypatch.setattr(d2_main, "_fetch_cron_freshness", lambda: {})
     body = client.get("/api/d2/orders").json()
     sources = {s["source"]: s for s in body["sources"]}
-    assert set(sources) == {"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid"}
+    assert set(sources) == {"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid", "s4kcs"}
     # Every source is SQL-backed now (vivid joined the unified_orders view
     # 2026-05-13; the dashboard was updated 2026-05-14 to stop using the
     # legacy API+match path for it).
@@ -699,7 +699,7 @@ def test_health_returns_cron_queue_and_sql_blob(monkeypatch, client):
     body = client.get("/api/d2/health").json()
     assert {c["jobname"] for c in body["crons"]} == {"evo_orders_queue_30min", "tickpick_orders_queue_30min"}
     assert set(body["queues"]) == {"tickpick", "vivid"}
-    assert set(body["sql_counts"]) == {"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid"}
+    assert set(body["sql_counts"]) == {"evo", "seatgeek_sales", "seatdata", "tickpick", "vivid", "s4kcs"}
     # fulfillby_fields: post-2026-05-16 rewire, seatgeek_sales (broker firehose)
     # exposes in_hand_date from the listing snapshot. The other four sources
     # still surface no explicit in-hand / fulfill-by timestamp.

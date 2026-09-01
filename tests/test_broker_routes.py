@@ -645,6 +645,162 @@ def test_substitutions_quantity_filter_and_ambiguous_bucket(client, monkeypatch)
     assert [s["ticket_group_id"] for s in body["ambiguous"]] == ["alpha"]
 
 
+def test_substitutions_market_pool_spans_gotickets(client, monkeypatch):
+    # The merged pool: same physical section under two labels. GoTickets quotes
+    # all-in retail, which here undercuts the exchange ask for the same row.
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "O", "quantity": 2, "splits": [2],
+         "retail_price": 262.10, "is_owned": False},
+    ]
+    gt = [
+        {"gt_listing_id": 7086439326, "gt_event_id": 1252283,
+         "captured_at": "2026-09-01T15:34:00Z", "section": "Promenade  311",
+         "section_id": 3262193, "row": "O", "quantity": 2, "splits": [2],
+         "all_in_price": 254.44, "display_price": 254.44},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&revenue=560&source=market").json()
+    assert body["pools"] == ["tevo_market", "gotickets"]
+    assert body["gt_captured_at"] == "2026-09-01T15:34:00Z"
+    # Both are same-section (the GT zone prefix is reconciled) better-row subs;
+    # cheapest first puts GoTickets on top.
+    assert [x["inv_source"] for x in body["subs"]] == ["gotickets", "tevo_market"]
+    best = body["best"]
+    assert best["unit_cost"] == 254.44
+    assert best["buy_url"] == ("https://pro.gotickets.com/tickets/1252283/"
+                              "?sortBy=price&sortDirection=asc&sections=3262193")
+    assert best["pnl_total"] == round((280.0 - 254.44) * 2, 2)
+
+
+def test_substitutions_market_all_in_price_is_not_fee_marked_up(client, monkeypatch):
+    # fee_pct applies to the exchange ask only — GoTickets is already all-in.
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 250.0,
+         "is_owned": False},
+    ]
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "splits": [2], "all_in_price": 255.0, "display_price": 255.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market&fee_pct=10").json()
+    landed = {x["inv_source"]: x["landed_cost"] for x in body["subs"]}
+    assert landed["tevo_market"] == 275.0   # 250 + 10%
+    assert landed["gotickets"] == 255.0     # unchanged
+    assert body["best"]["inv_source"] == "gotickets"
+
+
+def test_substitutions_owned_pool_never_reads_gotickets(client, monkeypatch):
+    ls = [
+        {"tevo_ticket_group_id": "mine", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 300.0,
+         "is_owned": True},
+    ]
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": 1.0, "display_price": 1.0},
+    ]
+    fake = FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    })
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2").json()
+    # We don't hold GoTickets stock, so an owned swap must not see it — not
+    # even the $1 bait row.
+    assert body["pools"] == ["tevo_owned", "sg_seller"]
+    assert body["gt_captured_at"] is None
+    assert "gotickets_listings_snapshots" not in fake.table_calls
+    assert [x["inv_source"] for x in body["subs"]] == ["tevo_owned"]
+
+
+def test_substitutions_market_without_gotickets_data(client, monkeypatch):
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 250.0,
+         "is_owned": False},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": [],
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    assert body["pools"] == ["tevo_market"]
+    assert body["gt_captured_at"] is None
+    assert body["best"]["inv_source"] == "tevo_market"
+
+
+def test_substitutions_gotickets_ambiguous_section_labels_need_a_human(client, monkeypatch):
+    # A venue fielding both "Loge 106" and "Lower 106" can't resolve a bare
+    # sold section "106" — those surface as ambiguous, never as a cover.
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "Loge 106", "section_id": 11, "row": "5", "quantity": 2,
+         "all_in_price": 100.0, "display_price": 100.0},
+        {"gt_listing_id": 2, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "Lower 106", "section_id": 12, "row": "5", "quantity": 2,
+         "all_in_price": 110.0, "display_price": 110.0},
+        # Unlabelled row: no section at all, so it can never match either.
+        {"gt_listing_id": 3, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "", "section_id": None, "row": "5", "quantity": 2,
+         "all_in_price": 90.0, "display_price": 90.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/900/substitutions"
+                      "?section=106&row=9&quantity=2&source=market").json()
+    assert body["subs"] == []
+    assert {a["section"] for a in body["ambiguous"]} == {"Loge 106", "Lower 106"}
+    assert body["best"] is None
+
+
+def test_substitutions_gotickets_dedupes_and_falls_back_to_display_price(client, monkeypatch):
+    # Same listing twice in one capture (first wins), and a null all_in_price
+    # falls back to the display price rather than dropping the listing.
+    gt = [
+        {"gt_listing_id": 55, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": None, "display_price": 258.96},
+        {"gt_listing_id": 55, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": 999.0, "display_price": 999.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    assert len(body["subs"]) == 1
+    assert body["subs"][0]["unit_cost"] == 258.96
+
+
+def test_substitutions_gotickets_link_omitted_without_section_id(client, monkeypatch):
+    gt = [
+        {"gt_listing_id": 7, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": None, "row": "M",
+         "quantity": 2, "all_in_price": 200.0, "display_price": 200.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    # Still linkable to the event page; just not filtered to the section.
+    assert body["best"]["buy_url"] == (
+        "https://pro.gotickets.com/tickets/1252283/?sortBy=price&sortDirection=asc")
+
+
 # ---------- /api/broker/order-lookup (order # -> sub fields) ----------
 
 def test_order_lookup_seatgeek(client, monkeypatch):
@@ -685,8 +841,165 @@ def test_order_lookup_evo_uses_first_item_and_counts(client, monkeypatch):
     assert body["line_items"] == 2
 
 
+def test_order_lookup_evo_accepts_composite_tevo_order_number(client, monkeypatch):
+    # TEvo displays "<purchase_order>-<order_id>"; we key on the trailing id.
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "evo_orders": [{"evo_order_id": 19056200, "tevo_event_id": 3170362,
+                        "total": 560, "subtotal": 560}],
+        "evo_order_items": [
+            {"ticket_group_section": "311", "ticket_group_row": "R", "quantity": 2,
+             "event_name": "US Open Session 8", "event_id": 3170362},
+        ],
+    }))
+    body = client.get("/api/broker/order-lookup?order_id=8036615-19056200").json()
+    assert body["found"] is True and body["source"] == "evo"
+    assert body["evo_order_id"] == 19056200
+    assert body["section"] == "311" and body["row"] == "R"
+    assert body["quantity"] == 2 and body["revenue"] == 560
+
+
 def test_order_lookup_not_found(client, monkeypatch):
     _use_db(monkeypatch, FakeSupabase())
     body = client.get("/api/broker/order-lookup?order_id=NOPE").json()
     assert body["found"] is False
     assert "note" in body
+
+
+# ---------- order-lookup → S4K CRM fallback (the two markets we don't ingest) ----------
+
+class _FakeCRM:
+    """Stands in for s4kcs_client.S4KCSClient."""
+
+    def __init__(self, row=None, raises=None):
+        self._row, self._raises = row, raises
+        self.asked = []
+
+    def find_order(self, order_id):
+        self.asked.append(order_id)
+        if self._raises is not None:
+            raise self._raises
+        return self._row
+
+
+def _use_crm(monkeypatch, crm):
+    monkeypatch.setattr(app_module, "_s4kcs_client", lambda: crm)
+
+
+def test_order_lookup_reads_the_stored_s4kcs_book_first(client, monkeypatch):
+    # Ingested every 10 min, so the table answers without a 10MB live fetch.
+    crm = _FakeCRM(row={"source": "StubHub", "id": "644308803"})
+    _use_crm(monkeypatch, crm)
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
+        "source": "StubHub", "s4k_order_id": "644308803",
+        "order_status": "Upload Transfer Receipts",
+        "event_name": "US Open Tennis: Session 11", "event_date": "2026-09-04",
+        "venue_name": "Louis Armstrong Stadium", "section": "3", "row": "N",
+        "seats": "", "quantity": 2, "price": 870.34,
+        "delivery": "Mobile Tickets", "inhand_date": "2026-09-02",
+        "tevo_event_id": None,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is True and body["via"] == "s4kcs_orders"
+    assert body["source"] == "StubHub" and body["revenue"] == 870.34
+    assert body["section"] == "3" and body["row"] == "N"
+    assert crm.asked == []  # the live API was never touched
+
+
+def test_order_lookup_takes_the_vivid_price_from_our_own_book(client, monkeypatch):
+    # The CRM ships Vivid rows with no price; v_s4kcs_orders substitutes the
+    # total from vivid_orders, so the lookup reports real revenue.
+    _use_crm(monkeypatch, _FakeCRM())
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
+        "source": "Vivid Seats", "s4k_order_id": "81252078", "section": "5",
+        "row": "12", "quantity": 2, "price": 240.0, "crm_price": None,
+        "price_source": "vivid_orders", "tevo_event_id": 3100123,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=81252078").json()
+    assert body["revenue"] == 240.0
+    assert body["tevo_event_id"] == 3100123
+
+
+def test_order_lookup_stored_row_carries_a_mapped_event_id(client, monkeypatch):
+    # Once the AQ mapper fills tevo_event_id the lookup can search directly,
+    # so no "pick the event" note is emitted.
+    _use_crm(monkeypatch, _FakeCRM())
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
+        "source": "Gametime", "s4k_order_id": "G1", "section": "12", "row": "4",
+        "quantity": 2, "price": 100.0, "tevo_event_id": 3170362,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=G1").json()
+    assert body["tevo_event_id"] == 3170362
+    assert body["note"] is None
+
+
+def test_order_lookup_falls_back_to_s4k_crm(client, monkeypatch):
+    # A StubHub order: real shape from the CRM book. We ingest no StubHub
+    # orders, so before this fallback it resolved to nothing at all.
+    _use_db(monkeypatch, FakeSupabase())
+    crm = _FakeCRM(row={
+        "source": "StubHub", "id": "644308803", "section": "3", "row": "N",
+        "quantity": 2, "price": 870.34, "event_name": "US Open Tennis: Session 11",
+        "event_date": "2026-09-04", "venue_name": "Louis Armstrong Stadium",
+        "inhand_date": "2026-09-02", "delivery": "Mobile Tickets", "seats": "",
+        "order_status": "Upload Transfer Receipts",
+    })
+    _use_crm(monkeypatch, crm)
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is True
+    # Nothing stored for it yet (created since the last 10-min poll), so the
+    # live book answered.
+    assert body["source"] == "StubHub" and body["via"] == "s4k_crm"
+    assert body["section"] == "3" and body["row"] == "N" and body["quantity"] == 2
+    assert body["revenue"] == 870.34
+    assert body["event_date"] == "2026-09-04"
+    assert body["order_status"] == "Upload Transfer Receipts"
+    # The CRM knows no canonical event id — that's the AQ mapper's job, not a
+    # name+date guess here, so the caller is told to pick the event.
+    assert body["tevo_event_id"] is None
+    assert "pick the event" in body["note"]
+    assert crm.asked == ["644308803"]
+
+
+def test_order_lookup_prefers_an_ingested_book_over_the_crm(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"tickpick_orders": [{
+        "tp_order_id": "TP9", "tevo_event_id": 5, "event_name": "X",
+        "section": "A", "row": "2", "quantity": 2, "total": 100,
+    }]}))
+    crm = _FakeCRM(row={"source": "StubHub", "id": "TP9"})
+    _use_crm(monkeypatch, crm)
+    body = client.get("/api/broker/order-lookup?order_id=TP9").json()
+    assert body["source"] == "tickpick" and body["tevo_event_id"] == 5
+    assert crm.asked == []  # never consulted — we had it already
+
+
+def test_order_lookup_crm_miss_reports_both_books(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    _use_crm(monkeypatch, _FakeCRM(row=None))
+    body = client.get("/api/broker/order-lookup?order_id=NOPE").json()
+    assert body["found"] is False
+    assert "S4K CRM" in body["note"]
+
+
+def test_order_lookup_crm_failure_degrades(client, monkeypatch):
+    # Upstream down / key revoked: say so rather than claiming "not found".
+    _use_db(monkeypatch, FakeSupabase())
+    _use_crm(monkeypatch, _FakeCRM(raises=RuntimeError("HTTP 401")))
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is False
+    assert "lookup failed" in body["note"] and "RuntimeError" in body["note"]
+
+
+# ---------- server-side client factory ----------
+
+def test_s4kcs_client_factory_builds_when_key_present(monkeypatch):
+    monkeypatch.setenv("S4KCS_API_KEY", "s4k_env")
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    c = app_module._s4kcs_client()
+    assert c is not None and c.api_key == "s4k_env"
+
+
+def test_s4kcs_client_factory_returns_none_without_a_key(monkeypatch, capsys):
+    monkeypatch.delenv("S4KCS_API_KEY", raising=False)
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    assert app_module._s4kcs_client() is None
+    assert "s4kcs: client unavailable" in capsys.readouterr().out

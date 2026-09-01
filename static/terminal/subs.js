@@ -5,7 +5,11 @@
 //   GET /api/broker/event/{id}/substitutions
 //        ?section=&row=&quantity=&revenue=&source=owned|market
 //     -> { target, subs:[...], ambiguous:[...], section_subs:{...},
-//          best, counts, captured_at, source }
+//          best, counts, captured_at, source, pools, gt_captured_at }
+//
+// source=market spans both books we can buy from — the TEvo exchange and
+// GoTickets — so a sub carries `inv_source` and, for GoTickets, a `buy_url`
+// straight to the section page.
 //
 // Pure read-only; matching/ranking lives server-side in core.substitutions.
 // The page can be deep-linked with ?event=&section=&row=&quantity= (e.g. from
@@ -26,6 +30,8 @@
 
   // ---------- order # → auto-fill the sold ticket ----------
 
+  // Order sources: the four we ingest, plus the S4K CRM fallback that fronts
+  // six marketplace books (adds StubHub + Gametime, which we ingest nowhere).
   function wireOrderLoad() {
     const btn = document.getElementById('subOrderLoad');
     if (btn) btn.addEventListener('click', loadOrder);
@@ -59,8 +65,20 @@
       if (o.event_name) document.getElementById('subEventSearch').value = o.event_name;
       const multi = (o.line_items && o.line_items > 1)
         ? ` · ⚠ ${esc(o.line_items)} line items — showing the first` : '';
-      msg.innerHTML = `<span class="pos">loaded ${esc(o.source)} order</span> · ` +
-        `${esc(o.event_name || ('event ' + o.tevo_event_id))}${multi}`;
+      // A CRM hit identifies its event by name/date/venue only — there's no
+      // tevo_event_id to search on, so show what it is and let the operator
+      // pick the event from the typeahead (already prefilled with the name).
+      const crm = o.via === 's4k_crm';
+      const when = o.event_date ? ` · ${esc(o.event_date)}` : '';
+      const where = o.venue_name ? ` · ${esc(o.venue_name)}` : '';
+      const status = o.order_status ? ` · <strong>${esc(o.order_status)}</strong>` : '';
+      msg.innerHTML = `<span class="pos">loaded ${esc(o.source)} order</span>` +
+        (crm ? ' <span class="badge muted" title="S4K CRM marketplace book">CRM</span>' : '') +
+        ` · ${esc(o.event_name || ('event ' + o.tevo_event_id))}${when}${where}${status}${multi}` +
+        (crm && !o.tevo_event_id
+          ? `<div class="muted small neg">${esc(o.note || 'pick the event above to run the search')}</div>`
+          : '');
+      if (crm && !o.tevo_event_id) return;  // nothing to search on yet
       run();  // auto-search subs from the loaded details
     } catch (err) {
       msg.innerHTML = `<span class="neg">${esc(String(err.message || err))}</span>`;
@@ -204,13 +222,18 @@
 
   function renderRecap(data, f) {
     const t = data.target || {};
-    const poolLabel = data.source === 'market' ? 'market (buy-in)' : 'owned';
+    const poolNames = { tevo_owned: 'TEvo owned', sg_seller: 'SG seller',
+                        tevo_market: 'exchange', gotickets: 'GoTickets' };
+    const pools = (data.pools || []).map(p => poolNames[p] || p);
+    const poolLabel = (data.source === 'market' ? 'market (buy-in)' : 'owned') +
+      (pools.length ? ` — ${pools.join(' + ')}` : '');
     const rev = (t.revenue_per_ticket != null) ? ` · revenue ${money(t.revenue_per_ticket)}/tix` : '';
     document.getElementById('subsRecap').innerHTML =
       `<div class="recap-line">Cover <strong>${esc(f.quantity)}×</strong> ` +
       `Section <strong>${esc(t.section || f.section)}</strong> ` +
       `Row <strong>${esc(t.row || f.row || '—')}</strong>${rev}</div>` +
       `<div class="muted small">pool: ${esc(poolLabel)} · snapshot: ${esc(T.fmtDate(data.captured_at))}` +
+      (data.gt_captured_at ? ` · GoTickets: ${esc(T.fmtDate(data.gt_captured_at))}` : '') +
       (data.captured_at ? '' : ' (no listings snapshot for this event)') + `</div>`;
   }
 
@@ -231,16 +254,18 @@
       `<span class="best-where">${where}</span> ` +
       `<span class="best-meta">${esc(b.quantity)} avail · cost ${money(b.unit_cost)}/tix · ${sourceBadge(b.inv_source)}</span>` +
       pnlBadge(b.pnl_total, ' total') +
+      (b.buy_url ? ` <a class="sub-link" href="${esc(b.buy_url)}" target="_blank" rel="noopener noreferrer">buy ↗</a>` : '') +
       `</div>`;
   }
 
   function renderRowSubs(data) {
     const subs = data.subs || [];
     document.getElementById('subsRowCount').textContent = subs.length ? `${subs.length}` : '';
-    const cols = ['Row', 'Match', 'Δrow', 'Qty', 'Cost/tix', 'P&L total', 'Source'];
+    const cols = ['Row', 'Match', 'Δrow', 'Qty', 'Cost/tix', 'P&L total', 'Source', 'Buy'];
     const rows = subs.map(s => [
       esc(s.row), esc(s.match_type), s.row_delta != null ? `+${esc(s.row_delta)}` : '—',
       esc(s.quantity), costDisp(s), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
+      buyCell(s),
     ]);
     document.getElementById('subsRowTable').innerHTML =
       rows.length ? tableHtml(cols, rows) : emptyHtml('No same-section same-or-better-row sub.');
@@ -255,10 +280,11 @@
       document.getElementById('subsSecTable').innerHTML = emptyHtml(esc(ss.note));
       return;
     }
-    const cols = ['To section', 'Δquality', 'Row', 'Qty', 'Cost/tix', 'P&L total', 'Source'];
+    const cols = ['To section', 'Δquality', 'Row', 'Qty', 'Cost/tix', 'P&L total', 'Source', 'Buy'];
     const rows = subs.map(s => [
       esc(s.to_section), s.section_delta != null ? `+${money(s.section_delta)}` : '—',
       esc(s.row || '—'), esc(s.quantity), costDisp(s), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
+      buyCell(s),
     ]);
     document.getElementById('subsSecTable').innerHTML =
       rows.length ? tableHtml(cols, rows) : emptyHtml('No better-section sub in this pool.');
@@ -270,8 +296,11 @@
     wrap.hidden = amb.length === 0;
     document.getElementById('subsAmbCount').textContent = amb.length ? `(${amb.length})` : '';
     if (!amb.length) return;
-    const cols = ['Row', 'Qty', 'Cost/tix', 'Source'];
-    const rows = amb.map(s => [esc(s.row), esc(s.quantity), money(s.unit_cost), sourceBadge(s.inv_source)]);
+    const cols = ['Section', 'Row', 'Why', 'Qty', 'Cost/tix', 'Source', 'Buy'];
+    const rows = amb.map(s => [
+      esc(s.section || '—'), esc(s.row), esc(s.match_type), esc(s.quantity),
+      money(s.unit_cost), sourceBadge(s.inv_source), buyCell(s),
+    ]);
     document.getElementById('subsAmbTable').innerHTML = tableHtml(cols, rows);
   }
 
@@ -316,8 +345,18 @@
   }
 
   function sourceBadge(src) {
-    const label = { tevo_owned: 'TEvo', sg_seller: 'SG seller', tevo_market: 'market' }[src] || (src || '—');
+    const label = {
+      tevo_owned: 'TEvo', sg_seller: 'SG seller', tevo_market: 'exchange',
+      gotickets: 'GoTickets',
+    }[src] || (src || '—');
     return `<span class="badge muted" title="${esc(src || '')}">${esc(label)}</span>`;
+  }
+
+  // Only GoTickets rows carry a buy link (the exchange has no per-listing
+  // page). Absent link -> a dash, never a fabricated URL.
+  function buyCell(s) {
+    if (!s.buy_url) return '—';
+    return `<a href="${esc(s.buy_url)}" target="_blank" rel="noopener noreferrer">buy ↗</a>`;
   }
 
   const esc = window.TermRender.escapeHtml;
