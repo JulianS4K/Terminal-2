@@ -77,38 +77,31 @@ def test_key_from_env(monkeypatch):
     assert s4k.S4KCSClient().api_key == "env-key"
 
 
-def test_key_from_vault_first_name(monkeypatch):
-    calls = []
+class _VaultDB:
+    """Minimal supabase-py stand-in for the get_app_secret RPC."""
 
-    class _DB:
-        def rpc(self, name, args):
-            calls.append(args["p_name"])
-            return self
+    def __init__(self, value):
+        self._value = value
+        self.asked = []
 
-        def execute(self):
-            return type("_R", (), {"data": "vault-key"})()
+    def rpc(self, name, args):
+        self.asked.append((name, args["p_name"]))
+        return self
 
-    assert s4k.S4KCSClient(db=_DB()).api_key == "vault-key"
-    assert calls == ["crm.s4kcs.com"]  # stops at the first name that resolves
+    def execute(self):
+        return type("_R", (), {"data": self._value})()
 
 
-def test_key_falls_through_to_second_vault_name():
-    calls = []
+def test_key_from_vault():
+    db = _VaultDB("vault-key")
+    assert s4k.S4KCSClient(db=db).api_key == "vault-key"
+    # One name owns this secret — the EVENUEDESK_API_KEY duplicate was deleted.
+    assert db.asked == [("get_app_secret", "crm.s4kcs.com")]
 
-    class _DB:
-        def rpc(self, name, args):
-            calls.append(args["p_name"])
-            self._name = args["p_name"]
-            return self
 
-        def execute(self):
-            # 'crm.s4kcs.com' absent (e.g. not whitelisted yet); the earlier
-            # seed name still carries the same key.
-            val = None if self._name == "crm.s4kcs.com" else "seed-key"
-            return type("_R", (), {"data": val})()
-
-    assert s4k.S4KCSClient(db=_DB()).api_key == "seed-key"
-    assert calls == ["crm.s4kcs.com", "EVENUEDESK_API_KEY"]
+def test_missing_vault_value_falls_through_to_the_missing_key_error():
+    with pytest.raises(s4k.S4KCSError):
+        s4k.S4KCSClient(db=_VaultDB(None))
 
 
 def test_missing_key_raises_with_actionable_message():

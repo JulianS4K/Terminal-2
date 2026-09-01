@@ -32,6 +32,32 @@ _PARKING_ZONE_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\
 _PARKING_SECTION_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park|prepaid|preferred\s*parking|guest\s*parking|vip\s*lot|vip\s*parking)\b", re.IGNORECASE)
 
 
+def _s4kcs_payload(payload, row: dict, *, via: str) -> dict:
+    """Shape one S4K CRM order row into the order-lookup response.
+
+    Identical whether the row came from the stored table or a live fetch, so
+    the caller can't drift the two shapes apart. `tevo_event_id` rides along
+    when the AQ mapper has filled it and is None otherwise — the CRM knows an
+    event by name/date/venue only (PROJECT_BIBLE §0), so an unmapped row tells
+    the caller to pick the event rather than guessing one here.
+    """
+    tev = row.get("tevo_event_id")
+    note = None if tev else ("event not mapped to a tevo_event_id — pick the "
+                             "event above to run the search")
+    return payload(
+        (row.get("source") or "s4k_crm"), tev, row.get("event_name"),
+        row.get("section"), row.get("row"), row.get("quantity"), row.get("price"),
+        via=via,
+        event_date=row.get("event_date"),
+        venue_name=row.get("venue_name"),
+        seats=row.get("seats"),
+        order_status=row.get("order_status"),
+        inhand_date=row.get("inhand_date"),
+        delivery=row.get("delivery"),
+        note=note,
+    )
+
+
 def _batch_fallback_zones(db, pairs: list[tuple]) -> dict[tuple, str | None]:
     """Resolve derive_zone_fallback for many (section, row) pairs in one RPC.
 
@@ -536,10 +562,11 @@ def build_broker_router(
         paste an order # instead of typing the sold ticket by hand.
 
         Searches the 4 ingested order sources (seatgeek / tickpick / vivid /
-        evo), then falls back to the S4K CRM marketplace API, which fronts the
-        open sell-side book of six marketplaces — including **StubHub and
-        Gametime, which we ingest nowhere**. `source` narrows the search; omit
-        it to try all.
+        evo), then `s4kcs_orders` — the S4K CRM's open sell-side book across
+        six marketplaces, polled every 10 minutes, and our only source for
+        **StubHub and Gametime** orders — and finally the CRM live, which
+        catches an order created since the last poll. `source` narrows the
+        first four; omit it to try all.
 
         A CRM hit carries no `tevo_event_id`: the CRM is keyed on marketplace
         ids and identifies an event by name/date/venue only. Mapping those to a
@@ -620,7 +647,19 @@ def build_broker_router(
                                    it.get("quantity"), rev, line_items=len(items),
                                    evo_order_id=eoid)
 
-        # Not in anything we ingest — ask the CRM, which sees all six markets.
+        # The CRM book is ingested into s4kcs_orders every 10 minutes
+        # (mig 20260901180000). Read that before paying for a live fetch: the
+        # upstream returns the WHOLE book (~22.7k rows, ~10MB) against a 10/min
+        # limit, which is not something a UI click should trigger.
+        stored = (db.table("s4kcs_orders")
+                  .select("source,s4k_order_id,order_status,event_name,event_date,"
+                          "venue_name,section,row,seats,quantity,price,delivery,"
+                          "inhand_date,tevo_event_id")
+                  .eq("s4k_order_id", oid).limit(1).execute().data or [])
+        if stored:
+            return _s4kcs_payload(payload, stored[0], via="s4kcs_orders")
+
+        # Not stored yet — an order created since the last poll. Ask upstream.
         crm = get_s4kcs_client()
         if crm is not None:
             try:
@@ -629,20 +668,7 @@ def build_broker_router(
                 return {"found": False, "order_id": oid, "source": src,
                         "note": f"not in our ingested books; S4K CRM lookup failed ({type(e).__name__})"}
             if row:
-                return payload(
-                    (row.get("source") or "s4k_crm"), None, row.get("event_name"),
-                    row.get("section"), row.get("row"), row.get("quantity"),
-                    row.get("price"),
-                    via="s4k_crm",
-                    event_date=row.get("event_date"),
-                    venue_name=row.get("venue_name"),
-                    seats=row.get("seats"),
-                    order_status=row.get("order_status"),
-                    inhand_date=row.get("inhand_date"),
-                    delivery=row.get("delivery"),
-                    note=("event not mapped to a tevo_event_id — pick the event "
-                          "above to run the search"),
-                )
+                return _s4kcs_payload(payload, row, via="s4k_crm")
 
         return {"found": False, "order_id": oid, "source": src,
                 "note": "no matching order in seatgeek/tickpick/vivid/evo, "

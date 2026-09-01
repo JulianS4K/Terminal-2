@@ -5,22 +5,21 @@
 --
 -- WHY. get_app_secret() is the single SECURITY DEFINER gate through which
 -- application code reads Vault; a name absent from its allowlist raises 42501.
--- The CRM key is stored under two names today — 'crm.s4kcs.com' (the
--- operator-designated name) and 'EVENUEDESK_API_KEY' (the earlier seed, same
--- value) — and neither is whitelisted, so s4kcs_client currently only resolves
--- its key from the S4KCS_API_KEY env var. Both names are added so a rotation of
--- either keeps working; the client tries them in that order.
+-- The CRM key lives under the single operator-designated name 'crm.s4kcs.com'.
+-- (It was also seeded as 'EVENUEDESK_API_KEY'; that duplicate is deleted from
+-- the Vault as part of this change, so only one name carries the key.)
 --
--- SCOPE. This widens the allowlist by exactly two names and changes nothing
+-- SCOPE. This widens the allowlist by exactly one name and changes nothing
 -- else: the caller check (service_role/postgres/supabase_admin) and the body
 -- are otherwise byte-identical to the deployed function. It grants no new
 -- caller any access — only code already running as service_role can call it.
 --
--- NOTE. The value stored under 'crm.s4kcs.com' carries a LEADING SPACE, which
--- makes it invalid as an X-API-Key header verbatim. This migration deliberately
--- does NOT rewrite the secret (a vault write is an operator decision, and
--- rotating it is the cleaner fix); s4kcs_client strips defensively instead,
--- the same safety net TEVO_SECRET carries for its historical stray wrapping.
+-- NOTE. The value seeded under 'crm.s4kcs.com' carried a LEADING SPACE, which
+-- makes it invalid as an X-API-Key header verbatim (the same class of paste
+-- damage TEVO_SECRET carried). It was normalized in the Vault under operator
+-- direction alongside this change. Both the client and the SQL ingest still
+-- strip defensively — a re-paste can reintroduce it, and a whitespace-broken
+-- key fails as an opaque 401.
 
 CREATE OR REPLACE FUNCTION public.get_app_secret(p_name text)
 RETURNS text
@@ -39,7 +38,7 @@ BEGIN
     'TICKETSDATA_USERNAME','TICKETSDATA_PASSWORD','TWITTERAPI_IO_KEY',
     'WA_GATEWAY_URL','WA_GATEWAY_KEY',
     -- S4K CRM marketplace API (crm.s4kcs.com) — read-only order book.
-    'crm.s4kcs.com','EVENUEDESK_API_KEY'
+    'crm.s4kcs.com'
   ) THEN
     RAISE EXCEPTION 'secret % is not in the app whitelist', p_name USING ERRCODE = '42501';
   END IF;

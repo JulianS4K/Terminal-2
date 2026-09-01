@@ -885,6 +885,39 @@ def _use_crm(monkeypatch, crm):
     monkeypatch.setattr(app_module, "_s4kcs_client", lambda: crm)
 
 
+def test_order_lookup_reads_the_stored_s4kcs_book_first(client, monkeypatch):
+    # Ingested every 10 min, so the table answers without a 10MB live fetch.
+    crm = _FakeCRM(row={"source": "StubHub", "id": "644308803"})
+    _use_crm(monkeypatch, crm)
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_orders": [{
+        "source": "StubHub", "s4k_order_id": "644308803",
+        "order_status": "Upload Transfer Receipts",
+        "event_name": "US Open Tennis: Session 11", "event_date": "2026-09-04",
+        "venue_name": "Louis Armstrong Stadium", "section": "3", "row": "N",
+        "seats": "", "quantity": 2, "price": 870.34,
+        "delivery": "Mobile Tickets", "inhand_date": "2026-09-02",
+        "tevo_event_id": None,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is True and body["via"] == "s4kcs_orders"
+    assert body["source"] == "StubHub" and body["revenue"] == 870.34
+    assert body["section"] == "3" and body["row"] == "N"
+    assert crm.asked == []  # the live API was never touched
+
+
+def test_order_lookup_stored_row_carries_a_mapped_event_id(client, monkeypatch):
+    # Once the AQ mapper fills tevo_event_id the lookup can search directly,
+    # so no "pick the event" note is emitted.
+    _use_crm(monkeypatch, _FakeCRM())
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_orders": [{
+        "source": "Gametime", "s4k_order_id": "G1", "section": "12", "row": "4",
+        "quantity": 2, "price": 100.0, "tevo_event_id": 3170362,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=G1").json()
+    assert body["tevo_event_id"] == 3170362
+    assert body["note"] is None
+
+
 def test_order_lookup_falls_back_to_s4k_crm(client, monkeypatch):
     # A StubHub order: real shape from the CRM book. We ingest no StubHub
     # orders, so before this fallback it resolved to nothing at all.
@@ -899,6 +932,8 @@ def test_order_lookup_falls_back_to_s4k_crm(client, monkeypatch):
     _use_crm(monkeypatch, crm)
     body = client.get("/api/broker/order-lookup?order_id=644308803").json()
     assert body["found"] is True
+    # Nothing stored for it yet (created since the last 10-min poll), so the
+    # live book answered.
     assert body["source"] == "StubHub" and body["via"] == "s4k_crm"
     assert body["section"] == "3" and body["row"] == "N" and body["quantity"] == 2
     assert body["revenue"] == 870.34

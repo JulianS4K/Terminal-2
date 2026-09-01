@@ -2,7 +2,7 @@
 
 Host: https://crm.s4kcs.com/api/v1
 Auth: an `X-API-Key: s4k_…` header, resolved arg → env `S4KCS_API_KEY` →
-Supabase Vault, mirroring the other clients.
+Supabase Vault (`crm.s4kcs.com`), mirroring the other clients.
 
 Why this exists: our own ingest covers four order books (EVO, SeatGeek,
 TickPick, Vivid). The CRM aggregates open sell-side orders from SIX
@@ -58,10 +58,10 @@ _assert_readonly_method = build_readonly_guard(
     "Reading marketplace orders only — never write back to crm.s4kcs.com.",
 )
 
-# Vault names carrying the key, tried in order. Both hold the same value today;
-# `crm.s4kcs.com` is the operator-designated name and `EVENUEDESK_API_KEY` the
-# earlier seed, kept as a fallback so a rotation of either keeps working.
-VAULT_SECRET_NAMES = ("crm.s4kcs.com", "EVENUEDESK_API_KEY")
+# The single Vault name carrying the key. It was also seeded as
+# `EVENUEDESK_API_KEY`; that duplicate was deleted so one name owns the secret
+# and a rotation has exactly one place to land.
+VAULT_SECRET_NAME = "crm.s4kcs.com"
 
 # {(markets, ev_from, ev_to): (fetched_at_monotonic, rows)}. Module-level so the
 # cache survives per-request client construction in the route.
@@ -69,20 +69,16 @@ _ORDERS_CACHE: dict[tuple, tuple[float, list[dict[str, Any]]]] = {}
 
 
 def _resolve_key(api_key: str | None, db: Any | None) -> str | None:
-    """arg → env → vault (each candidate name in turn). Never logs the value."""
+    """arg → env → vault. Never logs the value."""
     if api_key:
         return api_key
     env = os.environ.get("S4KCS_API_KEY")
     if env:
         return env
-    for name in VAULT_SECRET_NAMES:
-        found = vault_secret(
-            db, name,
-            on_error=lambda e: print(f"s4kcs: vault lookup failed: {e}"),
-        )
-        if found:
-            return found
-    return None
+    return vault_secret(
+        db, VAULT_SECRET_NAME,
+        on_error=lambda e: print(f"s4kcs: vault lookup failed: {e}"),
+    )
 
 
 class S4KCSClient:
@@ -95,12 +91,12 @@ class S4KCSClient:
             raise S4KCSError(
                 "S4KCS API key not found. Either pass api_key, set the "
                 "S4KCS_API_KEY env var, or store it in Supabase Vault as "
-                "'crm.s4kcs.com' and whitelist that name in "
-                "public.get_app_secret()."
+                "'crm.s4kcs.com' (whitelisted in public.get_app_secret())."
             )
-        # The vault copy under 'crm.s4kcs.com' was seeded with a leading space,
-        # which makes the header invalid; strip defensively rather than depend
-        # on the stored value being clean (same safety net as TEVO_SECRET).
+        # The vault copy was seeded with a leading space, which makes the
+        # header invalid. That value has been normalized, but a re-paste can
+        # reintroduce it and the failure is an opaque 401 — so strip rather
+        # than depend on the stored value being clean (as TEVO_SECRET does).
         self.api_key = key.strip()
         self.timeout = timeout
         self.cache_ttl = cache_ttl
