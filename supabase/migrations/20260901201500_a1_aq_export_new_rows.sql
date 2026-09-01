@@ -1,0 +1,50 @@
+-- Migration 20260901201500 · level:secondary-sales · lane:A1 · writes:aq_event_map (inserts) · reads:events,aq_event_map · pre:20260901193000
+--
+-- Import the AQ 5.1.27 export rows that name a TEvo event we trade but have no hub row.
+--
+-- WHY THIS SLICE. The export holds 218,668 future events; 217,120 have no hub row.
+-- Importing all of them is not possible through the MCP SQL channel (~23.5 MB of
+-- statement text) and would not pay for itself: a hub row without a tevo_event_id
+-- cannot reach our listings or orders, so it adds mapping surface and no coverage.
+-- Narrowing by venue does not fix that either -- 39,982 export rows sit at a venue we
+-- trade, but only 3,512 of those resolve to an actual TEvo event.
+--
+-- So the slice is the intersection that carries value: rows whose TEvo event
+-- (a) our mapper matched to a SeatGeek event under 20260901193000's guards, and
+-- (b) has no aq_event_map row at all. That is 774 rows, from the 1,880 future TEvo
+-- events with no hub row. Each lands with tevo_event_id + sg_event_id already set,
+-- so it is useful the moment it exists rather than waiting on a later matcher pass.
+--
+-- SCOPE. Inserts only, ON CONFLICT (aq_short_event_id) DO NOTHING. Columns are the
+-- five id spaces proven in 20260901193000 plus name/venue/date/city/state.
+-- performer_short_id and venue_short_id are left NULL -- they carry FKs into
+-- aq_performer_map / aq_venue_map and the export's Performer/Venue ids are a
+-- different id space (0/1548 match).
+--
+-- ## Applied to prod 2026-09-01 (operator-authorized)
+-- 762 inserted, 12 already present. Hub 17,440 -> 18,202 rows. No duplicate
+-- tevo_event_id within the imported set.
+--
+-- Hub coverage immediately after apply: tevo 13,136 · sg 12,643 · gotickets 5,845 ·
+-- vivid 6,489 · stubhub 6,269 · axs 406, out of 18,202 rows. (vivid and stubhub
+-- have since risen on their own -- A1's existing matchers keep filling them.)
+--
+-- ## OPERATIONAL FINDING (not fixed here -- needs an operator decision)
+-- public.seatgeek_sales_snapshots is 8.7 GB and carries an FK to
+-- aq_event_map(aq_short_event_id) with NO INDEX on its own referencing column.
+-- Every DELETE (or update of aq_short_event_id) on aq_event_map therefore runs a
+-- full 8.7 GB sequential scan per row and will not finish inside a normal
+-- statement timeout. Inserts and updates to other columns are unaffected, which
+-- is why the backfills in 20260901193000 were fine. Suggested fix:
+--     CREATE INDEX CONCURRENTLY idx_sg_sales_aq_short_event_id
+--       ON public.seatgeek_sales_snapshots (aq_short_event_id);
+-- Until that exists, treat aq_event_map rows as effectively append-only.
+
+-- Data-only migration; the 774 rows were applied via MCP in six batches.
+-- Re-running from zero is a no-op against a hub that already carries them.
+
+-- Verification:
+--   SELECT count(*) FROM aq_event_map WHERE aq_source = 'aq_export_5.1.27';   -- 762
+--   SELECT tevo_event_id, count(*) FROM aq_event_map
+--    WHERE aq_source = 'aq_export_5.1.27' AND tevo_event_id IS NOT NULL
+--    GROUP BY 1 HAVING count(*) > 1;                                          -- 0 rows
