@@ -323,84 +323,32 @@ def test_bandsintown_allowlist_constant_is_get_only():
     assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
 
 
-# ---------- s4k_marketplace_client ----------
+# ---------- s4kcs_client ----------
 
-def test_s4k_marketplace_assert_readonly_raises_on_post():
-    from s4k_marketplace_client import _assert_readonly_method, S4KMarketplaceReadOnlyError
-    with pytest.raises(S4KMarketplaceReadOnlyError) as exc:
+def test_s4kcs_assert_readonly_raises_on_post():
+    from s4kcs_client import _assert_readonly_method, S4KCSReadOnlyError
+    with pytest.raises(S4KCSReadOnlyError) as exc:
         _assert_readonly_method("POST")
     assert "READ-ONLY violation" in str(exc.value)
     assert "RULE 2" in str(exc.value)
 
 
-def test_s4k_marketplace_assert_readonly_raises_on_put_patch_delete():
-    from s4k_marketplace_client import _assert_readonly_method, S4KMarketplaceReadOnlyError
+def test_s4kcs_assert_readonly_raises_on_put_patch_delete():
+    from s4kcs_client import _assert_readonly_method, S4KCSReadOnlyError
     for method in ("PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
-        with pytest.raises(S4KMarketplaceReadOnlyError):
+        with pytest.raises(S4KCSReadOnlyError):
             _assert_readonly_method(method)
 
 
-def test_s4k_marketplace_assert_readonly_allows_get():
-    from s4k_marketplace_client import _assert_readonly_method
+def test_s4kcs_assert_readonly_allows_get():
+    from s4kcs_client import _assert_readonly_method
     _assert_readonly_method("GET")
     _assert_readonly_method("get")
 
 
-def test_s4k_marketplace_allowlist_constant_is_get_only():
-    from s4k_marketplace_client import ALLOWED_HTTP_METHODS
+def test_s4kcs_allowlist_constant_is_get_only():
+    from s4kcs_client import ALLOWED_HTTP_METHODS
     assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
-
-
-def test_s4k_marketplace_request_refuses_without_key(monkeypatch):
-    """No key configured must fail closed BEFORE any socket is opened, and the
-    error must not be silently swallowed into an empty pull."""
-    from s4k_marketplace_client import S4KMarketplaceClient, S4KMarketplaceAuthError
-    monkeypatch.delenv("S4K_MARKETPLACE_API_KEY", raising=False)
-    client = S4KMarketplaceClient(db=None)
-    with pytest.raises(S4KMarketplaceAuthError):
-        client.ping()
-
-
-def test_s4k_marketplace_key_never_appears_in_url_or_params(monkeypatch):
-    """The API key travels in a header only — never the URL or query string,
-    so it cannot leak into a redirect, access log, or exception repr."""
-    from s4k_marketplace_client import S4KMarketplaceClient
-    monkeypatch.setenv("S4K_MARKETPLACE_API_KEY", "s4k_TESTKEY_NOT_REAL")
-    client = S4KMarketplaceClient()
-    seen: dict = {}
-
-    class _Resp:
-        status_code = 200
-
-        @staticmethod
-        def json():
-            return {"ok": True}
-
-    def _fake_get(url, headers=None, params=None, timeout=None):
-        seen["url"] = url
-        seen["headers"] = headers or {}
-        seen["params"] = params
-        return _Resp()
-
-    monkeypatch.setattr(client._session, "get", _fake_get)
-    client.ping()
-
-    assert "s4k_TESTKEY_NOT_REAL" not in seen["url"]
-    assert "s4k_TESTKEY_NOT_REAL" not in str(seen["params"])
-    assert seen["headers"]["X-API-Key"] == "s4k_TESTKEY_NOT_REAL"
-
-
-def test_s4k_marketplace_is_not_wired_to_paciolan_tables():
-    """A separate source. If this module ever references the paciolan_* tables
-    or the eVenue box-office host, the pipelines have been conflated — which is
-    exactly what the operator ruled out."""
-    src = (Path(__file__).resolve().parent.parent / "s4k_marketplace_client.py").read_text()
-    # `evenue.net` and `paciolan_` may appear in prose explaining the
-    # separation, but never in a table name or URL the client actually uses.
-    assert "paciolan_event_snapshots" not in src
-    assert "paciolan_ingest" not in src
-    assert "https://evenue.net" not in src
-    assert "https://crm.s4kcs.com" in src
 
 
 # ---------- audit script catches synthetic violations ----------

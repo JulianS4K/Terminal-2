@@ -65,6 +65,11 @@ FORBIDDEN_HOSTS = (
     "www.broadway.com",
     "checkout.broadway.com",
     "rest.bandsintown.com",
+    # S4K CRM marketplace-orders API (crm.s4kcs.com/api/v1). Read-only by its
+    # own contract — every endpoint is a GET — and it fronts six marketplaces'
+    # sell-side order books, so a write here would reach StubHub/Gametime/etc.
+    # Locked by the same audit as every other upstream.
+    "crm.s4kcs.com",
     # TwitterAPI.io (X read gateway for the news wire — pg_net GET only, no
     # Python client). Bare host substring-matches api.twitterapi.io and any
     # future subdomain, same as seatdata.io / axs.com.
@@ -80,13 +85,6 @@ FORBIDDEN_HOSTS = (
     # eVenue host is forbidden. Bare "evenue.net" substring-matches
     # <tenant>.evenue.net / any future subdomain, same as seatdata.io / axs.com.
     "evenue.net",
-    # S4K CRM marketplace-orders API. A SEPARATE source from the Paciolan
-    # pipeline above — own host, own auth, own subject (our sell-side resale
-    # ORDERS, not box-office inventory). Documented GET-only and the key
-    # carries only marketplace:read, but the host is pinned here so the audit
-    # fails the build if a write path is ever introduced.
-    # Read-only via s4k_marketplace_client.S4KMarketplaceClient.
-    "crm.s4kcs.com",
 )
 
 # Client modules that legitimately reference these hosts, mapped to the HTTP
@@ -111,9 +109,7 @@ CLIENT_FILES = {
     # sourced), but declares the canonical GET-only guard so the new upstream is
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
-    # S4K CRM marketplace-orders API (crm.s4kcs.com). Separate source from
-    # paciolan_client.py — shares no tables, no cron, no code with it.
-    "s4k_marketplace_client.py": frozenset({"GET"}),
+    "s4kcs_client.py": frozenset({"GET"}),
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
