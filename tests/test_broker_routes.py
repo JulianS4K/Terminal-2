@@ -645,6 +645,162 @@ def test_substitutions_quantity_filter_and_ambiguous_bucket(client, monkeypatch)
     assert [s["ticket_group_id"] for s in body["ambiguous"]] == ["alpha"]
 
 
+def test_substitutions_market_pool_spans_gotickets(client, monkeypatch):
+    # The merged pool: same physical section under two labels. GoTickets quotes
+    # all-in retail, which here undercuts the exchange ask for the same row.
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "O", "quantity": 2, "splits": [2],
+         "retail_price": 262.10, "is_owned": False},
+    ]
+    gt = [
+        {"gt_listing_id": 7086439326, "gt_event_id": 1252283,
+         "captured_at": "2026-09-01T15:34:00Z", "section": "Promenade  311",
+         "section_id": 3262193, "row": "O", "quantity": 2, "splits": [2],
+         "all_in_price": 254.44, "display_price": 254.44},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&revenue=560&source=market").json()
+    assert body["pools"] == ["tevo_market", "gotickets"]
+    assert body["gt_captured_at"] == "2026-09-01T15:34:00Z"
+    # Both are same-section (the GT zone prefix is reconciled) better-row subs;
+    # cheapest first puts GoTickets on top.
+    assert [x["inv_source"] for x in body["subs"]] == ["gotickets", "tevo_market"]
+    best = body["best"]
+    assert best["unit_cost"] == 254.44
+    assert best["buy_url"] == ("https://pro.gotickets.com/tickets/1252283/"
+                              "?sortBy=price&sortDirection=asc&sections=3262193")
+    assert best["pnl_total"] == round((280.0 - 254.44) * 2, 2)
+
+
+def test_substitutions_market_all_in_price_is_not_fee_marked_up(client, monkeypatch):
+    # fee_pct applies to the exchange ask only — GoTickets is already all-in.
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 250.0,
+         "is_owned": False},
+    ]
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "splits": [2], "all_in_price": 255.0, "display_price": 255.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market&fee_pct=10").json()
+    landed = {x["inv_source"]: x["landed_cost"] for x in body["subs"]}
+    assert landed["tevo_market"] == 275.0   # 250 + 10%
+    assert landed["gotickets"] == 255.0     # unchanged
+    assert body["best"]["inv_source"] == "gotickets"
+
+
+def test_substitutions_owned_pool_never_reads_gotickets(client, monkeypatch):
+    ls = [
+        {"tevo_ticket_group_id": "mine", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 300.0,
+         "is_owned": True},
+    ]
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": 1.0, "display_price": 1.0},
+    ]
+    fake = FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    })
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2").json()
+    # We don't hold GoTickets stock, so an owned swap must not see it — not
+    # even the $1 bait row.
+    assert body["pools"] == ["tevo_owned", "sg_seller"]
+    assert body["gt_captured_at"] is None
+    assert "gotickets_listings_snapshots" not in fake.table_calls
+    assert [x["inv_source"] for x in body["subs"]] == ["tevo_owned"]
+
+
+def test_substitutions_market_without_gotickets_data(client, monkeypatch):
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 250.0,
+         "is_owned": False},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": [],
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    assert body["pools"] == ["tevo_market"]
+    assert body["gt_captured_at"] is None
+    assert body["best"]["inv_source"] == "tevo_market"
+
+
+def test_substitutions_gotickets_ambiguous_section_labels_need_a_human(client, monkeypatch):
+    # A venue fielding both "Loge 106" and "Lower 106" can't resolve a bare
+    # sold section "106" — those surface as ambiguous, never as a cover.
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "Loge 106", "section_id": 11, "row": "5", "quantity": 2,
+         "all_in_price": 100.0, "display_price": 100.0},
+        {"gt_listing_id": 2, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "Lower 106", "section_id": 12, "row": "5", "quantity": 2,
+         "all_in_price": 110.0, "display_price": 110.0},
+        # Unlabelled row: no section at all, so it can never match either.
+        {"gt_listing_id": 3, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "", "section_id": None, "row": "5", "quantity": 2,
+         "all_in_price": 90.0, "display_price": 90.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/900/substitutions"
+                      "?section=106&row=9&quantity=2&source=market").json()
+    assert body["subs"] == []
+    assert {a["section"] for a in body["ambiguous"]} == {"Loge 106", "Lower 106"}
+    assert body["best"] is None
+
+
+def test_substitutions_gotickets_dedupes_and_falls_back_to_display_price(client, monkeypatch):
+    # Same listing twice in one capture (first wins), and a null all_in_price
+    # falls back to the display price rather than dropping the listing.
+    gt = [
+        {"gt_listing_id": 55, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": None, "display_price": 258.96},
+        {"gt_listing_id": 55, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": 999.0, "display_price": 999.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    assert len(body["subs"]) == 1
+    assert body["subs"][0]["unit_cost"] == 258.96
+
+
+def test_substitutions_gotickets_link_omitted_without_section_id(client, monkeypatch):
+    gt = [
+        {"gt_listing_id": 7, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": None, "row": "M",
+         "quantity": 2, "all_in_price": 200.0, "display_price": 200.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    # Still linkable to the event page; just not filtered to the section.
+    assert body["best"]["buy_url"] == (
+        "https://pro.gotickets.com/tickets/1252283/?sortBy=price&sortDirection=asc")
+
+
 # ---------- /api/broker/order-lookup (order # -> sub fields) ----------
 
 def test_order_lookup_seatgeek(client, monkeypatch):
@@ -683,6 +839,23 @@ def test_order_lookup_evo_uses_first_item_and_counts(client, monkeypatch):
     assert body["source"] == "evo" and body["section"] == "100" and body["row"] == "5"
     assert body["revenue"] == 450  # subtotal preferred
     assert body["line_items"] == 2
+
+
+def test_order_lookup_evo_accepts_composite_tevo_order_number(client, monkeypatch):
+    # TEvo displays "<purchase_order>-<order_id>"; we key on the trailing id.
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "evo_orders": [{"evo_order_id": 19056200, "tevo_event_id": 3170362,
+                        "total": 560, "subtotal": 560}],
+        "evo_order_items": [
+            {"ticket_group_section": "311", "ticket_group_row": "R", "quantity": 2,
+             "event_name": "US Open Session 8", "event_id": 3170362},
+        ],
+    }))
+    body = client.get("/api/broker/order-lookup?order_id=8036615-19056200").json()
+    assert body["found"] is True and body["source"] == "evo"
+    assert body["evo_order_id"] == 19056200
+    assert body["section"] == "311" and body["row"] == "R"
+    assert body["quantity"] == 2 and body["revenue"] == 560
 
 
 def test_order_lookup_not_found(client, monkeypatch):

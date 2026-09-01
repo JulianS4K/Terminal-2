@@ -31,7 +31,9 @@
       <p class="muted small">
         Cover a sold / double-sold ticket from our own inventory. Finds the
         <strong>cheapest acceptable</strong> sub — same section &amp; same-or-better row
-        first, then a better-section fallback. Paste an order # to auto-fill, or enter the sold ticket below.
+        first, then a better-section fallback. Owned searches our own stock; market
+        prices a buy-in across the TEvo exchange <em>and</em> GoTickets. Paste an order #
+        to auto-fill, or enter the sold ticket below.
       </p>
       <div class="subs-orderbar">
         <div class="subs-field">
@@ -84,7 +86,7 @@
           <label for="subSource">Pool</label>
           <select id="subSource" name="source">
             <option value="owned">Owned (free swap)</option>
-            <option value="market">Market (buy-in)</option>
+            <option value="market">Market (buy-in: exchange + GoTickets)</option>
           </select>
         </div>
         <div class="subs-field narrow" id="subFeeField" hidden>
@@ -110,7 +112,9 @@
       <details id="subsAmbiguousWrap" hidden>
         <summary>Ambiguous <span id="subsAmbCount" class="muted small"></span></summary>
         <div id="subsAmbTable" class="subs-table-wrap"></div>
-        <p class="muted small">Row vs sold row not safely comparable (different kind, or venue-dependent letter rows). Eyeball before using.</p>
+        <p class="muted small">Not safely comparable — either the row (different kind, or
+        venue-dependent letter rows) or the section (a bare sold section like "106" when the
+        book holds both "Loge 106" and "Lower 106"). Eyeball before using.</p>
       </details>
     </section>
   </main>
@@ -121,6 +125,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260620c"></script>
+  <script src="subs.js?v=20260901gt"></script>
 </body>
 </html>

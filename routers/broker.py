@@ -23,7 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from core.concurrency import run_parallel
 from core.helpers import clean_section, delta, listings_cadence_seconds
-from core.substitutions import find_row_substitutions, find_section_substitutions
+from core.substitutions import (find_row_substitutions, find_section_substitutions,
+                                gotickets_buy_url)
 
 # Auto-hide parking/garage/hospitality zones unless the caller opts in. Names
 # like "Parking East", "Garage A", "Premium Parking", "Hospitality Tent".
@@ -374,8 +375,20 @@ def build_broker_router(
                  `is_owned=true` rows (TEvo, cost≈list `retail_price`) MERGED
                  with our SeatGeek SellerDirect book (`seatgeek_seller_listings`,
                  real `cost` basis) — a free swap from stock we already hold
-          market the rest of the `listings_snapshots` book — a buy-in when we
-                 hold no sub
+          market a buy-in when we hold no sub, across BOTH books we can buy
+                 from: the rest of the `listings_snapshots` exchange book
+                 (`retail_price` is an ask, so `fee_pct` applies) and the
+                 GoTickets book (`gotickets_listings_snapshots.all_in_price`
+                 is already what checkout charges, so those rows are
+                 fee-exempt and carry a `buy_url` per PROJECT_BIBLE §6b)
+
+        GoTickets labels a section "Promenade  311" where the exchange says
+        "311"; core.substitutions reconciles a bare label with a zoned one. It
+        will NOT equate two zoned labels sharing a number ("Loge 106" vs
+        "Lower 106" are different places), and when the sold section is bare
+        and several zoned labels carry its number, those land in `ambiguous`
+        for a human instead of being claimed as a cover.
+
         `revenue` (total $ received for the sale) turns on per-sub P&L so the
         loss/margin of each cover is explicit. Ranking/matching is pure logic in
         core.substitutions; "better SECTION" matching is a deliberate future phase.
@@ -437,8 +450,49 @@ def build_broker_router(
                     "inv_source": "sg_seller",
                 })
 
+        # Market buy-ins also span the GoTickets book — a cover we can actually
+        # purchase, often cheaper than the same row's exchange ask because GT
+        # quotes all-in retail. Never part of the owned pool: we don't hold it.
+        gt_captured_at = None
+        if source == "market":
+            gt_latest = (
+                db.table("gotickets_listings_snapshots").select("captured_at")
+                .eq("tevo_event_id", event_id).order("captured_at", desc=True)
+                .limit(1).execute().data or []
+            )
+            gt_captured_at = gt_latest[0]["captured_at"] if gt_latest else None
+            if gt_captured_at is not None:
+                gt_rows = (
+                    db.table("gotickets_listings_snapshots")
+                    .select("gt_listing_id,gt_event_id,section,section_id,row,"
+                            "quantity,splits,all_in_price,display_price")
+                    .eq("tevo_event_id", event_id).eq("captured_at", gt_captured_at)
+                    .execute().data or []
+                )
+                seen_listings = set()
+                for r in gt_rows:
+                    lid = r.get("gt_listing_id")
+                    if lid in seen_listings:
+                        continue
+                    seen_listings.add(lid)
+                    price = r.get("all_in_price")
+                    if price is None:
+                        price = r.get("display_price")
+                    pool.append({
+                        "id": lid,
+                        "section": r.get("section"),
+                        "row": r.get("row"),
+                        "quantity": r.get("quantity"),
+                        "splits": r.get("splits"),
+                        # all-in already includes buyer fees — see fee_exempt.
+                        "cost": price,
+                        "fee_exempt": True,
+                        "inv_source": "gotickets",
+                        "buy_url": gotickets_buy_url(r.get("gt_event_id"), r.get("section_id")),
+                    })
+
         # Buy-in fees only apply to a market purchase; an owned swap is stock we
-        # already hold (no fee).
+        # already hold (no fee). GoTickets rows opt out per-candidate above.
         eff_fee_pct = fee_pct if source == "market" else 0.0
         result = find_row_substitutions(section, row, qty, pool,
                                         revenue_per_ticket=rev_per_ticket,
@@ -463,8 +517,11 @@ def build_broker_router(
             section, qty, pool, section_quality, revenue_per_ticket=rev_per_ticket,
             fee_pct=eff_fee_pct)
 
+        pools = (["tevo_owned", "sg_seller"] if source == "owned"
+                 else ["tevo_market"] + (["gotickets"] if gt_captured_at else []))
         result.update({"captured_at": captured_at, "event_id": event_id,
-                       "source": source, "fee_pct": eff_fee_pct})
+                       "source": source, "fee_pct": eff_fee_pct,
+                       "pools": pools, "gt_captured_at": gt_captured_at})
         return result
 
     @router.get("/api/broker/order-lookup")
@@ -479,7 +536,9 @@ def build_broker_router(
         ingested as an order source — those orders won't resolve here, use the
         manual fields. `revenue` is the order's own total/payment (editable in
         the UI). EVO orders use the first line item for section/row and report
-        `line_items` so a multi-section order can be flagged.
+        `line_items` so a multi-section order can be flagged; they accept both
+        the bare `evo_order_id` and the composite "<po>-<order_id>" number TEvo
+        displays, and echo the id that matched as `evo_order_id`.
         """
         db = get_require_sb()()
         oid = (order_id or "").strip()
@@ -524,9 +583,15 @@ def build_broker_router(
                                o.get("section"), o.get("row"), o.get("quantity"), o.get("total"))
 
         if src in (None, "evo"):
+            # TEvo shows an order as "<purchase_order>-<order_id>" (the `oid`
+            # field in the raw payload, e.g. "8036615-19056200") but we key on
+            # the trailing `evo_order_id`. Brokers paste what TEvo shows them,
+            # so accept the composite and fall back to the whole string.
+            # The trailing segment IS the whole string when there's no
+            # hyphen, so this covers the bare id and the composite alike.
             try:
-                eoid = int(oid)
-            except (TypeError, ValueError):
+                eoid = int(oid.rsplit("-", 1)[-1])
+            except ValueError:
                 eoid = None
             if eoid is not None:
                 hdr = (db.table("evo_orders")
@@ -541,7 +606,8 @@ def build_broker_router(
                     rev = hdr[0].get("subtotal") if hdr[0].get("subtotal") is not None else hdr[0].get("total")
                     return payload("evo", tev, it.get("event_name"),
                                    it.get("ticket_group_section"), it.get("ticket_group_row"),
-                                   it.get("quantity"), rev, line_items=len(items))
+                                   it.get("quantity"), rev, line_items=len(items),
+                                   evo_order_id=eoid)
 
         return {"found": False, "order_id": oid, "source": src,
                 "note": "no matching order in seatgeek/tickpick/vivid/evo (StubHub orders aren't ingested — enter details manually)"}
