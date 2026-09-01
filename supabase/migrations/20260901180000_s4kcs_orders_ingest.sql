@@ -231,7 +231,15 @@ BEGIN
       END;
       v_rows := COALESCE(v_body->'rows', '[]'::jsonb);
 
-      WITH src AS (SELECT o FROM jsonb_array_elements(v_rows) AS o),
+      -- DISTINCT ON is MANDATORY: the feed can repeat a (source, id) pair
+      -- inside one payload (observed as a byte-identical duplicate row), and
+      -- Postgres rejects that with "ON CONFLICT DO UPDATE command cannot
+      -- affect row a second time" — which fails the WHOLE batch, not the row.
+      WITH src AS (
+        SELECT DISTINCT ON (o->>'source', o->>'id') o
+        FROM jsonb_array_elements(v_rows) AS o
+        ORDER BY o->>'source', o->>'id'
+      ),
       ins AS (
         INSERT INTO public.s4kcs_orders (
           source, s4k_order_id, order_status, seller_status,
