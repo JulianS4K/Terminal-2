@@ -32,7 +32,17 @@
 --   * Any pair whose tevo id or sg id is not 1:1 across the accepted set is dropped.
 --   * 46 matches failed these checks and are deliberately left unmapped.
 --
--- 3,576 venue+date matches -> 3498 written. Verification query at the foot.
+-- 3,576 venue+date matches -> 3,498 unique 1:1 pairs staged.
+--
+-- ## Applied to prod 2026-09-01 (operator-authorized)
+-- 2,773 of the staged pairs hit a hub row; 2,760 filled, 0 conflicts, 10 skipped
+-- because the sg id already sat on another row. Hub SeatGeek coverage 8,901 ->
+-- 11,661 (51% -> 66.9%). The remaining 725 pairs name TEvo events that have no
+-- hub row yet -- they land with the staged import, not here.
+--
+-- 46 staged sg ids ended up on more than one hub row. 45 are duplicate hub rows
+-- for the SAME TEvo event (consistent, not a mis-map). The 46th is one real event
+-- carrying two TEvo ids (a reschedule that got re-listed) -- also correct.
 
 BEGIN;
 
@@ -3555,3 +3565,33 @@ COMMIT;
 --   SELECT count(*) FILTER (WHERE sg_event_id IS NOT NULL) AS with_sg, count(*) FROM aq_event_map;
 --   SELECT sg_event_id, count(*) FROM aq_event_map WHERE sg_event_id IS NOT NULL
 --     GROUP BY 1 HAVING count(*) > 1;
+
+-- ============================================================================
+-- Companion apply (same session, operator-authorized): AQ 5.1.27 export cell fill
+-- ============================================================================
+-- Filled ONLY blank cells on the 1,548 hub rows the export overlaps, and only in
+-- columns whose id space was proven against those rows:
+--     Skybox Event Id    -> vivid_event_id       100.0%   215 cells
+--     Viagogo Event Id   -> sh_event_id           99.8%   221 cells
+--     Seatgeek Event Id  -> sg_event_id           98.6%   289 cells
+--     Go Tickets Event Id-> gotickets_event_id    97.4% 1,241 cells
+--     Axs Event Id       -> axs_event_id         100.0%    68 cells
+-- Deliberately NOT written -- these columns do not share our id space:
+--     Trade Desk Event Id      0/856   (overlaps TEvo numerically by coincidence)
+--     Stubhub Intl Event Id    0/926
+--     Ticket Network Event Id  0/125
+--     Ticket Master Event Id   575/1079 (53% -- too weak to trust)
+--     Venue Id / Performer Id  0/1548
+--
+-- gotickets_map_score is set to 1.00 on export-sourced ids to distinguish them
+-- from the fuzzy matcher's output (which carries its >=0.80 confidence).
+--
+-- Fallout the export exposed: 3 GoTickets ids sat on rows with different dates.
+-- Two were pre-existing FUZZY-matched rows binding an adjacent game in the same
+-- series (Giants at Dodgers 9/18 vs 9/19) and an adjacent night of the same run
+-- (Usher/Chris Brown 11/7 vs 11/8) -- both cleared back to unmapped (hub ids 4788,
+-- 15973). The third is a Rockets season-ticket package the export itself maps to
+-- one GoTickets listing twice; left alone.
+--
+-- Final hub coverage: tevo 12,374 · sg 11,881 · gotickets 5,106 · vivid 5,725 ·
+-- stubhub 5,527 · axs 287, out of 17,440 rows.
