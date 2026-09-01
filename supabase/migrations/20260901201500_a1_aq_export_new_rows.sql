@@ -22,11 +22,12 @@
 -- different id space (0/1548 match).
 --
 -- ## Applied to prod 2026-09-01 (operator-authorized)
--- 764 inserted, 10 already present. Hub 17,440 -> 18,204 rows. No duplicate
+-- 762 inserted, 12 already present. Hub 17,440 -> 18,202 rows. No duplicate
 -- tevo_event_id within the imported set.
 --
--- Final hub coverage: tevo 13,137 · sg 12,644 · gotickets 5,846 · vivid 6,490 ·
--- stubhub 6,270 · axs 407, out of 18,204 rows.
+-- Hub coverage immediately after apply: tevo 13,136 · sg 12,643 · gotickets 5,845 ·
+-- vivid 6,489 · stubhub 6,269 · axs 406, out of 18,202 rows. (vivid and stubhub
+-- have since risen on their own -- A1's existing matchers keep filling them.)
 --
 -- ## OPERATIONAL FINDING (not fixed here -- needs an operator decision)
 -- public.seatgeek_sales_snapshots is 8.7 GB and carries an FK to
@@ -43,7 +44,7 @@
 -- Re-running from zero is a no-op against a hub that already carries them.
 
 -- Verification:
---   SELECT count(*) FROM aq_event_map WHERE aq_source = 'aq_export_5.1.27';   -- 764
+--   SELECT count(*) FROM aq_event_map WHERE aq_source = 'aq_export_5.1.27';   -- 762
 --   SELECT tevo_event_id, count(*) FROM aq_event_map
 --    WHERE aq_source = 'aq_export_5.1.27' AND tevo_event_id IS NOT NULL
 --    GROUP BY 1 HAVING count(*) > 1;                                          -- 0 rows
