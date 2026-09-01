@@ -911,7 +911,23 @@ app.include_router(build_broker_router(
     get_discover_payload=lambda: _discover_payload,
     get_client=lambda: client,
     get_bulk_performer_assets=lambda: _bulk_performer_assets,
+    get_s4kcs_client=lambda: _s4kcs_client(),
 ))
+
+
+def _s4kcs_client():
+    """Build the read-only S4K CRM marketplace client, or None when no key is
+    configured. The order lookup treats None as "CRM unavailable" and answers
+    from the four ingested books, so a missing key degrades rather than 500s.
+    Construction is cheap (no network); the client memoises the order fetch
+    itself, which is what the 10/min upstream rate limit actually cares about.
+    """
+    try:
+        from s4kcs_client import S4KCSClient
+        return S4KCSClient(db=require_sb())
+    except Exception as e:  # noqa: BLE001 - missing key / import / client init
+        print(f"s4kcs: client unavailable: {type(e).__name__}")
+        return None
 
 
 # Trip-planner payload builders moved to core/trip_payloads.py (BR-CODE-1 core/

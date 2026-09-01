@@ -30,6 +30,8 @@
 
   // ---------- order # → auto-fill the sold ticket ----------
 
+  // Order sources: the four we ingest, plus the S4K CRM fallback that fronts
+  // six marketplace books (adds StubHub + Gametime, which we ingest nowhere).
   function wireOrderLoad() {
     const btn = document.getElementById('subOrderLoad');
     if (btn) btn.addEventListener('click', loadOrder);
@@ -63,8 +65,20 @@
       if (o.event_name) document.getElementById('subEventSearch').value = o.event_name;
       const multi = (o.line_items && o.line_items > 1)
         ? ` · ⚠ ${esc(o.line_items)} line items — showing the first` : '';
-      msg.innerHTML = `<span class="pos">loaded ${esc(o.source)} order</span> · ` +
-        `${esc(o.event_name || ('event ' + o.tevo_event_id))}${multi}`;
+      // A CRM hit identifies its event by name/date/venue only — there's no
+      // tevo_event_id to search on, so show what it is and let the operator
+      // pick the event from the typeahead (already prefilled with the name).
+      const crm = o.via === 's4k_crm';
+      const when = o.event_date ? ` · ${esc(o.event_date)}` : '';
+      const where = o.venue_name ? ` · ${esc(o.venue_name)}` : '';
+      const status = o.order_status ? ` · <strong>${esc(o.order_status)}</strong>` : '';
+      msg.innerHTML = `<span class="pos">loaded ${esc(o.source)} order</span>` +
+        (crm ? ' <span class="badge muted" title="S4K CRM marketplace book">CRM</span>' : '') +
+        ` · ${esc(o.event_name || ('event ' + o.tevo_event_id))}${when}${where}${status}${multi}` +
+        (crm && !o.tevo_event_id
+          ? `<div class="muted small neg">${esc(o.note || 'pick the event above to run the search')}</div>`
+          : '');
+      if (crm && !o.tevo_event_id) return;  // nothing to search on yet
       run();  // auto-search subs from the loaded details
     } catch (err) {
       msg.innerHTML = `<span class="neg">${esc(String(err.message || err))}</span>`;

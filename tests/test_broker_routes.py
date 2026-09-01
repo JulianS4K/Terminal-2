@@ -863,3 +863,94 @@ def test_order_lookup_not_found(client, monkeypatch):
     body = client.get("/api/broker/order-lookup?order_id=NOPE").json()
     assert body["found"] is False
     assert "note" in body
+
+
+# ---------- order-lookup → S4K CRM fallback (the two markets we don't ingest) ----------
+
+class _FakeCRM:
+    """Stands in for s4kcs_client.S4KCSClient."""
+
+    def __init__(self, row=None, raises=None):
+        self._row, self._raises = row, raises
+        self.asked = []
+
+    def find_order(self, order_id):
+        self.asked.append(order_id)
+        if self._raises is not None:
+            raise self._raises
+        return self._row
+
+
+def _use_crm(monkeypatch, crm):
+    monkeypatch.setattr(app_module, "_s4kcs_client", lambda: crm)
+
+
+def test_order_lookup_falls_back_to_s4k_crm(client, monkeypatch):
+    # A StubHub order: real shape from the CRM book. We ingest no StubHub
+    # orders, so before this fallback it resolved to nothing at all.
+    _use_db(monkeypatch, FakeSupabase())
+    crm = _FakeCRM(row={
+        "source": "StubHub", "id": "644308803", "section": "3", "row": "N",
+        "quantity": 2, "price": 870.34, "event_name": "US Open Tennis: Session 11",
+        "event_date": "2026-09-04", "venue_name": "Louis Armstrong Stadium",
+        "inhand_date": "2026-09-02", "delivery": "Mobile Tickets", "seats": "",
+        "order_status": "Upload Transfer Receipts",
+    })
+    _use_crm(monkeypatch, crm)
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is True
+    assert body["source"] == "StubHub" and body["via"] == "s4k_crm"
+    assert body["section"] == "3" and body["row"] == "N" and body["quantity"] == 2
+    assert body["revenue"] == 870.34
+    assert body["event_date"] == "2026-09-04"
+    assert body["order_status"] == "Upload Transfer Receipts"
+    # The CRM knows no canonical event id — that's the AQ mapper's job, not a
+    # name+date guess here, so the caller is told to pick the event.
+    assert body["tevo_event_id"] is None
+    assert "pick the event" in body["note"]
+    assert crm.asked == ["644308803"]
+
+
+def test_order_lookup_prefers_an_ingested_book_over_the_crm(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"tickpick_orders": [{
+        "tp_order_id": "TP9", "tevo_event_id": 5, "event_name": "X",
+        "section": "A", "row": "2", "quantity": 2, "total": 100,
+    }]}))
+    crm = _FakeCRM(row={"source": "StubHub", "id": "TP9"})
+    _use_crm(monkeypatch, crm)
+    body = client.get("/api/broker/order-lookup?order_id=TP9").json()
+    assert body["source"] == "tickpick" and body["tevo_event_id"] == 5
+    assert crm.asked == []  # never consulted — we had it already
+
+
+def test_order_lookup_crm_miss_reports_both_books(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    _use_crm(monkeypatch, _FakeCRM(row=None))
+    body = client.get("/api/broker/order-lookup?order_id=NOPE").json()
+    assert body["found"] is False
+    assert "S4K CRM" in body["note"]
+
+
+def test_order_lookup_crm_failure_degrades(client, monkeypatch):
+    # Upstream down / key revoked: say so rather than claiming "not found".
+    _use_db(monkeypatch, FakeSupabase())
+    _use_crm(monkeypatch, _FakeCRM(raises=RuntimeError("HTTP 401")))
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is False
+    assert "lookup failed" in body["note"] and "RuntimeError" in body["note"]
+
+
+# ---------- server-side client factory ----------
+
+def test_s4kcs_client_factory_builds_when_key_present(monkeypatch):
+    monkeypatch.setenv("S4KCS_API_KEY", "s4k_env")
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    c = app_module._s4kcs_client()
+    assert c is not None and c.api_key == "s4k_env"
+
+
+def test_s4kcs_client_factory_returns_none_without_a_key(monkeypatch, capsys):
+    monkeypatch.delenv("S4KCS_API_KEY", raising=False)
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    assert app_module._s4kcs_client() is None
+    assert "s4kcs: client unavailable" in capsys.readouterr().out

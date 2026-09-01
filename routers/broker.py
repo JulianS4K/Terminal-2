@@ -111,6 +111,10 @@ def build_broker_router(
     # Bulk performer assets (logos/colors) — core/broker_helpers, but tests patch
     # the server alias `app._bulk_performer_assets`, so resolve via getter.
     get_bulk_performer_assets: Callable[[], Callable] = lambda: (lambda *a: {}),
+    # S4K CRM marketplace-orders client (read-only). Returns a client or None
+    # when no API key is configured — the order lookup degrades to the four
+    # ingested books rather than failing. Getter so tests can bind a fake.
+    get_s4kcs_client: Callable[[], Any] = lambda: None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -532,9 +536,16 @@ def build_broker_router(
         paste an order # instead of typing the sold ticket by hand.
 
         Searches the 4 ingested order sources (seatgeek / tickpick / vivid /
-        evo). `source` narrows the search; omit it to try all. StubHub is NOT
-        ingested as an order source — those orders won't resolve here, use the
-        manual fields. `revenue` is the order's own total/payment (editable in
+        evo), then falls back to the S4K CRM marketplace API, which fronts the
+        open sell-side book of six marketplaces — including **StubHub and
+        Gametime, which we ingest nowhere**. `source` narrows the search; omit
+        it to try all.
+
+        A CRM hit carries no `tevo_event_id`: the CRM is keyed on marketplace
+        ids and identifies an event by name/date/venue only. Mapping those to a
+        canonical event is the AQ mapper's job, never a name+date guess in a
+        lookup path (`PROJECT_BIBLE §0`), so the response returns the event
+        name/date for the caller to resolve and leaves the id null. `revenue` is the order's own total/payment (editable in
         the UI). EVO orders use the first line item for section/row and report
         `line_items` so a multi-section order can be flagged; they accept both
         the bare `evo_order_id` and the composite "<po>-<order_id>" number TEvo
@@ -609,8 +620,33 @@ def build_broker_router(
                                    it.get("quantity"), rev, line_items=len(items),
                                    evo_order_id=eoid)
 
+        # Not in anything we ingest — ask the CRM, which sees all six markets.
+        crm = get_s4kcs_client()
+        if crm is not None:
+            try:
+                row = crm.find_order(oid)
+            except Exception as e:  # noqa: BLE001 - upstream/network/key failure
+                return {"found": False, "order_id": oid, "source": src,
+                        "note": f"not in our ingested books; S4K CRM lookup failed ({type(e).__name__})"}
+            if row:
+                return payload(
+                    (row.get("source") or "s4k_crm"), None, row.get("event_name"),
+                    row.get("section"), row.get("row"), row.get("quantity"),
+                    row.get("price"),
+                    via="s4k_crm",
+                    event_date=row.get("event_date"),
+                    venue_name=row.get("venue_name"),
+                    seats=row.get("seats"),
+                    order_status=row.get("order_status"),
+                    inhand_date=row.get("inhand_date"),
+                    delivery=row.get("delivery"),
+                    note=("event not mapped to a tevo_event_id — pick the event "
+                          "above to run the search"),
+                )
+
         return {"found": False, "order_id": oid, "source": src,
-                "note": "no matching order in seatgeek/tickpick/vivid/evo (StubHub orders aren't ingested — enter details manually)"}
+                "note": "no matching order in seatgeek/tickpick/vivid/evo, "
+                        "nor in the S4K CRM marketplace book"}
 
     # --- Trip-planner delegates (D0 terminal). Thin auth-gated wrappers over the
     # shared payload builders in server.py — the D0 twins of the D1 store routes
