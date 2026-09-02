@@ -65,6 +65,11 @@ FORBIDDEN_HOSTS = (
     "www.broadway.com",
     "checkout.broadway.com",
     "rest.bandsintown.com",
+    # S4K CRM marketplace-orders API (crm.s4kcs.com/api/v1). Read-only by its
+    # own contract — every endpoint is a GET — and it fronts six marketplaces'
+    # sell-side order books, so a write here would reach StubHub/Gametime/etc.
+    # Locked by the same audit as every other upstream.
+    "crm.s4kcs.com",
     # TwitterAPI.io (X read gateway for the news wire — pg_net GET only, no
     # Python client). Bare host substring-matches api.twitterapi.io and any
     # future subdomain, same as seatdata.io / axs.com.
@@ -104,6 +109,7 @@ CLIENT_FILES = {
     # sourced), but declares the canonical GET-only guard so the new upstream is
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
+    "s4kcs_client.py": frozenset({"GET"}),
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
