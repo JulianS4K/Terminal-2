@@ -1,4 +1,7 @@
 -- Migration 20260908170721 · level:security · lane:D0 · writes:none · reads:vault.decrypted_secrets · pre:20260901173000
+-- Already applied to prod · via MCP 2026-09-08 (recorded there as version
+-- 20260908171201 — apply_migration stamps its own timestamp; this file is the
+-- idempotent codification, and a re-apply under either version is a no-op).
 --
 -- Whitelist the S4K CRM **N2S** API key in public.get_app_secret() under its
 -- own name, 'crm.s4kcs.com/n2s', so s4kcs_client.py's n2s_* methods can
