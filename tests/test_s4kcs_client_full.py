@@ -674,3 +674,93 @@ def test_n2s_stats(monkeypatch):
 def test_n2s_stats_non_dict_body(monkeypatch):
     _patch_get(monkeypatch, _FakeResp(200, json_payload=[]))
     assert _client().n2s_stats() == {}
+
+
+# ====================================================================
+# N2S key — a second, independently-scoped secret
+# ====================================================================
+#
+# The CRM issues per-scope keys and the two we hold are disjoint
+# (`marketplace:read` vs `n2s:read`), so `/n2s/*` must not be sent the
+# marketplace key by default — and resolving the N2S one must never be a
+# precondition for the marketplace surface working.
+
+def test_n2s_key_from_argument(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, _FakeResp(200, json_payload={"timer_minutes": 15}), captured)
+    s4k.S4KCSClient("s4k_market", n2s_api_key="s4k_n2s").n2s_meta()
+    assert captured[0][1]["headers"]["X-API-Key"] == "s4k_n2s"
+
+
+def test_n2s_key_from_env(monkeypatch):
+    monkeypatch.setenv("S4KCS_N2S_API_KEY", "s4k_env_n2s")
+    captured = []
+    _patch_get(monkeypatch, _FakeResp(200, json_payload={}), captured)
+    _client().n2s_meta()
+    assert captured[0][1]["headers"]["X-API-Key"] == "s4k_env_n2s"
+
+
+def test_n2s_key_from_vault_uses_its_own_name(monkeypatch):
+    db = _VaultDB("s4k_vault_n2s")
+    captured = []
+    _patch_get(monkeypatch, _FakeResp(200, json_payload={}), captured)
+    s4k.S4KCSClient("s4k_market", db=db).n2s_meta()
+    assert captured[0][1]["headers"]["X-API-Key"] == "s4k_vault_n2s"
+    # Its OWN name — never the marketplace one, whose key lacks n2s:read.
+    assert db.asked == [("get_app_secret", "crm.s4kcs.com/n2s")]
+    assert s4k.N2S_VAULT_SECRET_NAME == "crm.s4kcs.com/n2s"
+
+
+def test_n2s_key_falls_back_to_the_marketplace_key(monkeypatch):
+    # Not a guess that it works: it keeps a single dual-scope key usable and
+    # turns a missing N2S secret into an honest 403 from the API rather than a
+    # construction-time failure on a client built for the marketplace book.
+    captured = []
+    _patch_get(monkeypatch, _FakeResp(200, json_payload={}), captured)
+    _client().n2s_meta()
+    assert captured[0][1]["headers"]["X-API-Key"] == "s4k_testkey"
+
+
+def test_n2s_key_is_stripped_and_resolved_once(monkeypatch):
+    db = _VaultDB("  s4k_padded_n2s  ")
+    captured = []
+    _patch_get(monkeypatch, _FakeResp(200, json_payload={}), captured)
+    c = s4k.S4KCSClient("s4k_market", db=db)
+    c.n2s_meta()
+    c.n2s_stats()
+    assert [h[1]["headers"]["X-API-Key"] for h in captured] == \
+        ["s4k_padded_n2s", "s4k_padded_n2s"]
+    assert len(db.asked) == 1  # cached — one vault round trip, not one per call
+
+
+def test_marketplace_calls_keep_using_the_marketplace_key(monkeypatch):
+    # The regression that would silently kill the 10-minute s4kcs_orders ingest.
+    db = _VaultDB("s4k_vault_n2s")
+    captured = []
+    _patch_get(monkeypatch, _FakeResp(200, json_payload={"rows": []}), captured)
+    c = s4k.S4KCSClient("s4k_market", db=db)
+    c.orders()
+    c.ping()
+    assert [h[1]["headers"]["X-API-Key"] for h in captured] == \
+        ["s4k_market", "s4k_market"]
+    assert db.asked == []  # the N2S secret is never even looked up
+
+
+def test_missing_n2s_vault_value_still_falls_back(monkeypatch):
+    captured = []
+    _patch_get(monkeypatch, _FakeResp(200, json_payload={}), captured)
+    s4k.S4KCSClient("s4k_market", db=_VaultDB(None)).n2s_meta()
+    assert captured[0][1]["headers"]["X-API-Key"] == "s4k_market"
+
+
+def test_resolve_key_reports_the_failing_lookup_by_label(monkeypatch, capsys):
+    class _Boom:
+        def rpc(self, *a, **k):
+            raise RuntimeError("vault down")
+
+    assert s4k._resolve_key(None, _Boom(), env_var="S4KCS_N2S_API_KEY",
+                            vault_name=s4k.N2S_VAULT_SECRET_NAME,
+                            label="s4kcs n2s") is None
+    out = capsys.readouterr().out
+    assert "s4kcs n2s: vault lookup failed" in out
+    assert "s4k_" not in out  # never the value

@@ -87,6 +87,15 @@ _assert_readonly_method = build_readonly_guard(
 # and a rotation has exactly one place to land.
 VAULT_SECRET_NAME = "crm.s4kcs.com"
 
+# The N2S key is a SEPARATE secret under its own name — not a rotation of the
+# one above. The CRM issues per-scope keys and the two we hold are disjoint
+# (verified live against /ping 2026-09-08): 'crm.s4kcs.com' carries
+# ["marketplace:read"], this one ["n2s:read"]. Neither serves both surfaces, so
+# collapsing them onto one name would 403 whichever endpoint lost — and if the
+# N2S key were written to the marketplace name it would silently stop the
+# 10-minute s4kcs_orders ingest. Whitelisted by mig 20260908170721.
+N2S_VAULT_SECRET_NAME = "crm.s4kcs.com/n2s"
+
 # N2S vocabulary, mirrored from `GET /n2s/meta` so a typo is a ValueError here
 # instead of a 400/422 round trip. `/meta` stays the source of truth: if the CRM
 # ships a new status or sort key, widen these — never silently drop the filter.
@@ -101,16 +110,23 @@ N2S_MAX_LIMIT = 1000  # the API's own ceiling; over it answers 422
 _ORDERS_CACHE: dict[tuple, tuple[float, list[dict[str, Any]]]] = {}
 
 
-def _resolve_key(api_key: str | None, db: Any | None) -> str | None:
-    """arg → env → vault. Never logs the value."""
+def _resolve_key(api_key: str | None, db: Any | None, *,
+                 env_var: str = "S4KCS_API_KEY",
+                 vault_name: str = VAULT_SECRET_NAME,
+                 label: str = "s4kcs") -> str | None:
+    """arg → env → vault. Never logs the value.
+
+    Parameterised because the host needs two independently-scoped keys; the
+    lookup order is identical for both, only the names differ.
+    """
     if api_key:
         return api_key
-    env = os.environ.get("S4KCS_API_KEY")
+    env = os.environ.get(env_var)
     if env:
         return env
     return vault_secret(
-        db, VAULT_SECRET_NAME,
-        on_error=lambda e: print(f"s4kcs: vault lookup failed: {e}"),
+        db, vault_name,
+        on_error=lambda e: print(f"{label}: vault lookup failed: {e}"),
     )
 
 
@@ -151,7 +167,8 @@ class S4KCSClient:
     BASE_URL = "https://crm.s4kcs.com/api/v1"
 
     def __init__(self, api_key: str | None = None, db: Any | None = None,
-                 *, timeout: int = 120, cache_ttl: float = 600.0):
+                 *, n2s_api_key: str | None = None,
+                 timeout: int = 120, cache_ttl: float = 600.0):
         key = _resolve_key(api_key, db)
         if not key:
             raise S4KCSError(
@@ -166,6 +183,32 @@ class S4KCSClient:
         self.api_key = key.strip()
         self.timeout = timeout
         self.cache_ttl = cache_ttl
+        # The N2S key is resolved lazily and only if an /n2s/* call is made:
+        # a caller that never touches N2S must not need it to exist, and the
+        # marketplace surface must keep working when it doesn't.
+        self._db = db
+        self._n2s_api_key = n2s_api_key
+        self._n2s_key_cache: str | None = None
+
+    def _n2s_key(self) -> str:
+        """The key for `/n2s/*` — arg → env `S4KCS_N2S_API_KEY` → vault
+        `crm.s4kcs.com/n2s`, falling back to the marketplace key.
+
+        The fallback is not a guess that it will work: it is what makes a
+        single dual-scope key (should the CRM ever issue one) usable under the
+        existing name. With today's disjoint keys it simply produces the
+        honest `HTTP 403: API key lacks the 'n2s:read' scope` instead of a
+        construction-time failure on a client that may only ever have been
+        built for the marketplace book.
+        """
+        if self._n2s_key_cache is None:
+            key = _resolve_key(
+                self._n2s_api_key, self._db,
+                env_var="S4KCS_N2S_API_KEY", vault_name=N2S_VAULT_SECRET_NAME,
+                label="s4kcs n2s",
+            ) or self.api_key
+            self._n2s_key_cache = key.strip()
+        return self._n2s_key_cache
 
     # ---------- transport ----------
 
@@ -177,7 +220,9 @@ class S4KCSClient:
         _assert_readonly_method("GET")  # RULE 2 enforcement
         url = f"{self.BASE_URL}{path}"
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        headers = {"X-API-Key": self.api_key, "Accept": "application/json"}
+        # Two surfaces, two scoped keys — see N2S_VAULT_SECRET_NAME.
+        key = self._n2s_key() if path.startswith("/n2s") else self.api_key
+        headers = {"X-API-Key": key, "Accept": "application/json"}
         try:
             r = fetch_with_retry(
                 lambda: requests.get(url, headers=headers, params=clean,
