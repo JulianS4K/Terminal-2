@@ -1,8 +1,12 @@
 -- Migration 20260909012000 · level:data-collection · lane:A1 · writes:s4kcs_orders · reads:s4kcs_orders,aq_event_map,events,vivid_orders,tickpick_orders · pre:20260909004500
 --
--- NOT YET APPLIED TO PROD — authored and dry-run verified, awaiting the Rule 1
--- operator go-ahead. Every other migration on this branch carries an "Already
--- applied" line; this one deliberately does not.
+-- Already applied to prod · via MCP 2026-09-08 under operator direction.
+-- Verified: rule 8 mapped 181 orders on its first run (the dry run predicted
+-- 168; the extra 13 come from the current_date - 7 days window plus orders
+-- ingested since). Same run: name_date_venue 19, name_date 24,
+-- venue_date_nameguard 10, venue_id_date_nameguard 1. Future CRM order
+-- coverage 87.7% -> 89.2% (24,749/27,749). The top 12 written pairs were
+-- re-read after the write and match the audited dry run exactly.
 --
 -- s4kcs_map_events() RULE 8 — map CRM orders against the `events` MIRROR
 -- directly, instead of only through the hub.
