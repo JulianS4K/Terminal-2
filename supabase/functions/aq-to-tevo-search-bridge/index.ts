@@ -108,6 +108,8 @@ function dateWindow(eventDate: string): { gte: string; lte: string; ms: number }
   };
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 Deno.serve(async (req) => {
   const authErr = requireCronSecret(req);
   if (authErr) return authErr;
@@ -122,6 +124,21 @@ Deno.serve(async (req) => {
   const dryRun = url.searchParams.get("dry_run") === "true";
   const minScore = Number(url.searchParams.get("min_score") ?? "50");
   const backoffHours = Math.max(1, Number(url.searchParams.get("backoff_hours") ?? "24"));
+  // Pacing (2026-09-08). TEvo 429s this bridge when the loop fires its whole
+  // batch as fast as the network allows — each candidate costs up to TWO
+  // searches, so limit=30 was ~60 requests in a couple of seconds. Sleep
+  // between candidates, and stop the run on the first 429 rather than
+  // spending the rest of the batch on requests that cannot succeed.
+  //
+  // BUDGET: _cron_invoke_edge_fn calls net.http_post with
+  // timeout_milliseconds = 60000, so a run must finish inside 60s. At the
+  // default limit=30 the worst case is ~59 sleeps (29 between candidates + up
+  // to 30 before a name fallback) plus ~60 requests: 59*250ms = ~15s of
+  // sleeping + ~18s of latency = ~33s. Raising pace_ms or limit eats that
+  // headroom — both are query params, so they can be retuned on the cron URL
+  // without redeploying. Note a timeout truncates rather than loses work:
+  // every match is written as it is found.
+  const paceMs = Math.max(0, Math.min(5000, Number(url.searchParams.get("pace_ms") ?? "250")));
 
   // Server-side candidate selection — anti-joins the ledger, never-tried-first.
   const { data: candidates, error: candErr } = await sb.rpc("aq_tevo_search_candidates", {
@@ -145,9 +162,14 @@ Deno.serve(async (req) => {
   );
 
   const samples: any[] = [];
-  let matched = 0, noResults = 0, lowScore = 0, errored = 0;
+  let matched = 0, noResults = 0, lowScore = 0, errored = 0, skipped = 0;
+  let throttled = false;
 
+  let first = true;
   for (const c of pool) {
+    if (throttled) { skipped++; continue; }   // stop hitting a rate-limited API
+    if (!first) await sleep(paceMs);
+    first = false;
     const [teamA, teamB] = splitSides(c.event_name);
     const tevoVenueId = venueMap.get(c.aq_id) ?? null;
     const w = dateWindow(c.event_date);
@@ -158,12 +180,28 @@ Deno.serve(async (req) => {
       ? await tevoSearch(tevoToken, tevoSecret, { venue_id: tevoVenueId, "occurs_at.gte": w.gte, "occurs_at.lte": w.lte, per_page: 25, page: 1 })
       : { ok: false as const, status: 0, body: null };
 
-    // Fall back to name+date if venue search empty or unavailable.
-    if ((resp.ok && (((resp.body as any).events ?? []) as any[]).length === 0) || !resp.ok) {
+    // `ok:true` responses carry no `status`, so narrow on `ok` before reading it.
+    let rateLimited = !resp.ok && resp.status === 429;
+
+    // Fall back to name+date if venue search empty or unavailable — but never
+    // after a 429: a second call would only deepen the rate limit.
+    if (!rateLimited &&
+        ((resp.ok && (((resp.body as any).events ?? []) as any[]).length === 0) || !resp.ok)) {
+      await sleep(paceMs);
       resp = await tevoSearch(tevoToken, tevoSecret, { name: nameQuery, "occurs_at.gte": w.gte, "occurs_at.lte": w.lte, per_page: 25, page: 1 });
+      rateLimited = !resp.ok && resp.status === 429;
     }
 
     if (!resp.ok) {
+      // A 429 says nothing about THIS row — it is our own pacing. Recording it
+      // as an attempt would anti-join the candidate out of the pool for
+      // backoff_hours (24h default), so one throttled run used to poison the
+      // whole batch for a day. Leave no ledger row and end the run instead.
+      if (rateLimited) {
+        throttled = true;
+        samples.push({ aq_id: c.aq_id, throttled: true });
+        continue;
+      }
       errored++;
       if (!dryRun) await sb.from("aq_tevo_search_attempts").upsert({ aq_id: c.aq_id, attempted_at: new Date().toISOString(), result: "errored", meta: { status: resp.status, body: resp.body, name: nameQuery } }, { onConflict: "aq_id" });
       samples.push({ aq_id: c.aq_id, error: resp.status });
@@ -226,6 +264,7 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({
     ok: true, dry_run: dryRun, limit, min_score: minScore, backoff_hours: backoffHours,
+    pace_ms: paceMs, throttled, skipped,
     attempted: pool.length, matched, no_results: noResults, low_score: lowScore, errored, samples,
   }, null, 2), { headers: { "content-type": "application/json" } });
 });
