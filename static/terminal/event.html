@@ -20,7 +20,7 @@
        style.css so its var() refs resolve (same as index.html). Without it the
        event page renders on a white background. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260810a" />
+  <link rel="stylesheet" href="style.css?v=20260819fb2" />
 </head>
 <body data-page="event">
 
@@ -83,6 +83,8 @@
       <button class="event-tab" data-tab="gt-listings" role="tab" aria-selected="false">GT Listings <span class="tab-count" id="tabCountGtListings"></span></button>
       <button class="event-tab" data-tab="vd-listings" role="tab" aria-selected="false">VD Listings <span class="tab-count" id="tabCountVdListings"></span></button>
       <button class="event-tab" data-tab="got-listings" role="tab" aria-selected="false">GoTickets Listings <span class="tab-count" id="tabCountGotListings"></span></button>
+      <button class="event-tab" data-tab="fan-broker" role="tab" aria-selected="false">Fan vs Broker <span class="tab-count" id="tabCountFanBroker"></span></button>
+      <button class="event-tab" data-tab="fan-listings" role="tab" aria-selected="false">Fan Listings <span class="tab-count" id="tabCountFanListings"></span></button>
       <!-- TP Listings tab removed 2026-06-07 (D0): TickPick demoted to per-event opt-in;
            TM Listings is its replacement. Opted-in TP rows still surface in the TD Markets tab. -->
       <button class="event-tab" data-tab="tm-listings" role="tab" aria-selected="false">TM Listings <span class="tab-count" id="tabCountTmListings"></span></button>
@@ -379,6 +381,41 @@
       </section>
     </div>
 
+    <!-- Fan vs Broker — client-side classifier over the per-source listing feeds.
+         Tags each SH/GT/VD listing by seller-type evidence: presence on the broker-only
+         channels (TEvo via get_event_evo_listings_full, GoTickets via
+         get_gotickets_event_listings) = confirmed broker; multi-retail-market presence,
+         same-price clusters across sections, and 8+ blocks = broker behavior; the
+         residual (single market, small, unclustered) = fan-likely. Fan is inferred from
+         ABSENCE of broker evidence, so it is a ceiling. Lazy-loads on first activation;
+         fires all five source RPCs in parallel. No new DB surface. -->
+    <div class="tab-pane" id="paneFanBroker" role="tabpanel" hidden>
+      <section id="fan-broker-section" class="td-platform-section">
+        <div class="panel-title row">
+          <span>FAN VS BROKER — per-source seller-type classification (latest batches)</span>
+          <span class="muted small" id="fanBrokerMeta">tap tab to load</span>
+        </div>
+        <div id="fanBrokerSummary"></div>
+        <div id="fanBrokerFilters"></div>
+        <div id="fanBrokerBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <!-- Fan Listings — the fan-likely set alone (the single-source remains of the
+         Fan vs Broker classifier), cleanest candidates first. Mirrors the outward
+         API (GET /api/event/{id}/fan-listings, routers/fan_listings.py) so what
+         external consumers pull is what this section shows. -->
+    <div class="tab-pane" id="paneFanListings" role="tabpanel" hidden>
+      <section id="fan-listings-section" class="td-platform-section">
+        <div class="panel-title row">
+          <span>FAN LISTINGS — single-source remains (likely fan-held)</span>
+          <span class="muted small" id="fanListingsMeta">tap tab to load</span>
+        </div>
+        <div id="fanListingsApi"></div>
+        <div id="fanListingsBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
     <!-- paneTpListings removed 2026-06-07 (D0): TickPick demoted to per-event opt-in.
          TM Listings (below) replaces it; opted-in TP rows still appear in the TD Markets tab. -->
 
@@ -616,6 +653,6 @@
   <script src="nav.js?v=20260811deals"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="event.js?v=20260811zoneoutliers"></script>
+  <script src="event.js?v=20260819fb4"></script>
 </body>
 </html>
