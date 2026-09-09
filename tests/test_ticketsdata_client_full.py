@@ -32,9 +32,18 @@ def _client():
 
 # ---------- _validate_platform: operator-disabled (lines 102-104) ----------
 
-def test_operator_disabled_platform_raises():
+def test_operator_disabled_platform_raises(monkeypatch):
+    # OPERATOR_DISABLED_PLATFORMS is empty as of 2026-08-26 (dice re-enabled),
+    # so park a real platform for the duration of this test to keep the guard
+    # branch covered. _validate_platform reads the module global at call time.
+    monkeypatch.setattr(td, "OPERATOR_DISABLED_PLATFORMS", frozenset({"viagogo"}))
     with pytest.raises(td.TicketsDataError, match="operator-disabled"):
-        td._validate_platform("dice")
+        td._validate_platform("viagogo")
+
+
+def test_no_platforms_currently_operator_disabled():
+    assert td.OPERATOR_DISABLED_PLATFORMS == frozenset()
+    assert td.EXCLUDED_PLATFORMS == td.NATIVE_PLATFORMS
 
 
 def test_eventbrite_platform_enabled():
@@ -42,6 +51,13 @@ def test_eventbrite_platform_enabled():
     assert "eventbrite" not in td.OPERATOR_DISABLED_PLATFORMS
     assert td._validate_platform("eventbrite") == "eventbrite"
     assert td._validate_platform(" Eventbrite ") == "eventbrite"
+
+
+def test_dice_platform_enabled():
+    # Re-enabled 2026-08-26 (operator directive) — disabled 2026-06-09, back on.
+    assert "dice" not in td.OPERATOR_DISABLED_PLATFORMS
+    assert td._validate_platform("dice") == "dice"
+    assert td._validate_platform(" Dice ") == "dice"
 
 
 # ---------- _vault_secret exception path (lines 116-118) ----------
@@ -111,6 +127,19 @@ def test_get_retries_503_then_succeeds(monkeypatch):
         _FakeResp(200, json_data={"ok": True}),
     ])
     assert _client()._get("/fetch", {"platform": "vividseats"}) == {"ok": True}
+    assert calls["n"] == 2
+
+
+def test_get_retries_502_dice_worker_unavailable(monkeypatch):
+    # Live 2026-08-26: a 30-way parallel Dice /fetch burst returned 4x HTTP 502
+    # {"error":"service_unavailable","message":"DICE dedicated worker unavailable"}.
+    # Same transient class as 503, so it must retry rather than burn the credit.
+    calls = _seq_get(monkeypatch, [
+        _FakeResp(502, json_data={"error": "service_unavailable",
+                                  "message": "DICE dedicated worker unavailable"}),
+        _FakeResp(200, json_data={"ok": True}),
+    ])
+    assert _client()._get("/fetch", {"platform": "dice"}) == {"ok": True}
     assert calls["n"] == 2
 
 
