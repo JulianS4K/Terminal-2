@@ -6,6 +6,7 @@
 // runs the authoritative live check.
 //
 //   GET /api/broker/sub-worklist?source=&with_sub=&days=&limit=&offset=
+//   GET /api/broker/n2s-covers?source=&days=&limit=&offset=
 //     -> { rows:[...], count, with_candidate, refreshed_at, filters }
 //
 // The queue row carries only the BEST candidate and a count — it is a triage
@@ -39,9 +40,101 @@
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
     wireQueue();
+    wireN2s();
     wireEventSearch();
     wireFeeToggle();
     prefillFromQuery();
+  }
+
+  // ---------- need-to-sub covers (push) ----------
+  //
+  // A DIFFERENT BOOK from the sub queue below. That one hunts profit on our own
+  // orders; this one lists orders that already FAILED and must be covered
+  // whether or not it pays. cover_cost is signed the other way round from
+  // margin on purpose: positive means honouring the order costs us that much.
+  // Sorting is cheapest-cover-first, never by margin.
+
+  function wireN2s() {
+    const btn = document.getElementById('n2sRun');
+    if (btn) btn.addEventListener('click', loadN2s);
+    if (document.getElementById('n2sTable')) loadN2s();
+  }
+
+  async function loadN2s() {
+    const wrap = document.getElementById('n2sTable');
+    const meta = document.getElementById('n2sMeta');
+    if (!wrap) return;
+    wrap.innerHTML = '<div class="empty">loading…</div>';
+    const qs = new URLSearchParams({ limit: '100' });
+    const src = (document.getElementById('n2sSource').value || '').trim();
+    const days = (document.getElementById('n2sDays').value || '').trim();
+    if (src) qs.set('source', src);
+    if (days) qs.set('days', days);
+    try {
+      const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
+      renderN2s(d);
+      if (meta) {
+        // refreshed_at is load-bearing: covers are only true while the listing
+        // is live, and the matcher only looks an hour back. Always show it.
+        const stamp = d.refreshed_at
+          ? ` · ${esc(String(d.refreshed_at).slice(0, 16).replace('T', ' '))}`
+          : ' · never refreshed';
+        const disp = d.displaced ? ` · ${d.displaced} took a dearer cover` : '';
+        meta.textContent = `${d.count} covered · ${d.at_or_below_sale} at or below sale`
+          + ` · ${money(d.total_cover_cost)} to settle${disp}${stamp}`;
+      }
+    } catch (err) {
+      wrap.innerHTML = emptyHtml(`covers unavailable: ${err && err.message ? err.message : err}`);
+      if (meta) meta.textContent = '';
+    }
+  }
+
+  function renderN2s(d) {
+    const wrap = document.getElementById('n2sTable');
+    const rows = (d && d.rows) || [];
+    if (!rows.length) {
+      // Say WHY it may be empty. An empty cover list is ambiguous between "all
+      // settled" and "the listings we had aged out of the 1-hour window", and
+      // the second is not good news.
+      wrap.innerHTML = emptyHtml('no live covers — either nothing needs subbing, '
+        + 'or no listing seen in the last hour matches section/row/qty');
+      return;
+    }
+    const body = rows.map((r) => {
+      const seat = `${esc(r.section || '')} / ${esc(r.order_row || '')} ×${r.quantity || ''}`;
+      const cov = `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}`;
+      // cover_rank > 1 means an earlier order claimed the cheaper listing.
+      const bumped = (r.cover_rank || 1) > 1
+        ? ' <span class="muted small" title="an earlier order claimed the cheaper listing">2nd choice</span>'
+        : '';
+      const timer = r.timer_expired
+        ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
+        : '';
+      const buy = r.buy_url
+        ? `<a href="${esc(r.buy_url)}" target="_blank" rel="noopener">buy</a>`
+        : '<span class="muted">—</span>';
+      return `<tr>
+        <td>${esc(r.s4k_source || '')}${timer}</td>
+        <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
+        <td>${seat}</td>
+        <td class="num">${money(r.sold_ea)}</td>
+        <td>${cov}${bumped}</td>
+        <td class="num">${money(r.sub_ea)}</td>
+        <td class="num">${coverCell(r.cover_cost)}</td>
+        <td>${buy}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table class="subs-table"><thead><tr>
+        <th>Src</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
+        <th>Cover</th><th class="num">Cover ea</th><th class="num">Cost to settle</th><th></th>
+      </tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  // Signed the opposite way to pnlCell: here a POSITIVE number is money out.
+  function coverCell(v) {
+    if (v === null || v === undefined) return '<span class="muted">—</span>';
+    const cls = v > 0 ? 'neg' : 'pos';
+    return `<span class="${cls}">${money(v)}</span>`;
   }
 
   // ---------- sub queue (push) ----------

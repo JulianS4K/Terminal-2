@@ -1073,3 +1073,78 @@ def test_sub_worklist_with_sub_false_selects_the_gap(client, monkeypatch):
     body = client.get("/api/broker/sub-worklist?with_sub=false").json()
     assert body["filters"]["with_sub"] is False
     assert body["with_candidate"] == 0
+
+
+def _cov_row(**over):
+    row = {
+        "n2s_id": 436, "order_number": "P8L5T1EUKG", "s4k_source": "Gametime",
+        "n2s_status": "n2s", "fail_reason": "Unknown", "timer_expired": True,
+        "event_name": "US Open Tennis - Session 21", "event_date": "2026-09-12",
+        "venue": "Arthur Ashe Stadium", "tevo_event_id": 3287886,
+        "section": "317", "order_row": "P", "quantity": 2, "sold_ea": 42.0,
+        "sub_source": "gotickets", "sub_listing_id": "7167764492",
+        "sub_section": "317", "sub_row": "H", "sub_qty": 2, "sub_ea": 61.0,
+        "sub_total": 122.0, "cover_cost": 38.0, "rows_closer": 8,
+        "buy_url": None, "captured_at": "2026-09-09T22:00:00Z",
+        "cover_rank": 1, "fifo_position": 3,
+        "refreshed_at": "2026-09-09T22:05:00Z",
+    }
+    row.update(over)
+    return row
+
+
+def test_n2s_covers_empty_reports_no_refresh_time(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": []}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["rows"] == [] and body["count"] == 0
+    # A stale/absent payload must read as "no answer", never "no covers", so an
+    # empty page reports no refresh time rather than now().
+    assert body["refreshed_at"] is None
+    assert body["total_cover_cost"] == 0
+    assert body["at_or_below_sale"] == 0 and body["displaced"] == 0
+
+
+def test_n2s_covers_separates_cost_from_saving(client, monkeypatch):
+    # cover_cost is signed: positive costs us, negative means the cover is
+    # cheaper than the sale. The count must not be "all rows".
+    rows = [_cov_row(), _cov_row(n2s_id=437, cover_cost=-93.62)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["count"] == 2
+    assert body["at_or_below_sale"] == 1
+    assert body["total_cover_cost"] == -55.62
+    assert body["refreshed_at"] == "2026-09-09T22:05:00Z"
+
+
+def test_n2s_covers_counts_fifo_displaced_orders(client, monkeypatch):
+    # cover_rank > 1 means an earlier order claimed the cheaper listing; that
+    # is contention worth surfacing, not a row to hide.
+    rows = [_cov_row(), _cov_row(n2s_id=438, cover_rank=2)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["displaced"] == 1
+
+
+def test_n2s_covers_treats_missing_cover_rank_as_first_choice(client, monkeypatch):
+    rows = [_cov_row(cover_rank=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["displaced"] == 0
+
+
+def test_n2s_covers_ignores_rows_with_no_cost(client, monkeypatch):
+    rows = [_cov_row(cover_cost=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["total_cover_cost"] == 0
+    assert body["at_or_below_sale"] == 0
+
+
+def test_n2s_covers_applies_every_filter(client, monkeypatch):
+    fake = FakeSupabase(table_data={"n2s_cover_queue": [_cov_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers"
+                      "?source=Gametime&days=14&limit=5&offset=10").json()
+    assert body["filters"] == {"source": "Gametime", "days": 14,
+                               "limit": 5, "offset": 10}
+    assert body["count"] == 1

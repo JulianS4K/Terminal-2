@@ -26,6 +26,44 @@
   </header>
 
   <main class="wrap subs">
+    <section id="n2s-covers-panel">
+      <div class="panel-title row">
+        <span>NEED TO SUB — COVERS</span>
+        <span id="n2sMeta" class="muted small"></span>
+      </div>
+      <p class="muted small">
+        Orders that <strong>already failed</strong> and must be covered. This is a
+        different book from the queue below: most of these appear in no order book we
+        hold, and the question is not "where is the margin" but
+        <strong>what is the least this obligation can be settled for</strong> — so a
+        cover that costs more than the sale is still a result. Cheapest first.
+        Each listing is offered to <strong>one</strong> order only, oldest alert first.
+      </p>
+      <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="n2sSource">Marketplace</label>
+          <select id="n2sSource">
+            <option value="">all</option>
+            <option>StubHub</option>
+            <option>SeatGeek</option>
+            <option>Gametime</option>
+            <option>TickPick</option>
+            <option>GoTickets</option>
+            <option>Vivid Seats</option>
+            <option>EVO</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sDays">Within days</label>
+          <input id="n2sDays" type="number" min="1" step="1" placeholder="all" />
+        </div>
+        <div class="subs-field">
+          <button id="n2sRun" type="button" class="btn">Refresh</button>
+        </div>
+      </div>
+      <div id="n2sTable"></div>
+    </section>
+
     <section id="subs-queue-panel">
       <div class="panel-title row">
         <span>SUB QUEUE</span>
@@ -165,6 +203,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260910queue"></script>
+  <script src="subs.js?v=20260910n2s"></script>
 </body>
 </html>

@@ -1050,6 +1050,70 @@ def build_broker_router(
 
         return {"window_hours": window_hours, "sort": sort, "count": len(out), "events": out}
 
+    @router.get("/api/broker/n2s-covers")
+    def broker_n2s_covers(
+        limit: int = 100,
+        offset: int = 0,
+        source: str | None = None,
+        days: int | None = None,
+        _=Depends(require_auth),
+    ):
+        """N2S ("Need to Sub") COVERS — failed orders and what can replace them.
+
+        Reads the precomputed `n2s_cover_queue`, NOT the matcher: `n2s_covers()`
+        is volatile, runs a four-source match and a sequential FIFO allocation,
+        so hanging HTTP off it would re-run all of that per request.
+
+        This is a different book from `/api/broker/sub-worklist`. That queue is
+        our own order book looking for a PROFITABLE swap. This one is the CRM's
+        Need-to-Sub list: orders that already failed and must be covered whether
+        or not it pays. Most rows here appear in no order book we hold, so the
+        two lists barely overlap.
+
+        Read `cover_cost` as what honouring the order COSTS over what it sold
+        for — positive is a loss, negative means the cover is cheaper than the
+        sale. Rows are cheapest-cover-first, because the question is "what is
+        the least this obligation can be settled for", not "where is the
+        margin".
+
+        `cover_rank` is which of that order's own candidates it was allocated:
+        1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed the
+        cheaper listing. Each listing is offered to exactly one order.
+
+        `refreshed_at` is load-bearing, not decoration. Covers are only true
+        while the listing is live, and the matcher only considers listings seen
+        in the last hour, so a stale payload means "no answer", never "no
+        covers".
+        """
+        db = get_require_sb()()
+        q = (db.table("n2s_cover_queue")
+             .select("n2s_id,order_number,s4k_source,n2s_status,fail_reason,"
+                     "timer_expired,event_name,event_date,venue,tevo_event_id,"
+                     "section,order_row,quantity,sold_ea,sub_source,"
+                     "sub_listing_id,sub_section,sub_row,sub_qty,sub_ea,"
+                     "sub_total,cover_cost,rows_closer,buy_url,captured_at,"
+                     "cover_rank,fifo_position,refreshed_at"))
+        if source:
+            q = q.eq("s4k_source", source)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+            q = q.lte("event_date", cutoff)
+        rows = (q.order("cover_cost", desc=False)
+                 .range(offset, offset + max(limit, 1) - 1)
+                 .execute().data) or []
+
+        costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "at_or_below_sale": sum(1 for c in costs if c <= 0),
+            "displaced": sum(1 for r in rows if (r.get("cover_rank") or 1) > 1),
+            "total_cover_cost": (round(sum(costs), 2) if costs else 0),
+            "refreshed_at": (rows[0].get("refreshed_at") if rows else None),
+            "filters": {"source": source, "days": days,
+                        "limit": limit, "offset": offset},
+        }
+
     @router.get("/api/broker/sub-worklist")
     def broker_sub_worklist(
         limit: int = 100,
