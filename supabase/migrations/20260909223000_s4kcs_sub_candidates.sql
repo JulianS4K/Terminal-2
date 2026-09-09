@@ -12,9 +12,15 @@
 --
 -- READ-ONLY: every function here is a pure SELECT. No upstream call, no write.
 --
--- Finds, for a CRM order that needs substituting, GoTickets listings that are
--- SAME SECTION, SAME ROW OR BETTER, and cover the ORDER QUANTITY -- reported
--- with both per-ticket and TOTAL economics.
+-- Finds, for EVERY CRM order across EVERY marketplace, GoTickets listings that
+-- could replace it: SAME SECTION, SAME ROW OR BETTER, SAME QUANTITY, and a
+-- TOTAL no higher than the order sold for. Emits the GoTickets event id and a
+-- buy_url so the answer points at the inventory it names (PROJECT_BIBLE §6b).
+--
+-- Defaults are the "show me what I can actually replace" question: every source,
+-- every status, only subs that are same-total-or-cheaper. Widen deliberately --
+-- p_require_cheaper=false to see the underwater options too, p_exact_qty=false
+-- to allow a larger listing (which costs more in total unless splits apply).
 --
 -- ── Three landmines this function exists to encode ──────────────────────────
 --
@@ -118,10 +124,14 @@ COMMENT ON VIEW public.v_s4kcs_sub_status IS
 
 -- ── 4. The finder ───────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.s4kcs_sub_candidates(
-  p_statuses          text[]   DEFAULT NULL,      -- NULL = all sub-signal statuses
+  p_sources           text[]   DEFAULT NULL,      -- NULL = every marketplace
+  p_statuses          text[]   DEFAULT NULL,      -- NULL = every order status
+  p_require_cheaper   boolean  DEFAULT true,      -- sub total <= what it sold for
+  p_exact_qty         boolean  DEFAULT true,      -- listing quantity == order quantity
   p_max_listing_age   interval DEFAULT interval '12 hours',
   p_per_order         integer  DEFAULT 3,
-  p_exclude_qualified boolean  DEFAULT true       -- drop Club/VIP/Charter/etc
+  p_exclude_qualified boolean  DEFAULT true,      -- drop Club/VIP/Charter/etc
+  p_event_ids         bigint[] DEFAULT NULL       -- NULL = all future events
 )
 RETURNS TABLE (
   source          text,
@@ -132,6 +142,7 @@ RETURNS TABLE (
   event_date      date,
   venue_name      text,
   tevo_event_id   bigint,
+  gt_event_id     bigint,
   section         text,
   order_row       text,
   quantity        integer,
@@ -146,6 +157,7 @@ RETURNS TABLE (
   margin_ea       numeric,
   margin_total    numeric,
   rows_closer     integer,
+  buy_url         text,
   captured_at     timestamptz
 )
 LANGUAGE sql STABLE PARALLEL SAFE
@@ -161,16 +173,22 @@ AS $$
            -- landmine 2: section is feed data, escape it before regex use
            regexp_replace(s.section, '([.^$*+?()\[\]{}|\\-])', '\\\1', 'g') AS sec_re
       FROM public.s4kcs_orders s
-      JOIN public.v_s4kcs_sub_status v ON v.order_status = s.order_status
+      LEFT JOIN public.v_s4kcs_sub_status v ON v.order_status = s.order_status
      WHERE s.event_date >= current_date
        AND s.tevo_event_id IS NOT NULL
-       AND (p_statuses IS NULL OR s.order_status = ANY(p_statuses))
+       AND (p_sources    IS NULL OR s.source       = ANY(p_sources))
+       AND (p_statuses   IS NULL OR s.order_status = ANY(p_statuses))
+       AND (p_event_ids  IS NULL OR s.tevo_event_id = ANY(p_event_ids))
        AND public.seat_row_kind(s."row") IS NOT NULL
+       -- an order with no usable price cannot be judged on total (GoTickets
+       -- rows are always 0.00, Vivid always NULL -- see the §3 landmine)
+       AND public.s4kcs_price_per_ticket(s.source, s.price, s.quantity) IS NOT NULL
   ),
   l AS (  -- latest snapshot per GoTickets listing, only the events we need
     SELECT DISTINCT ON (g.gt_listing_id)
-           g.gt_listing_id, g.tevo_event_id, g.section AS gt_section,
-           g."row" AS sub_row, g.quantity AS sub_qty, g.all_in_price, g.captured_at
+           g.gt_listing_id, g.tevo_event_id, g.gt_event_id, g.section AS gt_section,
+           g.section_id, g."row" AS sub_row, g.quantity AS sub_qty,
+           g.all_in_price, g.captured_at
       FROM public.gotickets_listings_snapshots g
      WHERE g.tevo_event_id IN (SELECT DISTINCT tevo_event_id FROM o)
        AND g.captured_at >= now() - p_max_listing_age
@@ -178,15 +196,20 @@ AS $$
   ),
   m AS (
     SELECT o.source, o.order_status, o.sub_signal, o.s4k_order_id, o.event_name,
-           o.event_date, o.venue_name, o.tevo_event_id, o.section, o.order_row,
-           o.quantity, o.sold_ea,
-           round(o.sold_ea * o.quantity, 2)                       AS sold_total,
+           o.event_date, o.venue_name, o.tevo_event_id, l.gt_event_id, o.section,
+           o.order_row, o.quantity, o.sold_ea,
+           round(o.sold_ea * o.quantity, 2)                    AS sold_total,
            l.gt_listing_id, l.gt_section, l.sub_row, l.sub_qty,
-           l.all_in_price                                         AS sub_ea,
-           round(l.all_in_price * o.quantity, 2)                  AS sub_total,
-           round(o.sold_ea - l.all_in_price, 2)                   AS margin_ea,
-           round((o.sold_ea - l.all_in_price) * o.quantity, 2)    AS margin_total,
-           (o.ord_rank - public.seat_row_rank(l.sub_row))         AS rows_closer,
+           l.all_in_price                                      AS sub_ea,
+           -- we pay for the whole listing; with exact qty that is the order qty
+           round(l.all_in_price * o.quantity, 2)               AS sub_total,
+           round(o.sold_ea - l.all_in_price, 2)                AS margin_ea,
+           round((o.sold_ea - l.all_in_price) * o.quantity, 2) AS margin_total,
+           (o.ord_rank - public.seat_row_rank(l.sub_row))      AS rows_closer,
+           -- §6b: both ids come straight off the snapshot; section_id IS GT's
+           -- own URL section id, never hand-mapped from the section label
+           'https://pro.gotickets.com/tickets/' || l.gt_event_id
+             || '/?sortBy=price&sortDirection=asc&sections=' || l.section_id AS buy_url,
            l.captured_at,
            row_number() OVER (PARTITION BY o.source, o.s4k_order_id
                               ORDER BY l.all_in_price) AS rn
@@ -196,29 +219,39 @@ AS $$
        AND l.gt_section ~ ('(^|[^0-9A-Za-z])' || o.sec_re || '$')
        AND (NOT p_exclude_qualified
             OR l.gt_section !~* '^(club|vip|owner|charter|suite|standing room|premium|loge box)')
-       -- QUANTITY: one listing must cover the whole order
-       AND l.sub_qty >= o.quantity
+       -- QUANTITY
+       AND (CASE WHEN p_exact_qty THEN l.sub_qty = o.quantity
+                 ELSE l.sub_qty >= o.quantity END)
        -- ROW: same kind only, and same row or closer
        AND public.seat_row_kind(l.sub_row) = o.ord_kind
        AND public.seat_row_rank(l.sub_row) <= o.ord_rank
+       -- TOTAL: same or cheaper than we sold it for
+       AND (NOT p_require_cheaper
+            OR l.all_in_price * o.quantity <= o.sold_ea * o.quantity)
   )
   SELECT source, order_status, sub_signal, s4k_order_id, event_name, event_date,
-         venue_name, tevo_event_id, section, order_row, quantity,
+         venue_name, tevo_event_id, gt_event_id, section, order_row, quantity,
          sold_ea, sold_total, gt_listing_id, gt_section, sub_row, sub_qty,
-         sub_ea, sub_total, margin_ea, margin_total, rows_closer, captured_at
+         sub_ea, sub_total, margin_ea, margin_total, rows_closer, buy_url, captured_at
     FROM m
    WHERE rn <= p_per_order
    ORDER BY margin_total DESC NULLS LAST, s4k_order_id, sub_ea;
 $$;
 
-COMMENT ON FUNCTION public.s4kcs_sub_candidates(text[],interval,integer,boolean) IS
-  'Substitute GoTickets listings for CRM orders needing replacement. Matches on '
-  'SECTION (CRM number anchored to end of GT section string, premium prefixes '
-  'excluded by default), ROW (same kind, same-or-closer via seat_row_rank), and '
-  'QUANTITY (one listing covers the whole order); reports per-ticket AND total '
-  'economics. Prices normalised per-source by s4kcs_price_per_ticket() -- '
-  'StubHub/SeatGeek rows carry the ORDER TOTAL. Read-only. NOTE: quantity is '
-  'single-listing; orders needing a multi-listing fill are reported as no-match.';
+COMMENT ON FUNCTION public.s4kcs_sub_candidates(text[],text[],boolean,boolean,interval,integer,boolean,bigint[]) IS
+  'Substitute GoTickets listings for CRM orders, ALL marketplaces and ALL statuses '
+  'by default. Matches on SECTION (CRM number anchored to end of GT section string, '
+  'premium prefixes excluded by default), ROW (same kind, same-or-closer via '
+  'seat_row_rank), QUANTITY (exact by default), and TOTAL (sub total <= sold total '
+  'by default). Emits gt_event_id + buy_url (PROJECT_BIBLE §6b). Prices normalised '
+  'per-source by s4kcs_price_per_ticket() -- StubHub/SeatGeek rows carry the ORDER '
+  'TOTAL, and GoTickets/Vivid orders carry no usable price so they are excluded '
+  '(they cannot be judged on total). Read-only. NOTE: quantity is single-listing; '
+  'an order needing a multi-listing fill reports as no-match. PERFORMANCE: the '
+  'full-scope call spans ~1.8k future events; idx_gt_ls_event_time already serves '
+  'the snapshot scan, but the volume alone puts a 12h-window run past a 60s '
+  'session ceiling. Narrow with p_event_ids / p_sources / p_max_listing_age for '
+  'interactive use; the unnarrowed call belongs in a cron or a background job.';
 
-REVOKE ALL ON FUNCTION public.s4kcs_sub_candidates(text[],interval,integer,boolean) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.s4kcs_sub_candidates(text[],interval,integer,boolean) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION public.s4kcs_sub_candidates(text[],text[],boolean,boolean,interval,integer,boolean,bigint[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.s4kcs_sub_candidates(text[],text[],boolean,boolean,interval,integer,boolean,bigint[]) TO authenticated, service_role;
