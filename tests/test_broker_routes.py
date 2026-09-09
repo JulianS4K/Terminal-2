@@ -1204,3 +1204,92 @@ def test_n2s_verify_freshness_floor_is_one_minute(client, monkeypatch):
     body = client.get("/api/broker/n2s-covers/verify?freshness_minutes=0").json()
     assert fake.rpc_calls[0][1]["p_freshness"] == "1 minutes"
     assert body["freshness_minutes"] == 0
+
+
+class _RaisingSupabase(FakeSupabase):
+    """RPC that raises, to prove a deliberate DB refusal reaches the caller."""
+
+    def __init__(self, exc, **kw):
+        super().__init__(**kw)
+        self._exc = exc
+
+    def rpc(self, name, params=None):
+        self.rpc_calls.append((name, params or {}))
+        raise self._exc
+
+
+def _intent_row(**over):
+    row = {
+        "intent_id": 1, "n2s_id": 436, "order_number": "81364906",
+        "s4k_source": "Vivid Seats", "sub_source": "gotickets",
+        "sub_listing_id": "7167764492", "sub_section": "623", "sub_row": "H",
+        "sub_qty": 2, "quoted_ea": 140.0, "quoted_total": 280.0,
+        "cover_cost": -99.62, "buy_url": "https://pro.gotickets.com/tickets/1/",
+        "verify_verdict": "ok", "verify_delta": 0.0, "status": "requested",
+        "requested_by": "julian@s4kent.com", "requested_at": "2026-09-09T23:50:00Z",
+        "payload": {"endpoint": "WEB"}, "payload_ready": False,
+        "payload_gaps": ["no_purchase_api__use_buy_url"], "notes": None,
+    }
+    row.update(over)
+    return row
+
+
+def test_buy_intent_records_without_buying(client, monkeypatch):
+    created = {"intent_id": 1, "status": "requested", "verdict": "ok",
+               "payload_ready": False,
+               "payload_gaps": ["no_purchase_api__use_buy_url"]}
+    fake = FakeSupabase(rpc_data={"n2s_buy_intent_create": [created]})
+    _use_db(monkeypatch, fake)
+    body = client.post("/api/broker/n2s-covers/436/buy-intent"
+                       "?requested_by=julian").json()
+    # The whole point: an intent is a record, never a purchase.
+    assert body["bought"] is False
+    assert body["intent"]["intent_id"] == 1
+    assert fake.rpc_calls[0][1]["p_n2s_id"] == 436
+
+
+def test_buy_intent_surfaces_a_refusal_as_409(client, monkeypatch):
+    # "not buyable" / "no cover" / duplicate are deliberate DB refusals — the
+    # caller must see the reason, not a bare 500.
+    _use_db(monkeypatch, _RaisingSupabase(RuntimeError("cover is not buyable (gone)")))
+    r = client.post("/api/broker/n2s-covers/436/buy-intent")
+    assert r.status_code == 409
+    assert "not buyable" in r.json()["detail"]
+
+
+def test_buy_intent_empty_result_is_also_a_refusal(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_create": []}))
+    r = client.post("/api/broker/n2s-covers/436/buy-intent")
+    assert r.status_code == 409
+
+
+def test_buy_intent_cancel_frees_the_order(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_cancel": [True]}))
+    body = client.post("/api/broker/buy-intents/1/cancel?by=julian").json()
+    assert body["status"] == "cancelled"
+
+
+def test_buy_intent_cancel_missing_is_409(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_cancel": [False]}))
+    assert client.post("/api/broker/buy-intents/9/cancel").status_code == 409
+
+
+def test_buy_intent_cancel_scalar_response(client, monkeypatch):
+    # supabase may hand back a bare scalar rather than a list
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_cancel": True}))
+    assert client.post("/api/broker/buy-intents/1/cancel").json()["status"] == "cancelled"
+
+
+def test_buy_intents_list_counts_sendable_payloads(client, monkeypatch):
+    rows = [_intent_row(), _intent_row(intent_id=2, payload_ready=True, payload_gaps=[])]
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_buy_intent": rows}))
+    body = client.get("/api/broker/buy-intents").json()
+    assert body["count"] == 2
+    assert body["ready_to_send"] == 1
+    assert body["status"] == "requested"
+
+
+def test_buy_intents_list_all_statuses(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_buy_intent": [_intent_row()]}))
+    body = client.get("/api/broker/buy-intents?status=").json()
+    assert body["status"] == "" and body["count"] == 1

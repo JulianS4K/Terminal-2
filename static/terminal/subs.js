@@ -8,6 +8,7 @@
 //   GET /api/broker/sub-worklist?source=&with_sub=&days=&limit=&offset=
 //   GET /api/broker/n2s-covers?source=&days=&limit=&offset=
 //   GET /api/broker/n2s-covers/verify?freshness_minutes=
+//   POST /api/broker/n2s-covers/{n2s_id}/buy-intent   (records intent; buys nothing)
 //     -> { rows:[...], count, with_candidate, refreshed_at, filters }
 //
 // The queue row carries only the BEST candidate and a count — it is a triage
@@ -134,12 +135,16 @@
         <td class="num">${coverCell(r.cover_cost)}</td>
         <td>${buy}</td>
         <td class="n2s-verdict muted small">—</td>
+        <td><button type="button" class="btn n2s-claim" data-n2s="${esc(String(r.n2s_id))}">claim</button></td>
       </tr>`;
     }).join('');
     wrap.innerHTML = `<table class="subs-table"><thead><tr>
         <th>Src</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
-        <th>Cover</th><th class="num">Cover ea</th><th class="num">Cost to settle</th><th></th><th>Verify</th>
+        <th>Cover</th><th class="num">Cover ea</th><th class="num">Cost to settle</th><th></th><th>Verify</th><th></th>
       </tr></thead><tbody>${body}</tbody></table>`;
+    wrap.querySelectorAll('.n2s-claim').forEach((b) => {
+      b.addEventListener('click', () => claimN2s(b.getAttribute('data-n2s'), b));
+    });
   }
 
   // Pre-purchase gate. Deliberately a BUTTON, not part of the page load: a
@@ -174,6 +179,33 @@
       }
     } catch (err) {
       if (meta) meta.textContent = `verify failed: ${err && err.message ? err.message : err}`;
+    }
+  }
+
+  // Records that someone is acting on this cover. It does NOT buy: nothing in
+  // this codebase places an order. GoTickets has no purchase API (the link is
+  // a storefront) and an EVO order still needs client/payment/delivery, so the
+  // intent exists to stop two people covering the same obligation and to keep
+  // an audit trail of who committed to what price.
+  async function claimN2s(n2sId, btn) {
+    if (!n2sId) return;
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = '…';
+    try {
+      const d = await T.api(`/api/broker/n2s-covers/${encodeURIComponent(n2sId)}/buy-intent`,
+                            { method: 'POST' });
+      btn.textContent = 'claimed';
+      btn.classList.add('pos');
+      const gaps = (d && d.intent && d.intent.payload_gaps) || [];
+      if (gaps.length) btn.title = `recorded — not purchased. missing: ${gaps.join(', ')}`;
+    } catch (err) {
+      // A 409 here is a real answer (not buyable / already claimed), not a
+      // glitch — show it rather than swallowing it.
+      btn.disabled = false;
+      btn.textContent = prev;
+      const meta = document.getElementById('n2sMeta');
+      if (meta) meta.textContent = `claim refused: ${err && err.message ? err.message : err}`;
     }
   }
 

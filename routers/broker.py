@@ -1159,6 +1159,94 @@ def build_broker_router(
             "freshness_minutes": freshness_minutes,
         }
 
+    @router.post("/api/broker/n2s-covers/{n2s_id}/buy-intent")
+    def broker_n2s_buy_intent(
+        n2s_id: int,
+        requested_by: str | None = None,
+        notes: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """Record that a human wants to buy this cover. **Buys nothing.**
+
+        This is OUR write surface, added because the CRM has none — its API is
+        GET-only per its own docs and our keys are read-scoped, so data cannot
+        be pushed into it. The CRM (or the terminal) pulls covers from
+        `/api/broker/n2s-covers` and calls this to trigger a buy.
+
+        An intent is refused unless the cover verifies buyable RIGHT NOW: a
+        `gone` or `order_closed` cover cannot become one, and `stale_data` is
+        refused too — "we cannot tell" is not consent to spend money. The
+        verdict is stored on the row, so it records what was true when the
+        human asked rather than whenever someone reads it back.
+
+        Only ONE open intent may exist per order. Two people acting on the same
+        failed order would otherwise buy two covers for one obligation.
+
+        `payload` is the reviewable request body and `payload_gaps` names what
+        is still missing. Both are informational: nothing in this codebase
+        sends an order. GoTickets has no purchase API at all (the buy_url is a
+        web storefront), and an EVO order still needs client_id, payment and
+        delivery. See docs/evo_buy_side.md.
+        """
+        db = get_require_sb()()
+        try:
+            rows = db.rpc("n2s_buy_intent_create",
+                          {"p_n2s_id": n2s_id,
+                           "p_requested_by": requested_by,
+                           "p_notes": notes}).execute().data or []
+        except Exception as exc:  # noqa: BLE001 - surfaced verbatim below
+            # The refusals are deliberate and each says why (not buyable, no
+            # queued cover, duplicate open intent). Return the reason rather
+            # than a bare 500, so the caller can show it to the operator.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not rows:
+            raise HTTPException(status_code=409,
+                                detail="intent not created (no cover, or not buyable)")
+        return {"intent": rows[0], "bought": False,
+                "note": "intent recorded only — nothing was purchased"}
+
+    @router.post("/api/broker/buy-intents/{intent_id}/cancel")
+    def broker_n2s_buy_intent_cancel(
+        intent_id: int,
+        by: str | None = None,
+        reason: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """Cancel an open buy intent, freeing the order for a new one."""
+        db = get_require_sb()()
+        ok = db.rpc("n2s_buy_intent_cancel",
+                    {"p_intent_id": intent_id, "p_by": by,
+                     "p_reason": reason}).execute().data
+        cancelled = bool(ok[0] if isinstance(ok, list) and ok else ok)
+        if not cancelled:
+            raise HTTPException(status_code=409,
+                                detail="no open intent with that id")
+        return {"intent_id": intent_id, "status": "cancelled"}
+
+    @router.get("/api/broker/buy-intents")
+    def broker_n2s_buy_intents(
+        status: str | None = "requested",
+        limit: int = 100,
+        _=Depends(require_auth),
+    ):
+        """Open buy intents — what someone has committed to acting on.
+
+        Defaults to `requested` (still open). Pass `status=` empty for all.
+        """
+        db = get_require_sb()()
+        q = db.table("n2s_buy_intent").select(
+            "intent_id,n2s_id,order_number,s4k_source,sub_source,sub_listing_id,"
+            "sub_section,sub_row,sub_qty,quoted_ea,quoted_total,cover_cost,"
+            "buy_url,verify_verdict,verify_delta,status,requested_by,"
+            "requested_at,payload,payload_ready,payload_gaps,notes")
+        if status:
+            q = q.eq("status", status)
+        rows = (q.order("requested_at", desc=True)
+                 .range(0, max(limit, 1) - 1).execute().data) or []
+        return {"rows": rows, "count": len(rows),
+                "ready_to_send": sum(1 for r in rows if r.get("payload_ready")),
+                "status": status}
+
     @router.get("/api/broker/sub-worklist")
     def broker_sub_worklist(
         limit: int = 100,
