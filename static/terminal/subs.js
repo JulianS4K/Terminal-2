@@ -7,6 +7,7 @@
 //
 //   GET /api/broker/sub-worklist?source=&with_sub=&days=&limit=&offset=
 //   GET /api/broker/n2s-covers?source=&days=&limit=&offset=
+//   GET /api/broker/n2s-covers/verify?freshness_minutes=
 //     -> { rows:[...], count, with_candidate, refreshed_at, filters }
 //
 // The queue row carries only the BEST candidate and a count — it is a triage
@@ -57,6 +58,8 @@
   function wireN2s() {
     const btn = document.getElementById('n2sRun');
     if (btn) btn.addEventListener('click', loadN2s);
+    const vbtn = document.getElementById('n2sVerify');
+    if (vbtn) vbtn.addEventListener('click', verifyN2s);
     if (document.getElementById('n2sTable')) loadN2s();
   }
 
@@ -121,7 +124,7 @@
             ? `<span class="muted small" title="event ${esc(String(r.tevo_event_id || ''))} · listing ${esc(String(r.sub_listing_id))}">`
               + `ev ${esc(String(r.tevo_event_id || '?'))}<br>lst ${esc(String(r.sub_listing_id))}</span>`
             : '<span class="muted">—</span>');
-      return `<tr>
+      return `<tr data-n2s="${esc(String(r.n2s_id))}">
         <td>${esc(r.s4k_source || '')}${timer}</td>
         <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
         <td>${seat}</td>
@@ -130,12 +133,48 @@
         <td class="num">${money(r.sub_ea)}</td>
         <td class="num">${coverCell(r.cover_cost)}</td>
         <td>${buy}</td>
+        <td class="n2s-verdict muted small">—</td>
       </tr>`;
     }).join('');
     wrap.innerHTML = `<table class="subs-table"><thead><tr>
         <th>Src</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
-        <th>Cover</th><th class="num">Cover ea</th><th class="num">Cost to settle</th><th></th>
+        <th>Cover</th><th class="num">Cover ea</th><th class="num">Cost to settle</th><th></th><th>Verify</th>
       </tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  // Pre-purchase gate. Deliberately a BUTTON, not part of the page load: a
+  // cover is only "good to buy" at the moment you ask, so verifying on render
+  // would stamp a verdict that goes stale sitting on screen. Ask when acting.
+  async function verifyN2s() {
+    const meta = document.getElementById('n2sMeta');
+    const wrap = document.getElementById('n2sTable');
+    if (!wrap) return;
+    try {
+      const d = await T.api('/api/broker/n2s-covers/verify');
+      const by = {};
+      (d.rows || []).forEach((r) => { by[r.n2s_id] = r; });
+      wrap.querySelectorAll('tr[data-n2s]').forEach((tr) => {
+        const v = by[tr.getAttribute('data-n2s')];
+        const cell = tr.querySelector('.n2s-verdict');
+        if (!cell) return;
+        if (!v) { cell.textContent = '—'; return; }
+        // gone / order_closed are hard blocks; stale_data means "cannot tell",
+        // which must not be shown as reassurance.
+        const cls = v.buyable ? (v.verdict === 'price_up' ? 'warn' : 'pos') : 'neg';
+        const delta = (v.price_delta_ea !== null && v.price_delta_ea !== undefined
+                       && Number(v.price_delta_ea) !== 0)
+          ? ` ${Number(v.price_delta_ea) > 0 ? '+' : ''}${money(v.price_delta_ea)}` : '';
+        cell.innerHTML = `<span class="${cls}">${esc(v.verdict || '?')}${delta}</span>`;
+      });
+      if (meta) {
+        const parts = Object.entries(d.by_verdict || {})
+          .map(([k, n]) => `${n} ${k}`).join(' · ');
+        meta.textContent = `verified ${d.count} · ${d.buyable} buyable`
+          + (parts ? ` · ${parts}` : '');
+      }
+    } catch (err) {
+      if (meta) meta.textContent = `verify failed: ${err && err.message ? err.message : err}`;
+    }
   }
 
   // Signed the opposite way to pnlCell: here a POSITIVE number is money out.

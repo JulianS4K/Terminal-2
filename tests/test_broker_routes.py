@@ -1148,3 +1148,59 @@ def test_n2s_covers_applies_every_filter(client, monkeypatch):
     assert body["filters"] == {"source": "Gametime", "days": 14,
                                "limit": 5, "offset": 10}
     assert body["count"] == 1
+
+
+def _verify_row(**over):
+    row = {
+        "n2s_id": 436, "order_number": "P8L5T1EUKG", "s4k_source": "Gametime",
+        "sub_source": "gotickets", "sub_listing_id": "7167764492",
+        "quoted_ea": 61.0, "price_now": 61.0, "price_delta_ea": 0.0,
+        "verdict": "ok", "buyable": True,
+        "checked_at": "2026-09-09T23:40:00Z",
+    }
+    row.update(over)
+    return row
+
+
+def test_n2s_verify_empty_queue(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_cover_verify": []}))
+    body = client.get("/api/broker/n2s-covers/verify").json()
+    assert body["count"] == 0 and body["buyable"] == 0
+    assert body["by_verdict"] == {}
+
+
+def test_n2s_verify_counts_only_buyable_rows(client, monkeypatch):
+    # `gone` and `order_closed` are hard blocks; `stale_data` means "cannot
+    # tell", which must NOT count as buyable either.
+    rows = [
+        _verify_row(),
+        _verify_row(n2s_id=437, verdict="price_up", price_now=70.0,
+                    price_delta_ea=9.0, buyable=True),
+        _verify_row(n2s_id=438, verdict="gone", price_now=None,
+                    price_delta_ea=None, buyable=False),
+        _verify_row(n2s_id=439, verdict="order_closed", buyable=False),
+        _verify_row(n2s_id=440, verdict="stale_data", buyable=False),
+    ]
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_cover_verify": rows}))
+    body = client.get("/api/broker/n2s-covers/verify").json()
+    assert body["count"] == 5
+    assert body["buyable"] == 2
+    assert body["by_verdict"] == {"ok": 1, "price_up": 1, "gone": 1,
+                                  "order_closed": 1, "stale_data": 1}
+
+
+def test_n2s_verify_labels_a_missing_verdict(client, monkeypatch):
+    rows = [_verify_row(verdict=None, buyable=False)]
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_cover_verify": rows}))
+    body = client.get("/api/broker/n2s-covers/verify").json()
+    assert body["by_verdict"] == {"unknown": 1}
+
+
+def test_n2s_verify_freshness_floor_is_one_minute(client, monkeypatch):
+    # A zero/negative window would ask for "captured after now", which can only
+    # ever answer stale_data — clamp it so the gate stays meaningful.
+    fake = FakeSupabase(rpc_data={"n2s_cover_verify": [_verify_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers/verify?freshness_minutes=0").json()
+    assert fake.rpc_calls[0][1]["p_freshness"] == "1 minutes"
+    assert body["freshness_minutes"] == 0

@@ -1114,6 +1114,51 @@ def build_broker_router(
                         "limit": limit, "offset": offset},
         }
 
+    @router.get("/api/broker/n2s-covers/verify")
+    def broker_n2s_covers_verify(
+        freshness_minutes: int = 60,
+        _=Depends(require_auth),
+    ):
+        """Pre-purchase gate: is each queued cover still good to buy RIGHT NOW?
+
+        A cover is two claims made at different moments — the listing was live
+        when its snapshot was captured (up to an hour ago), and the order was
+        open when the queue last refreshed. Both can go stale before anyone
+        acts, and a stale cover costs money in a way a stale read never does.
+
+        Verdicts: `ok`, `price_up` (still there, dearer — `price_delta_ea` says
+        by how much), `gone` (absent from the newest snapshot of that event),
+        `order_closed` (the N2S order is already resolved or allocated), and
+        `stale_data`.
+
+        `gone` and `order_closed` are hard blocks. `price_up` is a judgement
+        call reported WITH the delta, because a slightly dearer cover may still
+        be the right buy on an obligation.
+
+        `stale_data` means "we cannot tell", NOT "fine" — it is returned when
+        nothing has been captured for that event inside the window, and it is
+        never `buyable`. This endpoint re-checks the newest data we HOLD; it
+        does not pull upstream. TicketsData always reads stale_data because it
+        is a change feed, where absence means unchanged rather than sold.
+
+        See docs/evo_buy_side.md for the buy-side flow this gates.
+        """
+        db = get_require_sb()()
+        rows = db.rpc("n2s_cover_verify",
+                      {"p_freshness": f"{max(1, freshness_minutes)} minutes"}
+                      ).execute().data or []
+        by_verdict: dict[str, int] = {}
+        for r in rows:
+            v = r.get("verdict") or "unknown"
+            by_verdict[v] = by_verdict.get(v, 0) + 1
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "buyable": sum(1 for r in rows if r.get("buyable")),
+            "by_verdict": by_verdict,
+            "freshness_minutes": freshness_minutes,
+        }
+
     @router.get("/api/broker/sub-worklist")
     def broker_sub_worklist(
         limit: int = 100,
