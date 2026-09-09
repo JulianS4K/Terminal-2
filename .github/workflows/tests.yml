@@ -2,7 +2,8 @@ name: tests
 
 # CI gate — runs on every PR + push to main.
 # Jobs: pytest (backend) · typescript (D4 bridge type-check + build) · mypy (Python types)
-#       · frontend-smoke (Playwright) · exos-sql (Exos SQL migrations + lifecycle)
+#       · mcp-apps (ext-apps type-check + build) · frontend-smoke (Playwright)
+#       · exos-sql (Exos SQL migrations + lifecycle)
 #
 # A1 must NOT merge to main until all jobs are green.
 # Render auto-deploys on push to main — green CI is the implicit deploy gate.
@@ -157,6 +158,33 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
+        run: npm run build
+
+  mcp-apps:
+    name: MCP Apps (ext-apps build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: mcp_apps
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mcp_apps/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type check (tsc --noEmit)
+        run: npm run lint
+
+      - name: Build (Vite singlefile, all lanes)
+        # Bundles each apps/<lane> into one inlined HTML. No secrets / no network —
+        # data is fetched at runtime from the FastAPI app, not at build time.
         run: npm run build
 
   frontend-smoke:
