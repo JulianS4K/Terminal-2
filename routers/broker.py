@@ -1050,6 +1050,65 @@ def build_broker_router(
 
         return {"window_hours": window_hours, "sort": sort, "count": len(out), "events": out}
 
+    @router.get("/api/broker/sub-worklist")
+    def broker_sub_worklist(
+        limit: int = 100,
+        offset: int = 0,
+        source: str | None = None,
+        with_sub: bool | None = None,
+        days: int | None = None,
+        _=Depends(require_auth),
+    ):
+        """Substitution QUEUE — the whole order book with its best sub, if any.
+
+        Reads `s4kcs_sub_worklist`, which a scheduled refresh rebuilds off the
+        GoTickets and EVO pull cadence. This is deliberately a CHEAP read of
+        precomputed current state: it answers "which orders should I look at",
+        ranked by the money on the table. The authoritative per-order answer is
+        still `/api/broker/event/{id}/substitutions`, which recomputes live
+        against the current book and carries the GA / splits / ambiguous
+        handling the queue's summary row cannot.
+
+        A row with `candidates == 0` is in scope but had nothing qualify — it
+        stays in the queue on purpose, so the screen shows the real book rather
+        than only the orders that happened to match.
+
+        Query params:
+          limit/offset  page size (default 100) and cursor
+          source        filter to one marketplace (StubHub, Gametime, …)
+          with_sub      true = only orders with a candidate; false = only those
+                        without; omit for everything
+          days          only events inside the next N days
+        """
+        db = get_require_sb()()
+        q = (db.table("s4kcs_sub_worklist")
+             .select("source,s4k_order_id,tevo_event_id,event_name,event_date,venue_name,"
+                     "order_status,sub_signal,section,order_row,quantity,sold_ea,sold_total,"
+                     "candidates,best_sub_source,best_price_basis,best_listing_id,"
+                     "best_section,best_row,best_qty,best_ea,best_total,margin_ea,"
+                     "margin_total,rows_closer,buy_url,listing_captured_at,refreshed_at"))
+        if source:
+            q = q.eq("source", source)
+        if with_sub is True:
+            q = q.gt("candidates", 0)
+        elif with_sub is False:
+            q = q.eq("candidates", 0)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+            q = q.lte("event_date", cutoff)
+        rows = (q.order("margin_total", desc=True)
+                 .range(offset, offset + max(limit, 1) - 1)
+                 .execute().data) or []
+        with_candidate = sum(1 for r in rows if (r.get("candidates") or 0) > 0)
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "with_candidate": with_candidate,
+            "refreshed_at": (rows[0].get("refreshed_at") if rows else None),
+            "filters": {"source": source, "with_sub": with_sub, "days": days,
+                        "limit": limit, "offset": offset},
+        }
+
     @router.get("/api/broker/event/{event_id}/orders")
     def broker_event_orders(event_id: int, _=Depends(require_auth)):
         """Read persisted evo_orders + items for an event. Free, no TEvo call.

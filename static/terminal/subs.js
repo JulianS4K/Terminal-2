@@ -1,6 +1,21 @@
-// D0 Terminal — Substitution checker. Enter a sold ticket (event / section /
-// row / qty) and find the cheapest acceptable cover from our inventory:
-// same-section same-or-better row first, then a better-section fallback.
+// D0 Terminal — Substitution checker + QUEUE.
+//
+// The page is now push-first: the SUB QUEUE lists every order with its best
+// cover, rebuilt as the GoTickets and EVO books refresh, so work arrives
+// instead of being asked for. Picking a queue row fills the form below and
+// runs the authoritative live check.
+//
+//   GET /api/broker/sub-worklist?source=&with_sub=&days=&limit=&offset=
+//     -> { rows:[...], count, with_candidate, refreshed_at, filters }
+//
+// The queue row carries only the BEST candidate and a count — it is a triage
+// summary of precomputed state, NOT the answer. The answer is recomputed live
+// per order by the route below, which carries the GA / splits / ambiguous
+// handling the summary row cannot represent.
+//
+// The order-# lookup and the manual entry form are unchanged: a queue is for
+// sweeping the book, but covering a specific order someone just called about
+// still has to be one box you can paste into.
 //
 //   GET /api/broker/event/{id}/substitutions
 //        ?section=&row=&quantity=&revenue=&source=owned|market
@@ -23,9 +38,105 @@
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
+    wireQueue();
     wireEventSearch();
     wireFeeToggle();
     prefillFromQuery();
+  }
+
+  // ---------- sub queue (push) ----------
+
+  function wireQueue() {
+    const btn = document.getElementById('subsQRun');
+    if (btn) btn.addEventListener('click', loadQueue);
+    // Load once on open so the screen is useful before anyone touches a
+    // control — the whole point of a queue is that it is already there.
+    if (document.getElementById('subsQueueTable')) loadQueue();
+  }
+
+  async function loadQueue() {
+    const wrap = document.getElementById('subsQueueTable');
+    const meta = document.getElementById('subsQueueMeta');
+    if (!wrap) return;
+    wrap.innerHTML = '<div class="empty">loading…</div>';
+    const qs = new URLSearchParams({ limit: '100' });
+    const src = (document.getElementById('subsQSource').value || '').trim();
+    const has = (document.getElementById('subsQHas').value || '').trim();
+    const days = (document.getElementById('subsQDays').value || '').trim();
+    if (src) qs.set('source', src);
+    if (has) qs.set('with_sub', has);
+    if (days) qs.set('days', days);
+    try {
+      const d = await T.api(`/api/broker/sub-worklist?${qs.toString()}`);
+      renderQueue(d);
+      if (meta) {
+        const stamp = d.refreshed_at ? ` · refreshed ${esc(String(d.refreshed_at).slice(0, 16).replace('T', ' '))}` : '';
+        meta.textContent = `${d.count} orders · ${d.with_candidate} with a sub${stamp}`;
+      }
+    } catch (err) {
+      wrap.innerHTML = emptyHtml(`queue unavailable: ${err && err.message ? err.message : err}`);
+      if (meta) meta.textContent = '';
+    }
+  }
+
+  function renderQueue(d) {
+    const wrap = document.getElementById('subsQueueTable');
+    const rows = (d && d.rows) || [];
+    if (!rows.length) {
+      wrap.innerHTML = emptyHtml('queue empty — nothing in scope, or the refresh has not run yet');
+      return;
+    }
+    const body = rows.map((r) => {
+      const seat = `${esc(r.section || '')} / ${esc(r.order_row || '')} ×${r.quantity || ''}`;
+      // candidates=0 is a real, meaningful state: in scope, nothing qualified.
+      const cover = r.candidates
+        ? `${sourceBadge(r.best_sub_source)} ${esc(r.best_section || '')} / ${esc(r.best_row || '')}`
+        : '<span class="muted">none</span>';
+      const n = r.candidates ? `<span class="muted small">${r.candidates}</span>` : '';
+      return `<tr class="subs-q-row" data-order='${esc(JSON.stringify({
+        event: r.tevo_event_id, section: r.section, row: r.order_row,
+        quantity: r.quantity, revenue: r.sold_total,
+      }))}'>
+        <td>${esc(r.source || '')}</td>
+        <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')}</div></td>
+        <td>${seat}</td>
+        <td class="num">${money(r.sold_total)}</td>
+        <td>${cover} ${n}</td>
+        <td class="num">${money(r.best_total)}</td>
+        <td class="num">${pnlCell(r.margin_total)}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table class="subs-table"><thead><tr>
+        <th>Src</th><th>Event</th><th>Sold seat</th><th class="num">Sold</th>
+        <th>Best cover</th><th class="num">Cost</th><th class="num">Margin</th>
+      </tr></thead><tbody>${body}</tbody></table>`;
+    wrap.querySelectorAll('.subs-q-row').forEach((tr) => {
+      tr.addEventListener('click', () => pickQueueRow(tr));
+    });
+  }
+
+  // A queue row is a pointer, not an answer: fill the form and re-run the live
+  // check so what the broker acts on is priced against the CURRENT book, not
+  // whatever the last refresh happened to see.
+  function pickQueueRow(tr) {
+    let o;
+    try { o = JSON.parse(tr.getAttribute('data-order')); } catch (_e) { return; }
+    if (!o || !o.event) {
+      const msg = document.getElementById('subOrderMsg');
+      if (msg) msg.innerHTML = '<span class="neg">that order has no mapped event yet</span>';
+      return;
+    }
+    setVal('subEvent', o.event);
+    setVal('subSection', o.section);
+    setVal('subRow', o.row);
+    setVal('subQty', o.quantity);
+    setVal('subRevenue', o.revenue);
+    const srcSel = document.getElementById('subSource');
+    if (srcSel) srcSel.value = 'market';
+    wireFeeToggle();
+    run();
+    const panel = document.getElementById('subs-form-panel');
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth' });
   }
 
   // ---------- order # → auto-fill the sold ticket ----------

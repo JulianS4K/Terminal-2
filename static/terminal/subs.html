@@ -26,6 +26,46 @@
   </header>
 
   <main class="wrap subs">
+    <section id="subs-queue-panel">
+      <div class="panel-title row">
+        <span>SUB QUEUE</span>
+        <span id="subsQueueMeta" class="muted small"></span>
+      </div>
+      <p class="muted small">
+        Every order with its best cover, rebuilt as the GoTickets and EVO books refresh.
+        Rows with <strong>no candidate</strong> stay listed on purpose — this is the whole
+        book, not just the lucky ones. Pick a row to run the full live check below.
+      </p>
+      <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="subsQSource">Marketplace</label>
+          <select id="subsQSource">
+            <option value="">all</option>
+            <option>StubHub</option>
+            <option>SeatGeek</option>
+            <option>Gametime</option>
+            <option>TickPick</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="subsQHas">Has sub</label>
+          <select id="subsQHas">
+            <option value="true">with a sub</option>
+            <option value="">any</option>
+            <option value="false">no sub found</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="subsQDays">Within days</label>
+          <input id="subsQDays" type="number" min="1" step="1" placeholder="all" />
+        </div>
+        <div class="subs-field submit">
+          <button type="button" class="ctrl-btn" id="subsQRun">Load queue</button>
+        </div>
+      </div>
+      <div id="subsQueueTable" class="subs-table-wrap"></div>
+    </section>
+
     <section id="subs-form-panel">
       <div class="panel-title">SUBSTITUTION CHECKER</div>
       <p class="muted small">
@@ -125,6 +165,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260608"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260901crm"></script>
+  <script src="subs.js?v=20260910queue"></script>
 </body>
 </html>

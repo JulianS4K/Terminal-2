@@ -68,6 +68,15 @@ class _FakeQuery:
     def limit(self, *_a, **_k):
         return self
 
+    def gt(self, *_a, **_k):
+        return self
+
+    def lte(self, *_a, **_k):
+        return self
+
+    def range(self, *_a, **_k):
+        return self
+
     def execute(self):
         return type("_Res", (), {"data": self._data})()
 
@@ -1003,3 +1012,64 @@ def test_s4kcs_client_factory_returns_none_without_a_key(monkeypatch, capsys):
     monkeypatch.setattr(app_module, "require_sb", lambda: None)
     assert app_module._s4kcs_client() is None
     assert "s4kcs: client unavailable" in capsys.readouterr().out
+
+
+# ---------- /api/broker/sub-worklist (the substitution QUEUE) ----------
+
+def _wl_row(**over):
+    row = {
+        "source": "StubHub", "s4k_order_id": "abc", "tevo_event_id": 3287886,
+        "event_name": "Vikings at Patriots", "event_date": "2026-12-10",
+        "venue_name": "Gillette Stadium", "order_status": "Under Review",
+        "sub_signal": "probable", "section": "112", "order_row": "21",
+        "quantity": 2, "sold_ea": 382.0, "sold_total": 764.0,
+        "candidates": 3, "best_sub_source": "tevo", "best_price_basis": "tevo_retail",
+        "best_listing_id": 99, "best_section": "112", "best_row": "17",
+        "best_qty": 2, "best_ea": 300.0, "best_total": 600.0,
+        "margin_ea": 82.0, "margin_total": 164.0, "rows_closer": 4,
+        "buy_url": None, "listing_captured_at": "2026-09-09T19:00:00Z",
+        "refreshed_at": "2026-09-09T19:05:00Z",
+    }
+    row.update(over)
+    return row
+
+
+def test_sub_worklist_empty_reports_no_refresh_time(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_sub_worklist": []}))
+    body = client.get("/api/broker/sub-worklist").json()
+    assert body["rows"] == [] and body["count"] == 0
+    # no rows -> nothing to report a refresh time from, rather than "now"
+    assert body["refreshed_at"] is None
+    assert body["with_candidate"] == 0
+    assert body["filters"]["source"] is None
+
+
+def test_sub_worklist_counts_only_rows_with_a_candidate(client, monkeypatch):
+    # candidates=0 rows stay in the queue on purpose (the whole book is in
+    # scope), so with_candidate must not simply equal the row count.
+    rows = [_wl_row(), _wl_row(s4k_order_id="def", candidates=0,
+                              best_listing_id=None, margin_total=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_sub_worklist": rows}))
+    body = client.get("/api/broker/sub-worklist").json()
+    assert body["count"] == 2
+    assert body["with_candidate"] == 1
+    assert body["refreshed_at"] == "2026-09-09T19:05:00Z"
+
+
+def test_sub_worklist_applies_every_filter(client, monkeypatch):
+    fake = FakeSupabase(table_data={"s4kcs_sub_worklist": [_wl_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/sub-worklist"
+                      "?source=StubHub&with_sub=true&days=30&limit=5&offset=10").json()
+    assert body["filters"] == {"source": "StubHub", "with_sub": True, "days": 30,
+                               "limit": 5, "offset": 10}
+    assert body["count"] == 1
+
+
+def test_sub_worklist_with_sub_false_selects_the_gap(client, monkeypatch):
+    # the "nothing qualified" side of the filter is its own branch
+    rows = [_wl_row(candidates=0, best_listing_id=None, margin_total=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_sub_worklist": rows}))
+    body = client.get("/api/broker/sub-worklist?with_sub=false").json()
+    assert body["filters"]["with_sub"] is False
+    assert body["with_candidate"] == 0
