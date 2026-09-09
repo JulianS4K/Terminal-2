@@ -22,11 +22,11 @@
 --
 -- That is not timidity, it is the only correct stopping point today:
 --
---   1. GOTICKETS HAS NO PURCHASE API AT ALL. gotickets_client.py is the Broker
---      SALES api (sc.gotickets.com, GET /rest/sales) — sell-side. The buy link
---      we emit is pro.gotickets.com, a WEB STOREFRONT. There is no endpoint to
---      POST an order to, so a GoTickets intent is, correctly, a link plus a
---      record that someone is acting on it.
+--   1. GOTICKETS DOES HAVE A PURCHASE API — Pro API POST /orders, on the SAME
+--      surface gt_listings_poll_tick already uses. But it cannot be called
+--      yet: GET /payment-methods returns 200 [] (Pro Access IS on; nothing is
+--      shared account-wide), and expectedTotal — their spend guard — needs
+--      `tax` and `transactionRatePercentage`, neither of which we store.
 --   2. AN EVO ORDER NEEDS FACTS WE DO NOT HAVE. Orders/Create requires a
 --      client_id, a payment method (Braintree token or `offline`), and a
 --      delivery method + address_id. None exist in this database, and none can
@@ -114,8 +114,7 @@ SECURITY DEFINER
 SET search_path TO 'public','pg_temp'
 AS $function$
 DECLARE
-  c  RECORD;
-  v  RECORD;
+  c RECORD; v RECORD; v_gt_event bigint;
   v_gaps text[] := '{}';
   v_payload jsonb;
   v_ready boolean := false;
@@ -127,46 +126,74 @@ BEGIN
       USING ERRCODE = 'no_data_found';
   END IF;
 
-  -- Verify FIRST. A gone / order_closed / stale_data cover cannot become an
-  -- intent: "we cannot tell" is not consent to spend money.
+  -- Verify FIRST. gone / order_closed / stale_data cannot become an intent:
+  -- "we cannot tell" is not consent to spend money.
   SELECT * INTO v FROM public.n2s_cover_verify(ARRAY[p_n2s_id]) LIMIT 1;
   IF v IS NULL OR NOT COALESCE(v.buyable, false) THEN
     RAISE EXCEPTION 'n2s_buy_intent_create: cover for n2s_id % is not buyable (%)',
       p_n2s_id, COALESCE(v.verdict, 'no verdict') USING ERRCODE = 'check_violation';
   END IF;
 
-  -- Build the reviewable body. Fields we genuinely do not hold stay NULL and
-  -- are NAMED in payload_gaps, so the record is visibly incomplete rather than
-  -- looking ready to send.
   IF c.sub_source = 'tevo' THEN
-    IF NOT EXISTS (SELECT 1 FROM public.n2s_items i
-                    WHERE i.n2s_id = p_n2s_id AND i.tevo_event_id IS NOT NULL) THEN
-      v_gaps := v_gaps || 'tevo_event_id';
-    END IF;
-    v_gaps := v_gaps || ARRAY['client_id','payment_method','delivery_method','address_id'];
+    v_gaps := ARRAY['client_id','payment_method','delivery_method','address_id'];
     v_payload := jsonb_build_object(
-      'endpoint',      'POST /orders',
-      'type',          'customer',
-      'ticket_group_id', c.sub_listing_id,
-      'quantity',      c.sub_qty,
-      'price_per_ticket', c.quoted_ea,
-      -- deliberately null: see payload_gaps and docs/evo_buy_side.md §1
-      'client_id',     NULL,
-      'payment_type',  NULL,
-      'delivery',      NULL,
-      'address_id',    NULL);
+      'api',              'tevo',
+      'endpoint',         'POST /orders',
+      'ticket_group_id',  c.sub_listing_id,
+      'quantity',         c.sub_qty,
+      'price_per_ticket', c.sub_ea,
+      'client_id',        NULL,
+      'payment_type',     NULL,
+      'delivery',         NULL,
+      'address_id',       NULL);
+
   ELSIF c.sub_source = 'gotickets' THEN
-    -- No purchase API exists. The storefront link IS the buy path.
-    v_gaps := ARRAY['no_purchase_api__use_buy_url'];
+    -- ⚠ GOTICKETS DOES HAVE A PURCHASE API. An earlier version of this
+    -- function said it did not, having read only gotickets_client.py — which
+    -- is the SELL-side Broker Sales API (sc.gotickets.com). The buy side is
+    -- the Pro API at gotickets.com/rest/pro/api, the SAME surface
+    -- gt_listings_poll_tick() already authenticates against for listings.
+    -- The absence of a capability in one client file is not evidence the
+    -- vendor lacks it. See docs/buy_side_evo_gotickets.md.
+    SELECT ge.gt_event_id INTO v_gt_event
+      FROM public.gotickets_event ge
+     WHERE ge.tevo_event_id = c.tevo_event_id LIMIT 1;
+    IF v_gt_event IS NULL THEN v_gaps := v_gaps || 'gt_event_id'; END IF;
+
+    -- ⚠ expectedTotal IS THE SPEND GUARD AND IS LEFT NULL ON PURPOSE.
+    -- GoTickets refuses the order when the real total exceeds it (475 Price
+    -- Changed) — a better guard than anything we would bolt on. Their formula
+    -- is (displayPrice + tax) * qty * (1 + transactionRatePercentage/100),
+    -- and we hold NEITHER tax NOR transactionRatePercentage: the latter is
+    -- only returned when the listings call passes a paymentMethodToken, which
+    -- the poller does not. Guessing from all_in_price errs HIGH, which is the
+    -- UNSAFE direction — too high overpays silently, too low merely fails.
+    v_gaps := v_gaps || ARRAY['expectedTotal__needs_tax_and_transactionRate',
+                              'paymentMethodToken__none_global_on_account',
+                              'deliveryMethodId','emailAddress','phoneNumber',
+                              'billingAddress','recipient__original_buyer_pii'];
     v_payload := jsonb_build_object(
-      'endpoint', 'WEB',
-      'buy_url',  c.buy_url,
-      'section',  c.sub_section,
-      'row',      c.sub_row,
-      'quantity', c.sub_qty);
+      'api',                'gotickets_pro',
+      'endpoint',           'POST https://gotickets.com/rest/pro/api/orders',
+      'eventId',            v_gt_event,
+      'listingId',          c.sub_listing_id,
+      'quantity',           c.sub_qty,
+      'expectedTotal',      NULL,
+      'emailAddress',       NULL,
+      'phoneNumber',        NULL,
+      'deliveryMethodId',   NULL,
+      'paymentMethodToken', NULL,
+      'billingAddress',     NULL,
+      'recipient',          NULL,
+      'buyerNotes',         'N2S cover for ' || c.s4k_source || ' order ' || c.order_number,
+      '_reference_only',    jsonb_build_object(
+          'quoted_ea', c.sub_ea, 'quoted_total', c.sub_total,
+          'buy_url', c.buy_url,
+          'note', 'all_in_price is NOT expectedTotal - see payload_gaps'));
+
   ELSE
     v_gaps := ARRAY['no_purchase_integration_for_' || c.sub_source];
-    v_payload := jsonb_build_object('endpoint', 'NONE', 'source', c.sub_source);
+    v_payload := jsonb_build_object('api', c.sub_source, 'endpoint', 'NONE');
   END IF;
 
   v_ready := (cardinality(v_gaps) = 0);
