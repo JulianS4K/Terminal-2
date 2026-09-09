@@ -5,7 +5,8 @@
 -- Touches:  s4kcs_sub_worklist (CREATE TABLE),
 --           s4kcs_sub_worklist_refresh() (CREATE FUNCTION),
 --           reads s4kcs_orders + s4kcs_sub_candidates() (mig 20260909223000)
--- Pre-reqs: 20260909223000 (the matcher this calls)
+-- Pre-reqs: 20260909223000 (the matcher this calls),
+--           20260909220000 (v_s4kcs_orders + price_per_ticket)
 --
 -- READ-ONLY UPSTREAM (RULE 2): no outbound call at all. Pure DB.
 --
@@ -39,9 +40,10 @@
 -- the whole book rather than only the lucky rows. Narrowing to the at-risk
 -- statuses later is a one-argument change, NOT a rewrite.
 --
--- ⚠ GoTickets and Vivid orders cannot enter the queue: their CRM rows carry no
--- usable price (always 0.00 and always NULL — see the §3 landmine), so there is
--- no total to judge a sub against. That is ~6.8k of ~28k future orders.
+-- All six marketplaces now enter the queue. GoTickets and Vivid used to be
+-- excluded for having no usable price; both are repaired from our own books in
+-- v_s4kcs_orders (mig 20260909220000), which this reads instead of the base
+-- table -- that is ~6.8k of ~28k future orders that were previously invisible.
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.s4kcs_sub_worklist (
@@ -151,13 +153,12 @@ BEGIN
   WITH scope AS (
     SELECT s.source, s.s4k_order_id, s.tevo_event_id, s.event_name, s.event_date,
            s.venue_name, s.order_status, s.section, s."row" AS order_row, s.quantity,
-           public.s4kcs_price_per_ticket(s.source, s.price, s.quantity) AS sold_ea
-      FROM public.s4kcs_orders s
+           s.price_per_ticket AS sold_ea
+      FROM public.v_s4kcs_orders s
      WHERE s.tevo_event_id = ANY(v_events)
        AND s.event_date >= current_date
        AND (p_statuses IS NULL OR s.order_status = ANY(p_statuses))
-       -- GoTickets / Vivid carry no usable price, so no total to judge against
-       AND public.s4kcs_price_per_ticket(s.source, s.price, s.quantity) IS NOT NULL
+       AND s.price_per_ticket IS NOT NULL
   ),
   best AS (
     SELECT DISTINCT ON (c.source, c.s4k_order_id) c.*

@@ -491,6 +491,37 @@ def test_gotickets_timeout_error_wrapped(monkeypatch):
 
 # ---- events-controller (sc.gotickets.com/rest/events*) ----
 
+def test_gotickets_get_sales_list_and_limit(monkeypatch):
+    # `limit` is the only paging control the endpoint honours, so it must
+    # actually reach the query string rather than being silently dropped.
+    cap = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload=[{"id": 1, "unitCost": 10.0,
+                                             "totalPayout": 20.0, "quantity": 2}]),
+               captured=cap)
+    out = gotickets.GoTicketsClient("id", "secret").get_sales(limit=5000)
+    assert out[0]["id"] == 1
+    url, kwargs = cap[0]
+    assert url.endswith("/rest/sales")
+    assert kwargs["params"] == {"limit": 5000}
+
+
+def test_gotickets_get_sales_no_limit_sends_empty_params(monkeypatch):
+    # _get normalises None -> {} (it strips None-valued params), so "no limit"
+    # reaches requests as an empty mapping, not as None.
+    cap = []
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload=[]), captured=cap)
+    assert gotickets.GoTicketsClient("id", "secret").get_sales() == []
+    assert cap[0][1]["params"] == {}
+
+
+def test_gotickets_get_sales_non_list_returns_empty(monkeypatch):
+    # the per-id endpoint returns an object; a caller hitting the wrong shape
+    # should get [] rather than a dict that breaks iteration downstream
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload={"id": 1}))
+    assert gotickets.GoTicketsClient("id", "secret").get_sales() == []
+
+
 def test_gotickets_get_events_list_and_params(monkeypatch):
     captured = []
     events = [{"id": 1}, {"id": 2}]

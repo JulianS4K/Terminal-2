@@ -10,7 +10,8 @@
 --           seat_section_norm() / seat_section_qualifier() (CREATE FUNCTION),
 --           reads s4kcs_orders + listings_snapshots (TEvo) +
 --           gotickets_listings_snapshots + seatgeek_listings_snapshots
--- Pre-reqs: 20260901180000 (s4kcs_orders ingest)
+-- Pre-reqs: 20260901180000 (s4kcs_orders ingest),
+--           20260909220000 (v_s4kcs_orders + price_per_ticket — read, never re-derived)
 --
 -- READ-ONLY: every function here is a pure SELECT. No upstream call, no write.
 --
@@ -58,9 +59,10 @@
 --    marketplace, and neither the column nor raw->>'price' says which:
 --      StubHub, SeatGeek  -> ORDER TOTAL
 --      Gametime, TickPick -> PER TICKET
---      GoTickets          -> always 0.00 (feed gap; NOT null, so COALESCE
---                            cannot catch it -- see RESOURCES_BIBLE §1)
---      Vivid Seats        -> always NULL (feed gap)
+--      GoTickets          -> CRM ships 0.00; REPAIRED from gotickets_sales
+--      Vivid Seats        -> CRM ships NULL; REPAIRED from vivid_orders
+--    Both repairs live in v_s4kcs_orders, which this function reads, so all six
+--    marketplaces now carry a usable price.
 --    Established 2026-09-09 by ratio test against live GoTickets all-in prices
 --    over 11k future orders: median (price / market) vs (price/qty / market).
 --    StubHub 2.12 vs 0.75; Gametime 0.72 vs 0.26. Corroborated exactly by two
@@ -252,11 +254,14 @@ AS $$
     SELECT s.source, s.order_status, v.sub_signal, s.s4k_order_id,
            s.event_name, s.event_date, s.venue_name, s.tevo_event_id,
            s.section, s."row" AS order_row, s.quantity,
-           public.s4kcs_price_per_ticket(s.source, s.price, s.quantity) AS sold_ea,
+           s.price_per_ticket AS sold_ea,
            public.seat_row_kind(s."row") AS ord_kind,
            public.seat_row_rank(s."row") AS ord_rank,
            public.seat_section_norm(s.section) AS sec_norm
-      FROM public.s4kcs_orders s
+      -- v_s4kcs_orders, never s4kcs_orders: the view repairs the two
+      -- price-less feeds from our own books and exposes price_per_ticket, so
+      -- no caller re-derives the per-source unit rule (§3).
+      FROM public.v_s4kcs_orders s
       LEFT JOIN public.v_s4kcs_sub_status v ON v.order_status = s.order_status
      WHERE s.event_date >= current_date
        AND s.tevo_event_id IS NOT NULL
@@ -264,7 +269,7 @@ AS $$
        AND (p_statuses  IS NULL OR s.order_status  = ANY(p_statuses))
        AND (p_event_ids IS NULL OR s.tevo_event_id = ANY(p_event_ids))
        AND public.seat_row_kind(s."row") IS NOT NULL
-       AND public.s4kcs_price_per_ticket(s.source, s.price, s.quantity) IS NOT NULL
+       AND s.price_per_ticket IS NOT NULL
        -- ⚠ THE ORDER SIDE NEEDS THE PREMIUM GUARD TOO. Normalising takes the
        -- trailing token, so a premium box like "centennial club cr 6" reduces to
        -- "6" and would match plain section 6 -- a different product entirely.
