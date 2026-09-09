@@ -35,14 +35,20 @@
 -- results in the same breath". `sg_listings_on_demand_ready()` reports when a
 -- batch has actually landed, so a caller polls that instead of guessing.
 --
--- ⚠ THE PENDING TABLE HAS A DEAD BACKLOG. `sg_broker_pending` holds 191,110
--- unresolved `listings` rows whose newest request_id is 1,438,508, against a
--- live counter around 14.68 MILLION -- they are 75+ days old and their
--- `net._http_response` rows were pruned long ago. They are harmless to
--- correctness because `sg_broker_listings_process()` INNER JOINs the response
--- table, so a row with no response cannot be selected and cannot consume the
--- LIMIT. They are NOT harmless to cost: every drain sorts past them. Cleaning
--- them is a prod DELETE and therefore an operator decision, not taken here.
+-- THE PENDING QUEUE IS EMPTY -- and reading its raw row count says otherwise.
+-- `sg_broker_pending` holds 385,644 rows, which looks like a huge stuck
+-- backlog. It is not: 385,639 of them are RESOLVED history. Only **5** rows are
+-- actually unresolved, all `sales`, all fired today and all still drainable.
+-- The `listings` scope has 191,110 rows and **zero** unresolved -- every one
+-- completed, the newest fired 2026-07-02 when the poller was switched off.
+--   scope      total     resolved   unresolved
+--   listings   191,110   191,110    0
+--   sales      194,534   194,529    5
+-- So there is nothing stuck, nothing to unblock, and no drain cost to reclaim:
+-- `sg_broker_listings_process()` filters `resolved_at IS NULL`, so resolved
+-- rows are never scanned as candidates. Count `WHERE resolved_at IS NULL`
+-- before ever calling this table backed up -- a bare `count(*)` on a
+-- queue table that keeps its history is not a queue depth.
 --
 -- ⚠ THE SEATGEEK TOKEN TRAVELS IN THE URL. SeatGeek's broker API takes
 -- `?token=`, so the secret lands in plaintext in `net.http_request_queue.url`
@@ -191,9 +197,9 @@ $function$;
 COMMENT ON FUNCTION public.sg_listings_on_demand_ready(bigint[],interval) IS
   'Status of a recent sg_listings_pull_on_demand() batch: did pg_net respond, '
   'with what status, has sg_broker_listings_process() drained it, and how many '
-  'listing rows landed. p_since is deliberately short so the 191k-row dead '
-  'backlog in sg_broker_pending (request ids from an era 13M lower, responses '
-  'long pruned) never appears here.';
+  'listing rows landed. p_since is deliberately short so the 385k rows of '
+  'RESOLVED history in sg_broker_pending never appear here -- that history is '
+  'not a backlog: only 5 rows in the table are unresolved.';
 
 REVOKE ALL ON FUNCTION public.sg_listings_on_demand_ready(bigint[],interval) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.sg_listings_on_demand_ready(bigint[],interval) TO authenticated, service_role;
