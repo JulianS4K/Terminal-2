@@ -185,10 +185,12 @@ RETURNS numeric LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
          END;
 $$;
 COMMENT ON FUNCTION public.s4kcs_price_per_ticket(text,numeric,integer) IS
-  'Normalises s4kcs_orders.price to PER TICKET. StubHub/SeatGeek store the '
-  'order total; Gametime/TickPick store per-ticket; GoTickets is always 0.00 '
-  'and Vivid always NULL (feed gaps) -> NULL. Never compare a raw .price '
-  'across sources without this.';
+  'Normalises the RAW s4kcs_orders.price to PER TICKET. StubHub/SeatGeek store '
+  'the order total; Gametime/TickPick store per-ticket; GoTickets ships 0.00 and '
+  'Vivid NULL, so both return NULL here. Prefer v_sub_orders.price_per_ticket, '
+  'which also carries the repaired GoTickets/Vivid/EVO prices; this helper is '
+  'for callers reading the base table directly. Never compare a raw .price '
+  'across sources without one of the two.';
 
 -- ── 3. The status vocabulary that means "this order needs replacing" ────────
 CREATE OR REPLACE VIEW public.v_s4kcs_sub_status AS
@@ -405,8 +407,9 @@ COMMENT ON FUNCTION public.s4kcs_sub_candidates(text[],text[],text[],boolean,boo
   'by default). Emits sub_source + sub_price_basis so a cross-source ranking is '
   'always auditable; TEvo retail and GT all-in measured within ~1% like-for-like. '
   'EXCLUDES our own inventory (TEvo is_owned, SG is_broker_owned) and TEvo '
-  'ancillary rows. Orders from GoTickets/Vivid are skipped -- those feeds carry no '
-  'usable price (§3 landmine). buy_url is emitted for GoTickets only (§6b is the '
+  'ancillary rows. Reads v_sub_orders, so GoTickets and Vivid orders ARE included '
+  '(repaired from our own books) and EVO is present too -- only rows still lacking '
+  'a price are skipped. buy_url is emitted for GoTickets only (§6b is the '
   'one documented deep-link format). SEATGEEK CONTRIBUTES NOTHING TODAY: its '
   'listings poller (crons 355/236/64) is inactive and the table last captured '
   '2026-06-26. Read-only. Quantity is single-listing; an order needing a '

@@ -123,8 +123,10 @@ BEGIN
   IF p_event_ids IS NOT NULL THEN
     v_events := p_event_ids;
   ELSIF p_since IS NULL THEN
+    -- v_sub_orders, not s4kcs_orders: EVO orders exist in NO CRM feed, so
+    -- scoping off the base table would silently never refresh an EVO event.
     SELECT array_agg(DISTINCT s.tevo_event_id) INTO v_events
-      FROM public.s4kcs_orders s
+      FROM public.v_sub_orders s
      WHERE s.event_date >= current_date AND s.tevo_event_id IS NOT NULL;
   ELSE
     -- events whose GoTickets or TEvo book moved since the last pull
@@ -137,7 +139,7 @@ BEGIN
         FROM public.listings_snapshots t
        WHERE t.captured_at >= now() - p_since
     ) moved
-     WHERE e IN (SELECT DISTINCT tevo_event_id FROM public.s4kcs_orders
+     WHERE e IN (SELECT DISTINCT tevo_event_id FROM public.v_sub_orders
                   WHERE event_date >= current_date AND tevo_event_id IS NOT NULL);
   END IF;
 
