@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from . import prompts, providers, repository as repo
+from . import config, prompts, providers, repository as repo
 
-# Rough char budget for stuffed context (~ a few thousand tokens).
-CONTEXT_CHAR_BUDGET = 24000
-PER_SOURCE_CHARS = 4000
+# Rough char budget for stuffed context (env-tunable, see config.ONB_CHAT_*).
+CONTEXT_CHAR_BUDGET = config.ONB_CHAT_CONTEXT_BUDGET
+PER_SOURCE_CHARS = config.ONB_CHAT_PER_SOURCE
 
 
 def build_context(db, notebook_id: str) -> str:
@@ -69,7 +69,7 @@ def stream_reply(db, *, session_id: str, notebook_id: str, user_message: str) ->
 
     # Obtain the provider stream eagerly so a missing-key/unavailable ProviderError
     # surfaces here (→ 503 before streaming starts) rather than mid-SSE.
-    stream = providers.chat_stream(messages, system=system, max_tokens=2048)
+    stream = providers.chat_stream(messages, system=system, max_tokens=config.ONB_CHAT_REPLY_TOKENS)
     collected: list[str] = []
 
     def _gen() -> Iterator[str]:
@@ -91,7 +91,7 @@ def reply(db, *, session_id: str, notebook_id: str, user_message: str) -> str:
     context = build_context(db, notebook_id)
     system = prompts.chat_system_with_context(context)
     messages = _history(db, session_id) + [{"role": "user", "content": user_message}]
-    answer = providers.chat(messages, system=system, max_tokens=2048)
+    answer = providers.chat(messages, system=system, max_tokens=config.ONB_CHAT_REPLY_TOKENS)
     repo.add_chat_message(db, session_id=session_id, role="user", content=user_message)
     repo.add_chat_message(db, session_id=session_id, role="assistant", content=answer)
     return answer
