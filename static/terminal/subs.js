@@ -110,9 +110,17 @@
       const timer = r.timer_expired
         ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
         : '';
+      // GoTickets gives us a deep link. TEvo and SeatGeek do not publish a
+      // buy URL to us and there is no known console URL pattern, so rather
+      // than guess a link that may 404 or point at the wrong listing, show the
+      // two ids that locate it: the event and the ticket-group/listing id.
+      // A dash here would hide information the row already carries.
       const buy = r.buy_url
         ? `<a href="${esc(r.buy_url)}" target="_blank" rel="noopener">buy</a>`
-        : '<span class="muted">—</span>';
+        : (r.sub_listing_id
+            ? `<span class="muted small" title="event ${esc(String(r.tevo_event_id || ''))} · listing ${esc(String(r.sub_listing_id))}">`
+              + `ev ${esc(String(r.tevo_event_id || '?'))}<br>lst ${esc(String(r.sub_listing_id))}</span>`
+            : '<span class="muted">—</span>');
       return `<tr>
         <td>${esc(r.s4k_source || '')}${timer}</td>
         <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
