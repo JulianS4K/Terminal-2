@@ -6,7 +6,7 @@
 --           s4kcs_sub_worklist_refresh() (CREATE FUNCTION),
 --           reads s4kcs_orders + s4kcs_sub_candidates() (mig 20260909223000)
 -- Pre-reqs: 20260909223000 (the matcher this calls),
---           20260909220000 (v_s4kcs_orders + price_per_ticket)
+--           20260909221000 (v_sub_orders — our books first, CRM as fallback)
 --
 -- READ-ONLY UPSTREAM (RULE 2): no outbound call at all. Pure DB.
 --
@@ -151,10 +151,10 @@ BEGIN
 
   -- 3. every in-scope order, with its best candidate if one exists
   WITH scope AS (
-    SELECT s.source, s.s4k_order_id, s.tevo_event_id, s.event_name, s.event_date,
+    SELECT s.source, s.order_id AS s4k_order_id, s.tevo_event_id, s.event_name, s.event_date,
            s.venue_name, s.order_status, s.section, s."row" AS order_row, s.quantity,
            s.price_per_ticket AS sold_ea
-      FROM public.v_s4kcs_orders s
+      FROM public.v_sub_orders s
      WHERE s.tevo_event_id = ANY(v_events)
        AND s.event_date >= current_date
        AND (p_statuses IS NULL OR s.order_status = ANY(p_statuses))

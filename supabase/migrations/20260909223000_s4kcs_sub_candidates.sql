@@ -11,7 +11,7 @@
 --           reads s4kcs_orders + listings_snapshots (TEvo) +
 --           gotickets_listings_snapshots + seatgeek_listings_snapshots
 -- Pre-reqs: 20260901180000 (s4kcs_orders ingest),
---           20260909220000 (v_s4kcs_orders + price_per_ticket — read, never re-derived)
+--           20260909221000 (v_sub_orders — our books first, CRM as fallback)
 --
 -- READ-ONLY: every function here is a pure SELECT. No upstream call, no write.
 --
@@ -251,17 +251,18 @@ LANGUAGE sql STABLE PARALLEL SAFE
 SET search_path TO 'public','pg_temp'
 AS $$
   WITH o AS (
-    SELECT s.source, s.order_status, v.sub_signal, s.s4k_order_id,
+    SELECT s.source, s.order_status, v.sub_signal, s.order_id AS s4k_order_id,
            s.event_name, s.event_date, s.venue_name, s.tevo_event_id,
            s.section, s."row" AS order_row, s.quantity,
            s.price_per_ticket AS sold_ea,
            public.seat_row_kind(s."row") AS ord_kind,
            public.seat_row_rank(s."row") AS ord_rank,
            public.seat_section_norm(s.section) AS sec_norm
-      -- v_s4kcs_orders, never s4kcs_orders: the view repairs the two
-      -- price-less feeds from our own books and exposes price_per_ticket, so
-      -- no caller re-derives the per-source unit rule (§3).
-      FROM public.v_s4kcs_orders s
+      -- v_sub_orders, never s4kcs_orders: our own book wherever we have a
+      -- usable one (Vivid, GoTickets, EVO), the CRM only for marketplaces we
+      -- do not (StubHub, Gametime, and de facto SeatGeek/TickPick). It also
+      -- exposes price_per_ticket, so no caller re-derives the unit rule (§3).
+      FROM public.v_sub_orders s
       LEFT JOIN public.v_s4kcs_sub_status v ON v.order_status = s.order_status
      WHERE s.event_date >= current_date
        AND s.tevo_event_id IS NOT NULL
