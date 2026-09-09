@@ -93,6 +93,22 @@ def build_paciolan_router(get_require_sb: Callable[[], Callable],
                 .limit(1).execute()).data or []
         return rows[0] if rows else {}
 
+    @router.get("/api/paciolan/drivers")
+    def paciolan_drivers(_=Depends(require_auth)):
+        """Per-Chrome-instance extraction + issues (v_paciolan_drivers): each
+        driver's label, online state, 24h pull counts (ok/empty/error/expired),
+        and last status/error — so you can see which instance is extracting and
+        which is erroring. Service-role read (paciolan_* tables are RLS-locked)."""
+        db = get_require_sb()()
+        rows = (db.table("v_paciolan_drivers").select("*")
+                .order("last_seen", desc=True).limit(500).execute()).data or []
+        return {
+            "count": len(rows),
+            "online": sum(1 for r in rows if r.get("online")),
+            "erroring": sum(1 for r in rows if (r.get("error_24h") or 0) > 0),
+            "drivers": rows,
+        }
+
     @router.get("/api/paciolan/snapshot/{snapshot_id}/listings")
     def paciolan_listings(snapshot_id: int, limit: int = 5000,
                           _=Depends(require_auth)):

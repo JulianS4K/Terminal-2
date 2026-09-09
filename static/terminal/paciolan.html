@@ -45,6 +45,22 @@
       <div id="pacHealthCards" class="ctrl-row"><div class="empty">loading…</div></div>
     </section>
 
+    <!-- DRIVERS — one row per Chrome instance driving pulls, so you can see
+         which instance is extracting and which is erroring. Backed by
+         /api/paciolan/drivers (v_paciolan_drivers; service-role read). -->
+    <section id="paciolan-drivers" style="margin-top:18px">
+      <div class="panel-title row">
+        <span>PACIOLAN — CHROME INSTANCES</span>
+        <span class="muted small" id="pacDriversCount"></span>
+      </div>
+      <div class="muted small" style="margin-bottom:8px">
+        Each Chrome running the collector reports a stable instance id (name it in
+        the extension popup). Extraction + issues are attributed per instance —
+        <em>online</em> = seen in the last 5 min.
+      </div>
+      <div id="pacDriversBody"><div class="empty">loading…</div></div>
+    </section>
+
     <!-- URL LAYER — every captured Paciolan/eVenue event with its latest
          snapshot (face get-in / band / availability), AQ mapping to the
          canonical hub (→ EVO/SeatGeek/StubHub), and per-event pull status.

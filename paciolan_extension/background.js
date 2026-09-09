@@ -178,6 +178,34 @@ async function setDriverStatus(patch) {
   await setLocal({ driverStatus: { ...driverStatus, ...patch } });
 }
 
+// Stable per-install identity so each Chrome instance is trackable (extraction
+// + issues attributed to it server-side). Generated once, then persisted.
+async function getDriverId() {
+  const { driverId } = await getLocal(["driverId"]);
+  if (driverId) return driverId;
+  const id = (self.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : "drv-" + Math.abs(Date.now() ^ (performance.now() * 1000 | 0)).toString(36);
+  await setLocal({ driverId: id });
+  return id;
+}
+async function getDriverLabel() {
+  const { driverLabel } = await getLocal(["driverLabel"]);
+  return driverLabel || null;
+}
+
+// Register/refresh this instance server-side (paciolan_driver_heartbeat) so it
+// shows up — with its label + last-seen — even when idle. Best-effort.
+async function sendHeartbeat() {
+  try {
+    await callRpc("paciolan_driver_heartbeat", {
+      p_driver: await getDriverId(),
+      p_label: await getDriverLabel(),
+      p_ua: (self.navigator && navigator.userAgent) || null,
+    });
+  } catch (_) { /* heartbeat is best-effort; never surface */ }
+}
+
 // Wait until a tab reports status:'complete', then a fixed settle delay.
 function waitForTabLoad(tabId) {
   return new Promise((resolve, reject) => {
@@ -206,7 +234,8 @@ function sendMessageToTab(tabId, msg) {
 }
 
 // Drive one queued row: open the URL, scrape+upload, resolve, close the tab.
-async function drivePull(row) {
+// driverId tags the resolve so the pull is attributed to this instance.
+async function drivePull(row, driverId) {
   let tab = null;
   try {
     tab = await chrome.tabs.create({ url: row.url, active: false });
@@ -215,7 +244,7 @@ async function drivePull(row) {
     const resp = await sendMessageToTab(tab.id, { type: "paciolan_capture_now" });
     if (!resp.ok) {
       await callRpc("paciolan_pull_resolve",
-        { p_id: row.id, p_status: "error", p_error: resp.error || "capture failed" });
+        { p_id: row.id, p_status: "error", p_error: resp.error || "capture failed", p_driver: driverId });
       return { id: row.id, status: "error", error: resp.error };
     }
     const shipped = resp.record && resp.record.ship && resp.record.ship.shipped;
@@ -226,11 +255,12 @@ async function drivePull(row) {
       p_id: row.id, p_status: status, p_snapshot_id: snapId,
       p_available: avail,
       p_error: shipped ? null : (resp.record && resp.record.ship && resp.record.ship.error) || "upload failed",
+      p_driver: driverId,
     });
     return { id: row.id, status, available: avail, snapshot_id: snapId };
   } catch (e) {
     await callRpc("paciolan_pull_resolve",
-      { p_id: row.id, p_status: "error", p_error: String(e) }).catch(() => {});
+      { p_id: row.id, p_status: "error", p_error: String(e), p_driver: driverId }).catch(() => {});
     return { id: row.id, status: "error", error: String(e) };
   } finally {
     if (tab && tab.id != null) { try { await chrome.tabs.remove(tab.id); } catch (_) {} }
@@ -244,12 +274,14 @@ async function driverTick() {
   if (!driverArmed || driverBusy) return;
   driverBusy = true;
   try {
+    const driverId = await getDriverId();
+    await sendHeartbeat();   // register presence + label before polling
     let done = 0;
     const results = [];
     for (let i = 0; i < MAX_PULLS_PER_TICK; i++) {
       let claimed;
       try {
-        claimed = await callRpc("paciolan_next_pull", { p_driver: "extension" });
+        claimed = await callRpc("paciolan_next_pull", { p_driver: driverId });
       } catch (e) {
         await setDriverStatus({ last_tick: new Date().toISOString(), last_error: String(e) });
         return;
@@ -257,7 +289,7 @@ async function driverTick() {
       // PostgREST returns an array of rows for a table-returning function.
       const row = Array.isArray(claimed) ? claimed[0] : claimed;
       if (!row || row.id == null) break;   // queue empty
-      results.push(await drivePull(row));
+      results.push(await drivePull(row, driverId));
       done++;
     }
     await setDriverStatus({
@@ -302,6 +334,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === "paciolan_driver_status") {
     getLocal(["driverArmed", "driverStatus"]).then((s) =>
       sendResponse({ armed: !!s.driverArmed, status: s.driverStatus || {} }));
+    return true;
+  }
+  if (msg && msg.type === "paciolan_driver_identity") {
+    Promise.all([getDriverId(), getDriverLabel()]).then(([driverId, driverLabel]) =>
+      sendResponse({ driverId, driverLabel }));
+    return true;
+  }
+  if (msg && msg.type === "paciolan_driver_set_label") {
+    setLocal({ driverLabel: (msg.label || "").trim() || null })
+      .then(sendHeartbeat)
+      .then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (msg && msg.type === "paciolan_driver_heartbeat") {
+    sendHeartbeat().then(() => sendResponse({ ok: true }));
     return true;
   }
   return false;

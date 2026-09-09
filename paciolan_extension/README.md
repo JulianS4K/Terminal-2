@@ -171,6 +171,13 @@ logged-in Chrome open with the toggle on.
 auto-seeded into `paciolan_pull_targets` and kept fresh — no manual upkeep. A1
 can also seed/adjust targets directly (`pull_interval_min`, `active`).
 
+**Per-instance tracking:** each Chrome gets a stable `driver_id` and an operator
+**name** (set it under *This Chrome instance* in the popup). Every poll/resolve
+is attributed to that instance and a heartbeat keeps it visible while idle, so
+`v_paciolan_drivers` (the **Chrome instances** panel on the terminal PACIOLAN
+tab) shows per-instance extraction + issues — online, pulls/24h, ok/empty/error,
+and last error — i.e. which instance is working and which is stuck.
+
 The `next_pull` / `resolve` / `stats` RPCs are anon-granted but **secret-gated**
 by the same `paciolan_ingest_config` secret as ingest — the public anon key
 alone can't claim work or write. `SKIP LOCKED` means two Chromes never

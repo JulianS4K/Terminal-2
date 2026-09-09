@@ -42,6 +42,9 @@
     #driver .tog input { width: auto; }
     #driverStatus { font-size: 12px; margin-top: 6px; }
     #driver.on { background: #e7f5ec; border-color: #7fbf95; }
+    #instance { border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+    #instance .row { margin-top: 4px; }
+    #driverIdLine { word-break: break-all; }
   </style>
 </head>
 <body>
@@ -55,6 +58,15 @@
   <div id="driver">
     <label class="tog"><input type="checkbox" id="armed" /> Autonomous auto-pull (SQL-driven)</label>
     <div id="driverStatus" class="muted">Off. When armed, this Chrome polls the pull queue and refreshes due events on its own.</div>
+  </div>
+
+  <div id="instance">
+    <label>This Chrome instance</label>
+    <div class="row">
+      <input id="driverLabel" type="text" placeholder="name it (e.g. kiosk-BGSU) — tracks extraction &amp; issues" autocomplete="off" />
+      <button id="saveLabel" style="flex:0 0 auto">Save</button>
+    </div>
+    <div id="driverIdLine" class="muted" style="font-size:11px; margin-top:4px"></div>
   </div>
 
   <details id="cfg">

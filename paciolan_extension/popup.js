@@ -241,5 +241,23 @@ $("armed").addEventListener("change", async () => {
 
 $("checkUpdate").addEventListener("click", () => checkForUpdates(true));
 
+// --- instance identity (label + id) ----------------------------------------
+// Each Chrome gets a stable driver_id; the operator can name it. Opening the
+// popup also heartbeats, so a manual-only instance still registers server-side.
+async function loadInstance() {
+  const info = await chrome.runtime.sendMessage({ type: "paciolan_driver_identity" });
+  if (!info) return;
+  if (info.driverLabel) $("driverLabel").value = info.driverLabel;
+  $("driverIdLine").textContent = "id: " + (info.driverId || "?");
+  // register presence when the popup opens (best-effort; needs Supabase config)
+  chrome.runtime.sendMessage({ type: "paciolan_driver_heartbeat" }).catch(() => {});
+}
+$("saveLabel").addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "paciolan_driver_set_label", label: $("driverLabel").value });
+  setStatus("Instance name saved.", "ok");
+  refreshDriver();
+});
+
 load();
 refreshDriver();
+loadInstance();
