@@ -22,14 +22,24 @@
 -- `GET /rest/sales` returns 200 with the full recent book. Corrected in this
 -- PR. `/rest/sales/delta` does NOT exist (400: it parses "delta" as the id).
 --
--- ── Paging: `limit` works, `offset` does NOT ────────────────────────────────
--- Measured live: `?limit=5` returns 5, `?limit=5000` returns 5000 (back to
--- 2026-08-21), but `?offset=`, `?page=`/`?size=` and `?updateTimeFrom=` are all
--- IGNORED — each returns the same newest-first page starting at the same id.
--- So there is no cursor: the only lever is a bigger limit, and the feed is a
--- newest-first window, not a queryable history. Sync therefore pulls a window
--- and UPSERTS by sale id; it can never backfill an order older than the window,
--- which is why `v_s4kcs_orders` must degrade to NULL rather than to 0.
+-- ── Paging: `limit` works, `offset` does NOT, and `limit` caps at 10,000 ────
+-- Measured live: `?limit=5` returns 5 and `?limit=5000` returns 5000, but
+-- `?offset=`, `?page=`/`?size=` and `?updateTimeFrom=` are all IGNORED — each
+-- returns the same newest-first page starting at the same id. So there is no
+-- cursor: a bigger limit is the only lever.
+-- ⚠ AND THAT LEVER STOPS AT 10,000. `?limit=25000` returns exactly 10000 rows
+-- (9.6 MB) SILENTLY — no error, no truncation flag, nothing in the body says it
+-- was capped. Reachable history is therefore hard-capped at the newest 10k
+-- sales: on 2026-09-09 that reached back to 2026-08-01 and priced 1,995 of
+-- 3,166 future GoTickets orders (63%). The other 37% sold earlier and CANNOT be
+-- reached through this endpoint at all — which is why `v_s4kcs_orders` must
+-- degrade to NULL rather than to 0 for them.
+-- Backfilling those needs the per-id route (`GET /rest/sales/:id`, already in
+-- gotickets_client) drip-fed for the ~1,171 ids we are missing. Not built here;
+-- it is a different shape of job.
+-- The recurring cron uses 5000, NOT 10000: steady state only has to cover sales
+-- since the last run, and a 9.6 MB payload every 15 minutes re-fetching the same
+-- rows is waste. Use 10000 for a one-off deep backfill.
 --
 -- ── The join key, and how it looked wrong ───────────────────────────────────
 -- `s4kcs_orders.s4k_order_id` IS the GoTickets sale `id`: 1,762 of the 1,823
