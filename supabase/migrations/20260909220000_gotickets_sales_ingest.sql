@@ -254,6 +254,24 @@ CREATE OR REPLACE VIEW public.v_s4kcs_orders AS
             WHEN g.total_payout IS NOT NULL THEN 'gotickets_sales'::text
             ELSE NULL::text
         END AS price_source,
+    s.delivery,
+    s.inhand_date,
+    s.payout_date,
+    s.purchase_date,
+    s.notes,
+    COALESCE(s.tevo_event_id, v.tevo_event_id) AS tevo_event_id,
+    COALESCE(s.aq_short_event_id, v.aq_short_event_id) AS aq_short_event_id,
+    s.venue_short_id,
+    s.performer_short_id,
+    s.pulled_at,
+    s.last_seen_at,
+    s.map_method,
+    s.map_confidence,
+    s.mapped_at,
+    -- ⚠ APPENDED, NOT INSERTED. CREATE OR REPLACE VIEW can only ADD columns at
+    -- the END — reordering or inserting one fails with "cannot change name of
+    -- view column". These two must stay last, and anything added later must go
+    -- after them, or the replace stops being a drop-free upgrade.
     -- what the `price` column above means for THIS row
         CASE
             WHEN NULLIF(s.price, 0) IS NOT NULL
@@ -273,21 +291,7 @@ CREATE OR REPLACE VIEW public.v_s4kcs_orders AS
             WHEN g.total_payout IS NOT NULL
                  THEN round(g.total_payout / NULLIF(s.quantity, 0), 4)
             ELSE NULL::numeric
-        END AS price_per_ticket,
-    s.delivery,
-    s.inhand_date,
-    s.payout_date,
-    s.purchase_date,
-    s.notes,
-    COALESCE(s.tevo_event_id, v.tevo_event_id) AS tevo_event_id,
-    COALESCE(s.aq_short_event_id, v.aq_short_event_id) AS aq_short_event_id,
-    s.venue_short_id,
-    s.performer_short_id,
-    s.pulled_at,
-    s.last_seen_at,
-    s.map_method,
-    s.map_confidence,
-    s.mapped_at
+        END AS price_per_ticket
    FROM s4kcs_orders s
      LEFT JOIN vivid_orders v
        ON s.source = 'Vivid Seats'::text AND v.vivid_order_id = s.s4k_order_id
