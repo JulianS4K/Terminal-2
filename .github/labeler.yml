@@ -45,17 +45,37 @@
           - "supabase/migrations/*exos*.sql"
           - "docs/d4_*"
 
-# D6 — Paciolan/eVenue primary box-office ingest (browser-extension-sourced).
+# Paciolan/eVenue primary box-office ingest (browser-extension-sourced).
 # paciolan_client normalizer, the Chrome collector, the /api/paciolan route
 # block, and the paciolan_* schema. RULE-2 lockdown of evenue.net is A1/B1
 # policy over this surface (PROJECT_BIBLE §2.3).
-"area:d6":
+#
+# Was `area:d6` until 2026-09-10, when the D6 lane was retired into A1
+# (PROJECT_BIBLE §2.3 retirement note). Relabelled to the SURFACE, not the
+# lane — matching `area:broadway` below — because the paths still need a
+# label (nothing else globs `paciolan_extension/`) even though the lane code
+# is gone. Do not re-add an `area:a1`: labels here name surfaces.
+"area:paciolan":
   - changed-files:
       - any-glob-to-any-file:
           - "paciolan_client.py"
           - "paciolan_extension/**/*"
           - "routers/paciolan.py"
           - "supabase/migrations/*paciolan*.sql"
+
+# D7 — N2S ("Need to Sub") obligation-covering pipeline. Carved out of D0's
+# terminal/broker surface 2026-09-10: the subs page, the /api/broker/n2s-*
+# route block, and the n2s_* schema (ingest -> mapping -> four-source polling
+# -> two-tier matching -> cover queue -> Realtime feed).
+# NOTE routers/broker.py is D0-owned and holds BOTH lanes' route blocks, so a
+# change there labels d0; that intersection is a §2.6 seam by definition
+# (product block x substrate layer) and is intentional, not a gap.
+"area:d7":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "static/terminal/subs.*"
+          - "supabase/migrations/*n2s*.sql"
+          - "tests/frontend/test_n2s_*.py"
 
 "area:docs":
   - changed-files:
