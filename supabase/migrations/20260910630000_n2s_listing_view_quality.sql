@@ -1,4 +1,9 @@
 -- Migration 20260910630000 · level:secondary-sales · lane:D7 · writes:n2s_cover_queue,n2s_profitable_cover,n2s_integration_doc,n2s_error_code · reads:gotickets_listings_snapshots,seatgeek_listings_snapshots · pre:20260910620000
+--
+-- Already applied to prod · via MCP 2026-09-10 under operator direction (this corrected
+-- form, view anchor c.sub_zone). ⚠ The enrichment UPDATE injected below was hot-fixed
+-- minutes later by 20260910640000 — it scanned the full snapshot history and wedged
+-- cron 602. Apply 640000 immediately after this one on any fresh environment.
 -- ============================================================================
 -- Migration 20260910630000 — surface listing view quality (obstructed/limited)
 --
