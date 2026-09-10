@@ -1,6 +1,6 @@
 # D7 · N2S ("Need to Sub") obligation-covering pipeline
 
-> **Doc version:** v1.6.0 (2026-09-10) — §4a: **the gate-5/6 row downgrade is now zone-capped** (operator reversal of "downgrade is not zone based for now"), closing the row-bound-price-tier hole the original cascade documented as accepted. Adds the `zone_ok` truth table, the new ` zone unverified` suffix (`N2S-G1000`) for venues with no curated zones, and why the unverifiable case is a suffix rather than a seventh gate. Profit/cap split is unchanged. · v1.5.0 (2026-09-10) — §2a: recorded that the **section-change guarantee is structural** (only `match_zone` can move a section, and it requires a non-null `order_zone` equal to `sub_zone`), that gate 5 inherits it, and that the one carve-out is a row downgrade inside the sold section — now stated in the integration manual rather than left implied. · v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
+> **Doc version:** v1.7.0 (2026-09-10) — new **§2b**: listing **view quality** surfaced end to end (`sub_view`/`sub_notes` on the queue, `v_n2s_orders`, the external feed and the panel), after finding that an obstructed substitute classifies as gate 1 "actionable directly". Records the three-state rule (`unknown` is not `clear`), the new `N2S-V100`/`V200` codes, and the **TEvo blind spot** — `public_notes` is read by the client but never mirrored into `listings_snapshots`, so most rows read `unknown`; closing it is an A1 change. · v1.6.0 (2026-09-10) — §4a: **the gate-5/6 row downgrade is now zone-capped** (operator reversal of "downgrade is not zone based for now"), closing the row-bound-price-tier hole the original cascade documented as accepted. Adds the `zone_ok` truth table, the new ` zone unverified` suffix (`N2S-G1000`) for venues with no curated zones, and why the unverifiable case is a suffix rather than a seventh gate. Profit/cap split is unchanged. · v1.5.0 (2026-09-10) — §2a: recorded that the **section-change guarantee is structural** (only `match_zone` can move a section, and it requires a non-null `order_zone` equal to `sub_zone`), that gate 5 inherits it, and that the one carve-out is a row downgrade inside the sold section — now stated in the integration manual rather than left implied. · v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
 > does, the six stages it runs, the tables and crons that make up each one, the error-code
 > registry, and how an external consumer plugs into the profitable-cover feed.
 
@@ -316,6 +316,50 @@ Three details in `n2s_profitable_cover_sync()`:
   that the row is safe; the manual instructs receivers to hold such a row and report
   `N2S-G900`, and never to read a missing label as gate 1.
 
+---
+
+## 2b. Sightlines are a second axis, and we are blind on most of it
+
+An obstructed-view substitute against a clear-view sold seat classifies as **gate 1
+`Index`** — same section, same-or-better row, cheaper, "actionable directly". It is a real
+downgrade needing the buyer's consent, and until `20260910630000` nothing in the payload
+said so. Same failure shape as the tier-crossing downgrade, in a dimension the cascade
+never looked at.
+
+`sub_view` is **three-state** (`obstructed` / `clear` / `unknown`) and must never be
+collapsed to a boolean:
+
+| Source | Signal | Result |
+|---|---|---|
+| `seatgeek` | `has_limited_view` (its own `lv` flag) + `seller_notes` | real answer |
+| `gotickets` | `notes` (free text) | real answer where notes exist |
+| `tevo` | **nothing** | always `unknown` |
+| `ticketsdata` | nothing (and the vendor is off) | always `unknown` |
+
+> ⚠ **TEvo is the blind spot, and TEvo is most of the book** — 10 of the 11 rows on the
+> feed when this was written. Its API *does* return `public_notes`: `core/helpers.py` reads
+> it, and `core/store_events.py` says outright `"public_notes": None, # not mirrored to
+> listings_snapshots`. The column simply does not exist on that table. So for TEvo the
+> honest answer is not "clear", it is "we never looked" — which is the entire reason for
+> the third state. A boolean cannot express it and `NULL`-as-false expresses it wrongly.
+>
+> Mirroring `public_notes` into `listings_snapshots` is an **A1** change (that table and
+> the collector are A1's data plane, `PROJECT_BIBLE §2`), so D7 does not make it. It is the
+> single highest-value follow-up here: it converts the majority of rows from "unknown" to a
+> real answer.
+
+**Why the queue and not the cascade.** View quality is a property of the *listing*, not of
+how the listing matched. Threading it through `n2s_cover_candidates` would mean ten anchored
+edits inside the 250-line function whose last four revisions each cost a 60s-timeout cycle,
+to compute something that does not participate in the match. `n2s_cover_queue_refresh()`
+enriches from the same snapshot rows keyed on `(source, listing id, event, captured_at)`.
+
+**Why not folded into `cover_label`.** The label answers *what may I do with this match*;
+this answers *what is this seat*. A consumer filtering on `cover_gate` should not have to
+parse a label string to discover the seat is obstructed — so it is its own column, and any
+gate can carry it. The classifier vocabulary is **shared with the scanner's confidence
+rule** (`20260811273000` and siblings); widen both together or neither.
+
 ## 3. Cron chain
 
 | Job | Schedule | What it does |
@@ -432,3 +476,7 @@ Tracked as D7 cards in `KANBAN.md` — do not re-discover these:
 - **D7-PROD-2** — greedy-FIFO allocation is not globally optimal.
 - **D7-OPS-3** — `get_app_secret()` is not in the `§2.6` seam map, so seam review is blind
   to security controls carried in migrations.
+- **D7-DATA-1** — **TEvo `public_notes` is never mirrored into `listings_snapshots`**
+  (`core/store_events.py`), so `sub_view` reads `unknown` for the source that supplies most
+  covers. Closing it is an **A1** change to that table and the TEvo collector; it converts
+  the majority of the book from "not checked" to a real sightline answer. See §2b.

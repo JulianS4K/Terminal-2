@@ -120,6 +120,23 @@
       ? 'Buyer is being MOVED — offer this substitute and get acceptance BEFORE buying'
       : 'Same section the buyer purchased — actionable directly';
     let out = `<span class="n2s-gate ${cls}" title="${esc(tip)}">${esc(base)}</span>`;
+    // Obstructed view is NOT part of the gate — a gate 1 seat can be
+    // obstructed, and that is exactly the case worth catching, because the
+    // gate says "actionable directly". Rendered as its own chip for the same
+    // reason it is its own column: it answers "what is this seat", not "what
+    // may I do with this match".
+    if (r.sub_view === 'obstructed') {
+      out += ` <span class="n2s-gate n2s-gate-obstructed" title="${esc(
+        'Seller discloses an obstructed / limited view'
+        + (r.sub_notes ? ': ' + r.sub_notes : '')
+        + '. Offer this to the buyer before purchasing, whatever the gate says.'
+      )}">obstructed</span>`;
+    } else if (r.sub_view === 'unknown') {
+      out += ` <span class="n2s-gate n2s-gate-noview" title="${esc(
+        'This source publishes no view data, so the seat has NOT been checked. '
+        + 'Unknown is not the same as clear.'
+      )}">view ?</span>`;
+    }
     if (unver) {
       out += ` <span class="n2s-gate n2s-gate-unver" title="${esc(
         'No curated zones at this venue, so the same-zone rule could not be checked. '
