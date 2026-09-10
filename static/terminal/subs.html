@@ -55,7 +55,7 @@
         whole and the row says <em>buy N</em> — the spare seat is paid for, and is
         already counted in the cost. <strong>Claim</strong> records an intent and hands you a fill
         sheet; it buys nothing — the purchase is made by hand in the vendor console.
-        Live feed, refreshing every 60s.
+        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row.
       </p>
       <div class="subs-orderbar">
         <div class="subs-field narrow">
@@ -72,11 +72,16 @@
           </select>
         </div>
         <div class="subs-field narrow">
-          <label for="n2sHas">Has sub</label>
+          <label for="n2sHas">Sub</label>
+          <!-- One control, because these are not independent: "profitable"
+               is a SUBSET of "has sub", so two selects allowed the operator
+               to ask for "no sub" AND "profitable only" — a contradiction
+               that can only ever return an empty page. -->
           <select id="n2sHas">
             <option value="">all</option>
             <option value="true">has sub</option>
             <option value="false">no sub</option>
+            <option value="profit">profitable only</option>
           </select>
         </div>
         <div class="subs-field narrow">
@@ -87,15 +92,6 @@
           <select id="n2sLate">
             <option value="">in time only</option>
             <option value="true">include late</option>
-          </select>
-        </div>
-        <div class="subs-field narrow">
-          <label for="n2sProfit">Money</label>
-          <!-- cover_cost < 0 only. This empties the uncovered book by
-               construction, so the empty state has to say so. -->
-          <select id="n2sProfit">
-            <option value="">all</option>
-            <option value="true">profitable only</option>
           </select>
         </div>
         <div class="subs-field narrow">
@@ -211,6 +207,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260910audit"></script>
+  <script src="subs.js?v=20260910subfilter"></script>
 </body>
 </html>
