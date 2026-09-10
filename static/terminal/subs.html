@@ -17,6 +17,29 @@
   <title>Terminal — Subs</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
   <link rel="stylesheet" href="style.css?v=20260721a" />
+  <style>
+    /* D7 gate labels. Kept in this file rather than style.css because
+       style.css is D0's surface and subs.* is the D7 subset (PROJECT_BIBLE
+       §2.3). The two variants are styled DIFFERENTLY on purpose: gates 1-2
+       are directly actionable, gates 3-6 move the buyer and need consent
+       first, and a single uniform chip would hide exactly that distinction. */
+    .n2s-gate {
+      display: inline-block; padding: 1px 7px; border-radius: 10px;
+      font-size: 11px; line-height: 1.6; white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .n2s-gate-direct {            /* gates 1-2 — buy it */
+      background: rgba(74, 222, 128, .12);
+      border-color: rgba(74, 222, 128, .45);
+      color: var(--pos, #4ade80);
+    }
+    .n2s-gate-offer {             /* gates 3-6 — ASK THE BUYER FIRST */
+      background: rgba(251, 191, 36, .12);
+      border-color: rgba(251, 191, 36, .5);
+      color: #fbbf24;
+    }
+    .n2s-gate-cell { max-width: 190px; }
+  </style>
 </head>
 <body data-page="subs">
 
@@ -55,7 +78,7 @@
         whole and the row says <em>buy N</em> — the spare seat is paid for, and is
         already counted in the cost. <strong>Claim</strong> records an intent and hands you a fill
         sheet; it buys nothing — the purchase is made by hand in the vendor console.
-        Live feed, refreshing every 60s.
+        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row.
       </p>
       <div class="subs-orderbar">
         <div class="subs-field narrow">
@@ -72,11 +95,16 @@
           </select>
         </div>
         <div class="subs-field narrow">
-          <label for="n2sHas">Has sub</label>
+          <label for="n2sHas">Sub</label>
+          <!-- One control, because these are not independent: "profitable"
+               is a SUBSET of "has sub", so two selects allowed the operator
+               to ask for "no sub" AND "profitable only" — a contradiction
+               that can only ever return an empty page. -->
           <select id="n2sHas">
             <option value="">all</option>
             <option value="true">has sub</option>
             <option value="false">no sub</option>
+            <option value="profit">profitable only</option>
           </select>
         </div>
         <div class="subs-field narrow">
@@ -87,15 +115,6 @@
           <select id="n2sLate">
             <option value="">in time only</option>
             <option value="true">include late</option>
-          </select>
-        </div>
-        <div class="subs-field narrow">
-          <label for="n2sProfit">Money</label>
-          <!-- cover_cost < 0 only. This empties the uncovered book by
-               construction, so the empty state has to say so. -->
-          <select id="n2sProfit">
-            <option value="">all</option>
-            <option value="true">profitable only</option>
           </select>
         </div>
         <div class="subs-field narrow">
@@ -211,6 +230,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260910audit"></script>
+  <script src="subs.js?v=20260910gates"></script>
 </body>
 </html>

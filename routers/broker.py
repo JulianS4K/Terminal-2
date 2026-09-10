@@ -1114,6 +1114,22 @@ def build_broker_router(
         NULL `cover_cost`; it is the one view of this panel where absent rows
         are not the work.
 
+        `cover_label` is a WORKFLOW INSTRUCTION, not a quality score, and
+        `cover_gate` (1-6) is its stable machine form — filter on the gate, not
+        the label text.
+
+        * gates 1-2 (`Index`, `S4KTrading`) keep the buyer in the exact section
+          they purchased, so they are directly actionable.
+        * gates 3-6 carry ``offer subs`` because they MOVE the buyer — a
+          different section within the same curated zone, or up to five rows
+          further back. The substitute must be offered and accepted BEFORE it
+          is bought; acting on one unasked turns a covered order into a dispute.
+        * ``Index`` vs ``S4KTrading`` is profit, not quality: Index covers make
+          money, S4KTrading covers cost more than the sale but stay inside a
+          200% ceiling. Nothing above 200% is offered on any gate.
+        * suffix ``repost single`` means `sub_qty` is one over the obligation
+          and the spare seat is reposted — buy `sub_qty`, not `quantity`.
+
         `n2s_order_key` is the marketplace's order id on its own. For every
         source but EVO it equals `order_number`; EVO's `order_number` is an
         `<invoice>-<order>` composite, and pasting the whole thing into its
@@ -1155,7 +1171,7 @@ def build_broker_router(
                      "sub_ea,sub_total,cover_cost,rows_closer,buy_url,"
                      "captured_at,cover_rank,fifo_position,refreshed_at,"
                      "has_cover,no_cover_reason,open_intent_id,open_intent_by,"
-                     "n2s_order_key"))
+                     "n2s_order_key,cover_gate,cover_label"))
         if source:
             q = q.eq("s4k_source", source)
         if days is not None:

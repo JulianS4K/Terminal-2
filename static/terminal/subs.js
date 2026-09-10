@@ -96,6 +96,22 @@
     return `<span class="mono">${esc(num)}</span>${alt}`;
   }
 
+  // The gate label is a WORKFLOW INSTRUCTION, not a badge. Gates 1-2 keep the
+  // buyer in the section they bought and are directly actionable; gates 3-6
+  // carry "offer subs" because they MOVE the buyer and need their consent
+  // before purchase. That distinction is the whole point of showing it, so
+  // the two are styled differently rather than as one uniform chip.
+  function gateCell(r) {
+    if (!r.has_cover || !r.cover_label) return '<span class="muted">—</span>';
+    const g = r.cover_gate;
+    const offer = g >= 3;                       // 3-6 move the buyer
+    const cls = offer ? 'n2s-gate-offer' : 'n2s-gate-direct';
+    const tip = offer
+      ? 'Buyer is being MOVED — offer this substitute and get acceptance BEFORE buying'
+      : 'Same section the buyer purchased — actionable directly';
+    return `<span class="n2s-gate ${cls}" title="${esc(tip)}">${esc(r.cover_label)}</span>`;
+  }
+
   function coverFp(r) {
     return [r.sub_source || '', r.sub_listing_id || '', r.sub_ea == null ? '' : r.sub_ea].join('|');
   }
@@ -105,7 +121,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate', 'n2sProfit'].forEach((id) => {
+    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -160,12 +176,16 @@
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
     const late = (document.getElementById('n2sLate') || {}).value || '';
-    const profit = (document.getElementById('n2sProfit') || {}).value || '';
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
-    if (has) qs.set('with_sub', has);
+    // "profitable only" lives in the same select as has/no sub because it is a
+    // SUBSET of "has sub", not an independent axis. It therefore sets the
+    // profit filter and deliberately sends NO with_sub — adding
+    // with_sub=true would be redundant, and the server already narrows to
+    // covers by requiring cover_cost < 0.
+    if (has === 'profit') qs.set('profitable', 'true');
+    else if (has) qs.set('with_sub', has);
     if (late) qs.set('include_late', late);
-    if (profit) qs.set('profitable', profit);
     try {
       const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
       renderN2s(d);
@@ -236,7 +256,7 @@
       const onlyProfit = !!(d && d.filters && d.filters.profitable);
       wrap.innerHTML = emptyHtml(onlyProfit
         ? 'no cover currently settles for less than the seat sold for. '
-          + 'Set <em>Money</em> back to “all” for the whole book — most '
+          + 'Set <em>Sub</em> back to “all” for the whole book — most '
           + 'obligations cost money to settle, and still have to be settled.'
         : hidden
         ? `nothing shown — <strong>${hidden}</strong> open obligation${hidden === 1 ? '' : 's'} `
@@ -328,13 +348,14 @@
         <td class="num">${r.has_cover ? money(r.sub_ea) : '<span class="muted">—</span>'}</td>
         <td class="num">${coverCell(r.cover_cost)}</td>
         <td>${buy}</td>
+        <td class="n2s-gate-cell">${gateCell(r)}</td>
         <td class="n2s-verdict muted small">—</td>
         <td>${action}</td>
       </tr>`;
     }).join('');
     wrap.innerHTML = `<table class="subs-table"><thead><tr>
         <th>Src</th><th>Order #</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
-        <th>Sub / why not</th><th class="num">Sub ea</th><th class="num">Cost to settle</th><th></th><th>Verify</th><th></th>
+        <th>Sub / why not</th><th class="num">Sub ea</th><th class="num">Cost to settle</th><th></th><th>Gate</th><th>Verify</th><th></th>
       </tr></thead><tbody>${body}</tbody></table>`;
     wrap.querySelectorAll('.n2s-claim').forEach((b) => {
       b.addEventListener('click', () => claimN2s(b.getAttribute('data-n2s'), b));
