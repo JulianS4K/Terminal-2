@@ -1,6 +1,6 @@
 # D7 · N2S ("Need to Sub") obligation-covering pipeline
 
-> **Doc version:** v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
+> **Doc version:** v1.5.0 (2026-09-10) — §2a: recorded that the **section-change guarantee is structural** (only `match_zone` can move a section, and it requires a non-null `order_zone` equal to `sub_zone`), that gate 5 inherits it, and that the one carve-out is a row downgrade inside the sold section — now stated in the integration manual rather than left implied. · v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
 > does, the six stages it runs, the tables and crons that make up each one, the error-code
 > registry, and how an external consumer plugs into the profitable-cover feed.
 
@@ -255,6 +255,22 @@ as "$1,126 profit, go buy it". That is the wrong action, and nothing in the payl
 > the instruction to act; the gate is the permission to. Shipping one without the other is
 > the whole failure mode this lane exists to prevent — we are data control and labelling, and
 > the label has to survive the border.
+
+**The section-change guarantee is structural, and it is now published.** A different
+`sub_section` is only ever produced by one of the two branches that build the candidate
+universe in `n2s_cover_candidates`: `match_zone`, which requires `order_zone IS NOT NULL`,
+`lz.zone = oz.order_zone`, and that the normalised sections actually differ. The other branch,
+`match_exact`, pins the section. So a section change with no zone match is not filtered out
+downstream — it is never a candidate. Gate 5 inherits this: it carries no section predicate of
+its own, so a gate 5 row is either same-section-worse-row or same-zone-different-section-worse-row.
+
+> ⚠ **The exception is a row downgrade inside the sold section**, per the operator's
+> "downgrade is not zone based for now". `match_exact` does no zone comparison, and 436 of
+> 5,524 zone rules are row-bound **price tiers** rather than geography, so a +5 move within one
+> section can cross a tier. The manual states this to receivers rather than implying a
+> guarantee we do not have — they are the ones showing the seat to a buyer. Note that gates 3/4
+> get tier safety for free, because `n2s_zone_of()` is scoped on section **and** row: a move
+> that crosses a tier resolves to a different zone name and drops out of `match_zone` by itself.
 
 Three details in `n2s_profitable_cover_sync()`:
 
