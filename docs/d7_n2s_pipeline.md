@@ -1,6 +1,6 @@
 # D7 · N2S ("Need to Sub") obligation-covering pipeline
 
-> **Doc version:** v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
+> **Doc version:** v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
 > does, the six stages it runs, the tables and crons that make up each one, the error-code
 > registry, and how an external consumer plugs into the profitable-cover feed.
 
@@ -178,6 +178,7 @@ retired and a new one issued.
 | `N2S-A101` | access | `permission denied` / `42501`. | Reading as `anon`. The feed grants `authenticated` only. |
 | `N2S-A102` | access | `200 OK` with an **empty array**. | Not an error and not necessarily empty data — RLS filtered it. Confirm the JWT is a real signed-in user. |
 | `N2S-A103` | access | Realtime subscription opens then receives nothing. | Same RLS rule applies to the socket. Also check the table is in the `supabase_realtime` publication. |
+| `N2S-A104` | access | `Invalid login credentials` on an account that has **no Supabase password** — it signs in via Google/OAuth. | Retrying the password never works: an OAuth password is a different credential and GoTrue holds no hash to check. Set a real Supabase password (step 3 of `n2s_integration_doc`). A headless receiver cannot use an OAuth-only account at all. |
 
 ---
 
@@ -189,12 +190,19 @@ Full step-by-step, versioned and queryable, is seeded into **`public.n2s_integra
 1. Get the project URL and the **publishable** (anon) key. Never the `service_role` key —
    it bypasses RLS on every table in the project, so handing it to a receiver hands over the
    whole database.
-2. Sign in as a real Supabase Auth user. The feed grants `SELECT` to `authenticated` only;
+2. **Make sure the account actually has a Supabase password.** ⚠ A Google/OAuth password is
+   *not* one: if the user signs in through a provider, GoTrue stores no password hash and
+   `signInWithPassword` returns `Invalid login credentials` however many times the correct
+   Google password is typed (`N2S-A104`). Every account on this project today is
+   Google-only. Set one in Authentication → Users (Email provider must be enabled), or via
+   the Auth Admin API — **never** with `UPDATE auth.users … crypt(...)`, because a value
+   passed through a SQL console lands in the Postgres query log.
+3. Sign in as a real Supabase Auth user. The feed grants `SELECT` to `authenticated` only;
    `anon` gets nothing (`N2S-A101`).
-3. Read current state: `GET /rest/v1/n2s_profitable_cover?select=*&order=profit.desc`.
-4. Subscribe for changes: Realtime `postgres_changes` on `public.n2s_profitable_cover`,
+4. Read current state: `GET /rest/v1/n2s_profitable_cover?select=*&order=profit.desc`.
+5. Subscribe for changes: Realtime `postgres_changes` on `public.n2s_profitable_cover`,
    events `INSERT`/`UPDATE`/`DELETE`. RLS applies to the socket exactly as to the read.
-5. Treat a `DELETE` as **"this cover is gone"** — un-flag it. `REPLICA IDENTITY FULL` means
+6. Treat a `DELETE` as **"this cover is gone"** — un-flag it. `REPLICA IDENTITY FULL` means
    the event carries the full old row, so you know which order it was.
 
 The columns a buyer needs: `order_number` (and `order_key` to find it in the CRM),
