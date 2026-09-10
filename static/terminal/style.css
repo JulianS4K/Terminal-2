@@ -2858,3 +2858,18 @@ table.deals-tbl td.deals-open { text-align: center; }
 }
 .gt-open-btn:hover { border-color: var(--muted); color: #7dd3fc; }
 .gt-open-btn:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 1px; }
+
+/* ---------- N2S covers live feed ---------- */
+/* Mirrors the deals feed idiom: a flash that decays rather than a colour that
+   sticks, so an arrival is noticeable while you are looking and gone when you
+   come back to it. The panel repaints every 60s — a permanent highlight would
+   accumulate until the whole table was highlighted, which says nothing. */
+@keyframes n2s-flash { from { background: rgba(52, 211, 153, .22); } to { background: transparent; } }
+tr.n2s-row-new > td { animation: n2s-flash 6s ease-out forwards; }
+.n2s-new-chip {
+  font-size: 9px; font-weight: 800; letter-spacing: .05em;
+  color: #0a0a0a; background: #34d399; border-radius: 3px;
+  padding: 0 4px; vertical-align: middle;
+}
+tr.n2s-sheet > td { background: rgba(125, 211, 252, .07); }
+@media (prefers-reduced-motion: reduce) { tr.n2s-row-new > td { animation: none; } }

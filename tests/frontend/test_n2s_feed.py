@@ -1,0 +1,160 @@
+"""N2S covers panel — live-feed behaviour (regression net).
+
+The covers panel is a FEED: it repaints itself every 60s off
+`n2s_cover_queue`. That repaint is what makes these tests necessary — three of
+the behaviours below are invisible on a page you only ever load once, and two
+of them are the difference between a useful panel and a dangerous one:
+
+  * a verify verdict MUST be dropped when the queue reallocates that order to a
+    different listing, or it sits there reading "checked and fine" about
+    tickets that are no longer on offer;
+  * a claim's fill sheet MUST survive the repaint (and not stack), or it
+    vanishes from under someone mid-purchase;
+  * claiming MUST issue a POST. It previously did not: `Terminal.api()` took
+    only a path, so the `{method:'POST'}` the caller passed was silently
+    dropped and the claim went out as a GET to a POST-only route. Nothing at
+    the call site errored. That is precisely the class of defect a smoke test
+    that merely loads the page cannot see, hence this module.
+
+Playwright routing note: routes match MOST-RECENTLY-REGISTERED first, so the
+catch-all is registered before the specific stubs, not after.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+import pytest
+
+pytest.importorskip("playwright")
+
+# Python Playwright treats a plain string as a GLOB; only a compiled pattern is
+# a regex. Passing a JS-style "/.../" string here matches nothing, silently.
+_COVERS_RE = re.compile(r"/api/broker/n2s-covers\?")
+_VERIFY_RE = re.compile(r"/api/broker/n2s-covers/verify")
+_INTENT_RE = re.compile(r"buy-intent")
+
+
+def _cover(n2s_id, listing_id="L1", sub_ea=120):
+    return {
+        "n2s_id": n2s_id, "order_number": f"ORD{n2s_id}", "s4k_source": "StubHub",
+        "event_name": f"Event {n2s_id}", "event_date": "2026-10-01",
+        "venue": "Test Arena", "tevo_event_id": 9, "section": "101",
+        "order_row": "5", "quantity": 2, "sold_ea": 100,
+        "sub_source": "gotickets", "sub_listing_id": listing_id,
+        "sub_section": "101", "sub_row": "4", "sub_qty": 2, "sub_ea": sub_ea,
+        "sub_total": sub_ea * 2, "cover_cost": 40, "rows_closer": 1,
+        "buy_url": f"https://example.test/{n2s_id}",
+        "captured_at": "2026-09-10T00:00:00Z", "cover_rank": 1,
+        "fifo_position": 1, "refreshed_at": "2026-09-10T00:00:00Z",
+    }
+
+
+def _payload(rows):
+    return json.dumps({
+        "rows": rows, "count": len(rows), "at_or_below_sale": 0, "displaced": 0,
+        "total_cover_cost": 40 * len(rows),
+        "refreshed_at": "2026-09-10T00:00:00Z", "filters": {},
+    })
+
+
+def _json_route(route, body):
+    route.fulfill(status=200, content_type="application/json", body=body)
+
+
+@pytest.fixture()
+def feed_page(browser, live_server):
+    """Covers page with the API stubbed and the clock under our control."""
+    page = browser.new_page()
+    page.clock.install()
+    # Registered first => lowest precedence; the specific stubs below win.
+    page.route("**/api/**", lambda r: _json_route(r, '{"rows":[],"count":0}'))
+    yield page
+    page.close()
+
+
+def test_claim_issues_a_post_not_a_get(feed_page, live_server):
+    """The buy-intent route is POST-only; a dropped method makes claim a no-op."""
+    methods = []
+    feed_page.route(_COVERS_RE,
+                    lambda r: _json_route(r, _payload([_cover(1)])))
+
+    def _claim(route):
+        methods.append(route.request.method)
+        _json_route(route, json.dumps({
+            "intent": {"intent_id": 7, "payload_ready": True, "payload_gaps": [],
+                       "operator_fills": ["paymentMethodToken"]},
+            "bought": False}))
+
+    feed_page.route(_INTENT_RE, _claim)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector('#n2sTable tr[data-n2s]')
+    feed_page.click('#n2sTable tr[data-n2s="1"] .n2s-claim')
+    feed_page.wait_for_selector("tr.n2s-sheet")
+    assert methods == ["POST"]
+    # The sheet names what the operator still types at checkout.
+    assert "paymentMethodToken" in feed_page.eval_on_selector("tr.n2s-sheet td",
+                                                              "e => e.textContent")
+
+
+def test_poll_marks_only_new_arrivals(feed_page, live_server):
+    """First load flashes nothing; the next poll flashes only what arrived."""
+    state = {"n": 0}
+
+    def _covers(route):
+        state["n"] += 1
+        rows = ([_cover(1), _cover(2)] if state["n"] == 1
+                else [_cover(1), _cover(2), _cover(3)])
+        _json_route(route, _payload(rows))
+
+    feed_page.route(_COVERS_RE, _covers)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector('#n2sTable tr[data-n2s]')
+    # Nothing is "new" on a first load — every row flashing is noise.
+    assert feed_page.query_selector_all("#n2sTable tr.n2s-row-new") == []
+
+    feed_page.clock.fast_forward(61_000)
+    feed_page.wait_for_function(
+        "() => document.querySelectorAll('#n2sTable tr[data-n2s]').length === 3")
+    flagged = feed_page.eval_on_selector_all(
+        "#n2sTable tr.n2s-row-new", "t => t.map(x => x.dataset.n2s)")
+    assert flagged == ["3"]
+    assert state["n"] == 2, "the 60s poll did not fire"
+
+
+def test_verdict_is_dropped_when_the_cover_is_reallocated(feed_page, live_server):
+    """FIFO can move an order to another listing between polls. A verdict about
+    the OLD listing must not survive that — it would read as reassurance about
+    tickets that are no longer being offered here."""
+    state = {"n": 0}
+
+    def _covers(route):
+        state["n"] += 1
+        rows = ([_cover(1, "LA"), _cover(2, "LB")] if state["n"] == 1
+                else [_cover(1, "LA"), _cover(2, "LZ", 150)])
+        _json_route(route, _payload(rows))
+
+    feed_page.route(_COVERS_RE, _covers)
+    feed_page.route(_VERIFY_RE, lambda r: _json_route(r, json.dumps({
+        "rows": [{"n2s_id": 1, "verdict": "ok", "buyable": True, "price_delta_ea": 0},
+                 {"n2s_id": 2, "verdict": "ok", "buyable": True, "price_delta_ea": 0}],
+        "count": 2, "buyable": 2, "by_verdict": {"ok": 2}})))
+
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector('#n2sTable tr[data-n2s]')
+    feed_page.click("#n2sVerify")
+    feed_page.wait_for_function(
+        "() => document.querySelector('#n2sTable tr[data-n2s=\\\"2\\\"] .n2s-verdict')"
+        ".textContent.includes('ok')")
+
+    feed_page.clock.fast_forward(61_000)
+    feed_page.wait_for_function(
+        "() => document.querySelector('#n2sTable tr[data-n2s=\\\"2\\\"]')"
+        ".dataset.fp.includes('LZ')")
+
+    kept = feed_page.eval_on_selector(
+        '#n2sTable tr[data-n2s="1"] .n2s-verdict', "e => e.textContent.trim()")
+    dropped = feed_page.eval_on_selector(
+        '#n2sTable tr[data-n2s="2"] .n2s-verdict', "e => e.textContent.trim()")
+    assert "ok" in kept, "an unchanged cover should keep its verdict"
+    assert dropped == "—", "a reallocated cover must lose its stale verdict"

@@ -29,6 +29,7 @@
     <section id="n2s-covers-panel">
       <div class="panel-title row">
         <span>NEED TO SUB — COVERS</span>
+        <span id="n2sLive" class="live-pill off" title="Auto-refreshes every 60s; pauses while the tab is hidden"><span class="live-dot"></span><span class="live-label">paused</span></span>
         <span id="n2sMeta" class="muted small"></span>
       </div>
       <p class="muted small">
@@ -45,6 +46,13 @@
         The sheet separates what you type at checkout (payment, delivery, buyer details)
         from anything <em>our</em> side still owes, so a real gap does not read like
         routine paperwork.
+      </p>
+      <p class="muted small">
+        This panel is a <strong>live feed</strong> — it refreshes itself every 60 seconds as
+        the pipeline rebuilds the queue, and marks arrivals <span class="n2s-new-chip">NEW</span>.
+        A verdict you asked for and a fill sheet you claimed both survive a refresh, but a
+        verdict is <strong>dropped</strong> if the queue reallocates that order to a different
+        listing — it would otherwise read as "checked and fine" about the wrong tickets.
       </p>
       <div class="subs-orderbar">
         <div class="subs-field narrow">
