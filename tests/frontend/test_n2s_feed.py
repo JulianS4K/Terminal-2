@@ -508,3 +508,100 @@ def test_gate_without_the_suffix_renders_one_chip(feed_page, live_server):
     chips.first.wait_for()
     assert chips.count() == 1
     assert feed_page.locator(".n2s-gate-unver").count() == 0
+
+
+def test_obstructed_view_is_flagged_on_a_gate_1_row(feed_page, live_server):
+    """The dangerous case is precisely gate 1 + obstructed.
+
+    Gate 1 says "same section the buyer purchased — actionable directly", so a
+    reader who trusts the gate buys without asking. An obstructed seat is a
+    downgrade the buyer has to accept. If the flag only appeared on "offer
+    subs" gates it would never appear on the row that needs it most, so this
+    asserts it on gate 1 specifically, and that the seller's own wording rides
+    along rather than only our classification of it.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 1, "cover_label": "Index obstructed view",
+              "sub_view": "obstructed", "sub_notes": "Obstructed view - pole"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    gate = feed_page.locator(".n2s-gate-cell .n2s-gate").first
+    gate.wait_for()
+    flag = feed_page.locator(".n2s-gate-obstructed")
+    assert flag.count() == 1
+    # the gate itself is untouched — this is a separate axis, not a re-label
+    assert gate.inner_text().strip() == "Index"
+    assert "n2s-gate-direct" in gate.get_attribute("class")
+    title = flag.get_attribute("title") or ""
+    assert "Obstructed view - pole" in title      # the seller's words, verbatim
+    assert "before purchasing" in title
+
+
+def test_unknown_view_renders_differently_from_clear(feed_page, live_server):
+    """"Not checked" must not look like "checked and fine".
+
+    Every TEvo row is 'unknown' because public_notes is not mirrored into
+    listings_snapshots, so this is the majority case, not an edge one. Showing
+    nothing would let the absence of a warning read as an all-clear — the exact
+    inversion this field exists to prevent.
+    """
+    unknown = _cover(1)
+    unknown.update({"cover_gate": 1, "cover_label": "Index", "sub_view": "unknown"})
+    clear = _cover(2, listing_id="L2")
+    clear.update({"cover_gate": 1, "cover_label": "Index", "sub_view": "clear"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([unknown, clear])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    feed_page.locator(".n2s-gate-cell .n2s-gate").first.wait_for()
+    assert feed_page.locator(".n2s-gate-noview").count() == 1
+    assert feed_page.locator(".n2s-gate-obstructed").count() == 0
+    assert "NOT been checked" in (
+        feed_page.locator(".n2s-gate-noview").get_attribute("title") or "")
+
+
+def test_clear_view_adds_no_chip(feed_page, live_server):
+    """A checked-and-clear seat is the quiet case — no chip, no noise."""
+    r = _cover(1)
+    r.update({"cover_gate": 1, "cover_label": "Index", "sub_view": "clear"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    feed_page.locator(".n2s-gate-cell .n2s-gate").first.wait_for()
+    assert feed_page.locator(".n2s-gate-cell .n2s-gate").count() == 1
+    assert feed_page.locator(".n2s-gate-noview").count() == 0
+
+
+def test_obstructed_suffix_is_not_rendered_twice(feed_page, live_server):
+    """The label ends " obstructed view" AND a chip says it — show it once.
+
+    The suffix exists so a consumer reading only cover_label still sees the
+    defect. The panel reads both, so without stripping it the cell would read
+    "Index obstructed view" next to a chip saying "obstructed" — the same fact
+    twice, which reads like two different findings.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 1, "cover_label": "Index obstructed view",
+              "sub_view": "obstructed", "sub_notes": "pole"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    gate = feed_page.locator(".n2s-gate-cell .n2s-gate").first
+    gate.wait_for()
+    assert gate.inner_text().strip() == "Index"
+    assert feed_page.locator(".n2s-gate-obstructed").count() == 1
+
+
+def test_all_three_suffixes_coexist_without_eating_the_gate_name(feed_page, live_server):
+    """Three suffixes can stack; only the two the panel renders get stripped.
+
+    " repost single" has no chip of its own, so it must SURVIVE on the gate
+    name while the other two are lifted out. Getting this wrong in either
+    direction silently loses a fact the buyer needs.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 5, "sub_view": "obstructed", "sub_notes": "side view",
+              "cover_label": "Index Down offer subs zone unverified obstructed view repost single"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    gate = feed_page.locator(".n2s-gate-cell .n2s-gate").first
+    gate.wait_for()
+    assert gate.inner_text().strip() == "Index Down offer subs repost single"
+    assert feed_page.locator(".n2s-gate-unver").count() == 1
+    assert feed_page.locator(".n2s-gate-obstructed").count() == 1
