@@ -1171,7 +1171,7 @@ def build_broker_router(
                      "sub_ea,sub_total,cover_cost,rows_closer,buy_url,"
                      "captured_at,cover_rank,fifo_position,refreshed_at,"
                      "has_cover,no_cover_reason,open_intent_id,open_intent_by,"
-                     "n2s_order_key,cover_gate,cover_label"))
+                     "n2s_order_key,cover_gate,cover_label,sub_view,sub_notes"))
         if source:
             q = q.eq("s4k_source", source)
         if days is not None:
