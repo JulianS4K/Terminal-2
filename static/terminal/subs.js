@@ -101,15 +101,32 @@
   // carry "offer subs" because they MOVE the buyer and need their consent
   // before purchase. That distinction is the whole point of showing it, so
   // the two are styled differently rather than as one uniform chip.
+  // Suffixes are matched with endsWith, not equality: a label can carry BOTH
+  // (" zone unverified repost single"), so any equality test on the whole
+  // label silently stops matching the moment a second suffix appears.
+  const ZONE_UNVERIFIED = ' zone unverified';
+
   function gateCell(r) {
     if (!r.has_cover || !r.cover_label) return '<span class="muted">—</span>';
     const g = r.cover_gate;
     const offer = g >= 3;                       // 3-6 move the buyer
     const cls = offer ? 'n2s-gate-offer' : 'n2s-gate-direct';
+    // The suffix is rendered as its own chip. Inside the label it is a tail on
+    // an already-long string and reads as part of the gate name; beside it, it
+    // reads as the caveat it is.
+    const unver = r.cover_label.indexOf(ZONE_UNVERIFIED) !== -1;
+    const base = r.cover_label.replace(ZONE_UNVERIFIED, '');
     const tip = offer
       ? 'Buyer is being MOVED — offer this substitute and get acceptance BEFORE buying'
       : 'Same section the buyer purchased — actionable directly';
-    return `<span class="n2s-gate ${cls}" title="${esc(tip)}">${esc(r.cover_label)}</span>`;
+    let out = `<span class="n2s-gate ${cls}" title="${esc(tip)}">${esc(base)}</span>`;
+    if (unver) {
+      out += ` <span class="n2s-gate n2s-gate-unver" title="${esc(
+        'No curated zones at this venue, so the same-zone rule could not be checked. '
+        + 'It does NOT mean a zone was crossed — those are refused. Judge the row drop yourself.'
+      )}">zone unverified</span>`;
+    }
+    return out;
   }
 
   function coverFp(r) {

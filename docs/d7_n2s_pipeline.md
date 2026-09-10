@@ -1,6 +1,6 @@
 # D7 · N2S ("Need to Sub") obligation-covering pipeline
 
-> **Doc version:** v1.5.0 (2026-09-10) — §2a: recorded that the **section-change guarantee is structural** (only `match_zone` can move a section, and it requires a non-null `order_zone` equal to `sub_zone`), that gate 5 inherits it, and that the one carve-out is a row downgrade inside the sold section — now stated in the integration manual rather than left implied. · v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
+> **Doc version:** v1.6.0 (2026-09-10) — §4a: **the gate-5/6 row downgrade is now zone-capped** (operator reversal of "downgrade is not zone based for now"), closing the row-bound-price-tier hole the original cascade documented as accepted. Adds the `zone_ok` truth table, the new ` zone unverified` suffix (`N2S-G1000`) for venues with no curated zones, and why the unverifiable case is a suffix rather than a seventh gate. Profit/cap split is unchanged. · v1.5.0 (2026-09-10) — §2a: recorded that the **section-change guarantee is structural** (only `match_zone` can move a section, and it requires a non-null `order_zone` equal to `sub_zone`), that gate 5 inherits it, and that the one carve-out is a row downgrade inside the sold section — now stated in the integration manual rather than left implied. · v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
 > does, the six stages it runs, the tables and crons that make up each one, the error-code
 > registry, and how an external consumer plugs into the profitable-cover feed.
 
@@ -140,11 +140,18 @@ order, first match wins. The label is a **workflow instruction**, not a quality 
 | 2 | `S4KTrading` | exact | same or better | ≤200% of sale |
 | 3 | `Index offer subs` | same curated zone | same or better | profitable |
 | 4 | `offer subs s4ktrading` | same curated zone | same or better | ≤200% |
-| 5 | `Index Down offer subs` | exact or zone | **up to 5 rows back** | profitable |
-| 6 | `Down offer subs S4KTrading` | exact or zone | **up to 5 rows back** | ≤200% |
+| 5 | `Index Down offer subs` | exact or zone | **up to 5 rows back, same zone** | profitable |
+| 6 | `Down offer subs S4KTrading` | exact or zone | **up to 5 rows back, same zone** | ≤200% |
 
-Suffix **` repost single`** is appended whenever `sub_qty > quantity` — the lot could
-not be split, so we buy one spare and repost it.
+Two suffixes can be appended, in this order:
+
+| Suffix | When | Code |
+|---|---|---|
+| ` zone unverified` | gate 5/6 where **neither** seat resolves to a zone — the venue has none curated, so the same-zone rule could not be checked | `N2S-G1000` |
+| ` repost single` | `sub_qty > quantity` — the lot could not be split, so we buy one spare and repost it | `N2S-G700` |
+
+A label can carry both, so consumers matching on a suffix must use a suffix test
+(`LIKE '% zone unverified'`), never equality on the whole label.
 
 **No gate = not sent.** The 200% ceiling is expressed *only* through the gates; there
 is no separate filter. Nothing above it ships on any gate.
@@ -163,9 +170,33 @@ seat match a Silver seat, so `n2s_zone_of()` takes the row and **refuses ambigui
 zone label is worse than none. FIFA overlay zones and `system_placeholder` zones are
 excluded.
 
-> ⚠ **The gate-5/6 downgrade is deliberately NOT zone-capped** (operator, 2026-09-10),
-> so a five-row move can cross a row-based price tier. Zero live cases at authoring
-> time. This is precisely why gates 5/6 carry "offer subs".
+**The gate-5/6 downgrade is zone-capped** as of `20260910620000`, reversing the
+original "downgrade is not zone based for now". `zone_ok := sub_zone IS NOT DISTINCT
+FROM order_zone`, which reads as three cases because the NULLs carry meaning:
+
+| `order_zone` | `sub_zone` | Outcome |
+|---|---|---|
+| named | same | verified in-zone → ships, plain label |
+| NULL | NULL | venue has no curated zones, nothing to cross → ships, ` zone unverified` |
+| named | different | tier crossed → **no gate, not sent** |
+| named | NULL | sub's row is outside every curated range for that section → **no gate, not sent** |
+
+> ⚠ **Only `match_exact` was ever unsafe.** `match_zone` joins on `lz.zone =
+> oz.order_zone`, and because `n2s_zone_of()` is scoped on section *and* row, a
+> zone-branch downgrade that crossed a tier already resolved to a different zone name
+> and fell out on its own. The hole was entirely in the same-section branch, which
+> compared no zones at all — which is why the fix is one predicate, not a redesign.
+
+> ⚠ **The unverifiable case is a suffix, not a seventh gate.** "No zones at this venue"
+> is not a *worse* cover, it is an unchecked claim. A gate 7 would sort it below a real
+> gate 6 in every consumer that orders by `cover_gate` — but a same-section two-row drop
+> at an unzoned venue is not worse than a tier-verified five-row drop. The suffix leaves
+> the ordering alone and still stops the label claiming a guarantee we did not make.
+
+> ⚠ **Gates 5/6 narrowed; they were not re-pointed.** `N2S-G500`/`G600` keep their
+> numbers and labels — the set they admit is now a strict subset of what it was, which
+> is a narrowing, not a new meaning. Their `meaning` text is corrected in place.
+> Candidates that no longer qualify get no gate and fall under `N2S-G800`.
 
 > ⚠ **`AS MATERIALIZED` on `zrule`/`lcoord0`/`lcoord`/`evz` is load-bearing.** Postgres
 > inlines a CTE referenced once, which pushes the section normalisers back into the join
@@ -264,13 +295,11 @@ universe in `n2s_cover_candidates`: `match_zone`, which requires `order_zone IS 
 downstream — it is never a candidate. Gate 5 inherits this: it carries no section predicate of
 its own, so a gate 5 row is either same-section-worse-row or same-zone-different-section-worse-row.
 
-> ⚠ **The exception is a row downgrade inside the sold section**, per the operator's
-> "downgrade is not zone based for now". `match_exact` does no zone comparison, and 436 of
-> 5,524 zone rules are row-bound **price tiers** rather than geography, so a +5 move within one
-> section can cross a tier. The manual states this to receivers rather than implying a
-> guarantee we do not have — they are the ones showing the seat to a buyer. Note that gates 3/4
-> get tier safety for free, because `n2s_zone_of()` is scoped on section **and** row: a move
-> that crosses a tier resolves to a different zone name and drops out of `match_zone` by itself.
+**The row is held to the same rule as of `20260910620000`** — see §4a. `match_exact` used
+to compare no zones at all, so a +5 move inside one section could cross a row-bound price
+tier; gates 5/6 now require `sub_zone IS NOT DISTINCT FROM order_zone`, and a downgrade we
+can see crossing a zone gets no gate. The one case that still ships unverified is a venue
+with no curated zones on either side, and it says so in the label (` zone unverified`).
 
 Three details in `n2s_profitable_cover_sync()`:
 

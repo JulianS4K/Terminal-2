@@ -38,7 +38,12 @@
       border-color: rgba(251, 191, 36, .5);
       color: #fbbf24;
     }
-    .n2s-gate-cell { max-width: 190px; }
+    .n2s-gate-unver {             /* the caveat, not a gate — muted on purpose */
+      background: rgba(148, 163, 184, .12);
+      border-color: rgba(148, 163, 184, .40);
+      color: var(--muted, #94a3b8);
+    }
+    .n2s-gate-cell { max-width: 230px; }
   </style>
 </head>
 <body data-page="subs">
@@ -230,6 +235,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260910gates"></script>
+  <script src="subs.js?v=20260910zonecap"></script>
 </body>
 </html>

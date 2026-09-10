@@ -442,3 +442,69 @@ def test_gate_label_absent_on_uncovered_row(feed_page, live_server):
     cell = feed_page.locator(".n2s-gate-cell").first
     cell.wait_for()
     assert cell.locator(".n2s-gate").count() == 0
+
+
+def test_zone_unverified_suffix_renders_as_its_own_chip(feed_page, live_server):
+    """The caveat must be separable from the gate name, and stay a caveat.
+
+    " zone unverified" is not part of the gate's identity — it says the
+    same-zone rule could not be CHECKED at this venue, which is a different
+    claim from a gate. Rendered inside the label it reads as a longer gate
+    name; rendered beside it, it reads as the qualifier it is. The title must
+    also rule out the reading a reader will reach for on their own — that a
+    zone was crossed — because those rows are refused and never arrive.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 5,
+              "cover_label": "Index Down offer subs zone unverified"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    chips = feed_page.locator(".n2s-gate-cell .n2s-gate")
+    chips.first.wait_for()
+    assert chips.count() == 2
+    # the gate keeps its own name, without the suffix trailing on the end
+    assert chips.nth(0).inner_text().strip() == "Index Down offer subs"
+    assert "n2s-gate-offer" in chips.nth(0).get_attribute("class")
+    # the caveat is styled apart from both gate variants
+    caveat_cls = chips.nth(1).get_attribute("class")
+    assert "n2s-gate-unver" in caveat_cls
+    assert "n2s-gate-offer" not in caveat_cls
+    title = (chips.nth(1).get_attribute("title") or "").lower()
+    assert "not mean" in title and "crossed" in title
+
+
+def test_both_suffixes_on_one_label_keep_the_gate_name_intact(feed_page, live_server):
+    """Two suffixes can co-occur, and the second must not swallow the first.
+
+    A label built as gate + " zone unverified" + " repost single" is the case
+    that breaks any consumer testing the whole label for equality. The gate
+    chip must still show the bare gate name, and " repost single" must survive
+    on it rather than being stripped along with the zone suffix.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 6,
+              "cover_label": "Down offer subs S4KTrading zone unverified repost single"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    chips = feed_page.locator(".n2s-gate-cell .n2s-gate")
+    chips.first.wait_for()
+    assert chips.count() == 2
+    assert chips.nth(0).inner_text().strip() == "Down offer subs S4KTrading repost single"
+    assert chips.nth(1).inner_text().strip() == "zone unverified"
+
+
+def test_gate_without_the_suffix_renders_one_chip(feed_page, live_server):
+    """A verified in-zone downgrade must NOT pick up the caveat.
+
+    Gates 5/6 now guarantee the substitute resolves to the same zone, so the
+    plain label is the strong claim. If the caveat leaked onto it the guarantee
+    would be invisible exactly where we do have it.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 5, "cover_label": "Index Down offer subs"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    chips = feed_page.locator(".n2s-gate-cell .n2s-gate")
+    chips.first.wait_for()
+    assert chips.count() == 1
+    assert feed_page.locator(".n2s-gate-unver").count() == 0
