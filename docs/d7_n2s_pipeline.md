@@ -1,6 +1,6 @@
 # D7 · N2S ("Need to Sub") obligation-covering pipeline
 
-> **Doc version:** v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
+> **Doc version:** v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
 > does, the six stages it runs, the tables and crons that make up each one, the error-code
 > registry, and how an external consumer plugs into the profitable-cover feed.
 
@@ -186,6 +186,7 @@ obligation takes its best cover first. That is not globally optimal — see the 
   `/api/broker/n2s-covers` serves it to `static/terminal/subs.html`.
 - **`n2s_profitable_cover`** is a real **table** (not a view) holding only rows where
   `profit > 0`, synced by diff and published to Supabase Realtime. This is the external feed.
+  It carries `cover_gate` / `cover_label` / `order_zone` / `sub_zone` — see §2a.
 
 ---
 
@@ -208,29 +209,67 @@ guard, so an identical row emits nothing), covers that stopped being profitable 
 default (primary key only) a subscriber learns an `n2s_id` vanished but not which order it
 was — useless for un-flagging something already shown to a human.
 
-**Covers age out at 6 hours, at the source.** A cover whose underlying listing snapshot
-(`captured_at`) is older than 6 hours is excluded from the sync's `src` set, so the existing
-diff deletes it once and never re-adds it.
+**The 6-hour age-out is OFF (2026-09-10, operator direction).** It was built, shipped and
+then deliberately removed: the operator wants the full history retained to measure
+profit/loss potential over time, and an expiry that reaps rows destroys exactly the series
+being measured. `n2s_cover_history` (append-only) and `n2s_book_snapshot` (hourly exposure)
+now carry the long-run record; the feed carries current state only.
 
-> ⚠ **Never re-implement this as a `DELETE … WHERE first_seen_at < now() - '6 hours'` job.**
-> The sync is a per-minute diff: deleting a row that is *still* profitable just gets it
-> re-INSERTed on the next tick with a fresh `first_seen_at`. That is a 6-hourly delete/insert
-> **flap**, not an expiry — it emits phantom DELETE+INSERT events to every subscriber (each of
-> which they must treat as real), and resets the very timestamp it ages on, so nothing ever
-> expires. Any age measured on a *target-table* column is self-defeating for the same reason.
+> ⚠ **Turning it off cost us a deadman, and nothing replaced it.** While the cap was live, a
+> stalled poll chain emptied the feed within 6 hours rather than serving buy links priced
+> against dead inventory — an empty feed is an honest failure, a stale one is not. With the
+> cap off, a stall now leaves the last known covers sitting on the wire indefinitely. Restoring
+> it is one predicate in the sync's `src` CTE; a freshness signal that does not delete rows
+> would be the better replacement.
 >
-> `captured_at` is used because it survives a delete/insert round trip and is the honest
-> measure of how old the market data behind a buy link is. `updated_at` would be wrong twice
-> over: the sync writes only on genuine change, so it means *last changed*, not *last
-> confirmed* — ageing on it would delete the most stable covers first. A NULL `captured_at`
-> fails closed.
->
-> In steady state this reaps nothing (the poller re-captures continuously). Its value is as a
-> **deadman**: if the poll chain stalls, the feed empties itself within 6 hours instead of
-> serving buy links priced against dead inventory. An empty feed is an honest failure; a
-> stale one is not.
+> ⚠ **If it is ever restored, do NOT implement it as a `DELETE … WHERE first_seen_at <
+> now() - '6 hours'` job.** The sync is a per-minute diff: deleting a row that is *still*
+> profitable just gets it re-INSERTed on the next tick with a fresh `first_seen_at`. That is a
+> 6-hourly delete/insert **flap**, not an expiry — it emits phantom DELETE+INSERT events to
+> every subscriber (each of which they must treat as real), and resets the very timestamp it
+> ages on, so nothing ever expires. Any age measured on a *target-table* column is
+> self-defeating for the same reason. The shipped version filtered on `captured_at` in the
+> `src` set, because that survives a delete/insert round trip and is the honest measure of how
+> old the market data behind a buy link is. `updated_at` would be wrong twice over: the sync
+> writes only on genuine change, so it means *last changed*, not *last confirmed* — ageing on
+> it would delete the most stable covers first. A NULL `captured_at` failed closed.
 
 ---
+
+## 2a. The gate label must reach the feed, not just the panel
+
+The cascade classifies every cover (§4a), `n2s_cover_queue` stores the label, `v_n2s_orders`
+exposes it and the subs panel colours it. For a day, that was the whole story — and
+`n2s_profitable_cover`, the one surface that leaves the building, carried none of it. The
+manual's own "gates" step already told integrators to read `cover_label` before acting on a
+row, so we were documenting a field the feed did not send. A documented field that does not
+exist is worse than an undocumented one: the reader trusts it.
+
+It is the **safety** field, not a nicety. When the gap was found, 7 of the 11 rows on the wire
+were gates 3 and 5 — the buyer moved to another section in the same zone, or up to five rows
+further back — and each of those must be offered to the buyer and accepted *before* the
+purchase. A receiver sorting by `profit` descending and following `buy_url` reads the top row
+as "$1,126 profit, go buy it". That is the wrong action, and nothing in the payload said so.
+
+> ⚠ **Any surface that carries `buy_url` must carry `cover_gate` beside it.** The buy link is
+> the instruction to act; the gate is the permission to. Shipping one without the other is
+> the whole failure mode this lane exists to prevent — we are data control and labelling, and
+> the label has to survive the border.
+
+Three details in `n2s_profitable_cover_sync()`:
+
+- The four columns ride through `src`, the INSERT list, the `ON CONFLICT` update **and the
+  `IS DISTINCT FROM` change-detection tuple**. The last is the easy one to miss: without it a
+  cover that is re-gated (same listing, new classification) does not count as changed, so no
+  UPDATE, so no Realtime event — and a subscriber sits on a stale label indefinitely. That
+  failure is silent on both sides.
+- **Only the odd gates can appear here.** The feed is `v_n2s_orders WHERE cover_cost < 0`,
+  i.e. profitable; gates 2/4/6 are the at-or-under-200%-of-cost arms, which are by definition
+  not profitable. An even gate in this table means something upstream is wrong. The manual
+  says so rather than listing six gates a reader of this feed will never see.
+- A NULL label **fails closed**. It means the classification was lost in our pipeline, not
+  that the row is safe; the manual instructs receivers to hold such a row and report
+  `N2S-G900`, and never to read a missing label as gate 1.
 
 ## 3. Cron chain
 
@@ -238,7 +277,8 @@ diff deletes it once and never re-adds it.
 |---|---|---|
 | `n2s_pull_1min` | every minute | CRM ingest → `n2s_items` |
 | cron 598 | every minute | `n2s_map_events(true); n2s_pull_all_sources();` — map, then poll the newly-mapped |
-| cron 602 | every minute | `n2s_cover_queue_refresh(); n2s_profitable_cover_sync();` — match, queue, publish |
+| cron 602 | every minute | `n2s_cover_queue_refresh(); n2s_cover_history_append(); n2s_profitable_cover_sync();` — match, queue, record, publish |
+| `n2s_book_snapshot_hourly` | `37 * * * *` | `n2s_book_snapshot_take()` — open/covered/uncovered exposure, so the P&L series measures what we did NOT cover too |
 | `n2s_cover_push_1min` | every minute | drains `n2s_cover_push` — **inert** unless a webhook URL secret is set |
 
 > ⚠ **pg_cron cannot rename a job in place**, and adding a defaulted parameter alongside an
@@ -310,8 +350,9 @@ Full step-by-step, versioned and queryable, is seeded into **`public.n2s_integra
 6. Treat a `DELETE` as **"this cover is gone"** — un-flag it. `REPLICA IDENTITY FULL` means
    the event carries the full old row, so you know which order it was.
 
-The columns a buyer needs: `order_number` (and `order_key` to find it in the CRM),
-`sub_section`, `sub_row`, `sub_qty`, `buy_url`, `profit`.
+The columns a buyer needs: **`cover_label` first** (see §2a — it says whether the row may be
+acted on at all), then `order_number` (and `order_key` to find it in the CRM), `sub_section`,
+`sub_row`, `sub_qty`, `buy_url`, `profit`.
 
 ---
 
