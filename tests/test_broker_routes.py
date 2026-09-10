@@ -78,6 +78,9 @@ class _FakeQuery:
     def gt(self, *_a, **_k):
         return self
 
+    def lt(self, *_a, **_k):
+        return self
+
     def lte(self, *_a, **_k):
         return self
 
@@ -1088,6 +1091,7 @@ def test_sub_worklist_with_sub_false_selects_the_gap(client, monkeypatch):
 def _cov_row(**over):
     row = {
         "n2s_id": 436, "order_number": "P8L5T1EUKG", "s4k_source": "Gametime",
+        "n2s_order_key": "P8L5T1EUKG",
         "n2s_status": "n2s", "fail_reason": "Unknown", "timer_expired": True,
         "event_name": "US Open Tennis - Session 21", "event_date": "2026-09-12",
         "venue": "Arthur Ashe Stadium", "tevo_event_id": 3287886,
@@ -1242,6 +1246,30 @@ def test_n2s_covers_serves_an_over_delivery_cover(client, monkeypatch):
     assert row["cover_cost"] == 601.20
 
 
+def test_n2s_covers_profitable_filter_is_passed_through(client, monkeypatch):
+    """Profitable means cover_cost < 0 — the obligation settles for less than
+    the seat sold for. Break-even is excluded on purpose: it is not money."""
+    _use_db(monkeypatch, FakeSupabase(
+        table_data={"v_n2s_orders": [_cov_row(cover_cost=-99.62)]}))
+    body = client.get("/api/broker/n2s-covers?profitable=true").json()
+    assert body["filters"]["profitable"] is True
+    # Default must stay off, or the panel would silently hide the gap rows
+    # that are the whole point of this book.
+    assert client.get("/api/broker/n2s-covers").json()["filters"]["profitable"] is False
+
+
+def test_n2s_covers_serves_the_source_order_key(client, monkeypatch):
+    """The panel needs the marketplace's own order id to look the obligation up
+    while it is still live. EVO's order_number is an <invoice>-<order>
+    composite, so the key is carried separately rather than parsed out here."""
+    evo = _cov_row(s4k_source="EVO", order_number="8047273-19083928",
+                   n2s_order_key="19083928")
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [evo]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["order_number"] == "8047273-19083928"
+    assert row["n2s_order_key"] == "19083928"
+
+
 def test_n2s_covers_displaced_ignores_uncovered_rows(client, monkeypatch):
     """cover_rank is NULL on a gap row; it must not be read as first choice and
     counted into the contention figure."""
@@ -1279,6 +1307,7 @@ def test_n2s_covers_applies_every_filter(client, monkeypatch):
                       "?source=Gametime&days=14&limit=5&offset=10").json()
     assert body["filters"] == {"source": "Gametime", "days": 14,
                                "with_sub": None, "include_late": False,
+                               "profitable": False,
                                "limit": 5, "offset": 10}
     assert body["count"] == 1
 

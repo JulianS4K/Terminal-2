@@ -77,6 +77,25 @@
   // A cover is (order, listing, price). If any of those change the row is a
   // DIFFERENT offer, and anything we remembered about the old one — a verify
   // verdict, a claim — no longer describes what is on screen.
+  // The marketplace's OWN order number, so the obligation can be looked up in
+  // that marketplace's console while it is still live. Without it the row says
+  // which marketplace failed but not which order, which is the one thing you
+  // need to go and check it.
+  //
+  // EVO is the exception worth showing both halves of: its order_number is a
+  // composite "<invoice>-<order>" while n2s_order_key is just the order part,
+  // and which one the console wants depends where you paste it. Everywhere
+  // else the two are identical and only one is shown.
+  function ordCell(r) {
+    const num = r.order_number || '';
+    if (!num) return '<span class="muted">—</span>';
+    const key = r.n2s_order_key || '';
+    const alt = (key && key !== num)
+      ? `<div class="muted small" title="order key — EVO splits invoice from order">${esc(key)}</div>`
+      : '';
+    return `<span class="mono">${esc(num)}</span>${alt}`;
+  }
+
   function coverFp(r) {
     return [r.sub_source || '', r.sub_listing_id || '', r.sub_ea == null ? '' : r.sub_ea].join('|');
   }
@@ -86,7 +105,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
+    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate', 'n2sProfit'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -141,10 +160,12 @@
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
     const late = (document.getElementById('n2sLate') || {}).value || '';
+    const profit = (document.getElementById('n2sProfit') || {}).value || '';
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
     if (has) qs.set('with_sub', has);
     if (late) qs.set('include_late', late);
+    if (profit) qs.set('profitable', profit);
     try {
       const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
       renderN2s(d);
@@ -163,9 +184,17 @@
         // one that was invisible when this panel showed covers only.
         const why = Object.entries(d.by_no_cover_reason || {})
           .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
-        meta.textContent = `${d.count} open · ${d.covered} with a sub`
-          + ` · ${d.uncovered} without${why ? ` (${why})` : ''}`
-          + ` · ${money(d.total_cover_cost)} to settle${disp}${late}${arrived}${stamp}`;
+        // The profit filter shows only covers that settle BELOW the sale, so
+        // the uncovered book is empty by construction rather than because the
+        // book is clean. Reporting "0 without" there would read as good news.
+        const onlyProfit = d.filters && d.filters.profitable;
+        meta.textContent = onlyProfit
+          ? `${d.count} profitable cover${d.count === 1 ? '' : 's'}`
+            + ` · ${money(d.total_cover_cost)} net${disp}${late}${arrived}${stamp}`
+            + ` · gaps hidden by this filter`
+          : `${d.count} open · ${d.covered} with a sub`
+            + ` · ${d.uncovered} without${why ? ` (${why})` : ''}`
+            + ` · ${money(d.total_cover_cost)} to settle${disp}${late}${arrived}${stamp}`;
       }
     } catch (err) {
       const msg = err && err.message ? err.message : err;
@@ -281,10 +310,11 @@
         .filter(Boolean).join(' ');
       return `<tr data-n2s="${esc(String(r.n2s_id))}" data-fp="${esc(coverFp(r))}"${rowCls ? ` class="${rowCls}"` : ''}>
         <td>${esc(r.s4k_source || '')}${chip}${timer}${claimed}</td>
+        <td class="n2s-ord">${ordCell(r)}</td>
         <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
         <td>${seat}</td>
         <td class="num">${money(r.sold_ea)}</td>
-        <td>${cov}${bumped}</td>
+        <td class="n2s-sub">${cov}${bumped}</td>
         <td class="num">${r.has_cover ? money(r.sub_ea) : '<span class="muted">—</span>'}</td>
         <td class="num">${coverCell(r.cover_cost)}</td>
         <td>${buy}</td>
@@ -293,7 +323,7 @@
       </tr>`;
     }).join('');
     wrap.innerHTML = `<table class="subs-table"><thead><tr>
-        <th>Src</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
+        <th>Src</th><th>Order #</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
         <th>Sub / why not</th><th class="num">Sub ea</th><th class="num">Cost to settle</th><th></th><th>Verify</th><th></th>
       </tr></thead><tbody>${body}</tbody></table>`;
     wrap.querySelectorAll('.n2s-claim').forEach((b) => {

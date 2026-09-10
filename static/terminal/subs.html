@@ -88,6 +88,15 @@
           </select>
         </div>
         <div class="subs-field narrow">
+          <label for="n2sProfit">Money</label>
+          <!-- cover_cost < 0 only. This empties the uncovered book by
+               construction, so the empty state has to say so. -->
+          <select id="n2sProfit">
+            <option value="">all</option>
+            <option value="true">profitable only</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
           <label for="n2sDays">Within days</label>
           <input id="n2sDays" type="number" min="1" step="1" placeholder="all" />
         </div>
@@ -200,6 +209,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260910overdeliver"></script>
+  <script src="subs.js?v=20260910ordprofit"></script>
 </body>
 </html>
