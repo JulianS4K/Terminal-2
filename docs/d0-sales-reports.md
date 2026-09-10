@@ -1,7 +1,7 @@
 # D0 Sales Reports — build spec
 
-> **Doc version:** v1.0.0 (2026-06-24)
-> **Status:** DB layer shipped & live in `Terminal .5` (project `hzrizjeaxlqcxfrtczpq`). FastAPI + terminal UI are the remaining build.
+> **Doc version:** v1.2.0 (2026-08-26)
+> **Status:** Shipped & live in `Terminal .5` (project `hzrizjeaxlqcxfrtczpq`) — DB layer, the FastAPI read layer (`routers/d0_sales.py`) and the terminal pages (`static/terminal/sales.{html,js}`, `leagues.js`) are all built; `tests/test_d0_sales_routes.py` covers the routes. (v1.1.0 corrected the stale "FastAPI + terminal UI are the remaining build" line, which outlived the build by ~2 months.)
 > **Scope:** D0 terminal surface. Read-only over already-applied Supabase objects — **do not rebuild the data layer.**
 
 This is the self-contained build note for the league/performer **sales reports**. The SQL is done and verified against live data; what's left is the FastAPI read layer and the terminal pages that render it. Everything below is grounded in the actual database objects, not memory — column lists, the refresh functions, the cron schedules, and the validation numbers were all pulled from the live project on 2026-06-24.
@@ -73,7 +73,14 @@ Indexes: `idx_d0_sales_fact_event(event_id)`, `idx_d0_sales_fact_league(league)`
 
 ## 1. Data model & attribution rules
 
-**Universe.** Only the 6 ESPN leagues, gated by `performer_metadata.espn_league IN (MLB,NBA,NFL,NHL,MLS,WNBA)`. An event's `league` is its **home team's** league (`d0_league_events`).
+**Universe — split by source since mig `20260826120000`.**
+
+- **Owned sources** (`evo`, `seatgeek_orders`, `tickpick`, `vivid`) cover **all events**, via `d0_sales_events` (a left join to the league roster). Non-league sales land with **`league IS NULL`** — the column is nullable now. This is what makes S4K sales at comedy, community, mid-tier-music and venue-distributed events visible at all.
+- **Market sources** (`seatgeek_sales`, `seatdata`) stay gated to the 6 ESPN leagues via `d0_league_events`, deliberately: extending them adds 420,849 SeatData lines alone to a ~924k-row table, and the SG-sales firehose join over the non-league universe did not complete in 60s. Widening market breadth is its own decision.
+
+An event's `league` is still its **home team's** league. The league-level views (`d0_league_summary`, `d0_league_price_weighted`) filter `league IS NOT NULL`, so league reporting is unchanged; every performer view inner-joins `d0_league_event_roles` and so admits league events only.
+
+> **Known gap (not fixed by that migration).** 200 fulfilled `seatgeek_orders` and 68 `evo_order_items` carry no resolvable `tevo_event_id`, so they cannot join an event and stay untracked regardless of universe. That is an order→event mapping problem (`backfill_order_tevo_from_aq()`, hourly :40).
 
 **Home / away expansion (`d0_league_event_roles`).** Each event fans out to every performer on it (`performer_ids || primary_performer_id`, de-duped). `role = 'home'` when the performer is `events.primary_performer_id`, else `'away'`. Because `d0_perf_sale_lines` joins fact rows to *every* role on the event, **a single sale is counted once under the home team and once under the away team.** This is intentional — it lets "Inter Miami sales" mean *all sales at Inter Miami events*, home or away.
 
