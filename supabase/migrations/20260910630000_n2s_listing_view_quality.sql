@@ -142,13 +142,19 @@ DECLARE v text; n text;
 BEGIN
   v := pg_get_viewdef('public.v_n2s_orders'::regclass, true);
 
-  n := 'n.sub_zone';
+  -- ⚠ The queue is aliased `c` on this view (`LEFT JOIN n2s_cover_queue c`),
+  -- and 20260910520000 appended the gate columns as `c.cover_gate … c.sub_zone`.
+  -- The first cut of this migration anchored on `n.sub_zone` (n = n2s_items,
+  -- which has no such column). A pre-flight check of the anchors against
+  -- prod on 2026-09-10 showed this assertion would refuse it, so it was
+  -- corrected BEFORE apply — the broken form was never run against prod.
+  n := 'c.sub_zone';
   IF position(n in v) = 0 THEN
-    RAISE EXCEPTION 'anchor (n.sub_zone on v_n2s_orders) not found — 20260910520000 appended it; re-derive this migration';
+    RAISE EXCEPTION 'anchor (c.sub_zone on v_n2s_orders) not found — 20260910520000 appended it; re-derive this migration';
   END IF;
   -- CREATE OR REPLACE VIEW can only APPEND columns, which is what this is:
   -- two new names after the last one 20260910520000 added.
-  v := replace(v, n, n || ',' || E'\n' || '    n.sub_notes,' || E'\n' || '    n.sub_view');
+  v := replace(v, n, n || ',' || E'\n' || '    c.sub_notes,' || E'\n' || '    c.sub_view');
 
   EXECUTE 'CREATE OR REPLACE VIEW public.v_n2s_orders AS ' || v;
 END $do$;
