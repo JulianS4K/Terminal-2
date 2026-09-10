@@ -29,7 +29,8 @@ jobs:
             const title = context.payload.pull_request.title;
             // Format: <type>(<lane>): <message>
             // type: feat|fix|chore|docs|refactor|test|perf|style|build|ci|revert
-            // lane: a1|b1|c1|d0|d1|d2|d3|d4|e1|security|bibles|governance|deps|ci-deps|admin|bridge|d0/event|d0/home|d0/terminal|store|sg|sg/cron|sg/sales|sg/metrics|sg-bridge|unified-shell|metrics|d2|d2-* (loose: any [a-z0-9/-]+)
+            // lane: a1|b1|d0|d1|d3|d4|d5|d7|security|bibles|governance|deps|ci-deps|admin|bridge|d0/event|d0/home|d0/terminal|store|sg|sg/cron|sg/sales|sg/metrics|sg-bridge|unified-shell|metrics|d2|d2-* (loose: any [a-z0-9/-]+)
+            // retired lane codes (c1, d2, d6, e1) still parse — the regex is loose and old branches use them
             const re = /^(feat|fix|chore|docs|refactor|test|perf|style|build|ci|revert)\(([a-z0-9/_-]+)\):\s+.{5,}$/;
             if (!re.test(title)) {
               const msg = [
@@ -44,7 +45,7 @@ jobs:
                 ``,
                 `**Allowed types**: feat, fix, chore, docs, refactor, test, perf, style, build, ci, revert`,
                 ``,
-                `**Common lanes**: a1, b1, c1, d0, d1, d2, d3, d4, d5, d6, e1, security, bibles, governance, deps, ci-deps, sg, store`,
+                `**Common lanes**: a1, b1, d0, d1, d3, d4, d5, d7, security, bibles, governance, deps, ci-deps, sg, store` (retired but still accepted for history: c1, d2, d6, e1),
                 ``,
                 `See docs/pr_governance.md for the full convention.`,
                 ``,
