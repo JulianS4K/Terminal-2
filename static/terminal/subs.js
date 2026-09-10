@@ -1,24 +1,28 @@
 // D0 Terminal — Substitution checker + QUEUE.
 //
-// The page is now push-first: the SUB QUEUE lists every order with its best
-// cover, rebuilt as the GoTickets and EVO books refresh, so work arrives
-// instead of being asked for. Picking a queue row fills the form below and
-// runs the authoritative live check.
+// The page is push-first: NEED TO SUB lists every open obligation with its
+// cover where one exists, refreshing itself every 60s, so work arrives instead
+// of being asked for.
 //
-//   GET /api/broker/sub-worklist?source=&with_sub=&days=&limit=&offset=
+// The SUB QUEUE panel was removed 2026-09-10 (operator direction: "only keep
+// n2s"). That queue hunted OPTIONAL profitable swaps across our own healthy
+// order book; this page is now only about orders that already FAILED and must
+// be covered. /api/broker/sub-worklist and its 10-minute refresh cron still
+// exist server-side but nothing on this page reads them.
+//
 //   GET /api/broker/n2s-covers?source=&days=&limit=&offset=
 //   GET /api/broker/n2s-covers/verify?freshness_minutes=
 //   POST /api/broker/n2s-covers/{n2s_id}/buy-intent   (records intent; buys nothing)
-//     -> { rows:[...], count, with_candidate, refreshed_at, filters }
+//     -> { rows:[...], count, covered, uncovered, by_no_cover_reason,
+//          refreshed_at, filters }
 //
-// The queue row carries only the BEST candidate and a count — it is a triage
-// summary of precomputed state, NOT the answer. The answer is recomputed live
-// per order by the route below, which carries the GA / splits / ambiguous
-// handling the summary row cannot represent.
+// A cover row carries only the ALLOCATED listing — it is precomputed state,
+// not the last word. The checker below recomputes live per order and carries
+// the GA / splits / ambiguous handling a summary row cannot represent.
 //
-// The order-# lookup and the manual entry form are unchanged: a queue is for
-// sweeping the book, but covering a specific order someone just called about
-// still has to be one box you can paste into.
+// The order-# lookup and the manual entry form stay: a list is for sweeping
+// the book, but covering a specific order someone just called about still has
+// to be one box you can paste into.
 //
 //   GET /api/broker/event/{id}/substitutions
 //        ?section=&row=&quantity=&revenue=&source=owned|market
@@ -41,7 +45,6 @@
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
-    wireQueue();
     wireN2s();
     wireEventSearch();
     wireFeeToggle();
@@ -50,11 +53,12 @@
 
   // ---------- need-to-sub covers (push) ----------
   //
-  // A DIFFERENT BOOK from the sub queue below. That one hunts profit on our own
-  // orders; this one lists orders that already FAILED and must be covered
-  // whether or not it pays. cover_cost is signed the other way round from
-  // margin on purpose: positive means honouring the order costs us that much.
-  // Sorting is cheapest-cover-first, never by margin.
+  // Orders that already FAILED and must be covered whether or not it pays.
+  // ⚠ cover_cost is signed the OPPOSITE way to margin: positive means honouring
+  // the order costs us that much. Sorting is cheapest-cover-first, never by
+  // margin — the question is what the obligation settles for, not where the
+  // profit is. (The profit-hunting SUB QUEUE that used to sit below was
+  // removed; see the file header.)
 
   // The covers panel is a FEED, not a report you ask for. The pipeline rebuilds
   // n2s_cover_queue every 2 minutes, so a page that only loads on click shows
@@ -82,7 +86,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas'].forEach((id) => {
+    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -136,9 +140,11 @@
     const src = (document.getElementById('n2sSource').value || '').trim();
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
+    const late = (document.getElementById('n2sLate') || {}).value || '';
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
     if (has) qs.set('with_sub', has);
+    if (late) qs.set('include_late', late);
     try {
       const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
       renderN2s(d);
@@ -151,6 +157,7 @@
           : ' · never refreshed';
         const disp = d.displaced ? ` · ${d.displaced} took a dearer cover` : '';
         const arrived = n2sFeed.fresh.size ? ` · ${n2sFeed.fresh.size} new` : '';
+        const late = d.hidden_late ? ` · ${d.hidden_late} hidden (timer expired)` : '';
         // Lead with the shape of the book: how many can be acted on versus how
         // many are still open with nothing to act on. The second number is the
         // one that was invisible when this panel showed covers only.
@@ -158,7 +165,7 @@
           .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
         meta.textContent = `${d.count} open · ${d.covered} with a sub`
           + ` · ${d.uncovered} without${why ? ` (${why})` : ''}`
-          + ` · ${money(d.total_cover_cost)} to settle${disp}${arrived}${stamp}`;
+          + ` · ${money(d.total_cover_cost)} to settle${disp}${late}${arrived}${stamp}`;
       }
     } catch (err) {
       const msg = err && err.message ? err.message : err;
@@ -188,10 +195,16 @@
     n2sFeed.seen = ids;
     forgetStaleN2sState(rows);
     if (!rows.length) {
-      // Say WHY it may be empty. An empty cover list is ambiguous between "all
-      // settled" and "the listings we had aged out of the 1-hour window", and
-      // the second is not good news.
-      wrap.innerHTML = emptyHtml('no open N2S orders match these filters');
+      // ⚠ An empty page here is almost never "nothing needs covering". The
+      // default hides every order whose 15-minute CRM timer lapsed, which is
+      // nearly all of them, so saying only "no orders" would report a clear
+      // book when the truth is the opposite. Name the count and the way back.
+      const hidden = (d && d.hidden_late) || 0;
+      wrap.innerHTML = emptyHtml(hidden
+        ? `nothing shown — <strong>${hidden}</strong> open obligation${hidden === 1 ? '' : 's'} `
+          + 'are hidden because their 15-minute CRM timer expired. '
+          + 'Set <em>Timer</em> to “include late” to see them.'
+        : 'no open N2S orders match these filters');
       return;
     }
     const body = rows.map((r) => {
@@ -471,104 +484,6 @@
 
   // ---------- sub queue (push) ----------
 
-  function wireQueue() {
-    const btn = document.getElementById('subsQRun');
-    if (btn) btn.addEventListener('click', loadQueue);
-    // Load once on open so the screen is useful before anyone touches a
-    // control — the whole point of a queue is that it is already there.
-    if (document.getElementById('subsQueueTable')) loadQueue();
-  }
-
-  async function loadQueue() {
-    const wrap = document.getElementById('subsQueueTable');
-    const meta = document.getElementById('subsQueueMeta');
-    if (!wrap) return;
-    wrap.innerHTML = '<div class="empty">loading…</div>';
-    const qs = new URLSearchParams({ limit: '100' });
-    const src = (document.getElementById('subsQSource').value || '').trim();
-    const has = (document.getElementById('subsQHas').value || '').trim();
-    const days = (document.getElementById('subsQDays').value || '').trim();
-    if (src) qs.set('source', src);
-    if (has) qs.set('with_sub', has);
-    if (days) qs.set('days', days);
-    try {
-      const d = await T.api(`/api/broker/sub-worklist?${qs.toString()}`);
-      renderQueue(d);
-      if (meta) {
-        const stamp = d.refreshed_at ? ` · refreshed ${esc(String(d.refreshed_at).slice(0, 16).replace('T', ' '))}` : '';
-        meta.textContent = `${d.count} orders · ${d.with_candidate} with a sub${stamp}`;
-      }
-    } catch (err) {
-      wrap.innerHTML = emptyHtml(`queue unavailable: ${err && err.message ? err.message : err}`);
-      if (meta) meta.textContent = '';
-    }
-  }
-
-  function renderQueue(d) {
-    const wrap = document.getElementById('subsQueueTable');
-    const rows = (d && d.rows) || [];
-    if (!rows.length) {
-      wrap.innerHTML = emptyHtml('queue empty — nothing in scope, or the refresh has not run yet');
-      return;
-    }
-    const body = rows.map((r) => {
-      const seat = `${esc(r.section || '')} / ${esc(r.order_row || '')} ×${r.quantity || ''}`;
-      // candidates=0 is a real, meaningful state: in scope, nothing qualified.
-      const cover = r.candidates
-        ? `${sourceBadge(r.best_sub_source)} ${esc(r.best_section || '')} / ${esc(r.best_row || '')}`
-        : '<span class="muted">none</span>';
-      const n = r.candidates ? `<span class="muted small">${r.candidates}</span>` : '';
-      return `<tr class="subs-q-row" data-order='${esc(JSON.stringify({
-        event: r.tevo_event_id, section: r.section, row: r.order_row,
-        quantity: r.quantity, revenue: r.sold_total,
-      }))}'>
-        <td>${esc(r.source || '')}</td>
-        <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')}</div></td>
-        <td>${seat}</td>
-        <td class="num">${money(r.sold_total)}</td>
-        <td>${cover} ${n}</td>
-        <td class="num">${money(r.best_total)}</td>
-        <td class="num">${pnlCell(r.margin_total)}</td>
-      </tr>`;
-    }).join('');
-    wrap.innerHTML = `<table class="subs-table"><thead><tr>
-        <th>Src</th><th>Event</th><th>Sold seat</th><th class="num">Sold</th>
-        <th>Best cover</th><th class="num">Cost</th><th class="num">Margin</th>
-      </tr></thead><tbody>${body}</tbody></table>`;
-    wrap.querySelectorAll('.subs-q-row').forEach((tr) => {
-      tr.addEventListener('click', () => pickQueueRow(tr));
-    });
-  }
-
-  // A queue row is a pointer, not an answer: fill the form and re-run the live
-  // check so what the broker acts on is priced against the CURRENT book, not
-  // whatever the last refresh happened to see.
-  function pickQueueRow(tr) {
-    let o;
-    try { o = JSON.parse(tr.getAttribute('data-order')); } catch (_e) { return; }
-    if (!o || !o.event) {
-      const msg = document.getElementById('subOrderMsg');
-      if (msg) msg.innerHTML = '<span class="neg">that order has no mapped event yet</span>';
-      return;
-    }
-    // ⚠ ASSIGN, DO NOT setVal. setVal skips null/empty, so a GA order (no row)
-    // or one with no revenue would silently INHERIT those fields from the
-    // previously clicked order — and run() fires immediately, presenting
-    // candidates and a P&L for a seat this order never had. Clearing is the
-    // correct representation of "this order does not state one".
-    putVal('subEvent', o.event);
-    putVal('subSection', o.section);
-    putVal('subRow', o.row);
-    putVal('subQty', o.quantity);
-    putVal('subRevenue', o.revenue);
-    const srcSel = document.getElementById('subSource');
-    if (srcSel) srcSel.value = 'market';
-    wireFeeToggle();
-    run();
-    const panel = document.getElementById('subs-form-panel');
-    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth' });
-  }
-
   // ---------- order # → auto-fill the sold ticket ----------
 
   // Order sources: the four we ingest, plus the S4K CRM fallback that fronts
@@ -587,13 +502,6 @@
   function setVal(id, v) {
     const el = document.getElementById(id);
     if (el && v !== null && v !== undefined && v !== '') el.value = v;
-  }
-
-  // Assign-always: for switching the form to a DIFFERENT order, where an
-  // absent field means this order has none and the old value must not persist.
-  function putVal(id, v) {
-    const el = document.getElementById(id);
-    if (el) el.value = (v === null || v === undefined) ? '' : v;
   }
 
   async function loadOrder() {

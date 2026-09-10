@@ -51,9 +51,16 @@ class _FakeQuery:
 
     def __init__(self, data):
         self._data = data
+        self._count = False
 
     # builder methods used across broker routes — all return self
     def select(self, *_a, **_k):
+        # PostgREST returns a row count alongside the data whenever the caller
+        # asks for count="exact". Model that, so routes reading `.count` are
+        # exercised against the shape the real client actually returns rather
+        # than a fallback that only exists for this double.
+        if _k.get("count"):
+            self._count = True
         return self
 
     def eq(self, *_a, **_k):
@@ -78,7 +85,10 @@ class _FakeQuery:
         return self
 
     def execute(self):
-        return type("_Res", (), {"data": self._data})()
+        attrs = {"data": self._data}
+        if self._count:
+            attrs["count"] = len(self._data)
+        return type("_Res", (), attrs)()
 
 
 class FakeSupabase:
@@ -1200,13 +1210,35 @@ def test_n2s_covers_displaced_ignores_uncovered_rows(client, monkeypatch):
     assert body["displaced"] == 1
 
 
+def test_n2s_covers_hides_late_by_default_and_says_how_many(client, monkeypatch):
+    """The default filters out every order past its 15-minute CRM timer, which
+    measured 108 of 108. An empty page must therefore report the hidden count —
+    otherwise it reads as "nothing needs covering", the exact opposite of true."""
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row(), _cov_row(n2s_id=2)]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["filters"]["include_late"] is False
+    # The fake does not filter, so both the page query and the late-count query
+    # see the same rows; what matters is that the count is reported at all.
+    assert body["hidden_late"] == 2
+
+
+def test_n2s_covers_include_late_skips_the_hidden_count(client, monkeypatch):
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers?include_late=true").json()
+    assert body["filters"]["include_late"] is True
+    assert body["hidden_late"] == 0
+
+
 def test_n2s_covers_applies_every_filter(client, monkeypatch):
     fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
     _use_db(monkeypatch, fake)
     body = client.get("/api/broker/n2s-covers"
                       "?source=Gametime&days=14&limit=5&offset=10").json()
     assert body["filters"] == {"source": "Gametime", "days": 14,
-                               "with_sub": None, "limit": 5, "offset": 10}
+                               "with_sub": None, "include_late": False,
+                               "limit": 5, "offset": 10}
     assert body["count"] == 1
 
 
