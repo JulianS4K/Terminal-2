@@ -120,6 +120,49 @@ def test_claim_issues_a_post_not_a_get(feed_page, live_server):
                                                               "e => e.textContent")
 
 
+def test_an_already_claimed_row_offers_no_claim_button(feed_page, live_server):
+    """One open intent per order is enforced by a unique index, so a row someone
+    else already claimed can only 409. Show who has it instead of offering a
+    button whose sole outcome is an error."""
+    taken = _cover(2)
+    taken.update({"open_intent_id": 7, "open_intent_by": "someone@s4kent.com"})
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([_cover(1), taken])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+
+    assert len(feed_page.query_selector_all("#n2sTable .n2s-claim")) == 1
+    assert feed_page.query_selector('#n2sTable tr[data-n2s="1"] .n2s-claim')
+    assert feed_page.query_selector('#n2sTable tr[data-n2s="2"] .n2s-claim') is None
+    row2 = feed_page.eval_on_selector('#n2sTable tr[data-n2s="2"]', "e => e.textContent")
+    assert "claimed" in row2
+
+
+def test_claim_records_who_asked(feed_page, live_server):
+    """requested_by is the audit trail the one-intent-per-order rule exists to
+    provide. Without it every intent stores NULL and the row reads 'claimed by
+    someone' forever."""
+    seen = {}
+
+    def _claim(route):
+        seen["url"] = route.request.url
+        _json_route(route, json.dumps({"intent": {"intent_id": 7, "payload_ready": True,
+                                                  "payload_gaps": [], "operator_fills": []},
+                                       "bought": False}))
+
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([_cover(1)])))
+    feed_page.route(_INTENT_RE, _claim)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector('#n2sTable tr[data-n2s="1"] .n2s-claim')
+    # Override AFTER load: auth.js assigns window.TerminalAuth on script
+    # execution, so an init script would just be overwritten by the real one.
+    feed_page.evaluate(
+        "() => { window.TerminalAuth = Object.assign({}, window.TerminalAuth,"
+        "        { getEmail: () => 'julian@s4kent.com' }); }")
+    feed_page.click('#n2sTable tr[data-n2s="1"] .n2s-claim')
+    feed_page.wait_for_selector("tr.n2s-sheet")
+    assert "requested_by=julian%40s4kent.com" in seen["url"]
+
+
 def test_poll_marks_only_new_arrivals(feed_page, live_server):
     """First load flashes nothing; the next poll flashes only what arrived."""
     state = {"n": 0}

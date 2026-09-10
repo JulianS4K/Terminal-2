@@ -1128,6 +1128,10 @@ def build_broker_router(
                  .range(offset, offset + max(limit, 1) - 1)
                  .execute().data) or []
 
+        # ⚠ THESE AGGREGATES COVER THE PAGE, NOT THE BOOK. They are computed
+        # from `rows`, which `range()` has already truncated to `limit`. Named
+        # page_* so a caller cannot read "to settle" as a total obligation when
+        # it is only the first N. `truncated` says when that matters.
         costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
         covered = [r for r in rows if r.get("has_cover")]
         reasons: dict[str, int] = {}
@@ -1144,6 +1148,7 @@ def build_broker_router(
             "at_or_below_sale": sum(1 for c in costs if c <= 0),
             "displaced": sum(1 for r in covered if (r.get("cover_rank") or 1) > 1),
             "total_cover_cost": (round(sum(costs), 2) if costs else 0),
+            "truncated": len(rows) >= max(limit, 1),
             "refreshed_at": next((r.get("refreshed_at") for r in covered
                                   if r.get("refreshed_at")), None),
             "filters": {"source": source, "days": days, "with_sub": with_sub,
@@ -1346,7 +1351,12 @@ def build_broker_router(
         if days is not None:
             cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
             q = q.lte("event_date", cutoff)
-        rows = (q.order("margin_total", desc=True)
+        # ⚠ NULLS LAST IS REQUIRED, NOT COSMETIC. Postgres sorts NULLs FIRST on
+        # DESC, and margin_total is NULL for every candidates=0 row (LEFT JOIN
+        # in the refresh). Without this the first page is entirely rows with no
+        # sub — with_candidate reads 0 on a healthy book — and the table's own
+        # (margin_total DESC NULLS LAST) index cannot be used.
+        rows = (q.order("margin_total", desc=True, nullsfirst=False)
                  .range(offset, offset + max(limit, 1) - 1)
                  .execute().data) or []
         with_candidate = sum(1 for r in rows if (r.get("candidates") or 0) > 0)

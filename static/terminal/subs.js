@@ -142,6 +142,7 @@
     try {
       const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
       renderN2s(d);
+      if (background) setN2sLive(true);   // recovered from any earlier stall
       if (meta) {
         // refreshed_at is load-bearing: covers are only true while the listing
         // is live, and the matcher only looks an hour back. Always show it.
@@ -164,8 +165,9 @@
       // A blip on a background poll is not a reason to destroy a good table.
       // Say it in the meta line and leave the last known covers on screen.
       if (background) {
+        // The interval is still running, so the feed is NOT paused — say
+        // stalled and leave the pill live, or one blip mislabels it forever.
         if (meta) meta.textContent = `feed stalled: ${msg}`;
-        setN2sLive(false);
       } else {
         wrap.innerHTML = emptyHtml(`covers unavailable: ${msg}`);
         if (meta) meta.textContent = '';
@@ -214,9 +216,7 @@
       const bumped = (r.cover_rank || 1) > 1
         ? ' <span class="muted small" title="an earlier order claimed the cheaper listing">2nd choice</span>'
         : '';
-      const claimed = r.open_intent_id
-        ? ` <span class="muted small" title="intent #${esc(String(r.open_intent_id))} by ${esc(r.open_intent_by || 'someone')}">claimed</span>`
-        : '';
+      const claimed = '';  // shown in the action cell instead, next to the button
       const timer = r.timer_expired
         ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
         : '';
@@ -234,9 +234,14 @@
       // No cover means nothing to claim and nothing to verify. Offering the
       // button anyway would produce a 409 from the server, which is a worse
       // way to learn there is no sub than simply not showing it.
-      const action = r.has_cover
-        ? `<button type="button" class="btn n2s-claim" data-n2s="${esc(String(r.n2s_id))}">claim</button>`
-        : '<span class="muted">—</span>';
+      // An order with an OPEN intent is already someone's. Offering the button
+      // anyway would 409 off the one-open-intent-per-order index — the same
+      // "learn by error" the no-cover branch above deliberately avoids.
+      const action = !r.has_cover
+        ? '<span class="muted">—</span>'
+        : (r.open_intent_id
+            ? `<span class="muted small" title="intent #${esc(String(r.open_intent_id))} by ${esc(r.open_intent_by || 'someone')}">claimed</span>`
+            : `<button type="button" class="btn n2s-claim" data-n2s="${esc(String(r.n2s_id))}">claim</button>`);
       const isNew = n2sFeed.fresh.has(String(r.n2s_id));
       const chip = isNew ? ' <span class="n2s-new-chip">NEW</span>' : '';
       const rowCls = [isNew ? 'n2s-row-new' : '', r.has_cover ? '' : 'n2s-row-gap']
@@ -375,7 +380,13 @@
     const prev = btn.textContent;
     btn.textContent = '…';
     try {
-      const d = await T.api(`/api/broker/n2s-covers/${encodeURIComponent(n2sId)}/buy-intent`,
+      // Without requested_by every intent stores NULL and the row reads
+      // "claimed by someone" forever — the audit trail the one-intent-per-order
+      // rule exists to provide never actually works.
+      const who = (window.TerminalAuth && window.TerminalAuth.getEmail
+                   && window.TerminalAuth.getEmail()) || '';
+      const qs = who ? `?requested_by=${encodeURIComponent(who)}` : '';
+      const d = await T.api(`/api/broker/n2s-covers/${encodeURIComponent(n2sId)}/buy-intent${qs}`,
                             { method: 'POST' });
       btn.textContent = 'claimed';
       btn.classList.add('pos');
@@ -540,11 +551,16 @@
       if (msg) msg.innerHTML = '<span class="neg">that order has no mapped event yet</span>';
       return;
     }
-    setVal('subEvent', o.event);
-    setVal('subSection', o.section);
-    setVal('subRow', o.row);
-    setVal('subQty', o.quantity);
-    setVal('subRevenue', o.revenue);
+    // ⚠ ASSIGN, DO NOT setVal. setVal skips null/empty, so a GA order (no row)
+    // or one with no revenue would silently INHERIT those fields from the
+    // previously clicked order — and run() fires immediately, presenting
+    // candidates and a P&L for a seat this order never had. Clearing is the
+    // correct representation of "this order does not state one".
+    putVal('subEvent', o.event);
+    putVal('subSection', o.section);
+    putVal('subRow', o.row);
+    putVal('subQty', o.quantity);
+    putVal('subRevenue', o.revenue);
     const srcSel = document.getElementById('subSource');
     if (srcSel) srcSel.value = 'market';
     wireFeeToggle();
@@ -566,9 +582,18 @@
     });
   }
 
+  // Fill-if-present: for prefilling from a query string, where an absent
+  // parameter means "leave whatever is there".
   function setVal(id, v) {
     const el = document.getElementById(id);
     if (el && v !== null && v !== undefined && v !== '') el.value = v;
+  }
+
+  // Assign-always: for switching the form to a DIFFERENT order, where an
+  // absent field means this order has none and the old value must not persist.
+  function putVal(id, v) {
+    const el = document.getElementById(id);
+    if (el) el.value = (v === null || v === undefined) ? '' : v;
   }
 
   async function loadOrder() {

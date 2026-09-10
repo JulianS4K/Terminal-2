@@ -109,9 +109,12 @@
         </div>
         <div class="subs-field narrow">
           <label for="subsQHas">Has sub</label>
+          <!-- "any" first, so the initial auto-load shows the WHOLE book. The
+               panel copy promises no-candidate rows stay listed; defaulting to
+               "has sub" filtered out exactly those on first paint. -->
           <select id="subsQHas">
-            <option value="true">has sub</option>
             <option value="">any</option>
+            <option value="true">has sub</option>
             <option value="false">no sub found</option>
           </select>
         </div>
@@ -223,7 +226,7 @@
   <script src="lib/render.js"></script>
   <!-- Cache-busting: bump ?v=<date> on any first-party asset change. -->
   <script src="auth.js?v=20260608"></script>
-  <script src="app.js?v=20260608"></script>
+  <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
   <script src="subs.js?v=20260910claim"></script>
 </body>
