@@ -105,7 +105,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate', 'n2sProfit'].forEach((id) => {
+    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -160,12 +160,16 @@
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
     const late = (document.getElementById('n2sLate') || {}).value || '';
-    const profit = (document.getElementById('n2sProfit') || {}).value || '';
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
-    if (has) qs.set('with_sub', has);
+    // "profitable only" lives in the same select as has/no sub because it is a
+    // SUBSET of "has sub", not an independent axis. It therefore sets the
+    // profit filter and deliberately sends NO with_sub — adding
+    // with_sub=true would be redundant, and the server already narrows to
+    // covers by requiring cover_cost < 0.
+    if (has === 'profit') qs.set('profitable', 'true');
+    else if (has) qs.set('with_sub', has);
     if (late) qs.set('include_late', late);
-    if (profit) qs.set('profitable', profit);
     try {
       const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
       renderN2s(d);
@@ -236,7 +240,7 @@
       const onlyProfit = !!(d && d.filters && d.filters.profitable);
       wrap.innerHTML = emptyHtml(onlyProfit
         ? 'no cover currently settles for less than the seat sold for. '
-          + 'Set <em>Money</em> back to “all” for the whole book — most '
+          + 'Set <em>Sub</em> back to “all” for the whole book — most '
           + 'obligations cost money to settle, and still have to be settled.'
         : hidden
         ? `nothing shown — <strong>${hidden}</strong> open obligation${hidden === 1 ? '' : 's'} `

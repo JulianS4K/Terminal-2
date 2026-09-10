@@ -380,3 +380,33 @@ def test_uncatalogued_event_does_not_claim_we_searched(feed_page, live_server):
                                       "e => e.textContent")
     assert "event not in catalogue" in cell
     assert "no match" not in cell
+
+
+def test_profitable_only_is_an_option_of_the_sub_filter(feed_page, live_server):
+    """"profitable" is a SUBSET of "has sub", not an independent axis. Two
+    separate selects let the operator ask for "no sub" AND "profitable only",
+    a contradiction that can only return an empty page — so it is one control,
+    and picking it sends profitable=true and no with_sub."""
+    urls = []
+
+    def _covers(route):
+        urls.append(route.request.url)
+        _json_route(route, _payload([_cover(1)]))
+
+    feed_page.route(_COVERS_RE, _covers)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+
+    # The retired standalone control must be gone, not merely hidden.
+    assert feed_page.query_selector("#n2sProfit") is None
+    opts = feed_page.eval_on_selector_all(
+        "#n2sHas option", "o => o.map(x => x.value)")
+    assert opts == ["", "true", "false", "profit"]
+
+    feed_page.select_option("#n2sHas", "profit")
+    feed_page.wait_for_function(
+        "() => window.__n2sLast !== undefined || true")
+    feed_page.wait_for_timeout(300)
+    last = urls[-1]
+    assert "profitable=true" in last
+    assert "with_sub" not in last
