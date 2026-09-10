@@ -588,6 +588,61 @@ def test_obstructed_suffix_is_not_rendered_twice(feed_page, live_server):
     assert feed_page.locator(".n2s-gate-obstructed").count() == 1
 
 
+def test_single_ticket_suffix_renders_its_own_chip(feed_page, live_server):
+    """" single ticket" is a fact about the SALE (the obligation is one seat), so
+    it is lifted off the gate name into its own chip. A gate 1 single must still
+    read as a plain gate 1: the chip says the sale is a single, the gate says the
+    match is actionable.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 1, "cover_label": "Index single ticket", "sub_qty": 1, "quantity": 1})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    chips = feed_page.locator(".n2s-gate-cell .n2s-gate")
+    chips.first.wait_for()
+    assert chips.count() == 2
+    assert chips.nth(0).inner_text().strip() == "Index"
+    assert "n2s-gate-direct" in (chips.nth(0).get_attribute("class") or "")
+    assert chips.nth(1).inner_text().strip() == "single ticket"
+    assert "n2s-gate-single" in (chips.nth(1).get_attribute("class") or "")
+    title = (chips.nth(1).get_attribute("title") or "").lower()
+    assert "one seat" in title
+
+
+def test_single_ticket_sale_covered_from_a_pair_keeps_repost_single_on_the_gate(feed_page, live_server):
+    """The two singles are different facts and CAN co-occur: a one-seat sale
+    covered by a listing that only sells as a pair is " single ticket repost
+    single". The sale fact becomes a chip; the buy fact stays on the gate name,
+    as it does everywhere else, so neither is lost.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 1, "sub_qty": 2, "quantity": 1,
+              "cover_label": "Index single ticket repost single"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    chips = feed_page.locator(".n2s-gate-cell .n2s-gate")
+    chips.first.wait_for()
+    assert chips.count() == 2
+    assert chips.nth(0).inner_text().strip() == "Index repost single"
+    assert chips.nth(1).inner_text().strip() == "single ticket"
+
+
+def test_single_ticket_and_zone_caveat_stack_without_eating_the_gate_name(feed_page, live_server):
+    """Both suffixes the panel renders can stack on a gate 5 row; each becomes
+    its own chip and the gate name survives intact."""
+    r = _cover(1)
+    r.update({"cover_gate": 5, "sub_qty": 1, "quantity": 1,
+              "cover_label": "Index Down offer subs zone unverified single ticket"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    chips = feed_page.locator(".n2s-gate-cell .n2s-gate")
+    chips.first.wait_for()
+    assert chips.count() == 3
+    assert chips.nth(0).inner_text().strip() == "Index Down offer subs"
+    assert feed_page.locator(".n2s-gate-unver").count() == 1
+    assert feed_page.locator(".n2s-gate-single").count() == 1
+
+
 def test_all_three_suffixes_coexist_without_eating_the_gate_name(feed_page, live_server):
     """Three suffixes can stack; only the two the panel renders get stripped.
 
