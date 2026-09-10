@@ -109,6 +109,12 @@
   // The chip below already says that, so strip it from the gate name rather
   // than showing the same fact twice in one cell.
   const OBSTRUCTED_SUFFIX = ' obstructed view';
+  // " single ticket" marks a one-seat SALE (the obligation's quantity is 1).
+  // It is a fact about the order, not the match, so it gets its own chip
+  // beside the gate the same way the zone caveat does. It is a different fact
+  // from " repost single", which is about the BUY (one seat over, spare
+  // reposted); a single-seat sale covered from a pair carries both.
+  const SINGLE_TICKET = ' single ticket';
 
   function gateCell(r) {
     if (!r.has_cover || !r.cover_label) return '<span class="muted">—</span>';
@@ -119,9 +125,11 @@
     // an already-long string and reads as part of the gate name; beside it, it
     // reads as the caveat it is.
     const unver = r.cover_label.indexOf(ZONE_UNVERIFIED) !== -1;
+    const single = r.cover_label.indexOf(SINGLE_TICKET) !== -1;
     const base = r.cover_label
       .replace(ZONE_UNVERIFIED, '')
-      .replace(OBSTRUCTED_SUFFIX, '');
+      .replace(OBSTRUCTED_SUFFIX, '')
+      .replace(SINGLE_TICKET, '');
     const tip = offer
       ? 'Buyer is being MOVED — offer this substitute and get acceptance BEFORE buying'
       : 'Same section the buyer purchased — actionable directly';
@@ -148,6 +156,12 @@
         'No curated zones at this venue, so the same-zone rule could not be checked. '
         + 'It does NOT mean a zone was crossed — those are refused. Judge the row drop yourself.'
       )}">zone unverified</span>`;
+    }
+    if (single) {
+      out += ` <span class="n2s-gate n2s-gate-single" title="${esc(
+        'The sale is for exactly one seat. Singles are the hardest quantity to source and the most '
+        + 'often refused at checkout. Read sub_qty: with "repost single" it is 2 for a sale of 1.'
+      )}">single ticket</span>`;
     }
     return out;
   }
