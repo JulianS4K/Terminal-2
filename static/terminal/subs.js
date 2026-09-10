@@ -105,6 +105,10 @@
   // (" zone unverified repost single"), so any equality test on the whole
   // label silently stops matching the moment a second suffix appears.
   const ZONE_UNVERIFIED = ' zone unverified';
+  // cover_label now ends " obstructed view" whenever sub_view is 'obstructed'.
+  // The chip below already says that, so strip it from the gate name rather
+  // than showing the same fact twice in one cell.
+  const OBSTRUCTED_SUFFIX = ' obstructed view';
 
   function gateCell(r) {
     if (!r.has_cover || !r.cover_label) return '<span class="muted">—</span>';
@@ -115,7 +119,9 @@
     // an already-long string and reads as part of the gate name; beside it, it
     // reads as the caveat it is.
     const unver = r.cover_label.indexOf(ZONE_UNVERIFIED) !== -1;
-    const base = r.cover_label.replace(ZONE_UNVERIFIED, '');
+    const base = r.cover_label
+      .replace(ZONE_UNVERIFIED, '')
+      .replace(OBSTRUCTED_SUFFIX, '');
     const tip = offer
       ? 'Buyer is being MOVED — offer this substitute and get acceptance BEFORE buying'
       : 'Same section the buyer purchased — actionable directly';

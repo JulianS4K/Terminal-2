@@ -124,7 +124,14 @@ BEGIN
     '   WHERE v.src = q.sub_source' || E'\n' ||
     '     AND v.lid = q.sub_listing_id' || E'\n' ||
     '     AND v.eid = q.tevo_event_id' || E'\n' ||
-    '     AND v.captured_at = q.captured_at;' || E'\n');
+    '     AND v.captured_at = q.captured_at;' || E'\n' ||
+    '' || E'\n' ||
+    '  -- and into the LABEL, so a consumer that only reads cover_label still' || E'\n' ||
+    '  -- sees it. Safe to append unconditionally: the refresh DELETEs the whole' || E'\n' ||
+    '  -- queue and rebuilds it every run, so the suffix cannot accumulate.' || E'\n' ||
+    '  UPDATE public.n2s_cover_queue q' || E'\n' ||
+    '     SET cover_label = q.cover_label || '' obstructed view''' || E'\n' ||
+    '   WHERE q.sub_view = ''obstructed'' AND q.cover_label IS NOT NULL;' || E'\n');
 
   EXECUTE d;
 END $do$;
@@ -254,3 +261,38 @@ WITH ordered AS (
     FROM public.n2s_integration_doc)
 UPDATE public.n2s_integration_doc d SET step_no = o.n
   FROM ordered o WHERE o.slug = d.slug AND d.step_no IS DISTINCT FROM o.n;
+
+-- ── the label carries it too ───────────────────────────────────────────────
+-- sub_view is the column a machine should branch on, but cover_label is what a
+-- human reads and what a thin consumer may be displaying alone. A seat defect
+-- that only exists in a column nobody rendered is not surfaced.
+--
+-- ⚠ Only 'obstructed' becomes a suffix. 'unknown' stays a column and nothing
+-- more: it is the state of MOST rows today (every TEvo listing), and a suffix
+-- carried by the majority stops carrying information — it would train readers
+-- to skip the tail of every label, which is where " repost single" and
+-- " zone unverified" live. The label is a workflow instruction, and 'unknown'
+-- does not change the action; 'obstructed' does.
+UPDATE public.n2s_integration_doc
+   SET body = replace(
+         replace(body, 'Two suffixes can be appended to any of those:',
+                       'Three suffixes can be appended to any of those:'),
+         'rule could not be checked. It does NOT mean a zone was crossed.',
+         'rule could not be checked. It does NOT mean a zone was crossed.' || E'\n' ||
+         '  ... obstructed view          the source discloses a limited / obstructed / partial view for' || E'\n' ||
+         '                               this listing. INDEPENDENT of the gate — a gate 1 row can carry it.')
+ WHERE slug = 'gates'
+   AND body LIKE '%It does NOT mean a zone was crossed.%'
+   AND body NOT LIKE '%obstructed view%';
+
+UPDATE public.n2s_integration_doc
+   SET body = replace(body,
+        'There is no filtering on this field.',
+        'The label carries it as well: any row with sub_view = ''obstructed'' has " obstructed view" appended to cover_label, so a consumer displaying only the label still sees the defect. ''unknown'' is deliberately NOT suffixed — it is the state of most rows, and a suffix on the majority stops carrying information. Branch on sub_view if you want to act on it.' || E'\n\n' ||
+        'There is no filtering on this field.')
+ WHERE slug = 'view-quality'
+   AND body NOT LIKE '%appended to cover_label%';
+
+UPDATE public.n2s_error_code
+   SET what_to_do = $doc$Offer it to the buyer before purchasing, whatever the gate says. Gate 1 means the geometry matches, not that the seat is equivalent. The label also ends " obstructed view" so a label-only consumer still sees it. Read sub_notes and quote the seller's actual wording to the buyer rather than the word "obstructed" alone — "behind the stage-left speaker stack" and "slight side view" are both 'obstructed' here and are very different conversations.$doc$
+ WHERE code = 'N2S-V100';

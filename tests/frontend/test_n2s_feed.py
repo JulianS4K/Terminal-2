@@ -521,7 +521,7 @@ def test_obstructed_view_is_flagged_on_a_gate_1_row(feed_page, live_server):
     along rather than only our classification of it.
     """
     r = _cover(1)
-    r.update({"cover_gate": 1, "cover_label": "Index",
+    r.update({"cover_gate": 1, "cover_label": "Index obstructed view",
               "sub_view": "obstructed", "sub_notes": "Obstructed view - pole"})
     feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
     feed_page.goto(f"{live_server}/static/terminal/subs.html")
@@ -567,3 +567,41 @@ def test_clear_view_adds_no_chip(feed_page, live_server):
     feed_page.locator(".n2s-gate-cell .n2s-gate").first.wait_for()
     assert feed_page.locator(".n2s-gate-cell .n2s-gate").count() == 1
     assert feed_page.locator(".n2s-gate-noview").count() == 0
+
+
+def test_obstructed_suffix_is_not_rendered_twice(feed_page, live_server):
+    """The label ends " obstructed view" AND a chip says it — show it once.
+
+    The suffix exists so a consumer reading only cover_label still sees the
+    defect. The panel reads both, so without stripping it the cell would read
+    "Index obstructed view" next to a chip saying "obstructed" — the same fact
+    twice, which reads like two different findings.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 1, "cover_label": "Index obstructed view",
+              "sub_view": "obstructed", "sub_notes": "pole"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    gate = feed_page.locator(".n2s-gate-cell .n2s-gate").first
+    gate.wait_for()
+    assert gate.inner_text().strip() == "Index"
+    assert feed_page.locator(".n2s-gate-obstructed").count() == 1
+
+
+def test_all_three_suffixes_coexist_without_eating_the_gate_name(feed_page, live_server):
+    """Three suffixes can stack; only the two the panel renders get stripped.
+
+    " repost single" has no chip of its own, so it must SURVIVE on the gate
+    name while the other two are lifted out. Getting this wrong in either
+    direction silently loses a fact the buyer needs.
+    """
+    r = _cover(1)
+    r.update({"cover_gate": 5, "sub_view": "obstructed", "sub_notes": "side view",
+              "cover_label": "Index Down offer subs zone unverified obstructed view repost single"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    gate = feed_page.locator(".n2s-gate-cell .n2s-gate").first
+    gate.wait_for()
+    assert gate.inner_text().strip() == "Index Down offer subs repost single"
+    assert feed_page.locator(".n2s-gate-unver").count() == 1
+    assert feed_page.locator(".n2s-gate-obstructed").count() == 1
