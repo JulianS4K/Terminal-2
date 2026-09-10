@@ -1088,15 +1088,23 @@ def build_broker_router(
         * ``awaiting_source_pull`` — mapped, the four-source pull is in flight.
           Wait a couple of minutes.
         * ``no_match`` — we looked at live listings and none satisfied same
-          section / same-or-better row / exact quantity. The only one of the
+          section / same-or-better row / a usable quantity. The only one of the
           three that means "go find tickets".
 
-        `sub_qty` is how many tickets to BUY — always the obligation's quantity.
-        `sub_avail` is the listing's own lot size; when it is larger, this is a
-        SPLIT take: the listing is bigger than the obligation and its published
-        splits permit buying exactly `sub_qty`. Quantity delivered is still
-        matched exactly — that never loosened — but a 4-seat listing selling in
-        2s can now cover a 2-seat obligation.
+        `sub_qty` is how many tickets to BUY, which is not always how many we
+        owe. Read it against the other two quantity columns:
+
+        * ``sub_qty == quantity``, ``sub_avail == sub_qty`` — an exact match.
+        * ``sub_qty == quantity``, ``sub_avail > sub_qty`` — a SPLIT take: the
+          listing is bigger than the obligation and its published splits permit
+          buying exactly what is owed.
+        * ``sub_qty > quantity`` — an OVER-DELIVERY: nothing sold the owed
+          quantity, so the whole (quantity + 1) lot is bought and the spare
+          seat is paid for. Only ever allocated when the order has no exact or
+          split candidate at all, however cheap the spare seat looks.
+
+        `sub_total` and `cover_cost` are computed on `sub_qty`, so the spare
+        seat is charged to the cover rather than quietly omitted.
 
         `cover_rank` is which of that order's own candidates it was allocated:
         1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed

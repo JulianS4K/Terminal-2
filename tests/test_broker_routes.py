@@ -1216,6 +1216,21 @@ def test_n2s_covers_serves_the_lot_size_of_a_split_take(client, monkeypatch):
     assert row["sub_total"] == 122.0
 
 
+def test_n2s_covers_serves_an_over_delivery_cover(client, monkeypatch):
+    """An over-delivery buys a lot one seat bigger than the obligation. The
+    panel needs sub_qty (3) and quantity (2) both intact to say so; collapsing
+    them would have the operator buy 2 of a lot that only sells as 3."""
+    over = _cov_row(quantity=2, sub_qty=3, sub_avail=3,
+                    sub_total=1099.20, cover_cost=601.20)
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [over]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["quantity"] == 2 and row["sub_qty"] == 3
+    # A whole-lot buy is not a split take — the two markers are exclusive.
+    assert row["sub_avail"] == row["sub_qty"]
+    # The spare seat is inside the cost, not omitted from it.
+    assert row["cover_cost"] == 601.20
+
+
 def test_n2s_covers_displaced_ignores_uncovered_rows(client, monkeypatch):
     """cover_rank is NULL on a gap row; it must not be read as first choice and
     counted into the contention figure."""

@@ -285,3 +285,19 @@ def test_a_split_take_names_the_lot_it_comes_from(feed_page, live_server):
     # An exact-quantity cover has no lot to disclose, so it stays unadorned.
     assert "of " not in feed_page.eval_on_selector(
         '#n2sTable tr[data-n2s="2"]', "e => e.textContent")
+
+
+def test_an_over_delivery_says_how_many_seats_are_actually_bought(feed_page, live_server):
+    """When nothing sells the owed quantity we buy the whole lot and eat the
+    spare seat. The row shows the OWED quantity next to the seat, so without a
+    second marker the operator sends a buy for 2 and is charged for 3."""
+    over = _cover(1)
+    over.update({"quantity": 2, "sub_qty": 3, "sub_avail": 3})
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([over])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+
+    text = feed_page.eval_on_selector('#n2sTable tr[data-n2s="1"]', "e => e.textContent")
+    assert "buy 3" in text
+    # A whole-lot buy is not a split take; "of 3" would claim the opposite.
+    assert "of 3" not in text
