@@ -1087,14 +1087,31 @@ def _cov_row(**over):
         "sub_total": 122.0, "cover_cost": 38.0, "rows_closer": 8,
         "buy_url": None, "captured_at": "2026-09-09T22:00:00Z",
         "cover_rank": 1, "fifo_position": 3,
-        "refreshed_at": "2026-09-09T22:05:00Z",
+        "refreshed_at": "2026-09-09T22:05:00Z", "alert_at": "2026-09-09T21:00:00Z",
+        "has_cover": True, "no_cover_reason": None,
+        "open_intent_id": None, "open_intent_by": None,
     }
     row.update(over)
     return row
 
 
+def _gap_row(**over):
+    """An open obligation with NO cover — the majority of the real book, and
+    what this panel used to omit entirely."""
+    row = _cov_row(**over)
+    row.update({
+        "sub_source": None, "sub_listing_id": None, "sub_section": None,
+        "sub_row": None, "sub_qty": None, "sub_ea": None, "sub_total": None,
+        "cover_cost": None, "rows_closer": None, "buy_url": None,
+        "captured_at": None, "cover_rank": None, "fifo_position": None,
+        "refreshed_at": None, "has_cover": False, "no_cover_reason": "no_match",
+    })
+    row.update(over)
+    return row
+
+
 def test_n2s_covers_empty_reports_no_refresh_time(client, monkeypatch):
-    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": []}))
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": []}))
     body = client.get("/api/broker/n2s-covers").json()
     assert body["rows"] == [] and body["count"] == 0
     # A stale/absent payload must read as "no answer", never "no covers", so an
@@ -1108,7 +1125,7 @@ def test_n2s_covers_separates_cost_from_saving(client, monkeypatch):
     # cover_cost is signed: positive costs us, negative means the cover is
     # cheaper than the sale. The count must not be "all rows".
     rows = [_cov_row(), _cov_row(n2s_id=437, cover_cost=-93.62)]
-    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
     body = client.get("/api/broker/n2s-covers").json()
     assert body["count"] == 2
     assert body["at_or_below_sale"] == 1
@@ -1120,33 +1137,76 @@ def test_n2s_covers_counts_fifo_displaced_orders(client, monkeypatch):
     # cover_rank > 1 means an earlier order claimed the cheaper listing; that
     # is contention worth surfacing, not a row to hide.
     rows = [_cov_row(), _cov_row(n2s_id=438, cover_rank=2)]
-    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
     body = client.get("/api/broker/n2s-covers").json()
     assert body["displaced"] == 1
 
 
 def test_n2s_covers_treats_missing_cover_rank_as_first_choice(client, monkeypatch):
     rows = [_cov_row(cover_rank=None)]
-    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
     body = client.get("/api/broker/n2s-covers").json()
     assert body["displaced"] == 0
 
 
 def test_n2s_covers_ignores_rows_with_no_cost(client, monkeypatch):
     rows = [_cov_row(cover_cost=None)]
-    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_cover_queue": rows}))
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
     body = client.get("/api/broker/n2s-covers").json()
     assert body["total_cover_cost"] == 0
     assert body["at_or_below_sale"] == 0
 
 
+def test_n2s_covers_keeps_orders_that_have_no_sub(client, monkeypatch):
+    """The whole point of the rewrite: an uncovered obligation is the WORK, so
+    it must be served, counted and explained — not omitted the way reading
+    n2s_cover_queue directly used to omit it."""
+    rows = [_cov_row(), _gap_row(n2s_id=500),
+            _gap_row(n2s_id=501, no_cover_reason="unmapped")]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["count"] == 3
+    assert body["covered"] == 1
+    assert body["uncovered"] == 2
+    assert body["by_no_cover_reason"] == {"no_match": 1, "unmapped": 1}
+    # A row with no cover contributes no cost — NULL is "nothing allocated",
+    # not a free settlement.
+    assert body["total_cover_cost"] == 38.0
+
+
+def test_n2s_covers_refreshed_at_comes_from_a_covered_row(client, monkeypatch):
+    """Uncovered rows carry no refreshed_at (nothing was computed for them), so
+    a book that leads with gaps must still report when the covers were built —
+    otherwise the freshness stamp reads as 'never' on a healthy pipeline."""
+    rows = [_gap_row(n2s_id=500), _cov_row()]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["refreshed_at"] == "2026-09-09T22:05:00Z"
+
+
+def test_n2s_covers_with_sub_filter_is_passed_through(client, monkeypatch):
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers?with_sub=false").json()
+    assert body["filters"]["with_sub"] is False
+
+
+def test_n2s_covers_displaced_ignores_uncovered_rows(client, monkeypatch):
+    """cover_rank is NULL on a gap row; it must not be read as first choice and
+    counted into the contention figure."""
+    rows = [_gap_row(n2s_id=500), _cov_row(n2s_id=438, cover_rank=2)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["displaced"] == 1
+
+
 def test_n2s_covers_applies_every_filter(client, monkeypatch):
-    fake = FakeSupabase(table_data={"n2s_cover_queue": [_cov_row()]})
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
     _use_db(monkeypatch, fake)
     body = client.get("/api/broker/n2s-covers"
                       "?source=Gametime&days=14&limit=5&offset=10").json()
     assert body["filters"] == {"source": "Gametime", "days": 14,
-                               "limit": 5, "offset": 10}
+                               "with_sub": None, "limit": 5, "offset": 10}
     assert body["count"] == 1
 
 

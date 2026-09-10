@@ -33,26 +33,22 @@
         <span id="n2sMeta" class="muted small"></span>
       </div>
       <p class="muted small">
-        Orders that <strong>already failed</strong> and must be covered. This is a
-        different book from the queue below: most of these appear in no order book we
-        hold, and the question is not "where is the margin" but
-        <strong>what is the least this obligation can be settled for</strong> — so a
-        cover that costs more than the sale is still a result. Cheapest first.
-        Each listing is offered to <strong>one</strong> order only, oldest alert first.
+        <strong>Every open</strong> order that has already failed, with its sub attached
+        where one exists. Rows with <strong>no sub stay listed on purpose</strong> — they
+        are the work, not missing data. The question is not "where is the margin" but
+        <strong>what is the least this obligation can be settled for</strong>, so a cover
+        dearer than the sale is still a result. Actionable rows first, cheapest first;
+        then the gaps, longest-unsettled first. Each listing is offered to
+        <strong>one</strong> order only.
       </p>
       <p class="muted small">
-        <strong>Claim records an intent and hands you a fill sheet — it buys nothing.</strong>
-        The purchase is made by hand in the vendor console for both EVO and GoTickets.
-        The sheet separates what you type at checkout (payment, delivery, buyer details)
-        from anything <em>our</em> side still owes, so a real gap does not read like
-        routine paperwork.
-      </p>
-      <p class="muted small">
-        This panel is a <strong>live feed</strong> — it refreshes itself every 60 seconds as
-        the pipeline rebuilds the queue, and marks arrivals <span class="n2s-new-chip">NEW</span>.
-        A verdict you asked for and a fill sheet you claimed both survive a refresh, but a
-        verdict is <strong>dropped</strong> if the queue reallocates that order to a different
-        listing — it would otherwise read as "checked and fine" about the wrong tickets.
+        <strong>No sub</strong> names its reason, because three different situations look
+        identical as a blank: <em>unmapped</em> (event unidentified — nothing was searched),
+        <em>pulling…</em> (sources in flight), <em>no match</em> (searched; nothing had the
+        same section, an equal-or-better row and the exact quantity — the only one meaning
+        go find tickets). <strong>Claim</strong> records an intent and hands you a fill
+        sheet; it buys nothing — the purchase is made by hand in the vendor console.
+        Live feed, refreshing every 60s.
       </p>
       <div class="subs-orderbar">
         <div class="subs-field narrow">
@@ -66,6 +62,14 @@
             <option>GoTickets</option>
             <option>Vivid Seats</option>
             <option>EVO</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sHas">Has sub</label>
+          <select id="n2sHas">
+            <option value="">all</option>
+            <option value="true">has sub</option>
+            <option value="false">no sub</option>
           </select>
         </div>
         <div class="subs-field narrow">
@@ -106,7 +110,7 @@
         <div class="subs-field narrow">
           <label for="subsQHas">Has sub</label>
           <select id="subsQHas">
-            <option value="true">with a sub</option>
+            <option value="true">has sub</option>
             <option value="">any</option>
             <option value="false">no sub found</option>
           </select>

@@ -47,13 +47,36 @@ def _cover(n2s_id, listing_id="L1", sub_ea=120):
         "buy_url": f"https://example.test/{n2s_id}",
         "captured_at": "2026-09-10T00:00:00Z", "cover_rank": 1,
         "fifo_position": 1, "refreshed_at": "2026-09-10T00:00:00Z",
+        # has_cover drives whether the row is actionable at all — a gap row
+        # renders its reason and gets no claim button.
+        "has_cover": True, "no_cover_reason": None,
+        "alert_at": "2026-09-10T00:00:00Z",
+        "open_intent_id": None, "open_intent_by": None,
     }
 
 
+def _gap(n2s_id, reason="no_match"):
+    """An open obligation with no cover — kept on screen deliberately."""
+    row = _cover(n2s_id)
+    row.update({k: None for k in (
+        "sub_source", "sub_listing_id", "sub_section", "sub_row", "sub_qty",
+        "sub_ea", "sub_total", "cover_cost", "rows_closer", "buy_url",
+        "captured_at", "cover_rank", "fifo_position", "refreshed_at")})
+    row.update({"has_cover": False, "no_cover_reason": reason})
+    return row
+
+
 def _payload(rows):
+    covered = [r for r in rows if r.get("has_cover")]
+    reasons: dict[str, int] = {}
+    for r in rows:
+        if r.get("no_cover_reason"):
+            reasons[r["no_cover_reason"]] = reasons.get(r["no_cover_reason"], 0) + 1
     return json.dumps({
-        "rows": rows, "count": len(rows), "at_or_below_sale": 0, "displaced": 0,
-        "total_cover_cost": 40 * len(rows),
+        "rows": rows, "count": len(rows), "covered": len(covered),
+        "uncovered": len(rows) - len(covered), "by_no_cover_reason": reasons,
+        "at_or_below_sale": 0, "displaced": 0,
+        "total_cover_cost": 40 * len(covered),
         "refreshed_at": "2026-09-10T00:00:00Z", "filters": {},
     })
 
@@ -120,6 +143,28 @@ def test_poll_marks_only_new_arrivals(feed_page, live_server):
         "#n2sTable tr.n2s-row-new", "t => t.map(x => x.dataset.n2s)")
     assert flagged == ["3"]
     assert state["n"] == 2, "the 60s poll did not fire"
+
+
+def test_orders_without_a_sub_are_shown_and_are_not_actionable(feed_page, live_server):
+    """The rewrite's whole point: an uncovered obligation stays on screen, names
+    WHY there is no sub, and offers no claim button — claiming would 409, which
+    is a worse way to learn there is no cover than simply not offering it."""
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload(
+        [_cover(1), _gap(2), _gap(3, "unmapped")])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+
+    assert len(feed_page.query_selector_all("#n2sTable tr[data-n2s]")) == 3
+    assert len(feed_page.query_selector_all("#n2sTable tr.n2s-row-gap")) == 2
+    # Only the covered row can be claimed.
+    assert len(feed_page.query_selector_all("#n2sTable .n2s-claim")) == 1
+    # Each gap says which of the three situations it is.
+    reasons = feed_page.eval_on_selector_all(
+        "#n2sTable tr.n2s-row-gap td:nth-child(5)",
+        "t => t.map(x => x.textContent.trim())")
+    assert sorted(reasons) == ["no match", "unmapped"]
+    meta = feed_page.eval_on_selector("#n2sMeta", "e => e.textContent")
+    assert "3 open" in meta and "1 with a sub" in meta and "2 without" in meta
 
 
 def test_verdict_is_dropped_when_the_cover_is_reallocated(feed_page, live_server):

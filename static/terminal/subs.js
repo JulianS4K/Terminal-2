@@ -82,7 +82,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays'].forEach((id) => {
+    ['n2sSource', 'n2sDays', 'n2sHas'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -132,11 +132,13 @@
     // Only an explicit refresh may blank the table. A background poll that
     // wiped it would clear a fill sheet someone is reading mid-purchase.
     if (!background) wrap.innerHTML = '<div class="empty">loading…</div>';
-    const qs = new URLSearchParams({ limit: '100' });
+    const qs = new URLSearchParams({ limit: '200' });
     const src = (document.getElementById('n2sSource').value || '').trim();
     const days = (document.getElementById('n2sDays').value || '').trim();
+    const has = (document.getElementById('n2sHas') || {}).value || '';
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
+    if (has) qs.set('with_sub', has);
     try {
       const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
       renderN2s(d);
@@ -148,7 +150,13 @@
           : ' · never refreshed';
         const disp = d.displaced ? ` · ${d.displaced} took a dearer cover` : '';
         const arrived = n2sFeed.fresh.size ? ` · ${n2sFeed.fresh.size} new` : '';
-        meta.textContent = `${d.count} covered · ${d.at_or_below_sale} at or below sale`
+        // Lead with the shape of the book: how many can be acted on versus how
+        // many are still open with nothing to act on. The second number is the
+        // one that was invisible when this panel showed covers only.
+        const why = Object.entries(d.by_no_cover_reason || {})
+          .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
+        meta.textContent = `${d.count} open · ${d.covered} with a sub`
+          + ` · ${d.uncovered} without${why ? ` (${why})` : ''}`
           + ` · ${money(d.total_cover_cost)} to settle${disp}${arrived}${stamp}`;
       }
     } catch (err) {
@@ -181,16 +189,33 @@
       // Say WHY it may be empty. An empty cover list is ambiguous between "all
       // settled" and "the listings we had aged out of the 1-hour window", and
       // the second is not good news.
-      wrap.innerHTML = emptyHtml('no live covers — either nothing needs subbing, '
-        + 'or no listing seen in the last hour matches section/row/qty');
+      wrap.innerHTML = emptyHtml('no open N2S orders match these filters');
       return;
     }
     const body = rows.map((r) => {
       const seat = `${esc(r.section || '')} / ${esc(r.order_row || '')} ×${r.quantity || ''}`;
-      const cov = `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}`;
+      // An uncovered row is the WORK, not an empty cell. Say which of the three
+      // situations it is: "we never looked" and "we looked and found nothing"
+      // call for opposite responses, and a bare dash hides the difference —
+      // which is exactly how a mapping outage would go unnoticed here.
+      const WHY = {
+        unmapped: ['unmapped', 'the event could not be identified, so no source was searched'],
+        awaiting_source_pull: ['pulling…', 'the four-source pull is in flight; give it ~2 minutes'],
+        no_match: ['no match', 'listings were searched; none had the same section, an equal-or-better row and the exact quantity'],
+      };
+      const cov = r.has_cover
+        ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}`
+        : (() => {
+            const w = WHY[r.no_cover_reason] || ['no sub', 'no cover allocated'];
+            const cls = r.no_cover_reason === 'awaiting_source_pull' ? 'muted' : 'neg';
+            return `<span class="${cls} small" title="${esc(w[1])}">${esc(w[0])}</span>`;
+          })();
       // cover_rank > 1 means an earlier order claimed the cheaper listing.
       const bumped = (r.cover_rank || 1) > 1
         ? ' <span class="muted small" title="an earlier order claimed the cheaper listing">2nd choice</span>'
+        : '';
+      const claimed = r.open_intent_id
+        ? ` <span class="muted small" title="intent #${esc(String(r.open_intent_id))} by ${esc(r.open_intent_by || 'someone')}">claimed</span>`
         : '';
       const timer = r.timer_expired
         ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
@@ -206,24 +231,32 @@
             ? `<span class="muted small" title="event ${esc(String(r.tevo_event_id || ''))} · listing ${esc(String(r.sub_listing_id))}">`
               + `ev ${esc(String(r.tevo_event_id || '?'))}<br>lst ${esc(String(r.sub_listing_id))}</span>`
             : '<span class="muted">—</span>');
+      // No cover means nothing to claim and nothing to verify. Offering the
+      // button anyway would produce a 409 from the server, which is a worse
+      // way to learn there is no sub than simply not showing it.
+      const action = r.has_cover
+        ? `<button type="button" class="btn n2s-claim" data-n2s="${esc(String(r.n2s_id))}">claim</button>`
+        : '<span class="muted">—</span>';
       const isNew = n2sFeed.fresh.has(String(r.n2s_id));
       const chip = isNew ? ' <span class="n2s-new-chip">NEW</span>' : '';
-      return `<tr data-n2s="${esc(String(r.n2s_id))}" data-fp="${esc(coverFp(r))}"${isNew ? ' class="n2s-row-new"' : ''}>
-        <td>${esc(r.s4k_source || '')}${chip}${timer}</td>
+      const rowCls = [isNew ? 'n2s-row-new' : '', r.has_cover ? '' : 'n2s-row-gap']
+        .filter(Boolean).join(' ');
+      return `<tr data-n2s="${esc(String(r.n2s_id))}" data-fp="${esc(coverFp(r))}"${rowCls ? ` class="${rowCls}"` : ''}>
+        <td>${esc(r.s4k_source || '')}${chip}${timer}${claimed}</td>
         <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
         <td>${seat}</td>
         <td class="num">${money(r.sold_ea)}</td>
         <td>${cov}${bumped}</td>
-        <td class="num">${money(r.sub_ea)}</td>
+        <td class="num">${r.has_cover ? money(r.sub_ea) : '<span class="muted">—</span>'}</td>
         <td class="num">${coverCell(r.cover_cost)}</td>
         <td>${buy}</td>
         <td class="n2s-verdict muted small">—</td>
-        <td><button type="button" class="btn n2s-claim" data-n2s="${esc(String(r.n2s_id))}">claim</button></td>
+        <td>${action}</td>
       </tr>`;
     }).join('');
     wrap.innerHTML = `<table class="subs-table"><thead><tr>
         <th>Src</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
-        <th>Cover</th><th class="num">Cover ea</th><th class="num">Cost to settle</th><th></th><th>Verify</th><th></th>
+        <th>Sub / why not</th><th class="num">Sub ea</th><th class="num">Cost to settle</th><th></th><th>Verify</th><th></th>
       </tr></thead><tbody>${body}</tbody></table>`;
     wrap.querySelectorAll('.n2s-claim').forEach((b) => {
       b.addEventListener('click', () => claimN2s(b.getAttribute('data-n2s'), b));
@@ -418,6 +451,8 @@
 
   // Signed the opposite way to pnlCell: here a POSITIVE number is money out.
   function coverCell(v) {
+    // NULL is "no cover was allocated", NOT zero cost. Rendering it as $0.00
+    // would read as a free settlement, which is the opposite of the truth.
     if (v === null || v === undefined) return '<span class="muted">—</span>';
     const cls = v > 0 ? 'neg' : 'pos';
     return `<span class="${cls}">${money(v)}</span>`;

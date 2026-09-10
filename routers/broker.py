@@ -1052,65 +1052,101 @@ def build_broker_router(
 
     @router.get("/api/broker/n2s-covers")
     def broker_n2s_covers(
-        limit: int = 100,
+        limit: int = 200,
         offset: int = 0,
         source: str | None = None,
         days: int | None = None,
+        with_sub: bool | None = None,
         _=Depends(require_auth),
     ):
-        """N2S ("Need to Sub") COVERS — failed orders and what can replace them.
+        """N2S ("Need to Sub") — the WHOLE open book, with the sub attached
+        where one exists.
 
-        Reads the precomputed `n2s_cover_queue`, NOT the matcher: `n2s_covers()`
-        is volatile, runs a four-source match and a sequential FIFO allocation,
-        so hanging HTTP off it would re-run all of that per request.
+        Reads `v_n2s_orders`, which LEFT JOINs the precomputed
+        `n2s_cover_queue` onto every open obligation. It is deliberately NOT
+        just the covered rows: measured when this was written, 8 orders had a
+        cover against 105 open ones, so serving only the queue showed 8 and
+        silently omitted 97 that still have to be settled — the ones that most
+        need a person, because nothing automatic is going to happen to them.
+        An order with no cover is the work, not missing data.
 
         This is a different book from `/api/broker/sub-worklist`. That queue is
         our own order book looking for a PROFITABLE swap. This one is the CRM's
-        Need-to-Sub list: orders that already failed and must be covered whether
-        or not it pays. Most rows here appear in no order book we hold, so the
-        two lists barely overlap.
+        Need-to-Sub list: orders that already failed and must be covered
+        whether or not it pays. Most rows here appear in no order book we hold.
 
         Read `cover_cost` as what honouring the order COSTS over what it sold
         for — positive is a loss, negative means the cover is cheaper than the
-        sale. Rows are cheapest-cover-first, because the question is "what is
-        the least this obligation can be settled for", not "where is the
-        margin".
+        sale. It is NULL where there is no cover.
+
+        `no_cover_reason` separates three situations a bare dash would conflate,
+        and they call for opposite responses:
+
+        * ``unmapped`` — we cannot identify the event, so we never looked. A
+          mapping problem; more inventory will not help.
+        * ``awaiting_source_pull`` — mapped, the four-source pull is in flight.
+          Wait a couple of minutes.
+        * ``no_match`` — we looked at live listings and none satisfied same
+          section / same-or-better row / exact quantity. The only one of the
+          three that means "go find tickets".
 
         `cover_rank` is which of that order's own candidates it was allocated:
-        1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed the
-        cheaper listing. Each listing is offered to exactly one order.
+        1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed
+        the cheaper listing. Each listing is offered to exactly one order.
 
         `refreshed_at` is load-bearing, not decoration. Covers are only true
         while the listing is live, and the matcher only considers listings seen
         in the last hour, so a stale payload means "no answer", never "no
-        covers".
+        covers". It is NULL on an uncovered row because nothing was computed.
+
+        Pass `with_sub=true` for only the actionable rows, `false` for only the
+        gaps. Omit it for the whole book, which is the default on purpose.
         """
         db = get_require_sb()()
-        q = (db.table("n2s_cover_queue")
+        q = (db.table("v_n2s_orders")
              .select("n2s_id,order_number,s4k_source,n2s_status,fail_reason,"
-                     "timer_expired,event_name,event_date,venue,tevo_event_id,"
-                     "section,order_row,quantity,sold_ea,sub_source,"
-                     "sub_listing_id,sub_section,sub_row,sub_qty,sub_ea,"
-                     "sub_total,cover_cost,rows_closer,buy_url,captured_at,"
-                     "cover_rank,fifo_position,refreshed_at"))
+                     "timer_expired,alert_at,event_name,event_date,venue,"
+                     "tevo_event_id,section,order_row,quantity,sold_ea,"
+                     "sub_source,sub_listing_id,sub_section,sub_row,sub_qty,"
+                     "sub_ea,sub_total,cover_cost,rows_closer,buy_url,"
+                     "captured_at,cover_rank,fifo_position,refreshed_at,"
+                     "has_cover,no_cover_reason,open_intent_id,open_intent_by"))
         if source:
             q = q.eq("s4k_source", source)
         if days is not None:
             cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
             q = q.lte("event_date", cutoff)
-        rows = (q.order("cover_cost", desc=False)
+        if with_sub is not None:
+            q = q.eq("has_cover", with_sub)
+        # Actionable rows first, cheapest cover first; then the uncovered block
+        # oldest-alert first, since that is the longest-unsettled obligation.
+        # Postgres sorts NULLs last on ASC, so uncovered rows fall through
+        # cover_cost without any special handling.
+        rows = (q.order("has_cover", desc=True)
+                 .order("cover_cost", desc=False)
+                 .order("alert_at", desc=False)
                  .range(offset, offset + max(limit, 1) - 1)
                  .execute().data) or []
 
         costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
+        covered = [r for r in rows if r.get("has_cover")]
+        reasons: dict[str, int] = {}
+        for r in rows:
+            why = r.get("no_cover_reason")
+            if why:
+                reasons[why] = reasons.get(why, 0) + 1
         return {
             "rows": rows,
             "count": len(rows),
+            "covered": len(covered),
+            "uncovered": len(rows) - len(covered),
+            "by_no_cover_reason": reasons,
             "at_or_below_sale": sum(1 for c in costs if c <= 0),
-            "displaced": sum(1 for r in rows if (r.get("cover_rank") or 1) > 1),
+            "displaced": sum(1 for r in covered if (r.get("cover_rank") or 1) > 1),
             "total_cover_cost": (round(sum(costs), 2) if costs else 0),
-            "refreshed_at": (rows[0].get("refreshed_at") if rows else None),
-            "filters": {"source": source, "days": days,
+            "refreshed_at": next((r.get("refreshed_at") for r in covered
+                                  if r.get("refreshed_at")), None),
+            "filters": {"source": source, "days": days, "with_sub": with_sub,
                         "limit": limit, "offset": offset},
         }
 
