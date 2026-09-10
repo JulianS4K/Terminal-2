@@ -74,10 +74,23 @@
     return legacy ? { Authorization: 'Bearer ' + legacy } : {};
   }
 
-  async function api(path) {
+  // `opts` is optional and additive: every existing caller passes a path only
+  // and still gets exactly the GET it always got. It exists because callers
+  // that need a POST were passing { method } to a one-argument function, which
+  // silently dropped it and sent a GET to a POST-only route — a failure with
+  // no error at the call site.
+  async function api(path, opts) {
+    const o = opts || {};
     const url = API_BASE + path;
     const res = await fetch(url, {
-      headers: { 'Accept': 'application/json', ...getAuthHeader() },
+      method: o.method || 'GET',
+      headers: {
+        'Accept': 'application/json',
+        ...(o.body ? { 'Content-Type': 'application/json' } : {}),
+        ...getAuthHeader(),
+        ...(o.headers || {}),
+      },
+      ...(o.body ? { body: typeof o.body === 'string' ? o.body : JSON.stringify(o.body) } : {}),
       credentials: API_BASE ? 'omit' : 'same-origin',
       mode: API_BASE ? 'cors' : 'same-origin',
     });
