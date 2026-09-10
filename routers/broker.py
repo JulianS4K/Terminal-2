@@ -1091,6 +1091,13 @@ def build_broker_router(
           section / same-or-better row / exact quantity. The only one of the
           three that means "go find tickets".
 
+        `sub_qty` is how many tickets to BUY — always the obligation's quantity.
+        `sub_avail` is the listing's own lot size; when it is larger, this is a
+        SPLIT take: the listing is bigger than the obligation and its published
+        splits permit buying exactly `sub_qty`. Quantity delivered is still
+        matched exactly — that never loosened — but a 4-seat listing selling in
+        2s can now cover a 2-seat obligation.
+
         `cover_rank` is which of that order's own candidates it was allocated:
         1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed
         the cheaper listing. Each listing is offered to exactly one order.
@@ -1123,6 +1130,7 @@ def build_broker_router(
                      "timer_expired,alert_at,event_name,event_date,venue,"
                      "tevo_event_id,section,order_row,quantity,sold_ea,"
                      "sub_source,sub_listing_id,sub_section,sub_row,sub_qty,"
+                     "sub_avail,"
                      "sub_ea,sub_total,cover_cost,rows_closer,buy_url,"
                      "captured_at,cover_rank,fifo_position,refreshed_at,"
                      "has_cover,no_cover_reason,open_intent_id,open_intent_by"))

@@ -1093,7 +1093,8 @@ def _cov_row(**over):
         "venue": "Arthur Ashe Stadium", "tevo_event_id": 3287886,
         "section": "317", "order_row": "P", "quantity": 2, "sold_ea": 42.0,
         "sub_source": "gotickets", "sub_listing_id": "7167764492",
-        "sub_section": "317", "sub_row": "H", "sub_qty": 2, "sub_ea": 61.0,
+        "sub_section": "317", "sub_row": "H", "sub_qty": 2, "sub_avail": 2,
+        "sub_ea": 61.0,
         "sub_total": 122.0, "cover_cost": 38.0, "rows_closer": 8,
         "buy_url": None, "captured_at": "2026-09-09T22:00:00Z",
         "cover_rank": 1, "fifo_position": 3,
@@ -1111,7 +1112,8 @@ def _gap_row(**over):
     row = _cov_row(**over)
     row.update({
         "sub_source": None, "sub_listing_id": None, "sub_section": None,
-        "sub_row": None, "sub_qty": None, "sub_ea": None, "sub_total": None,
+        "sub_row": None, "sub_qty": None, "sub_avail": None,
+        "sub_ea": None, "sub_total": None,
         "cover_cost": None, "rows_closer": None, "buy_url": None,
         "captured_at": None, "cover_rank": None, "fifo_position": None,
         "refreshed_at": None, "has_cover": False, "no_cover_reason": "no_match",
@@ -1199,6 +1201,19 @@ def test_n2s_covers_with_sub_filter_is_passed_through(client, monkeypatch):
     _use_db(monkeypatch, fake)
     body = client.get("/api/broker/n2s-covers?with_sub=false").json()
     assert body["filters"]["with_sub"] is False
+
+
+def test_n2s_covers_serves_the_lot_size_of_a_split_take(client, monkeypatch):
+    """sub_qty is what we buy and what the vendor payload owes; sub_avail is the
+    listing's whole lot. Both must reach the panel — dropping sub_avail makes a
+    2-of-4 split take indistinguishable from a 2-seat listing, and the operator
+    finds out only in the vendor console."""
+    split = _cov_row(sub_qty=2, sub_avail=4)
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [split]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["sub_qty"] == 2 and row["sub_avail"] == 4
+    # Economics stay on what is owed, not on the lot we happen to draw from.
+    assert row["sub_total"] == 122.0
 
 
 def test_n2s_covers_displaced_ignores_uncovered_rows(client, monkeypatch):

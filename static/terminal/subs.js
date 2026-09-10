@@ -218,8 +218,16 @@
         awaiting_source_pull: ['pulling…', 'the four-source pull is in flight; give it ~2 minutes'],
         no_match: ['no match', 'listings were searched; none had the same section, an equal-or-better row and the exact quantity'],
       };
+      // ⚠ A SPLIT TAKE MUST LOOK LIKE ONE. sub_qty is what we buy; sub_avail is
+      // the listing's lot size. When the lot is bigger we are buying PART of
+      // it — "2 of 4" — and showing only "2" would leave the operator to
+      // discover at checkout that the listing is not the size they expected.
+      const lot = (r.has_cover && r.sub_avail && r.sub_qty
+                   && r.sub_avail > r.sub_qty)
+        ? ` <span class="muted small" title="a ${esc(String(r.sub_avail))}-seat listing whose splits allow buying exactly ${esc(String(r.sub_qty))}">of ${esc(String(r.sub_avail))}</span>`
+        : '';
       const cov = r.has_cover
-        ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}`
+        ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}${lot}`
         : (() => {
             const w = WHY[r.no_cover_reason] || ['no sub', 'no cover allocated'];
             const cls = r.no_cover_reason === 'awaiting_source_pull' ? 'muted' : 'neg';
