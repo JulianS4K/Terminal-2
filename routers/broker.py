@@ -1207,6 +1207,14 @@ def build_broker_router(
                 lq = lq.lte("event_date", cutoff)
             if with_sub is not None:
                 lq = lq.eq("has_cover", with_sub)
+            if profitable:
+                # ⚠ MUST MIRROR EVERY FILTER ABOVE. This counts what the timer
+                # filter removed, so it has to count the same book the page is
+                # showing. Without this it reports the whole timer-expired book
+                # under profitable=true — "108 hidden (timer expired)" when
+                # including them would in fact reveal zero profitable covers,
+                # which sends the operator to a switch that cannot help.
+                lq = lq.lt("cover_cost", 0)
             # count="exact" makes PostgREST return the row count, which is the
             # whole point of the query — the rows themselves are discarded.
             hidden_late = int(getattr(lq.execute(), "count", 0) or 0)

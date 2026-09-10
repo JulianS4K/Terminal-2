@@ -229,7 +229,16 @@
       // nearly all of them, so saying only "no orders" would report a clear
       // book when the truth is the opposite. Name the count and the way back.
       const hidden = (d && d.hidden_late) || 0;
-      wrap.innerHTML = emptyHtml(hidden
+      // ⚠ THE PROFIT FILTER NEEDS ITS OWN EMPTY STATE. Under it the honest
+      // reading is "no cover currently settles below its sale", which the
+      // timer has nothing to do with — pointing at the Timer control there
+      // sends the operator to a switch that cannot help.
+      const onlyProfit = !!(d && d.filters && d.filters.profitable);
+      wrap.innerHTML = emptyHtml(onlyProfit
+        ? 'no cover currently settles for less than the seat sold for. '
+          + 'Set <em>Money</em> back to “all” for the whole book — most '
+          + 'obligations cost money to settle, and still have to be settled.'
+        : hidden
         ? `nothing shown — <strong>${hidden}</strong> open obligation${hidden === 1 ? '' : 's'} `
           + 'are hidden because their 15-minute CRM timer expired. '
           + 'Set <em>Timer</em> to “include late” to see them.'
@@ -245,6 +254,7 @@
       const WHY = {
         unmapped: ['unmapped', 'the event could not be identified, so no source was searched'],
         awaiting_source_pull: ['pulling…', 'the four-source pull is in flight; give it ~2 minutes'],
+        event_not_catalogued: ['event not in catalogue', 'the order is mapped to a real TEvo event we have never ingested, so no listings could be pulled for it — nothing was searched'],
         no_match: ['no match', 'listings were searched; none had the same section, an equal-or-better row and a usable quantity'],
       };
       // ⚠ A SPLIT TAKE MUST LOOK LIKE ONE. sub_qty is what we buy; sub_avail is

@@ -346,3 +346,37 @@ def test_profit_filter_says_gaps_are_hidden(feed_page, live_server):
     meta = feed_page.eval_on_selector("#n2sMeta", "e => e.textContent")
     assert "gaps hidden by this filter" in meta
     assert "without" not in meta
+
+
+def test_empty_profitable_book_does_not_blame_the_timer(feed_page, live_server):
+    """Under the profit filter the honest reading is "nothing settles below its
+    sale", which the 15-minute timer has nothing to do with. Pointing at the
+    Timer control there sends the operator to a switch that cannot help."""
+    def _covers(route):
+        _json_route(route, json.dumps({
+            "rows": [], "count": 0, "covered": 0, "uncovered": 0,
+            "by_no_cover_reason": {}, "at_or_below_sale": 0, "displaced": 0,
+            "total_cover_cost": 0, "hidden_late": 108,
+            "refreshed_at": "2026-09-10T05:00:00Z",
+            "filters": {"profitable": True}}))
+
+    feed_page.route(_COVERS_RE, _covers)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable .empty")
+    txt = feed_page.eval_on_selector("#n2sTable .empty", "e => e.textContent")
+    assert "settles for less than the seat sold for" in txt
+    assert "timer" not in txt.lower()
+
+
+def test_uncatalogued_event_does_not_claim_we_searched(feed_page, live_server):
+    """'no match' means listings were searched and none fit. An event we never
+    ingested was never searched, and the fix is to ingest it — not to go
+    hunting inventory that was never queried."""
+    gap = _gap(1, "event_not_catalogued")
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([gap])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+    cell = feed_page.eval_on_selector('#n2sTable tr[data-n2s="1"] .n2s-sub',
+                                      "e => e.textContent")
+    assert "event not in catalogue" in cell
+    assert "no match" not in cell

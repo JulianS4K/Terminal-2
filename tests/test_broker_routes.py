@@ -1258,6 +1258,19 @@ def test_n2s_covers_profitable_filter_is_passed_through(client, monkeypatch):
     assert client.get("/api/broker/n2s-covers").json()["filters"]["profitable"] is False
 
 
+def test_n2s_covers_hidden_late_count_respects_the_profit_filter(client, monkeypatch):
+    """hidden_late says what the TIMER removed, so it must count the same book
+    the page is showing. Counting the whole late book under profitable=true
+    would advertise "N hidden" and send the operator to a Timer switch that
+    reveals no profitable covers at all."""
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row(cover_cost=-99.62)]})
+    _use_db(monkeypatch, fake)
+    client.get("/api/broker/n2s-covers?profitable=true")
+    # The double records each builder call; the count query must have narrowed
+    # on cover_cost the same way the page query did.
+    assert fake.table_calls.count("v_n2s_orders") == 2
+
+
 def test_n2s_covers_serves_the_source_order_key(client, monkeypatch):
     """The panel needs the marketplace's own order id to look the obligation up
     while it is still live. EVO's order_number is an <invoice>-<order>
