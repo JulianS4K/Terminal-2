@@ -1227,17 +1227,21 @@ def _intent_row(**over):
         "cover_cost": -99.62, "buy_url": "https://pro.gotickets.com/tickets/1/",
         "verify_verdict": "ok", "verify_delta": 0.0, "status": "requested",
         "requested_by": "julian@s4kent.com", "requested_at": "2026-09-09T23:50:00Z",
-        "payload": {"endpoint": "WEB"}, "payload_ready": False,
-        "payload_gaps": ["no_purchase_api__use_buy_url"], "notes": None,
+        "payload": {"endpoint": "POST https://gotickets.com/rest/pro/api/orders"},
+        "payload_ready": True, "payload_gaps": [],
+        "operator_fills": ["paymentMethodToken", "recipient__original_buyer_pii"],
+        "notes": None,
     }
     row.update(over)
     return row
 
 
 def test_buy_intent_records_without_buying(client, monkeypatch):
+    # The buy is placed by hand in the vendor console, so the response carries
+    # a fill sheet: what WE produced, plus what the human types at checkout.
     created = {"intent_id": 1, "status": "requested", "verdict": "ok",
-               "payload_ready": False,
-               "payload_gaps": ["no_purchase_api__use_buy_url"]}
+               "payload_ready": True, "payload_gaps": [],
+               "operator_fills": ["paymentMethodToken", "deliveryMethodId"]}
     fake = FakeSupabase(rpc_data={"n2s_buy_intent_create": [created]})
     _use_db(monkeypatch, fake)
     body = client.post("/api/broker/n2s-covers/436/buy-intent"
@@ -1245,6 +1249,10 @@ def test_buy_intent_records_without_buying(client, monkeypatch):
     # The whole point: an intent is a record, never a purchase.
     assert body["bought"] is False
     assert body["intent"]["intent_id"] == 1
+    # A sheet the operator must still complete is NOT a defect — it stays
+    # "ready", because payload_ready reports only on what our side owes.
+    assert body["intent"]["payload_ready"] is True
+    assert body["intent"]["operator_fills"]
     assert fake.rpc_calls[0][1]["p_n2s_id"] == 436
 
 
@@ -1280,13 +1288,29 @@ def test_buy_intent_cancel_scalar_response(client, monkeypatch):
     assert client.post("/api/broker/buy-intents/1/cancel").json()["status"] == "cancelled"
 
 
-def test_buy_intents_list_counts_sendable_payloads(client, monkeypatch):
-    rows = [_intent_row(), _intent_row(intent_id=2, payload_ready=True, payload_gaps=[])]
+def test_buy_intents_list_counts_what_our_side_still_owes(client, monkeypatch):
+    # `complete` counts sheets with nothing left on OUR side. It deliberately
+    # ignores operator_fills: if the human's checkout fields counted against a
+    # sheet, none would ever read complete and the number would say nothing.
+    rows = [_intent_row(),
+            _intent_row(intent_id=2, payload_ready=False,
+                        payload_gaps=["no_purchase_integration_for_seatgeek"],
+                        operator_fills=[])]
     _use_db(monkeypatch, FakeSupabase(table_data={"n2s_buy_intent": rows}))
     body = client.get("/api/broker/buy-intents").json()
     assert body["count"] == 2
-    assert body["ready_to_send"] == 1
+    assert body["complete"] == 1
+    assert body["needs_us"] == 1
     assert body["status"] == "requested"
+
+
+def test_buy_intents_list_selects_the_operator_fill_list(client, monkeypatch):
+    # A sheet without operator_fills cannot be acted on — the operator would
+    # not know what the console still wants from them.
+    fake = FakeSupabase(table_data={"n2s_buy_intent": [_intent_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/buy-intents").json()
+    assert "recipient__original_buyer_pii" in body["rows"][0]["operator_fills"]
 
 
 def test_buy_intents_list_all_statuses(client, monkeypatch):

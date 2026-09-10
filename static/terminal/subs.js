@@ -182,11 +182,11 @@
     }
   }
 
-  // Records that someone is acting on this cover. It does NOT buy: nothing in
-  // this codebase places an order. GoTickets has no purchase API (the link is
-  // a storefront) and an EVO order still needs client/payment/delivery, so the
-  // intent exists to stop two people covering the same obligation and to keep
-  // an audit trail of who committed to what price.
+  // Records that someone is acting on this cover and hands them the fill
+  // sheet. It does NOT buy: nothing in this codebase places an order — the
+  // purchase is made by hand in the vendor console, for both TEvo and
+  // GoTickets. The intent exists to stop two people covering the same
+  // obligation and to keep an audit trail of who committed to what price.
   async function claimN2s(n2sId, btn) {
     if (!n2sId) return;
     btn.disabled = true;
@@ -197,8 +197,7 @@
                             { method: 'POST' });
       btn.textContent = 'claimed';
       btn.classList.add('pos');
-      const gaps = (d && d.intent && d.intent.payload_gaps) || [];
-      if (gaps.length) btn.title = `recorded — not purchased. missing: ${gaps.join(', ')}`;
+      showFillSheet(btn, (d && d.intent) || {});
     } catch (err) {
       // A 409 here is a real answer (not buyable / already claimed), not a
       // glitch — show it rather than swallowing it.
@@ -207,6 +206,44 @@
       const meta = document.getElementById('n2sMeta');
       if (meta) meta.textContent = `claim refused: ${err && err.message ? err.message : err}`;
     }
+  }
+
+  // The two absence lists mean opposite things and must not be shown alike.
+  // operator_fills is the human's checkout work and is the NORMAL case;
+  // payload_gaps is something our side owed and failed to produce. Rendering
+  // them the same way would train people to skim past both, and then a real
+  // gap — an unmapped event, a source with no purchase path — gets ignored
+  // along with "type in your card number".
+  function showFillSheet(btn, intent) {
+    const tr = btn.closest('tr');
+    if (!tr) return;
+    const fills = intent.operator_fills || [];
+    const gaps = intent.payload_gaps || [];
+    const sheet = document.createElement('tr');
+    sheet.className = 'n2s-sheet';
+    const cell = document.createElement('td');
+    cell.colSpan = tr.children.length;
+    cell.className = 'muted small';
+    // Built from nodes rather than markup: every piece here is server data,
+    // and textContent cannot be talked into being markup.
+    cell.appendChild(document.createTextNode(
+      `intent #${intent.intent_id || '?'} recorded — nothing was purchased. `));
+    const seg = (label, list, cls) => {
+      if (!list.length) return;
+      if (cell.childNodes.length > 1) cell.appendChild(document.createTextNode(' · '));
+      const b = document.createElement('strong');
+      b.textContent = label;
+      if (cls) b.className = cls;
+      cell.appendChild(b);
+      cell.appendChild(document.createTextNode(` ${list.join(', ')}`));
+    };
+    seg('we still owe:', gaps, 'neg');
+    seg('you fill at checkout:', fills, '');
+    if (!gaps.length && !fills.length) {
+      cell.appendChild(document.createTextNode('nothing outstanding'));
+    }
+    sheet.appendChild(cell);
+    tr.insertAdjacentElement('afterend', sheet);
   }
 
   // Signed the opposite way to pnlCell: here a POSITIVE number is money out.

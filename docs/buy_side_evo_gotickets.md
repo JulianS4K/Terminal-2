@@ -1,8 +1,12 @@
 # Buy-side process — EVO + GoTickets — REFERENCE ONLY, NOT IMPLEMENTED
 
-**Doc version:** v2.0.0 (2026-09-09) — **CORRECTION**: GoTickets DOES have a
-purchase API (Pro API `POST /orders`); v1.0.0 stated it did not. Adds the
-GoTickets flow, its `expectedTotal` guard, and the measured blockers. ·
+**Doc version:** v3.0.0 (2026-09-10) — the buy is placed **by hand in the
+vendor console** for both vendors (operator direction 2026-09-09), so the
+former "blockers" are re-framed as the operator's fill list; adds the
+who-supplies-what split now encoded in `n2s_buy_intent.operator_fills` vs
+`payload_gaps` (mig 20260910170000). · v2.0.0 — **CORRECTION**: GoTickets DOES
+have a purchase API (Pro API `POST /orders`); v1.0.0 stated it did not. Adds
+the GoTickets flow, its `expectedTotal` guard, and the measured blockers. ·
 v1.0.0 — first cut, TEvo `Orders/Create` + the verification gate.
 
 > ## ⚠ NOTHING HERE IS IMPLEMENTED, AND IT CANNOT BE WITHOUT AUTHORISATION
@@ -158,20 +162,49 @@ listings call passes a `paymentMethodToken`, which our poller does not. So
 `expectedTotal` must not be guessed from `all_in_price`: guessing high is
 exactly the unsafe direction.
 
-## Measured blockers (2026-09-09)
+## Who supplies what (2026-09-10)
 
-| # | Blocker | Evidence |
+The buy is placed **by hand in the vendor console**, for both TEvo and
+GoTickets. So the fields an order needs are not one undifferentiated list of
+things we are missing — they split by **who owes them**, and the intent row
+records that split (`n2s_buy_intent.operator_fills` vs `.payload_gaps`,
+mig 20260910170000).
+
+### The operator fills these at checkout — normal, not a defect
+
+| Field | Vendor | Why it is theirs |
 |---|---|---|
-| 1 | **No usable payment method** | `GET /payment-methods` → **200 `[]`**. Pro Access IS enabled (403 would say otherwise) but nothing is shared account-wide. Their note: *"Payment Method need to be shared with entire account to allow usage in those APIs (global = true)"*. Fix in Seller Central. |
-| 2 | **No `deliveryMethodId`** | Required. Not held anywhere in this database. |
-| 3 | **No buyer identity** | `emailAddress`, `phoneNumber`, `billingAddress` are required. We hold none. |
-| 4 | **`expectedTotal` not computable** | See above — missing `tax` and `transactionRatePercentage`. |
-| 5 | **The recipient problem** | `recipient` is **required** for Mobile Transfer, Print at Home, UPS shipping and custom delivery — i.e. most sub scenarios. For a cover the tickets must reach the **original marketplace's buyer**, whose contact details live on StubHub/Vivid/SeatGeek and are **not in the N2S feed** (we deliberately do not ingest customer PII, mig 20260910030000). This is the same delivery-leg problem as §3 above, and it is the deepest one: it is not a missing config value, it is data we chose not to hold. |
+| `client_id` / buyer account | TEvo | Chosen at purchase time; no single right answer to store. |
+| `payment_method` / `paymentMethodToken` | both | `GET /payment-methods` → **200 `[]`** — Pro Access IS on (403 would say otherwise) but nothing is shared account-wide. A console buy uses the card on the page. |
+| `delivery_method` / `deliveryMethodId`, `address_id` | both | Depends on how the cover will reach the buyer, decided per order. |
+| `emailAddress`, `phoneNumber`, `billingAddress` | GoTickets | Purchaser identity, entered at checkout. |
+| `expectedTotal` | GoTickets | The **API-side** spend guard. A person at the checkout page sees the real total and confirms it by eye — the same guard, performed manually. We still cannot compute it (no `tax`, no `transactionRatePercentage`), so it must not be re-listed as ours. |
+| `recipient` | GoTickets | **Permanently theirs.** See below. |
 
-## What would close them
+### Our side owes these — a real defect when absent
 
-1–3 are configuration the operator can supply. 4 needs the listings poller to
-pass a `paymentMethodToken` and to persist `tax`. **5 is a design decision**,
-not a setting: either the sub is delivered through the original marketplace's
-own flow (and GoTickets ships to us), or customer PII has to enter this system,
-which is a separate conversation with its own consequences.
+| Field | When it is missing | Consequence |
+|---|---|---|
+| `gt_event_id` | the TEvo event is not mapped into `gotickets_event` | The operator cannot even open the listing page. |
+| a purchase path at all | the match came from SeatGeek or TicketsData | There is nothing for a human to open; the match is informational only. |
+
+`payload_ready` reports on **this second table only**. If the operator's
+checkout fields counted against it, no intent would ever read ready and the
+flag would carry no information at all — and a genuine gap would be skimmed
+past along with "type in your card number".
+
+## The one thing manual entry does not solve
+
+`recipient` is required for Mobile Transfer, Print at Home, UPS shipping and
+custom delivery — i.e. most sub scenarios. For a cover the tickets must reach
+the **original marketplace's buyer**, whose contact details live on
+StubHub/Vivid/SeatGeek and are **not in the N2S feed**: `n2s_items` strips
+`customer_name` and `customer_email` at the door, from the column list and out
+of `raw` (mig 20260910030000).
+
+That is a design decision, not a setting. Either the cover is delivered through
+the original marketplace's own transfer flow (and the vendor ships to us), or
+customer PII enters this system — a separate conversation with its own
+consequences. Buying manually does not change it; it only moves the question
+from a NULL field to a person sitting at a checkout page with nowhere to send
+the tickets.

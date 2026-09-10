@@ -1182,11 +1182,21 @@ def build_broker_router(
         Only ONE open intent may exist per order. Two people acting on the same
         failed order would otherwise buy two covers for one obligation.
 
-        `payload` is the reviewable request body and `payload_gaps` names what
-        is still missing. Both are informational: nothing in this codebase
-        sends an order. GoTickets has no purchase API at all (the buy_url is a
-        web storefront), and an EVO order still needs client_id, payment and
-        delivery. See docs/evo_buy_side.md.
+        The intent is a FILL SHEET, not a request we send. Nothing in this
+        codebase places an order; the buy happens by hand in the vendor
+        console. `payload` is what we know, and the two absence lists are split
+        by who owes them:
+
+        * ``operator_fills`` — what the human types at checkout (payment token,
+          delivery method, buyer contact, recipient). Expected and normal; a
+          non-empty list is the ordinary case for both vendors.
+        * ``payload_gaps`` — data OUR side owed and could not produce, e.g. an
+          unmapped ``gt_event_id``, or a match on a source we hold no purchase
+          path to. A real defect, and what ``payload_ready`` reports on.
+
+        Keeping them apart matters: if the human's checkout fields counted as
+        gaps, every intent would read defective and a genuine gap would be
+        ignored along with them. See docs/buy_side_evo_gotickets.md.
         """
         db = get_require_sb()()
         try:
@@ -1232,19 +1242,26 @@ def build_broker_router(
         """Open buy intents — what someone has committed to acting on.
 
         Defaults to `requested` (still open). Pass `status=` empty for all.
+
+        Each row carries its fill sheet: `payload` plus `operator_fills` (the
+        human's checkout fields) and `payload_gaps` (what our side still owes).
         """
         db = get_require_sb()()
         q = db.table("n2s_buy_intent").select(
             "intent_id,n2s_id,order_number,s4k_source,sub_source,sub_listing_id,"
             "sub_section,sub_row,sub_qty,quoted_ea,quoted_total,cover_cost,"
             "buy_url,verify_verdict,verify_delta,status,requested_by,"
-            "requested_at,payload,payload_ready,payload_gaps,notes")
+            "requested_at,payload,payload_ready,payload_gaps,operator_fills,notes")
         if status:
             q = q.eq("status", status)
         rows = (q.order("requested_at", desc=True)
                  .range(0, max(limit, 1) - 1).execute().data) or []
+        # `complete` counts sheets with nothing left on OUR side. It is not
+        # "ready to send" — nothing sends, and the operator's checkout fields
+        # are still theirs to fill.
         return {"rows": rows, "count": len(rows),
-                "ready_to_send": sum(1 for r in rows if r.get("payload_ready")),
+                "complete": sum(1 for r in rows if r.get("payload_ready")),
+                "needs_us": sum(1 for r in rows if not r.get("payload_ready")),
                 "status": status}
 
     @router.get("/api/broker/sub-worklist")
