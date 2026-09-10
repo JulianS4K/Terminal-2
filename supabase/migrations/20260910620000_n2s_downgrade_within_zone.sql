@@ -1,4 +1,6 @@
 -- Migration 20260910620000 · level:secondary-sales · lane:D7 · writes:n2s_error_code,n2s_integration_doc · reads:none · pre:20260910610000
+--
+-- Already applied to prod · via MCP 2026-09-10 under operator direction.
 -- ============================================================================
 -- Migration 20260910620000 — a row downgrade must stay WITHIN the zone
 --
