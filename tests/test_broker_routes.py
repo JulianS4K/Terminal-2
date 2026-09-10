@@ -1196,6 +1196,17 @@ def test_n2s_covers_refreshed_at_comes_from_a_covered_row(client, monkeypatch):
     assert body["refreshed_at"] == "2026-09-09T22:05:00Z"
 
 
+def test_n2s_covers_reports_pipeline_freshness_when_the_page_is_empty(client, monkeypatch):
+    """A filter must not look like an outage. With every open order late and
+    include_late=false the page is empty, so no SERVED row carries a
+    refreshed_at — but the matcher is still running, and reading "never
+    refreshed" there would send the operator hunting a dead pipeline."""
+    late = _cov_row(timer_expired=True, refreshed_at="2026-09-09T22:05:00Z")
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [late]}))
+    body = client.get("/api/broker/n2s-covers?with_sub=true").json()
+    assert body["refreshed_at"] == "2026-09-09T22:05:00Z"
+
+
 def test_n2s_covers_with_sub_filter_is_passed_through(client, monkeypatch):
     fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
     _use_db(monkeypatch, fake)

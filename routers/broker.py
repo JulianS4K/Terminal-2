@@ -1186,6 +1186,26 @@ def build_broker_router(
 
         costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
         covered = [r for r in rows if r.get("has_cover")]
+
+        # ⚠ THE STAMP DESCRIBES THE PIPELINE, NOT THIS PAGE. Sourcing it only
+        # from the rows we served makes a *filter* look like an outage: with
+        # include_late=false and every open order late — which is the normal
+        # state of this book — the page is empty, so no served row carries a
+        # refreshed_at and the panel reads "never refreshed" while the matcher
+        # is in fact running every minute. `range()` can do the same on a later
+        # page. So when the page yields no stamp, ask the view directly. The
+        # probe is deliberately unfiltered: the question it answers is "when
+        # did the matcher last run", which no display filter changes.
+        stamp = next((r.get("refreshed_at") for r in covered
+                      if r.get("refreshed_at")), None)
+        if stamp is None:
+            probe = ((db.table("v_n2s_orders").select("refreshed_at")
+                      .eq("has_cover", True)
+                      .order("refreshed_at", desc=True)
+                      .limit(1).execute().data) or [])
+            # Still None on a genuinely empty book — an absent payload must read
+            # as "no answer", never as "no covers".
+            stamp = probe[0].get("refreshed_at") if probe else None
         reasons: dict[str, int] = {}
         for r in rows:
             why = r.get("no_cover_reason")
@@ -1202,8 +1222,7 @@ def build_broker_router(
             "total_cover_cost": (round(sum(costs), 2) if costs else 0),
             "truncated": len(rows) >= max(limit, 1),
             "hidden_late": hidden_late,
-            "refreshed_at": next((r.get("refreshed_at") for r in covered
-                                  if r.get("refreshed_at")), None),
+            "refreshed_at": stamp,
             "filters": {"source": source, "days": days, "with_sub": with_sub,
                         "include_late": include_late,
                         "limit": limit, "offset": offset},
