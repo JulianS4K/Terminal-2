@@ -42,7 +42,8 @@ def _cover(n2s_id, listing_id="L1", sub_ea=120):
         "venue": "Test Arena", "tevo_event_id": 9, "section": "101",
         "order_row": "5", "quantity": 2, "sold_ea": 100,
         "sub_source": "gotickets", "sub_listing_id": listing_id,
-        "sub_section": "101", "sub_row": "4", "sub_qty": 2, "sub_ea": sub_ea,
+        "sub_section": "101", "sub_row": "4", "sub_qty": 2, "sub_avail": 2,
+        "sub_ea": sub_ea,
         "sub_total": sub_ea * 2, "cover_cost": 40, "rows_closer": 1,
         "buy_url": f"https://example.test/{n2s_id}",
         "captured_at": "2026-09-10T00:00:00Z", "cover_rank": 1,
@@ -59,7 +60,7 @@ def _gap(n2s_id, reason="no_match"):
     """An open obligation with no cover — kept on screen deliberately."""
     row = _cover(n2s_id)
     row.update({k: None for k in (
-        "sub_source", "sub_listing_id", "sub_section", "sub_row", "sub_qty",
+        "sub_source", "sub_listing_id", "sub_section", "sub_row", "sub_qty", "sub_avail",
         "sub_ea", "sub_total", "cover_cost", "rows_closer", "buy_url",
         "captured_at", "cover_rank", "fifo_position", "refreshed_at")})
     row.update({"has_cover": False, "no_cover_reason": reason})
@@ -266,3 +267,37 @@ def test_verdict_is_dropped_when_the_cover_is_reallocated(feed_page, live_server
         '#n2sTable tr[data-n2s="2"] .n2s-verdict', "e => e.textContent.trim()")
     assert "ok" in kept, "an unchanged cover should keep its verdict"
     assert dropped == "—", "a reallocated cover must lose its stale verdict"
+
+
+def test_a_split_take_names_the_lot_it_comes_from(feed_page, live_server):
+    """Buying 2 of a 4-seat listing is only legal because the seller's splits
+    allow it. The row must say so — otherwise "2" reads as a 2-seat listing and
+    the operator has no way to tell the vendor console will show four."""
+    split = _cover(1)
+    split["sub_avail"] = 4
+    exact = _cover(2)
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([split, exact])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+
+    assert "of 4" in feed_page.eval_on_selector(
+        '#n2sTable tr[data-n2s="1"]', "e => e.textContent")
+    # An exact-quantity cover has no lot to disclose, so it stays unadorned.
+    assert "of " not in feed_page.eval_on_selector(
+        '#n2sTable tr[data-n2s="2"]', "e => e.textContent")
+
+
+def test_an_over_delivery_says_how_many_seats_are_actually_bought(feed_page, live_server):
+    """When nothing sells the owed quantity we buy the whole lot and eat the
+    spare seat. The row shows the OWED quantity next to the seat, so without a
+    second marker the operator sends a buy for 2 and is charged for 3."""
+    over = _cover(1)
+    over.update({"quantity": 2, "sub_qty": 3, "sub_avail": 3})
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([over])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+
+    text = feed_page.eval_on_selector('#n2sTable tr[data-n2s="1"]', "e => e.textContent")
+    assert "buy 3" in text
+    # A whole-lot buy is not a split take; "of 3" would claim the opposite.
+    assert "of 3" not in text

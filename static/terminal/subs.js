@@ -216,10 +216,30 @@
       const WHY = {
         unmapped: ['unmapped', 'the event could not be identified, so no source was searched'],
         awaiting_source_pull: ['pulling…', 'the four-source pull is in flight; give it ~2 minutes'],
-        no_match: ['no match', 'listings were searched; none had the same section, an equal-or-better row and the exact quantity'],
+        no_match: ['no match', 'listings were searched; none had the same section, an equal-or-better row and a usable quantity'],
       };
+      // ⚠ A SPLIT TAKE MUST LOOK LIKE ONE. sub_qty is what we buy; sub_avail is
+      // the listing's lot size. When the lot is bigger we are buying PART of
+      // it — "2 of 4" — and showing only "2" would leave the operator to
+      // discover at checkout that the listing is not the size they expected.
+      // ⚠ AND SO MUST AN OVER-DELIVERY. The two are exclusive — a split take
+      // buys PART of a bigger lot (sub_avail > sub_qty), an over-delivery buys
+      // a WHOLE lot that is bigger than the obligation (sub_qty > quantity) —
+      // and only the second one spends money on a seat we did not sell. It is
+      // the costlier surprise, so it is the louder label.
+      const lot = (() => {
+        if (!r.has_cover || !r.sub_qty) return '';
+        if (r.quantity && r.sub_qty > r.quantity) {
+          const spare = r.sub_qty - r.quantity;
+          return ` <span class="neg small" title="no listing sells exactly ${esc(String(r.quantity))} here, so the whole ${esc(String(r.sub_qty))}-seat lot is bought and ${esc(String(spare))} spare seat${spare === 1 ? '' : 's'} paid for">buy ${esc(String(r.sub_qty))}</span>`;
+        }
+        if (r.sub_avail && r.sub_avail > r.sub_qty) {
+          return ` <span class="muted small" title="a ${esc(String(r.sub_avail))}-seat listing whose splits allow buying exactly ${esc(String(r.sub_qty))}">of ${esc(String(r.sub_avail))}</span>`;
+        }
+        return '';
+      })();
       const cov = r.has_cover
-        ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}`
+        ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}${lot}`
         : (() => {
             const w = WHY[r.no_cover_reason] || ['no sub', 'no cover allocated'];
             const cls = r.no_cover_reason === 'awaiting_source_pull' ? 'muted' : 'neg';
