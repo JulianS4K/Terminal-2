@@ -17,6 +17,29 @@
   <title>Terminal — Subs</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
   <link rel="stylesheet" href="style.css?v=20260721a" />
+  <style>
+    /* D7 gate labels. Kept in this file rather than style.css because
+       style.css is D0's surface and subs.* is the D7 subset (PROJECT_BIBLE
+       §2.3). The two variants are styled DIFFERENTLY on purpose: gates 1-2
+       are directly actionable, gates 3-6 move the buyer and need consent
+       first, and a single uniform chip would hide exactly that distinction. */
+    .n2s-gate {
+      display: inline-block; padding: 1px 7px; border-radius: 10px;
+      font-size: 11px; line-height: 1.6; white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .n2s-gate-direct {            /* gates 1-2 — buy it */
+      background: rgba(74, 222, 128, .12);
+      border-color: rgba(74, 222, 128, .45);
+      color: var(--pos, #4ade80);
+    }
+    .n2s-gate-offer {             /* gates 3-6 — ASK THE BUYER FIRST */
+      background: rgba(251, 191, 36, .12);
+      border-color: rgba(251, 191, 36, .5);
+      color: #fbbf24;
+    }
+    .n2s-gate-cell { max-width: 190px; }
+  </style>
 </head>
 <body data-page="subs">
 
@@ -207,6 +230,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260910subfilter"></script>
+  <script src="subs.js?v=20260910gates"></script>
 </body>
 </html>

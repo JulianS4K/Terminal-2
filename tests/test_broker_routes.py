@@ -1102,6 +1102,7 @@ def _cov_row(**over):
         "sub_total": 122.0, "cover_cost": 38.0, "rows_closer": 8,
         "buy_url": None, "captured_at": "2026-09-09T22:00:00Z",
         "cover_rank": 1, "fifo_position": 3,
+        "cover_gate": 2, "cover_label": "S4KTrading",
         "refreshed_at": "2026-09-09T22:05:00Z", "alert_at": "2026-09-09T21:00:00Z",
         "has_cover": True, "no_cover_reason": None,
         "open_intent_id": None, "open_intent_by": None,
@@ -1492,3 +1493,37 @@ def test_buy_intents_list_all_statuses(client, monkeypatch):
     _use_db(monkeypatch, FakeSupabase(table_data={"n2s_buy_intent": [_intent_row()]}))
     body = client.get("/api/broker/buy-intents?status=").json()
     assert body["status"] == "" and body["count"] == 1
+
+
+def test_n2s_covers_exposes_gate_and_label(client, monkeypatch):
+    """The gate cascade's classification must survive to the API.
+
+    Regression guard for a real break: the cascade added cover_gate/cover_label
+    to n2s_cover_candidates, but n2s_cover_queue, n2s_covers() and v_n2s_orders
+    each had to be widened separately. Until the last landed, the label died one
+    step downstream and the panel showed nothing — with no error anywhere.
+    """
+    rows = [_cov_row(),
+            _cov_row(n2s_id=437, cover_gate=5,
+                     cover_label="Index Down offer subs", cover_cost=-12.5)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    got = {r["n2s_id"]: r for r in body["rows"]}
+    assert got[436]["cover_gate"] == 2
+    assert got[436]["cover_label"] == "S4KTrading"
+    # gates 3-6 carry "offer subs": the buyer is MOVED and must consent first.
+    assert got[437]["cover_gate"] == 5
+    assert "offer subs" in got[437]["cover_label"]
+
+
+def test_n2s_covers_gap_row_carries_no_gate(client, monkeypatch):
+    """An uncovered obligation must not claim a gate.
+
+    A gap row is the work, not a cover — labelling it would tell an operator
+    there is something to act on when there is not.
+    """
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [
+        _gap_row(cover_gate=None, cover_label=None)]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["has_cover"] is False
+    assert row["cover_gate"] is None and row["cover_label"] is None
