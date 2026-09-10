@@ -97,6 +97,11 @@
         <div class="subs-field">
           <button id="n2sVerify" type="button" class="btn">Verify buyable</button>
         </div>
+        <div class="subs-field">
+          <!-- Refresh re-reads what the matcher last computed; this re-reads the
+               WORLD. Kept separate because it costs upstream calls. -->
+          <button id="n2sPull" type="button" class="btn" title="Ask TEvo, GoTickets and SeatGeek for current listings. Covers update a minute or two later, once responses land.">Pull listings</button>
+        </div>
       </div>
       <div id="n2sTable"></div>
     </section>
@@ -200,6 +205,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260910overdeliver"></script>
+  <script src="subs.js?v=20260910pull"></script>
 </body>
 </html>

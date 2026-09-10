@@ -1214,6 +1214,49 @@ def test_n2s_covers_with_sub_filter_is_passed_through(client, monkeypatch):
     assert body["filters"]["with_sub"] is False
 
 
+def test_n2s_covers_pull_dispatches_and_reports_what_was_skipped(client, monkeypatch):
+    """The button must report BOTH halves. A press that dispatches nothing
+    because everything is already fresh is the guard working, and showing only
+    the dispatch count would make that read as a broken refresh."""
+    fake = FakeSupabase(rpc_data={"n2s_pull_on_demand": [
+        {"orders": 107, "events": 47, "evo_fired": 2, "gt_fired": 1,
+         "sg_queued": 10, "td_queued": 0,
+         "evo_skipped_fresh": 45, "gt_skipped_fresh": 30}]})
+    _use_db(monkeypatch, fake)
+    body = client.post("/api/broker/n2s-covers/pull").json()
+    assert body["events"] == 47
+    assert body["dispatched"] == {"tevo": 2, "gotickets": 1,
+                                  "seatgeek": 10, "ticketsdata": 0}
+    assert body["skipped_fresh"] == {"tevo": 45, "gotickets": 30}
+    # No ids given => pull every open order.
+    assert fake.rpc_calls[-1][1] == {"p_n2s_ids": None}
+
+
+def test_n2s_covers_pull_scopes_to_the_given_orders(client, monkeypatch):
+    fake = FakeSupabase(rpc_data={"n2s_pull_on_demand": [
+        {"orders": 2, "events": 1, "evo_fired": 1, "gt_fired": 0,
+         "sg_queued": 0, "td_queued": 0,
+         "evo_skipped_fresh": 0, "gt_skipped_fresh": 0}]})
+    _use_db(monkeypatch, fake)
+    client.post("/api/broker/n2s-covers/pull?n2s_ids=389,%20144")
+    assert fake.rpc_calls[-1][1] == {"p_n2s_ids": [389, 144]}
+
+
+def test_n2s_covers_pull_rejects_a_non_numeric_id(client, monkeypatch):
+    """Silently dropping an unparseable id would pull a DIFFERENT set of orders
+    than the caller asked for, and report success for it."""
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_pull_on_demand": []}))
+    assert client.post("/api/broker/n2s-covers/pull?n2s_ids=389,oops").status_code == 400
+
+
+def test_n2s_covers_pull_survives_an_empty_rpc_result(client, monkeypatch):
+    """No open orders => the RPC returns no row; the route must still answer."""
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_pull_on_demand": []}))
+    body = client.post("/api/broker/n2s-covers/pull").json()
+    assert body["orders"] == 0 and body["events"] == 0
+    assert body["dispatched"]["tevo"] == 0
+
+
 def test_n2s_covers_serves_the_lot_size_of_a_split_take(client, monkeypatch):
     """sub_qty is what we buy and what the vendor payload owes; sub_avail is the
     listing's whole lot. Both must reach the panel — dropping sub_avail makes a

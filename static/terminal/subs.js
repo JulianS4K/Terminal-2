@@ -86,6 +86,8 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
+    const pbtn = document.getElementById('n2sPull');
+    if (pbtn) pbtn.addEventListener('click', () => pullN2s(pbtn));
     ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
@@ -96,6 +98,33 @@
     if (!document.getElementById('n2sTable')) return;
     loadN2s();
     startN2sFeed();
+  }
+
+  // On-demand marketplace pull. The responses are asynchronous, so there is
+  // nothing to render on return — report what was dispatched and let the 60s
+  // feed pick the covers up. A press that dispatches nothing is the five-minute
+  // per-event guard working; say so plainly rather than looking broken.
+  async function pullN2s(btn) {
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Pulling…';
+    try {
+      const r = await T.api('/api/broker/n2s-covers/pull', { method: 'POST' });
+      const d = r.dispatched || {};
+      const sent = (d.tevo || 0) + (d.gotickets || 0) + (d.seatgeek || 0);
+      const meta = document.getElementById('n2sMeta');
+      if (meta) {
+        meta.textContent = sent
+          ? `pulling ${sent} request${sent === 1 ? '' : 's'} across ${r.events || 0} event${r.events === 1 ? '' : 's'} — covers update as they land`
+          : 'already current — every event was pulled within the last 5 minutes';
+      }
+    } catch (e) {
+      const meta = document.getElementById('n2sMeta');
+      if (meta) meta.textContent = `pull failed: ${e && e.message ? e.message : 'unknown error'}`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
   }
 
   function startN2sFeed() {

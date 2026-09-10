@@ -1273,6 +1273,54 @@ def build_broker_router(
             "freshness_minutes": freshness_minutes,
         }
 
+    @router.post("/api/broker/n2s-covers/pull")
+    def broker_n2s_covers_pull(
+        n2s_ids: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """Poll the marketplaces NOW for the events behind open obligations.
+
+        The panel's refresh only re-reads what the matcher last computed. This
+        re-reads the *world*: it fires a listings pull at TEvo, GoTickets and
+        SeatGeek so the next matcher pass sees current prices. Covers appear a
+        minute or two later, once the async responses land and the cover queue
+        rebuilds — this returns what was dispatched, not the covers.
+
+        Pass ``n2s_ids`` as a comma-separated list to pull only those orders'
+        events; omit it for every open order.
+
+        ⚠ THIS IS NOT RATE-LIMITED BY THE CALLER, IT IS RATE-LIMITED BY THE
+        DATA. `n2s_pull_events()` skips any event that already has a snapshot
+        under five minutes old OR a request still in flight, so leaning on the
+        button cannot exceed one pull per event per source per five minutes.
+        A second press seconds after the first legitimately dispatches nothing
+        and reports all-skipped; that is the guard working, not a failure.
+
+        Read-only upstream (RULE 2): a listings GET, never an order or a price
+        write.
+        """
+        ids: list[int] | None = None
+        if n2s_ids:
+            try:
+                ids = [int(x) for x in n2s_ids.split(",") if x.strip()]
+            except ValueError as exc:
+                raise HTTPException(status_code=400,
+                                    detail="n2s_ids must be comma-separated integers") from exc
+        db = get_require_sb()()
+        rows = db.rpc("n2s_pull_on_demand", {"p_n2s_ids": ids}).execute().data or []
+        r = rows[0] if rows else {}
+        return {
+            "orders": r.get("orders", 0),
+            "events": r.get("events", 0),
+            "dispatched": {"tevo": r.get("evo_fired", 0),
+                           "gotickets": r.get("gt_fired", 0),
+                           "seatgeek": r.get("sg_queued", 0),
+                           "ticketsdata": r.get("td_queued", 0)},
+            "skipped_fresh": {"tevo": r.get("evo_skipped_fresh", 0),
+                              "gotickets": r.get("gt_skipped_fresh", 0)},
+            "note": "listings requested; covers refresh once responses land",
+        }
+
     @router.post("/api/broker/n2s-covers/{n2s_id}/buy-intent")
     def broker_n2s_buy_intent(
         n2s_id: int,
