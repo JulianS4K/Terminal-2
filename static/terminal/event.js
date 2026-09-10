@@ -1155,6 +1155,17 @@
       b.textContent = String(bridge.espn_league).toUpperCase();
       badges.appendChild(b);
     }
+    // Buy-side companion: the same event on FLIGHTS, where its per-marketplace
+    // booking options and "vs usual" verdict live (flights.html?event=<id>).
+    const evId = T.getEventId();
+    if (evId) {
+      const a = document.createElement('a');
+      a.className = 'badge badge-link';
+      a.href = 'flights.html?event=' + evId;
+      a.textContent = 'COMPARE ON FLIGHTS →';
+      a.title = 'per-marketplace prices + price history for this event';
+      badges.appendChild(a);
+    }
   }
 
   function renderEventMode(bridge, data) {

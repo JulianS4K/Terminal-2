@@ -10,6 +10,7 @@
   'use strict';
 
   const cardTerminal    = document.getElementById('cardTerminal');
+  const cardFlights     = document.getElementById('cardFlights');
   const cardFantasy     = document.getElementById('cardFantasy');
   const cardBridge      = document.getElementById('cardBridge');
   const bridgeNote      = document.getElementById('bridgeNote');
@@ -29,9 +30,10 @@
     if (gate) gate.hidden = false;
   }
 
-  // Terminal + Fantasy are both @s4kent.com-gated operator surfaces.
+  // Terminal + Flights + Fantasy are all @s4kent.com-gated operator surfaces.
   function lockOperatorCards() {
     lockCard(cardTerminal);
+    lockCard(cardFlights);
     lockCard(cardFantasy);
   }
 

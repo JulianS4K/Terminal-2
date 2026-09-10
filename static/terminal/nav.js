@@ -64,6 +64,12 @@
     // for now; the other sites are the metric, not the inventory. Sits in the
     // movers "what to trade" cluster. Wired 2026-08-11.
     { id: 'deals',     label: 'DEALS',     href: 'deals.html' },
+    // Flights — the buy-side search surface: performer/city/date search over
+    // the book, a cheapest-per-date price graph, and a per-marketplace booking
+    // comparison with a "vs usual price" verdict drawn from each event's own
+    // trailing history. Google Flights' shape, ticket data. Backed by
+    // /api/broker/flights/* (routers/flights.py). Wired 2026-08-26.
+    { id: 'flights',   label: 'FLIGHTS',   href: 'flights.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
     // owned-vs-market, price distribution, top sections). Backed by
     // /api/d0/sales/* over the d0_sales_fact snapshot. See docs/d0-sales-reports.md.
