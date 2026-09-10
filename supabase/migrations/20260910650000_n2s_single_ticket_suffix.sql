@@ -1,4 +1,6 @@
 -- Migration 20260910650000 · level:secondary-sales · lane:D7 · writes:n2s_error_code,n2s_integration_doc · reads:none · pre:20260910640000
+--
+-- Already applied to prod · via MCP 2026-09-10 under operator direction.
 -- ============================================================================
 -- Migration 20260910650000 — " single ticket" suffix for a one-seat SALE
 --
@@ -99,8 +101,8 @@ UPDATE public.n2s_integration_doc
                        'Four suffixes can be appended to any of those:'),
          E'  ... repost single             sub_qty is one greater than the obligation; the spare is reposted\n',
          E'  ... single ticket             sold_qty is exactly 1 — the SALE is a single seat. Any gate can carry\n'
-         E'                                it. Different fact from repost single (the BUY); both can appear.\n'
-         E'  ... repost single             sub_qty is one greater than the obligation; the spare is reposted\n')
+         || E'                                it. Different fact from repost single (the BUY); both can appear.\n'
+         || E'  ... repost single             sub_qty is one greater than the obligation; the spare is reposted\n')
  WHERE slug = 'gates'
    AND body LIKE '%Three suffixes can be appended to any of those:%'
    AND body NOT LIKE '%... single ticket%';
