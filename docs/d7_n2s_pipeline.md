@@ -74,7 +74,14 @@ Two guards matter and must both stay:
 - a **separate budget** for newly-mapped events (`p_new_max`), so a burst of new orders
   cannot starve the steady-state refresh.
 
-### 4. Match — two tiers
+### 4. Match — two tiers, then six gates
+
+Matching happens in two independent dimensions, and it is easy to confuse them:
+
+- **tiers** answer *how many do we buy* (quantity/splits) — below;
+- **gates** answer *what are we allowed to do with it* (section/row/cost) — §4a.
+
+
 Per obligation, candidate listings at the same event are matched in two tiers and the
 cheapest of the best tier wins.
 
@@ -121,6 +128,51 @@ occupy one of the `p_per_order` slots a cheaper cover should have had.
 > ⚠ The whole-lot guard is symmetric on purpose: a lot equal to our quantity still has to
 > be sellable whole (`l.splits IS NULL OR l.q = ANY(l.splits)`). Dropping either side of
 > that lets us "buy" a lot the marketplace would not actually sell us in one piece.
+
+### 4a. Gates — the label cascade
+
+Every surviving candidate is classified into exactly one of six gates, checked in
+order, first match wins. The label is a **workflow instruction**, not a quality score.
+
+| Gate | Label | Section | Row | Cost |
+|---|---|---|---|---|
+| 1 | `Index` | exact | same or better | profitable |
+| 2 | `S4KTrading` | exact | same or better | ≤200% of sale |
+| 3 | `Index offer subs` | same curated zone | same or better | profitable |
+| 4 | `offer subs s4ktrading` | same curated zone | same or better | ≤200% |
+| 5 | `Index Down offer subs` | exact or zone | **up to 5 rows back** | profitable |
+| 6 | `Down offer subs S4KTrading` | exact or zone | **up to 5 rows back** | ≤200% |
+
+Suffix **` repost single`** is appended whenever `sub_qty > quantity` — the lot could
+not be split, so we buy one spare and repost it.
+
+**No gate = not sent.** The 200% ceiling is expressed *only* through the gates; there
+is no separate filter. Nothing above it ships on any gate.
+
+> ⚠ **"offer subs" is a hard instruction, not a hint.** Gates 1–2 keep the buyer in the
+> section they purchased and are directly actionable. Gates 3–6 **move** them, so the
+> buyer must accept before we purchase. `cover_gate` is a stable integer — filter on it,
+> not on the label text.
+
+**Zones are section *and* row scoped.** Many are price tiers stacked inside one section
+(sections 121-124 at one venue: `Metro Gold/Plat` rows 1-6, `Metro Silver` 7-12,
+`Metro Bronze` 13-22, `Metro Box` 23-35). Resolving on section alone would let a Gold
+seat match a Silver seat, so `n2s_zone_of()` takes the row and **refuses ambiguity**
+(returns NULL) rather than breaking a tie by `display_order` the way
+`match_performer_zone()` does. Ambiguous lookups fall through to gates 5/6 — a wrong
+zone label is worse than none. FIFA overlay zones and `system_placeholder` zones are
+excluded.
+
+> ⚠ **The gate-5/6 downgrade is deliberately NOT zone-capped** (operator, 2026-09-10),
+> so a five-row move can cross a row-based price tier. Zero live cases at authoring
+> time. This is precisely why gates 5/6 carry "offer subs".
+
+> ⚠ **`AS MATERIALIZED` on `zrule`/`lcoord0`/`lcoord`/`evz` is load-bearing.** Postgres
+> inlines a CTE referenced once, which pushes the section normalisers back into the join
+> predicate and evaluates them per *comparison* — ~24M calls, a hard 60s timeout. It
+> fails as a timeout rather than a wrong answer, so it looks like infrastructure. Do not
+> remove it. For the same reason the exact-section and zone matches are two UNION'd
+> branches, never one `OR` across relations.
 
 ### 5. Queue — one cover per obligation
 `n2s_cover_queue_refresh()` writes the winning cover per obligation into
