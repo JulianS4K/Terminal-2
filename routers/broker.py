@@ -1057,6 +1057,7 @@ def build_broker_router(
         source: str | None = None,
         days: int | None = None,
         with_sub: bool | None = None,
+        include_late: bool = False,
         _=Depends(require_auth),
     ):
         """N2S ("Need to Sub") — the WHOLE open book, with the sub attached
@@ -1101,6 +1102,20 @@ def build_broker_router(
 
         Pass `with_sub=true` for only the actionable rows, `false` for only the
         gaps. Omit it for the whole book, which is the default on purpose.
+
+        ⚠ `include_late` DEFAULTS TO FALSE AND THAT HIDES ALMOST EVERYTHING.
+        The CRM gives each N2S alert a 15-minute response timer; `timer_expired`
+        is true once it lapses and it never goes back. Measured when this was
+        added: **108 of 108** open obligations were expired — least 42 minutes
+        over, most 4 days, mean ~50 hours — so the default returns an EMPTY
+        page and will almost always do so. That is the operator's explicit
+        choice (2026-09-10), made after being shown those numbers, not an
+        oversight.
+
+        Because of that, `hidden_late` is always returned. A caller MUST show
+        it: an empty page here means "everything was filtered", never "nothing
+        needs covering", and the two are opposite. Pass `include_late=true` to
+        see the whole book.
         """
         db = get_require_sb()()
         q = (db.table("v_n2s_orders")
@@ -1118,6 +1133,10 @@ def build_broker_router(
             q = q.lte("event_date", cutoff)
         if with_sub is not None:
             q = q.eq("has_cover", with_sub)
+        if not include_late:
+            # timer_expired is COALESCEd to false at ingest, never NULL, so a
+            # plain equality is safe and an untimed row is not treated as late.
+            q = q.eq("timer_expired", False)
         # Actionable rows first, cheapest cover first; then the uncovered block
         # oldest-alert first, since that is the longest-unsettled obligation.
         # Postgres sorts NULLs last on ASC, so uncovered rows fall through
@@ -1132,6 +1151,24 @@ def build_broker_router(
         # from `rows`, which `range()` has already truncated to `limit`. Named
         # page_* so a caller cannot read "to settle" as a total obligation when
         # it is only the first N. `truncated` says when that matters.
+        # How many the timer filter removed. Counted separately and ALWAYS
+        # reported: without it an empty page is indistinguishable from a clear
+        # book, which is the one confusion this filter is guaranteed to cause.
+        hidden_late = 0
+        if not include_late:
+            lq = (db.table("v_n2s_orders").select("n2s_id", count="exact")
+                    .eq("timer_expired", True))
+            if source:
+                lq = lq.eq("s4k_source", source)
+            if days is not None:
+                lq = lq.lte("event_date", cutoff)
+            if with_sub is not None:
+                lq = lq.eq("has_cover", with_sub)
+            lres = lq.execute()
+            hidden_late = getattr(lres, "count", None)
+            if hidden_late is None:
+                hidden_late = len(getattr(lres, "data", None) or [])
+
         costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
         covered = [r for r in rows if r.get("has_cover")]
         reasons: dict[str, int] = {}
@@ -1149,9 +1186,11 @@ def build_broker_router(
             "displaced": sum(1 for r in covered if (r.get("cover_rank") or 1) > 1),
             "total_cover_cost": (round(sum(costs), 2) if costs else 0),
             "truncated": len(rows) >= max(limit, 1),
+            "hidden_late": hidden_late,
             "refreshed_at": next((r.get("refreshed_at") for r in covered
                                   if r.get("refreshed_at")), None),
             "filters": {"source": source, "days": days, "with_sub": with_sub,
+                        "include_late": include_late,
                         "limit": limit, "offset": offset},
         }
 

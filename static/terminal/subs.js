@@ -86,7 +86,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas'].forEach((id) => {
+    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -140,9 +140,11 @@
     const src = (document.getElementById('n2sSource').value || '').trim();
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
+    const late = (document.getElementById('n2sLate') || {}).value || '';
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
     if (has) qs.set('with_sub', has);
+    if (late) qs.set('include_late', late);
     try {
       const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
       renderN2s(d);
@@ -155,6 +157,7 @@
           : ' · never refreshed';
         const disp = d.displaced ? ` · ${d.displaced} took a dearer cover` : '';
         const arrived = n2sFeed.fresh.size ? ` · ${n2sFeed.fresh.size} new` : '';
+        const late = d.hidden_late ? ` · ${d.hidden_late} hidden (timer expired)` : '';
         // Lead with the shape of the book: how many can be acted on versus how
         // many are still open with nothing to act on. The second number is the
         // one that was invisible when this panel showed covers only.
@@ -162,7 +165,7 @@
           .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
         meta.textContent = `${d.count} open · ${d.covered} with a sub`
           + ` · ${d.uncovered} without${why ? ` (${why})` : ''}`
-          + ` · ${money(d.total_cover_cost)} to settle${disp}${arrived}${stamp}`;
+          + ` · ${money(d.total_cover_cost)} to settle${disp}${late}${arrived}${stamp}`;
       }
     } catch (err) {
       const msg = err && err.message ? err.message : err;
@@ -192,10 +195,16 @@
     n2sFeed.seen = ids;
     forgetStaleN2sState(rows);
     if (!rows.length) {
-      // Say WHY it may be empty. An empty cover list is ambiguous between "all
-      // settled" and "the listings we had aged out of the 1-hour window", and
-      // the second is not good news.
-      wrap.innerHTML = emptyHtml('no open N2S orders match these filters');
+      // ⚠ An empty page here is almost never "nothing needs covering". The
+      // default hides every order whose 15-minute CRM timer lapsed, which is
+      // nearly all of them, so saying only "no orders" would report a clear
+      // book when the truth is the opposite. Name the count and the way back.
+      const hidden = (d && d.hidden_late) || 0;
+      wrap.innerHTML = emptyHtml(hidden
+        ? `nothing shown — <strong>${hidden}</strong> open obligation${hidden === 1 ? '' : 's'} `
+          + 'are hidden because their 15-minute CRM timer expired. '
+          + 'Set <em>Timer</em> to “include late” to see them.'
+        : 'no open N2S orders match these filters');
       return;
     }
     const body = rows.map((r) => {

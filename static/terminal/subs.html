@@ -73,6 +73,16 @@
           </select>
         </div>
         <div class="subs-field narrow">
+          <label for="n2sLate">Timer</label>
+          <!-- Default hides anything past the CRM's 15-minute response timer.
+               That is nearly the whole book, so the empty state names the count
+               and this control is the way back. -->
+          <select id="n2sLate">
+            <option value="">in time only</option>
+            <option value="true">include late</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
           <label for="n2sDays">Within days</label>
           <input id="n2sDays" type="number" min="1" step="1" placeholder="all" />
         </div>

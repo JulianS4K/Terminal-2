@@ -163,6 +163,26 @@ def test_claim_records_who_asked(feed_page, live_server):
     assert "requested_by=julian%40s4kent.com" in seen["url"]
 
 
+def test_empty_page_explains_the_timer_filter(feed_page, live_server):
+    """The default hides every order past its 15-minute CRM timer — measured at
+    108 of 108. An empty table that just said "no orders" would report a clear
+    book while 108 obligations sat unhandled, so the count and the way back
+    must both be on screen."""
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, json.dumps({
+        "rows": [], "count": 0, "covered": 0, "uncovered": 0,
+        "by_no_cover_reason": {}, "at_or_below_sale": 0, "displaced": 0,
+        "total_cover_cost": 0, "hidden_late": 108, "truncated": False,
+        "refreshed_at": None, "filters": {}})))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable .empty")
+    txt = feed_page.eval_on_selector("#n2sTable", "e => e.textContent")
+    assert "108" in txt
+    assert "timer expired" in txt
+    assert "include late" in txt
+    # and the control that reverses it is present
+    assert feed_page.query_selector("#n2sLate")
+
+
 def test_poll_marks_only_new_arrivals(feed_page, live_server):
     """First load flashes nothing; the next poll flashes only what arrived."""
     state = {"n": 0}
