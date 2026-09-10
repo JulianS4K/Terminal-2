@@ -1164,10 +1164,9 @@ def build_broker_router(
                 lq = lq.lte("event_date", cutoff)
             if with_sub is not None:
                 lq = lq.eq("has_cover", with_sub)
-            lres = lq.execute()
-            hidden_late = getattr(lres, "count", None)
-            if hidden_late is None:
-                hidden_late = len(getattr(lres, "data", None) or [])
+            # count="exact" makes PostgREST return the row count, which is the
+            # whole point of the query — the rows themselves are discarded.
+            hidden_late = int(getattr(lq.execute(), "count", 0) or 0)
 
         costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
         covered = [r for r in rows if r.get("has_cover")]

@@ -51,9 +51,16 @@ class _FakeQuery:
 
     def __init__(self, data):
         self._data = data
+        self._count = False
 
     # builder methods used across broker routes — all return self
     def select(self, *_a, **_k):
+        # PostgREST returns a row count alongside the data whenever the caller
+        # asks for count="exact". Model that, so routes reading `.count` are
+        # exercised against the shape the real client actually returns rather
+        # than a fallback that only exists for this double.
+        if _k.get("count"):
+            self._count = True
         return self
 
     def eq(self, *_a, **_k):
@@ -78,7 +85,10 @@ class _FakeQuery:
         return self
 
     def execute(self):
-        return type("_Res", (), {"data": self._data})()
+        attrs = {"data": self._data}
+        if self._count:
+            attrs["count"] = len(self._data)
+        return type("_Res", (), attrs)()
 
 
 class FakeSupabase:
