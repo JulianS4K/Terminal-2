@@ -410,3 +410,35 @@ def test_profitable_only_is_an_option_of_the_sub_filter(feed_page, live_server):
     last = urls[-1]
     assert "profitable=true" in last
     assert "with_sub" not in last
+
+
+def test_gate_label_distinguishes_actionable_from_offer(feed_page, live_server):
+    """Gates 1-2 and 3-6 must NOT render the same.
+
+    The label is a workflow instruction, not a badge: gates 1-2 keep the buyer
+    in the section they purchased and are directly actionable, gates 3-6 MOVE
+    them and need consent before purchase. One uniform chip would erase exactly
+    the distinction the label exists to carry, so this asserts the two get
+    different classes rather than merely that some text appears.
+    """
+    a = _cover(1); a.update({"cover_gate": 1, "cover_label": "Index"})
+    b = _cover(2, listing_id="L2")
+    b.update({"cover_gate": 4, "cover_label": "offer subs s4ktrading"})
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([a, b])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    cells = feed_page.locator(".n2s-gate-cell .n2s-gate")
+    cells.first.wait_for()
+    assert cells.count() == 2
+    assert "n2s-gate-direct" in cells.nth(0).get_attribute("class")
+    assert "n2s-gate-offer" in cells.nth(1).get_attribute("class")
+    # the offer variant must SAY so, not just be a colour
+    assert "offer" in (cells.nth(1).get_attribute("title") or "").lower()
+
+
+def test_gate_label_absent_on_uncovered_row(feed_page, live_server):
+    """No cover means no gate — labelling a gap row would invent work."""
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([_gap(3)])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    cell = feed_page.locator(".n2s-gate-cell").first
+    cell.wait_for()
+    assert cell.locator(".n2s-gate").count() == 0
