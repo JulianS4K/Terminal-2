@@ -102,7 +102,16 @@ SELECT
   FROM public.n2s_items n
   LEFT JOIN public.n2s_cover_queue c ON c.n2s_id = n.n2s_id
   LEFT JOIN public.n2s_buy_intent  b ON b.n2s_id = n.n2s_id AND b.status = 'requested'
- WHERE NOT n.is_terminal;
+ WHERE NOT n.is_terminal
+   -- ⚠ DATE FLOOR IS LOAD-BEARING, NOT A CONVENIENCE FILTER. An obligation for
+   -- an event that has already been played cannot be covered by buying
+   -- tickets, so it is not work — it is history. n2s_cover_queue is built
+   -- future-only by the matcher, so reading that table was implicitly filtered;
+   -- LEFT JOINing onto n2s_items loses that and would serve 371 dead rows
+   -- against 105 live ones, burying the actual book. `>= current_date` keeps
+   -- SAME-DAY events, per the operator's "keep today" (mig 20260910010000);
+   -- never tighten this to `> current_date`.
+   AND n.event_dt::date >= current_date;
 
 COMMENT ON VIEW public.v_n2s_orders IS
   'Every OPEN N2S obligation with its allocated cover LEFT JOINed on. Rows '
