@@ -1,6 +1,6 @@
 # D7 · N2S ("Need to Sub") obligation-covering pipeline
 
-> **Doc version:** v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
+> **Doc version:** v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
 > does, the six stages it runs, the tables and crons that make up each one, the error-code
 > registry, and how an external consumer plugs into the profitable-cover feed.
 
@@ -84,8 +84,39 @@ cheapest of the best tier wins.
   sellable whole. We buy `qty + 1` and eat the spare seat. This exists because a 4-seat lot
   in the same section and row is often **cheaper in total** than the 3 we actually need.
 
-Tier 1 always outranks tier 2 — the allocator sorts on `(sub_qty > quantity)` **before**
-cost, so a slightly cheaper over-delivery never displaces an exact match.
+- **Tier 3 — one seat over, from a *larger* lot.** The lot is bigger than `qty + 1`, and
+  `qty + 1` is one of its permitted splits. This reaches inventory tiers 1b and 2 both miss:
+  a 6-seat lot with splits `[2,4,6]` against an obligation of 3 matches neither (3 isn't a
+  permitted split; the lot isn't 4) — but the seller *will* sell 4.
+
+Tier order is the first sort key, so a tier-1 or tier-2 cover always outranks a tier-3 one
+even when tier 3 is nominally cheaper: buying exactly what we owe beats a marginal saving
+that leaves us holding a seat. A listing matching both tier 1b and tier 3 is assigned tier 1,
+so we buy what we owe rather than one extra.
+
+> ⚠ **Both caps on tier 3 are load-bearing.** It buys `qty + 1` and *never* a larger
+> permitted split, and it is admitted only at `cover_cost ≤ 0`. Generalising to "the cheapest
+> permitted split ≥ qty" was measured before being rejected: it reached 11 orders, **10 were
+> worse than the cover that order already had**, and the one genuinely new cover was a
+> **$2,022 loss**. Restrictive singleton splits like `[4]` on a 4-lot mean *buy all four or
+> nothing*, so covering 2 costs 4 — and one case would have bought **6 seats to cover 1**
+> ($4,244 against an $862 alternative). Tier 3 is the only arm whose admission depends on
+> price, because it is the only one where we choose to buy a spare seat off a lot we were not
+> otherwise touching.
+
+**A global 200% ceiling applies to every tier.** A candidate is dropped unless
+`sub_total ≤ 2 × sold value`, filtered *before* ranking so an over-cap candidate cannot
+occupy one of the `p_per_order` slots a cheaper cover should have had.
+
+> ⚠ **This hides covers that exist.** At cutover it removed 17 of 49 — the worst at 880%
+> (sold 5 seats for $26.25, cover $231.05). None were profitable, so the external feed was
+> unaffected, but the obligation does **not** go away when its cover is hidden: those orders
+> now read "no cover" when the truthful statement is "a cover exists, above the ceiling".
+>
+> ⚠ The `sold_ea ≤ 0` carve-out is not sloppiness. A naive cap gives a zero-priced order a
+> ceiling of zero, so *every* cover fails and the obligation becomes permanently uncoverable
+> with no explanation — a live hazard, since `PROJECT_BIBLE §3` records GoTickets CRM orders
+> carrying price `0.00`. When the ceiling cannot be computed, it is skipped, not enforced.
 
 > ⚠ The whole-lot guard is symmetric on purpose: a lot equal to our quantity still has to
 > be sellable whole (`l.splits IS NULL OR l.q = ANY(l.splits)`). Dropping either side of
