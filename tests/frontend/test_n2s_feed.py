@@ -224,7 +224,9 @@ def test_orders_without_a_sub_are_shown_and_are_not_actionable(feed_page, live_s
     assert len(feed_page.query_selector_all("#n2sTable .n2s-claim")) == 1
     # Each gap says which of the three situations it is.
     reasons = feed_page.eval_on_selector_all(
-        "#n2sTable tr.n2s-row-gap td:nth-child(5)",
+        # Addressed by class, not position: a positional selector silently
+        # re-points at a different column the next time one is added.
+        "#n2sTable tr.n2s-row-gap .n2s-sub",
         "t => t.map(x => x.textContent.trim())")
     assert sorted(reasons) == ["no match", "unmapped"]
     meta = feed_page.eval_on_selector("#n2sMeta", "e => e.textContent")
@@ -302,3 +304,79 @@ def test_an_over_delivery_says_how_many_seats_are_actually_bought(feed_page, liv
     # A whole-lot buy is not a split take; "of 3" would claim the opposite.
     assert "of 3" not in text
 
+
+
+def test_row_shows_the_marketplace_order_number(feed_page, live_server):
+    """Knowing StubHub failed is useless without knowing WHICH StubHub order.
+    EVO additionally shows its bare order key, because its order_number is an
+    <invoice>-<order> composite that its console will not match."""
+    sh = _cover(1)
+    sh.update({"s4k_source": "StubHub", "order_number": "653320088",
+               "n2s_order_key": "653320088"})
+    evo = _cover(2)
+    evo.update({"s4k_source": "EVO", "order_number": "8047273-19083928",
+                "n2s_order_key": "19083928"})
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([sh, evo])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+
+    assert "653320088" in feed_page.eval_on_selector(
+        '#n2sTable tr[data-n2s="1"] .n2s-ord', "e => e.textContent")
+    evo_cell = feed_page.eval_on_selector(
+        '#n2sTable tr[data-n2s="2"] .n2s-ord', "e => e.textContent")
+    assert "8047273-19083928" in evo_cell and "19083928" in evo_cell
+    # A source whose key equals its order number gets no redundant second line.
+    assert feed_page.eval_on_selector(
+        '#n2sTable tr[data-n2s="1"] .n2s-ord',
+        "e => e.querySelectorAll('div').length") == 0
+
+
+def test_profit_filter_says_gaps_are_hidden(feed_page, live_server):
+    """Showing "0 without" under this filter would read as a clean book. The
+    uncovered rows are gone by construction — a gap has no cover_cost."""
+    def _covers(route):
+        body = json.loads(_payload([_cover(1)]))
+        body["filters"] = {"profitable": True}
+        body["uncovered"] = 0
+        _json_route(route, json.dumps(body))
+
+    feed_page.route(_COVERS_RE, _covers)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+    meta = feed_page.eval_on_selector("#n2sMeta", "e => e.textContent")
+    assert "gaps hidden by this filter" in meta
+    assert "without" not in meta
+
+
+def test_empty_profitable_book_does_not_blame_the_timer(feed_page, live_server):
+    """Under the profit filter the honest reading is "nothing settles below its
+    sale", which the 15-minute timer has nothing to do with. Pointing at the
+    Timer control there sends the operator to a switch that cannot help."""
+    def _covers(route):
+        _json_route(route, json.dumps({
+            "rows": [], "count": 0, "covered": 0, "uncovered": 0,
+            "by_no_cover_reason": {}, "at_or_below_sale": 0, "displaced": 0,
+            "total_cover_cost": 0, "hidden_late": 108,
+            "refreshed_at": "2026-09-10T05:00:00Z",
+            "filters": {"profitable": True}}))
+
+    feed_page.route(_COVERS_RE, _covers)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable .empty")
+    txt = feed_page.eval_on_selector("#n2sTable .empty", "e => e.textContent")
+    assert "settles for less than the seat sold for" in txt
+    assert "timer" not in txt.lower()
+
+
+def test_uncatalogued_event_does_not_claim_we_searched(feed_page, live_server):
+    """'no match' means listings were searched and none fit. An event we never
+    ingested was never searched, and the fix is to ingest it — not to go
+    hunting inventory that was never queried."""
+    gap = _gap(1, "event_not_catalogued")
+    feed_page.route(_COVERS_RE, lambda r: _json_route(r, _payload([gap])))
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+    cell = feed_page.eval_on_selector('#n2sTable tr[data-n2s="1"] .n2s-sub',
+                                      "e => e.textContent")
+    assert "event not in catalogue" in cell
+    assert "no match" not in cell

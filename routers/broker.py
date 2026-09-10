@@ -1058,6 +1058,7 @@ def build_broker_router(
         days: int | None = None,
         with_sub: bool | None = None,
         include_late: bool = False,
+        profitable: bool = False,
         _=Depends(require_auth),
     ):
         """N2S ("Need to Sub") — the WHOLE open book, with the sub attached
@@ -1106,6 +1107,18 @@ def build_broker_router(
         `sub_total` and `cover_cost` are computed on `sub_qty`, so the spare
         seat is charged to the cover rather than quietly omitted.
 
+        `profitable=true` narrows to covers where `cover_cost < 0` — the
+        obligation settles for less than the seat sold for, so the difference
+        is kept. Break-even is excluded: it is not making money. Note this
+        filter necessarily empties the uncovered book, since a gap row has a
+        NULL `cover_cost`; it is the one view of this panel where absent rows
+        are not the work.
+
+        `n2s_order_key` is the marketplace's order id on its own. For every
+        source but EVO it equals `order_number`; EVO's `order_number` is an
+        `<invoice>-<order>` composite, and pasting the whole thing into its
+        console finds nothing.
+
         `cover_rank` is which of that order's own candidates it was allocated:
         1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed
         the cheaper listing. Each listing is offered to exactly one order.
@@ -1141,7 +1154,8 @@ def build_broker_router(
                      "sub_avail,"
                      "sub_ea,sub_total,cover_cost,rows_closer,buy_url,"
                      "captured_at,cover_rank,fifo_position,refreshed_at,"
-                     "has_cover,no_cover_reason,open_intent_id,open_intent_by"))
+                     "has_cover,no_cover_reason,open_intent_id,open_intent_by,"
+                     "n2s_order_key"))
         if source:
             q = q.eq("s4k_source", source)
         if days is not None:
@@ -1153,6 +1167,19 @@ def build_broker_router(
             # timer_expired is COALESCEd to false at ingest, never NULL, so a
             # plain equality is safe and an untimed row is not treated as late.
             q = q.eq("timer_expired", False)
+        if profitable:
+            # cover_cost is outlay MINUS revenue, so negative means the cover
+            # settles for less than the seat sold for and we keep the
+            # difference. Strictly < 0: break-even is not making money.
+            #
+            # ⚠ THIS NECESSARILY HIDES THE UNCOVERED BOOK. An order with no
+            # cover has a NULL cover_cost and cannot satisfy the comparison, so
+            # every gap row disappears — including the ones most needing a
+            # person. That is the point of the filter, but it inverts this
+            # panel's usual "gaps are the work" stance, so `uncovered` and
+            # `by_no_cover_reason` come back as zeros here and the UI says
+            # which book you are looking at.
+            q = q.lt("cover_cost", 0)
         # Actionable rows first, cheapest cover first; then the uncovered block
         # oldest-alert first, since that is the longest-unsettled obligation.
         # Postgres sorts NULLs last on ASC, so uncovered rows fall through
@@ -1180,6 +1207,14 @@ def build_broker_router(
                 lq = lq.lte("event_date", cutoff)
             if with_sub is not None:
                 lq = lq.eq("has_cover", with_sub)
+            if profitable:
+                # ⚠ MUST MIRROR EVERY FILTER ABOVE. This counts what the timer
+                # filter removed, so it has to count the same book the page is
+                # showing. Without this it reports the whole timer-expired book
+                # under profitable=true — "108 hidden (timer expired)" when
+                # including them would in fact reveal zero profitable covers,
+                # which sends the operator to a switch that cannot help.
+                lq = lq.lt("cover_cost", 0)
             # count="exact" makes PostgREST return the row count, which is the
             # whole point of the query — the rows themselves are discarded.
             hidden_late = int(getattr(lq.execute(), "count", 0) or 0)
@@ -1224,7 +1259,7 @@ def build_broker_router(
             "hidden_late": hidden_late,
             "refreshed_at": stamp,
             "filters": {"source": source, "days": days, "with_sub": with_sub,
-                        "include_late": include_late,
+                        "include_late": include_late, "profitable": profitable,
                         "limit": limit, "offset": offset},
         }
 
