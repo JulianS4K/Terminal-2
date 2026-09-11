@@ -11,7 +11,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { ArrowLeft, BarChart3, DollarSign, Tag, Globe, Users, Ban } from 'lucide-react';
+import { ArrowLeft, BarChart3, DollarSign, Tag, Users, Ban } from 'lucide-react';
 import { getEventForEdit } from '../lib/events';
 import { listEventTickets, voidTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
@@ -23,28 +23,10 @@ import ScanReport from '../components/ScanReport';
 import WaitlistPanel from '../components/WaitlistPanel';
 import AnnouncementsPanel from '../components/AnnouncementsPanel';
 import RemindersPanel from '../components/RemindersPanel';
+import EventAnalyticsPanel from '../components/EventAnalyticsPanel';
 import TierPricingPanel from '../components/TierPricingPanel';
 import ReschedulePanel from '../components/ReschedulePanel';
 import { formatCurrency } from '../lib/utils';
-
-interface TierStat {
-  tierId: string;
-  tierName: string;
-  count: number;
-  revenue: number;
-}
-
-interface PromoterStat {
-  promoterId: string;
-  count: number;
-  revenue: number;
-}
-
-interface ChannelStat {
-  channel: string;
-  count: number;
-  revenue: number;
-}
 
 export default function OrganizerEventReport() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -57,6 +39,8 @@ export default function OrganizerEventReport() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [voidingId, setVoidingId] = useState<string | null>(null);
+  // Bumped after any mutation on this page so the analytics document refetches.
+  const [analyticsKey, setAnalyticsKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +126,7 @@ export default function OrganizerEventReport() {
       setTickets((prev) =>
         prev.map((t) => (t.id === ticket.id ? { ...t, status: 'voided' as const } : t)),
       );
+      setAnalyticsKey((k) => k + 1);
       toast({
         kind: 'success',
         message:
@@ -163,45 +148,6 @@ export default function OrganizerEventReport() {
   );
   const totalSold = activeTickets.length;
   const totalRevenue = activeTickets.reduce((sum, t) => sum + (t.pricePaid || 0), 0);
-
-  const tierMap = new Map<string, TierStat>();
-  for (const t of activeTickets) {
-    const tid = t.tierId || 'unknown';
-    const existing = tierMap.get(tid) || {
-      tierId: tid,
-      tierName: t.tierName || 'Unknown',
-      count: 0,
-      revenue: 0,
-    };
-    existing.count += 1;
-    existing.revenue += t.pricePaid || 0;
-    tierMap.set(tid, existing);
-  }
-  const tierStats = Array.from(tierMap.values()).sort((a, b) => b.count - a.count);
-
-  const promoterMap = new Map<string, PromoterStat>();
-  for (const t of activeTickets) {
-    if (!t.promoterId) continue;
-    const existing = promoterMap.get(t.promoterId) || {
-      promoterId: t.promoterId,
-      count: 0,
-      revenue: 0,
-    };
-    existing.count += 1;
-    existing.revenue += t.pricePaid || 0;
-    promoterMap.set(t.promoterId, existing);
-  }
-  const promoterStats = Array.from(promoterMap.values()).sort((a, b) => b.count - a.count);
-
-  const channelMap = new Map<string, ChannelStat>();
-  for (const t of activeTickets) {
-    const ch = t.channelSource || 'vibepass';
-    const existing = channelMap.get(ch) || { channel: ch, count: 0, revenue: 0 };
-    existing.count += 1;
-    existing.revenue += t.pricePaid || 0;
-    channelMap.set(ch, existing);
-  }
-  const channelStats = Array.from(channelMap.values()).sort((a, b) => b.count - a.count);
 
   const checkedIn = activeTickets.filter((t) => t.status === 'used').length;
   const currency = event.currency || 'USD';
@@ -300,38 +246,14 @@ export default function OrganizerEventReport() {
           isPublished={event.status === 'published'}
         />
 
-        {/* Tier breakdown. */}
-        <Section title="By Tier" empty="No tier breakdown yet — first sale populates this." rows={tierStats.length}>
-          <Table
-            cols={['Tier', 'Sold', 'Revenue']}
-            rows={tierStats.map((t) => [t.tierName, String(t.count), formatCurrency(t.revenue, currency)])}
-          />
-        </Section>
-
-        {/* Promoter / affiliate. */}
-        <Section
-          title="By Promoter"
-          empty="No promoter-attributed sales yet. Buyers who arrive via ?promoter=X are counted here."
-          rows={promoterStats.length}
-        >
-          <Table
-            cols={['Promoter', 'Sold', 'Revenue']}
-            rows={promoterStats.map((p) => [p.promoterId, String(p.count), formatCurrency(p.revenue, currency)])}
-          />
-        </Section>
-
-        {/* Channel attribution — direct vs Lysted secondary channels. */}
-        <Section
-          title="By Channel"
-          empty="All sales are direct so far."
-          rows={channelStats.length}
-        >
-          <Table
-            icon={<Globe size={14} />}
-            cols={['Channel', 'Sold', 'Revenue']}
-            rows={channelStats.map((c) => [c.channel, String(c.count), formatCurrency(c.revenue, currency)])}
-          />
-        </Section>
+        {/* Attendance funnel + attribution (server-side document) + CSV exports. */}
+        <EventAnalyticsPanel
+          eventId={eventId!}
+          eventTitle={event.title}
+          currency={currency}
+          tickets={tickets}
+          refreshKey={analyticsKey}
+        />
 
         {/* Attendees + per-ticket refund/void controls. Lists every
             ticket including voided ones (greyed out, with reason).
@@ -418,53 +340,5 @@ function Stat({ label, value, icon }: { label: string; value: string; icon: Reac
       </div>
       <p className="disp text-4xl text-slate-900 tracking-tight" style={{ transform: 'skewX(-3deg)' }}>{value}</p>
     </div>
-  );
-}
-
-function Section({
-  title,
-  empty,
-  rows,
-  children,
-}: {
-  title: string;
-  empty: string;
-  rows: number;
-  children: ReactNode;
-}) {
-  return (
-    <div className="bg-white rounded-2xl p-6 shadow-sm mb-6">
-      <h3 className="text-sm font-bold text-slate-700 mb-3">{title}</h3>
-      {rows === 0 ? (
-        <p className="text-xs text-slate-400">{empty}</p>
-      ) : (
-        children
-      )}
-    </div>
-  );
-}
-
-function Table({ cols, rows, icon }: { cols: string[]; rows: string[][]; icon?: ReactNode }) {
-  return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
-          {cols.map((c) => (
-            <th key={c} className="py-2 font-black">{c}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, i) => (
-          <tr key={i} className="border-b border-slate-50 last:border-b-0">
-            {row.map((cell, j) => (
-              <td key={j} className="py-2 text-slate-700">
-                {j === 0 && icon ? <span className="inline-flex items-center gap-2">{icon}{cell}</span> : cell}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
   );
 }

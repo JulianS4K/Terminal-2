@@ -568,4 +568,92 @@ BEGIN
 END $$;
 
 SELECT '*** PART C (reminders + invoice RLS) PASSED ***' AS result;
+-- ============================================================================
+-- PART D — ORGANIZER ANALYTICS DOCUMENT (mig 20260911130000)
+--   totals · no-show only after start · tz day buckets · axes with scan-in
+--   · checkin + reject rollups · role gate.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+-- Event G: started 1h ago (NY tz). 5 tickets: 3 used, 1 active, 1 voided.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,timezone) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','EvtG','evtg','published',50,4,
+   now()-interval '1 hour','America/New_York');
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold) VALUES
+  ('dddddddd-0000-0000-0000-0000000000d1','dddddddd-0000-0000-0000-0000000000e1','GA',0,50,4);
+INSERT INTO public.exos_tickets(event_id,org_id,tier_id,tier_name,owner_id,buyer_id,status,barcode_secret,price_paid,channel_source,promoter_id,created_at) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','used','g1',10,'vibepass','promoA',now()-interval '3 days'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','used','g2',10,'vibepass','promoA',now()-interval '3 days'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','used','g3',0,'boxoffice',NULL,now()-interval '1 day'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','active','g4',0,'boxoffice','',now()-interval '1 day'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','66666666-6666-6666-6666-666666666666','66666666-6666-6666-6666-666666666666','voided','g5',99,'vibepass','promoB',now()-interval '1 day');
+INSERT INTO public.exos_event_checkins(event_id,ticket_id,org_id,scanned_by,source,verification) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1',gen_random_uuid(),'aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','camera','verified'),
+  ('dddddddd-0000-0000-0000-0000000000e1',gen_random_uuid(),'aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','camera','verified'),
+  ('dddddddd-0000-0000-0000-0000000000e1',gen_random_uuid(),'aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','manual','manual');
+INSERT INTO public.exos_scan_rejects(event_id,org_id,rejected_by,reason,source) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','used','camera'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','used','camera'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','wrong-event','manual');
+
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE j jsonb; a jsonb;
+BEGIN
+  j := public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000e1');
+  ASSERT (j->>'sold')::int = 4, 'sold=4 (voided excluded), got '||(j->>'sold');
+  ASSERT (j->>'used')::int = 3, 'used=3';
+  ASSERT (j->>'unscanned')::int = 1, 'unscanned=1';
+  ASSERT (j->>'voided')::int = 1, 'voided=1';
+  ASSERT (j->>'revenue')::numeric = 20, 'revenue=20 (voided 99 excluded), got '||(j->>'revenue');
+  ASSERT (j->>'capacity')::int = 50, 'capacity from event';
+  ASSERT (j->>'event_started')::boolean, 'started';
+  ASSERT (j->>'checkin_rate')::numeric = 0.75, 'checkin_rate=.75';
+  ASSERT (j->>'no_show_rate')::numeric = 0.25, 'no_show_rate=.25 after start';
+  ASSERT j->>'timezone' = 'America/New_York', 'tz carried';
+  -- Day buckets: two distinct days (3d ago × 2, 1d ago × 2), cumulative 2 → 4.
+  ASSERT jsonb_array_length(j->'sales_by_day') = 2, 'two day buckets, got '||jsonb_array_length(j->'sales_by_day');
+  ASSERT (j->'sales_by_day'->0->>'sold')::int = 2 AND (j->'sales_by_day'->1->>'cumulative')::int = 4, 'daily + cumulative';
+  -- Axes with scan-in.
+  ASSERT jsonb_array_length(j->'by_tier') = 1 AND (j->'by_tier'->0->>'used')::int = 3, 'by_tier used=3';
+  ASSERT jsonb_array_length(j->'by_promoter') = 1, 'blank/NULL/voided promoters excluded → 1 row';
+  ASSERT j->'by_promoter'->0->>'promoter' = 'promoA' AND (j->'by_promoter'->0->>'used')::int = 2, 'promoA sold 2 used 2';
+  SELECT x INTO a FROM jsonb_array_elements(j->'by_channel') x WHERE x->>'channel' = 'boxoffice';
+  ASSERT (a->>'sold')::int = 2 AND (a->>'used')::int = 1, 'boxoffice 2 sold / 1 used';
+  -- Door rollups.
+  ASSERT (j->'scans'->>'total')::int = 3, 'scans total=3';
+  ASSERT (j->'scans'->'by_source'->>'camera')::int = 2, 'scans by_source camera=2';
+  ASSERT (j->'rejects'->>'total')::int = 3, 'rejects total=3';
+  ASSERT j->'rejects'->'by_reason'->0->>'reason' = 'used' AND (j->'rejects'->'by_reason'->0->>'count')::int = 2, 'rejects by_reason sorted desc';
+  RAISE NOTICE 'D1 analytics document OK';
+
+  -- D2. Not started yet → no_show_rate is NULL, checkin_rate still reported.
+  UPDATE public.exos_events SET starts_at = now()+interval '2 days', timezone = 'Not/AZone'
+   WHERE id='dddddddd-0000-0000-0000-0000000000e1';
+  j := public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000e1');
+  ASSERT NOT (j->>'event_started')::boolean AND j->'no_show_rate' = 'null'::jsonb, 'no-show NULL before start';
+  ASSERT (j->>'checkin_rate')::numeric = 0.75, 'checkin_rate independent of start';
+  ASSERT j->>'timezone' = 'UTC', 'bad tz degrades to UTC';
+  RAISE NOTICE 'D2 pre-start + tz fallback OK';
+END $$;
+-- D3. Buyer (no org role) refused; unknown event refused.
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000e1');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true;
+  END;
+  ASSERT ok, 'buyer cannot read analytics (42501)';
+  ok := false;
+  BEGIN
+    PERFORM public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000ff');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%not found%';
+  END;
+  ASSERT ok, 'unknown event refused';
+  RAISE NOTICE 'D3 role gate OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART D (analytics) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;
