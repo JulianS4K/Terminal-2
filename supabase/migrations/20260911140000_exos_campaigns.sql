@@ -80,7 +80,12 @@ CREATE TABLE IF NOT EXISTS public.exos_campaigns (
   audience        jsonb NOT NULL DEFAULT '{"kind":"holders"}'::jsonb,
   subject         text NOT NULL CHECK (char_length(subject) BETWEEN 1 AND 160),
   body            text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 4000),
-  base_url        text CHECK (base_url IS NULL OR (base_url ~ '^https://' AND char_length(base_url) <= 200)),
+  -- Only URL-safe characters (no quotes / angle brackets / spaces / query / fragment):
+  -- the value is interpolated into an href, and a CHECK keeps the invariant even
+  -- if a future writer bypasses exos_campaign_send.
+  base_url        text CHECK (base_url IS NULL OR (
+                    base_url ~ '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
+                    AND char_length(base_url) <= 200)),
   status          text NOT NULL DEFAULT 'draft'
                     CHECK (status IN ('draft','scheduled','sending','sent','cancelled','failed')),
   scheduled_at    timestamptz,
@@ -367,7 +372,8 @@ BEGIN
            || '<p>' || v_safe_bod || '</p>'
            || '<p style="color:#888;font-size:12px">Sent by ' || v_safe_org || ' via Bridge.'
            || CASE WHEN c.base_url IS NOT NULL
-                   THEN ' <a href="' || c.base_url || '/unsubscribe/' ||
+                   -- base_url is charset-restricted by the CHECK above; escaped anyway.
+                   THEN ' <a href="' || replace(replace(replace(replace(c.base_url, '&', '&amp;'), '"', '&quot;'), '<', '&lt;'), '>', '&gt;') || '/unsubscribe/' ||
                         (SELECT token FROM public.exos_campaign_recipients WHERE id = v_mail)::text ||
                         '">Unsubscribe from ' || v_safe_org || ' emails</a>.'
                    ELSE ' To stop these emails, open the Bridge app and unfollow the organizer.'
@@ -416,7 +422,8 @@ BEGIN
     RAISE EXCEPTION 'SMS sending is not configured yet — this campaign was saved but not sent. Email campaigns send today; SMS needs an operator-configured provider.';
   END IF;
   v_base := nullif(rtrim(btrim(coalesce(p_base_url, '')), '/'), '');
-  IF v_base IS NOT NULL AND (v_base !~ '^https://[^/?#\s]+(/[^?#\s]*)?$' OR char_length(v_base) > 200) THEN
+  IF v_base IS NOT NULL AND (v_base !~ '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
+                             OR char_length(v_base) > 200) THEN
     RAISE EXCEPTION 'exos_campaign_send: base url must be a plain https origin/path';
   END IF;
 

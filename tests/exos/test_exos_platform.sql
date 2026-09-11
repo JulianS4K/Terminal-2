@@ -1129,6 +1129,14 @@ BEGIN
   BEGIN PERFORM public.exos_campaign_send(cid, 'http://evil.example/x');
   EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%plain https%'; END;
   ASSERT ok, 'non-https base refused';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_send(cid, 'https://evil.example/x"><script>');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%plain https%'; END;
+  ASSERT ok, 'html-significant characters in base refused';
+  ok := false;
+  BEGIN UPDATE public.exos_campaigns SET base_url = 'https://a.b/"' WHERE id = cid;
+  EXCEPTION WHEN check_violation THEN ok := true; END;
+  ASSERT ok, 'CHECK constraint rejects a quote in base_url even on a direct write';
   PERFORM public.exos_campaign_cancel(cid);
   ASSERT (SELECT status FROM public.exos_campaigns WHERE id=cid) = 'cancelled', 'cancelled';
   ok := false;
@@ -1153,4 +1161,23 @@ BEGIN
 END $$;
 SELECT set_config('app.uid','',false);
 SELECT '*** PART I (campaigns) PASSED ***' AS result;
+-- ============================================================================
+-- PART J — VENUE PLACE ID + GEO (mig 20260911141000): columns + range checks.
+-- ============================================================================
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  UPDATE public.exos_events SET google_place_id = 'ChIJN1t_tDeuEmsRUsoyG83frY4', venue_lat = 40.7128, venue_lng = -74.0060
+   WHERE id = '11111111-0000-0000-0000-0000000000e9';
+  ASSERT (SELECT venue_lat = 40.7128 AND venue_lng = -74.006 FROM public.exos_events WHERE id='11111111-0000-0000-0000-0000000000e9'), 'geo stored';
+  BEGIN UPDATE public.exos_events SET venue_lat = 91 WHERE id = '11111111-0000-0000-0000-0000000000e9';
+  EXCEPTION WHEN check_violation THEN ok := true; END;
+  ASSERT ok, 'latitude range enforced';
+  ok := false;
+  BEGIN UPDATE public.exos_events SET google_place_id = 'x' WHERE id = '11111111-0000-0000-0000-0000000000e9';
+  EXCEPTION WHEN check_violation THEN ok := true; END;
+  ASSERT ok, 'place id length enforced';
+  RAISE NOTICE 'J1 venue place/geo OK';
+END $$;
+SELECT '*** PART J (venue place) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;
