@@ -8,13 +8,13 @@
 --           sg_purchases_sync(timestamptz,timestamptz,int,int), sg_purchases_sync(),
 --           sg_purchases_drain(), gt_purchases_sync(timestamptz,timestamptz),
 --           gt_purchases_sync(), gt_purchases_drain(), our_purchases_map() (CREATE FUNCTION) ·
---           v_our_purchases, v_our_purchase_flips, v_our_purchase_deals (CREATE VIEW) ·
+--           v_our_purchases, v_our_purchase_flips (CREATE VIEW) ·
 --           cron_policy (+4 rows), cron.job (4 jobs)
 --           Reads: sg_events_canonical, aq_event_map, gotickets_event, v_s4kcs_orders,
---           order_fee_schedule, gotickets_deals_feed, gotickets_deal_outcome
+--           order_fee_schedule
 -- Pre-reqs: 20260909220000 (gotickets_sales pattern + vault GOTICKETS_*),
 --           20260910200000 (get_app_secret('SEATGEEK_API_TOKEN') pattern),
---           20260911160400 (gotickets_deal_outcome), vault secrets
+--           vault secrets
 --           SEATGEEK_API_TOKEN / GOTICKETS_ACCESS_ID / GOTICKETS_API_SECRET
 --
 -- ⚠ READ-ONLY UPSTREAM (RULE 2). Two calls, both GET, both on already-allowlisted
@@ -32,7 +32,8 @@
 -- OWN flips: what we paid, what we later sold it for. Step one is a durable,
 -- polled record of what we bought. Step two (here too) maps each purchase to
 -- the TEvo event through the hub and joins it to (a) our CRM sales — the flip —
--- and (b) the deal feed — did we buy a flagged deal, and how did it grade.
+-- and (b) the deal feed — did we buy a flagged deal, and how did it grade
+-- (that join lives in mig 20260911160600, which needs the outcome label too).
 --
 -- ── Endpoint shapes (from the operator-supplied specs) ─────────────────────
 -- SeatGeek /purchases?token&start_time&end_time&event_id&order_ids&order_status
@@ -78,8 +79,7 @@
 --
 -- ROLLBACK: cron.unschedule ×4 (sg_purchases_sync_30min, sg_purchases_drain_30min,
 --           gt_purchases_sync_30min, gt_purchases_drain_30min); DELETE the 4
---           cron_policy rows; DROP VIEW v_our_purchase_deals, v_our_purchase_flips,
---           v_our_purchases; DROP FUNCTION our_purchases_map, gt_purchases_drain,
+--           cron_policy rows; DROP VIEW v_our_purchase_flips, v_our_purchases; DROP FUNCTION our_purchases_map, gt_purchases_drain,
 --           gt_purchases_sync(), gt_purchases_sync(timestamptz,timestamptz),
 --           sg_purchases_drain, sg_purchases_sync(), sg_purchases_sync(timestamptz,
 --           timestamptz,int,int); DROP TABLE gt_purchases_pending, gotickets_purchases,
@@ -627,30 +627,7 @@ GRANT SELECT ON public.v_our_purchase_flips TO authenticated, service_role;
 COMMENT ON VIEW public.v_our_purchase_flips IS
   'Our own flips: each non-cancelled purchase joined to our CRM sales for the same event x section number x row sold on/after the buy date. flip_roi_pct = (median sold x (1-fee) - unit_all_in) / unit_all_in. The label the deal model should ultimately calibrate against. A1 mig 20260911160500.';
 
--- ── 8. Did we buy a flagged deal? purchase ↔ feed ↔ outcome label ────────────
-CREATE OR REPLACE VIEW public.v_our_purchase_deals
-WITH (security_invoker = true) AS
-SELECT p.source, p.purchase_id, p.tevo_event_id, p.event_name, p.event_date,
-       p.section, p."row", p.quantity, p.unit_all_in, p.purchased_at,
-       f.gt_listing_id, f.gt_price AS deal_price, f.first_seen_at AS deal_first_seen_at,
-       f.win_prob AS deal_win_prob, f.net_profit_pct AS deal_net_profit_pct,
-       f.confidence AS deal_confidence, f.regime AS deal_regime,
-       o.outcome AS label_outcome, o.realized_roi_pct AS label_realized_roi_pct,
-       o.match_level AS label_match_level
-FROM public.v_our_purchases p
-JOIN public.gotickets_deals_feed f
-  ON f.tevo_event_id = p.tevo_event_id
- AND (regexp_match(f.section, '(\d{1,4})'))[1] = p.secnum
- AND upper(btrim(f."row")) = upper(btrim(p."row"))
- AND f.first_seen_at <= p.purchased_at + interval '1 day'
-LEFT JOIN public.gotickets_deal_outcome o
-  ON o.tevo_event_id = f.tevo_event_id AND o.gt_listing_id = f.gt_listing_id
-WHERE p.tevo_event_id IS NOT NULL;
-GRANT SELECT ON public.v_our_purchase_deals TO authenticated, service_role;
-COMMENT ON VIEW public.v_our_purchase_deals IS
-  'Purchases that match a flagged deal (same event x section number x row, flagged before we bought) with the feed prediction and, once played, the outcome label. Shows which deals we acted on and how they graded. A1 mig 20260911160500.';
-
--- ── 9. Crons, policy-gated (30-min sync, drain 5 min later) ──────────────────
+-- ── 8. Crons, policy-gated (30-min sync, drain 5 min later) ──────────────────
 INSERT INTO public.cron_policy
   (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min,
    work_check_sql, daily_max_fires, notes)
