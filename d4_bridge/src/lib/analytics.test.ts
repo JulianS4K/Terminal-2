@@ -91,6 +91,7 @@ describe('attendeesCsv', () => {
       checkInDate: Timestamp.fromDate(new Date('2026-09-11T10:30:00Z')),
       barcodeValue: '',
       tierName: 'GA',
+      attendeeName: 'Ada Lovelace',
       buyerEmail: 'a@x.com',
       pricePaid: 10,
       promoterId: '=evil',
@@ -98,9 +99,9 @@ describe('attendeesCsv', () => {
     };
     const csv = attendeesCsv([t]);
     const lines = csv.split('\r\n');
-    expect(lines[0].startsWith('ticket_id,status,tier,buyer_email')).toBe(true);
+    expect(lines[0].startsWith('ticket_id,status,tier,attendee_name,buyer_email')).toBe(true);
     expect(lines[1]).toBe(
-      "tk1,used,GA,a@x.com,10,vibepass,'=evil,ord1,2026-09-08T12:00:00.000Z,2026-09-11T10:30:00.000Z,,",
+      "tk1,used,GA,Ada Lovelace,a@x.com,10,vibepass,'=evil,ord1,2026-09-08T12:00:00.000Z,2026-09-11T10:30:00.000Z,,",
     );
   });
 });

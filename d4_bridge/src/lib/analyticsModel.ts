@@ -156,13 +156,14 @@ export function analyticsSummaryCsv(a: EventAnalytics, eventTitle: string): stri
 /** Attendee export: one row per ticket (voided included, flagged). */
 export function attendeesCsv(tickets: Ticket[]): string {
   const header = [
-    'ticket_id', 'status', 'tier', 'buyer_email', 'price_paid', 'channel', 'promoter',
+    'ticket_id', 'status', 'tier', 'attendee_name', 'buyer_email', 'price_paid', 'channel', 'promoter',
     'order_ref', 'purchased_at', 'checked_in_at', 'voided_at', 'voided_reason',
   ];
   const rows = tickets.map((t) => [
     t.id,
     t.status,
     t.tierName ?? '',
+    t.attendeeName ?? '',
     t.buyerEmail ?? '',
     t.pricePaid ?? 0,
     t.channelSource ?? 'vibepass',

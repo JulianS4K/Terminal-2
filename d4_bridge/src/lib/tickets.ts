@@ -237,7 +237,10 @@ export async function getTicketForScan(ticketId: string): Promise<ScanTicket | n
   // Scanner needs the secret for HMAC verification — fetch it from the view.
   const [row] = await withBarcodeSecrets([data]);
   const names = await fetchProfileNames([row.owner_id]);
-  return { ...mapTicket(row), ownerName: names.get(row.owner_id) || 'Anonymous attendee' };
+  const ticket = mapTicket(row);
+  // The person the ticket is FOR (attendee_name, set by the holder) beats the
+  // account that holds it — same coalesce as exos_event_checkin_roster.
+  return { ...ticket, ownerName: ticket.attendeeName || names.get(row.owner_id) || 'Anonymous attendee' };
 }
 
 export interface RegistryEntry {
