@@ -44,7 +44,10 @@
 -- terminal: W/F/L totals by source, calibration of pred_p15 / pred_roi / score_v1, model-vs-legacy
 -- price error, and the latest graded rows. Pre-model rows have NULL predictions.
 --
--- BACKFILL: deal_price_train_build(60, N) in batches, then deal_price_adjust_refresh('bkt_v1').
+-- TRAINING BACKFILL (played events only): deal_price_train_build(60, N) in batches, then
+-- deal_price_adjust_refresh('bkt_v1'). NO prediction backfill onto existing feed rows (operator
+-- 2026-09-11 "dont backfill, only poll fresh listing data"): pred_* is written only by the scanner
+-- when a deal is (re)evaluated on a fresh capture.
 -- READ-ONLY upstream. ROLLBACK: drop the new objects; re-apply scan_listing_deals from 162000;
 -- ALTER TABLE gotickets_deals_feed DROP the five columns.
 -- ============================================================================
