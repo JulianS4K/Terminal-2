@@ -48,6 +48,7 @@ export function mapTicket(row: any): Ticket {
     buyerEmail: row.buyer_email ?? undefined,
     transferId: row.transfer_id ?? undefined,
     pendingTransferId: row.pending_transfer_id ?? null,
+    attendeeName: row.attendee_name ?? undefined,
     voidedAt: row.voided_at ? toTs(row.voided_at) : undefined,
     voidedBy: row.voided_by ?? undefined,
     voidedReason: row.voided_reason ?? undefined,
@@ -92,7 +93,7 @@ const TICKET_COLS =
   'id, event_id, org_id, tier_id, tier_name, buyer_id, owner_id, buyer_email, ' +
   'status, price_paid, order_ref, channel_source, promoter_id, ' +
   'pending_transfer_id, transfer_id, voided_at, voided_by, voided_reason, released_at, ' +
-  'check_in_at, last_reissue_at, created_at, updated_at';
+  'check_in_at, last_reissue_at, created_at, updated_at, attendee_name';
 
 const TICKET_WITH_EVENT = `${TICKET_COLS}, event:exos_events(*)`;
 
@@ -534,6 +535,20 @@ export async function mintTickets(input: {
  *  ids. Server enforces free-tier-only + published + sales window + per-person
  *  limit + capacity (exos_claim_free_tickets). Paid tiers route through Stripe.
  *  promoterId/channel come from the landing URL for campaign attribution. */
+/**
+ * Current owner: name the person this ticket is for (shown on the pass and to
+ * the door). Empty/blank clears it. Server-enforced: owner only, active ticket,
+ * not in transfer, ≤80 chars (mig 20260911060000). Returns the stored name.
+ */
+export async function setTicketAttendee(ticketId: string, name: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('exos_set_ticket_attendee', {
+    p_ticket_id: ticketId,
+    p_name: name,
+  });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
+
 export async function claimFreeTickets(input: {
   eventId: string;
   tierId: string;

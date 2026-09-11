@@ -370,6 +370,10 @@ export interface Ticket {
   // refuse to act". Without this lock, the original holder could
   // walk in with the QR while the receiver hasn't claimed yet.
   pendingTransferId?: string | null;
+  // Display name of the person this ticket is FOR (mig 20260911060000).
+  // Set by the current owner via exos_set_ticket_attendee; cleared server-side
+  // when ownership changes. Undefined = show the owner's profile name.
+  attendeeName?: string;
   // Buyer's email at fulfillment time, lowercased. Denormalized
   // because the canonical source (auth token email) isn't readable
   // from another user's context — without this, the organizer's

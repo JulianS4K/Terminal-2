@@ -31,7 +31,8 @@ done
 # reminders (cron entry RPC + manual staff RPC + starts_at reset trigger). The
 # cron.schedule block inside is guarded on pg_cron, so it applies here.
 for m in 20260911050000_exos_invoice_counters_rls \
-         20260911051000_exos_event_reminders; do
+         20260911051000_exos_event_reminders \
+         20260911060000_exos_ticket_attendee_name; do
   $PSQL -f "$MIG/${m}.sql"
 done
 # 2026-09-11 stage 3 (organizer side): analytics document RPC, self-serve
