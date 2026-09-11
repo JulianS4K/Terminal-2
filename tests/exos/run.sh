@@ -45,4 +45,10 @@ for m in 20260911130000_exos_event_analytics \
          20260911133000_exos_event_series; do
   $PSQL -f "$MIG/${m}.sql"
 done
+# 2026-09-11 stage 5 (organizer side): email campaigns (audiences, opt-out,
+# scheduled cron entry — cron.schedule guarded on pg_cron).
+for m in 20260911140000_exos_campaigns \
+         20260911141000_exos_venue_place; do
+  $PSQL -f "$MIG/${m}.sql"
+done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"

@@ -7,11 +7,15 @@ takes the static dir + getters for the two patched server symbols
 """
 from __future__ import annotations
 
+import html as _html
+import json
 import os
+import re
 from typing import Callable
 
+import requests
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 
 def build_pages_router(
@@ -20,6 +24,8 @@ def build_pages_router(
     get_storefront_as_landing: Callable[[], bool] = lambda: False,
     get_storefront_version: Callable[[], str] = lambda: "dev",
     get_bridge_dir: Callable[[], str],
+    get_supabase_url: Callable[[], str | None] = lambda: None,
+    get_supabase_anon_key: Callable[[], str | None] = lambda: None,
 ) -> APIRouter:
     # get_bridge_dir resolves the test-patched server symbol (app._BRIDGE_DIR)
     # at request time — not captured at mount time — so the route tests'
@@ -199,6 +205,149 @@ def build_pages_router(
             raise HTTPException(404, "bridge build not present — run `npm --prefix d4_bridge run build` then copy dist → static/bridge/")
         return FileResponse(index_path)
 
+
+    # --- D4 / Exos: crawler-visible event pages + events sitemap (Stage 5) -----
+    # The SPA sets Event JSON-LD at runtime (d4_bridge/src/lib/meta.ts), which
+    # Googlebot reads only when it chooses to render JS. The Google Events rich
+    # result (Search + Maps) is the organizer's free distribution channel, so
+    # /bridge/event/<id> now ships the JSON-LD + Open Graph tags in the initial
+    # HTML for EVERY caller: one anon read of exos_public_events (published
+    # events only — the view is security_invoker, so drafts never leak), a 2s
+    # budget, and the untouched SPA shell on any failure. Same-origin, no key
+    # beyond the publishable anon key. /bridge/sitemap-events.xml lists every
+    # published event with <lastmod> for Search Console.
+
+    _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    _PUBLIC_EVENT_COLS = ("id,name,slug,description,starts_at,ends_at,doors_at,timezone,currency,"
+                          "venue_name,venue_address,performer_names,image_url,total_tickets,"
+                          "tickets_sold,google_place_id,venue_lat,venue_lng,updated_at")
+
+    def _bridge_public_base(request: Request) -> str:
+        # Honour the proxy-supplied scheme/host (Render/Railway terminate TLS).
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+        return f"{proto}://{host}/bridge"
+
+    def _bridge_rest(path: str, params: dict) -> list | None:
+        url, key = get_supabase_url(), get_supabase_anon_key()
+        if not url or not key:
+            return None
+        r = requests.get(f"{url}/rest/v1/{path}", params=params,
+                         headers={"apikey": key, "Authorization": f"Bearer {key}"}, timeout=2.0)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        return data if isinstance(data, list) else None
+
+    def _bridge_event_json_ld(ev: dict, base: str) -> dict:
+        addr = ev.get("venue_address") or {}
+        if not isinstance(addr, dict):
+            addr = {}
+        place: dict = {"@type": "Place", "name": ev.get("venue_name") or ""}
+        postal = {k: v for k, v in {
+            "streetAddress": addr.get("street"), "addressLocality": addr.get("city"),
+            "addressRegion": addr.get("region"), "postalCode": addr.get("postal"),
+            "addressCountry": addr.get("country"),
+        }.items() if v}
+        if postal:
+            place["address"] = {"@type": "PostalAddress", **postal}
+        lat, lng, pid = ev.get("venue_lat"), ev.get("venue_lng"), ev.get("google_place_id")
+        if lat is not None and lng is not None:
+            place["geo"] = {"@type": "GeoCoordinates", "latitude": float(lat), "longitude": float(lng)}
+            place["hasMap"] = (f"https://www.google.com/maps/search/?api=1&query={float(lat)},{float(lng)}"
+                               + (f"&query_place_id={pid}" if pid else ""))
+        elif pid:
+            place["hasMap"] = f"https://www.google.com/maps/place/?q=place_id:{pid}"
+        if pid:
+            place["identifier"] = pid
+        url = f"{base}/event/{ev['id']}"
+        remaining = max(0, int(ev.get("total_tickets") or 0) - int(ev.get("tickets_sold") or 0))
+        out: dict = {
+            "@context": "https://schema.org", "@type": "Event",
+            "name": ev.get("name") or "", "startDate": ev.get("starts_at"),
+            "location": place, "url": url,
+            "eventAttendanceMode": "https://schema.org/OfflineEventAttendanceMode",
+            "eventStatus": "https://schema.org/EventScheduled",
+            "offers": {"@type": "Offer", "url": url, "priceCurrency": ev.get("currency") or "USD",
+                       "availability": "https://schema.org/InStock" if remaining > 0 else "https://schema.org/SoldOut"},
+        }
+        if ev.get("ends_at"):
+            out["endDate"] = ev["ends_at"]
+        if ev.get("doors_at"):
+            out["doorTime"] = ev["doors_at"]
+        if ev.get("image_url"):
+            out["image"] = ev["image_url"]
+        if ev.get("description"):
+            out["description"] = str(ev["description"])[:300]
+        perf = ev.get("performer_names") or []
+        if isinstance(perf, list) and perf:
+            out["performer"] = [{"@type": "PerformingGroup", "name": str(p)} for p in perf if p]
+        return out
+
+    def _bridge_inject_event_meta(shell: str, ev: dict, base: str) -> str:
+        """Swap the index.html placeholder tags for this event's and append the
+        JSON-LD. Replacements are attribute-level regexes on the tags meta.ts
+        also targets, so the SPA's runtime update still finds them."""
+        title = f"{ev.get('name') or 'Event'} | Exos"
+        desc = (str(ev.get("description") or "")[:200]).replace("\n", " ")
+        url = f"{base}/event/{ev['id']}"
+        img = ev.get("image_url") or ""
+        def set_tag(html_s: str, attr: str, key: str, content: str) -> str:
+            pat = re.compile(rf'(<meta\s+{attr}="{re.escape(key)}"\s+content=")[^"]*(")')
+            return pat.sub(lambda m: m.group(1) + _html.escape(content, quote=True) + m.group(2), html_s, count=1)
+        shell = re.sub(r"<title>[^<]*</title>", f"<title>{_html.escape(title)}</title>", shell, count=1)
+        shell = set_tag(shell, "name", "description", desc)
+        shell = set_tag(shell, "property", "og:title", title)
+        shell = set_tag(shell, "property", "og:description", desc)
+        shell = set_tag(shell, "property", "og:type", "event")
+        shell = set_tag(shell, "name", "twitter:title", title)
+        if img:
+            shell = set_tag(shell, "property", "og:image", img)
+            shell = set_tag(shell, "name", "twitter:card", "summary_large_image")
+        ld = json.dumps(_bridge_event_json_ld(ev, base)).replace("</", "<\\/")
+        inject = (f'<link rel="canonical" href="{_html.escape(url, quote=True)}">'
+                  f'<meta property="og:url" content="{_html.escape(url, quote=True)}">'
+                  f'<script type="application/ld+json" id="vibepass-jsonld">{ld}</script>')
+        return shell.replace("</head>", inject + "</head>", 1) if "</head>" in shell else shell
+
+    @router.get("/bridge/event/{event_id}")
+    def bridge_event_page(event_id: str, request: Request):
+        """SPA shell with this published event's meta + JSON-LD pre-rendered.
+        Any failure (bad id, draft, DB down, no keys) serves the plain shell."""
+        index_path = os.path.join(get_bridge_dir(), "index.html")
+        if not os.path.isfile(index_path):
+            raise HTTPException(404, "bridge build not present")
+        with open(index_path, "r", encoding="utf-8") as fh:
+            shell = fh.read()
+        if _UUID_RE.match(event_id or ""):
+            try:
+                rows = _bridge_rest("exos_public_events", {"id": f"eq.{event_id}", "select": _PUBLIC_EVENT_COLS, "limit": "1"})
+                if rows:
+                    shell = _bridge_inject_event_meta(shell, rows[0], _bridge_public_base(request))
+            except Exception as e:  # noqa: BLE001 — SEO must never break the page
+                print(f"[bridge_event_page] pre-render skipped for {event_id}: {e!r}")
+        return HTMLResponse(shell)
+
+    @router.get("/bridge/sitemap-events.xml")
+    def bridge_events_sitemap(request: Request):
+        """Sitemap of published events (≤ 5000 newest by start) for Search Console."""
+        base = _bridge_public_base(request)
+        rows: list = []
+        try:
+            rows = _bridge_rest("exos_public_events", {"select": "id,updated_at,starts_at",
+                                                       "order": "starts_at.desc.nullslast", "limit": "5000"}) or []
+        except Exception as e:  # noqa: BLE001
+            print(f"[bridge_events_sitemap] fetch failed: {e!r}")
+        items = []
+        for ev in rows:
+            lastmod = ev.get("updated_at") or ev.get("starts_at")
+            items.append("<url><loc>%s/event/%s</loc>%s</url>" % (
+                _html.escape(base, quote=True), ev.get("id"),
+                f"<lastmod>{_html.escape(str(lastmod)[:10])}</lastmod>" if lastmod else ""))
+        body = ('<?xml version="1.0" encoding="UTF-8"?>'
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + "".join(items) + "</urlset>")
+        return Response(content=body, media_type="application/xml",
+                        headers={"Cache-Control": "public, max-age=900"})
 
     @router.get("/bridge/{page:path}")
     def bridge_static_proxy(page: str):

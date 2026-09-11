@@ -310,6 +310,11 @@ export interface Event {
   // set. The template is index 0; undefined = standalone event.
   seriesId?: string;
   seriesIndex?: number;
+  // Google Places ID + coordinates of the venue (mig 20260911141000). Feed the
+  // Event JSON-LD `geo`, the Maps deep link, and the crawler pre-render.
+  googlePlaceId?: string;
+  venueLat?: number;
+  venueLng?: number;
   purchaseLimits?: {
     maxPerOrder?: number;
     maxPerAccount?: number;

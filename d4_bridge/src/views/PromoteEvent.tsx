@@ -18,7 +18,7 @@ import { useParams, Link } from 'react-router-dom';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
   ArrowLeft, Megaphone, Copy, Download, Code2, Share2, ExternalLink,
-  Twitter, Facebook, QrCode, Sparkles, Settings, Tag,
+  Twitter, Facebook, QrCode, Sparkles, Settings, Tag, Rocket, MapPin, CheckCircle2, AlertCircle,
 } from 'lucide-react';
 import { getEventForEdit } from '../lib/events';
 import { Event, Organization } from '../types';
@@ -307,6 +307,88 @@ window.addEventListener('message', function(e) {
                 </button>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* Boost: paid ads + Google Maps readiness (Stage 5). Everything here is
+            a hand-off into the org's OWN ad accounts with a tracked link — the
+            app never writes to Meta / Google (upstream writes are gated). */}
+        <section className="bg-[#111] p-6 border border-white/10 mb-6">
+          <h2 className="disp text-lg uppercase tracking-wide text-white mb-1 flex items-center gap-2">
+            <Rocket className="w-4 h-4 text-brand-primary" /> Boost with ads
+          </h2>
+          <p className="text-sm text-white/60 mb-4">
+            Copy the tracked link into a campaign in your own ad account. Buyers who arrive through it are
+            attributed to that channel in the Sales report, and your pixel (if configured) records the conversion.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {([
+              { key: 'meta-ads', label: 'Meta (Facebook / Instagram)', pixel: org?.marketing?.pixels?.meta, manager: 'https://www.facebook.com/adsmanager/creation', pixelName: 'Meta Pixel' },
+              { key: 'google-ads', label: 'Google Ads', pixel: org?.marketing?.pixels?.ga4, manager: 'https://ads.google.com/aw/campaigns/new', pixelName: 'GA4 tag' },
+            ] as const).map((p) => {
+              const ch = CHANNELS.find((c) => c.key === p.key)!;
+              const link = campaignSlug ? buildCampaignUrl(ch) : buildCampaignUrl({ key: ch.key, medium: ch.medium });
+              return (
+                <div key={p.key} className="bg-black border border-white/10 p-4 space-y-3">
+                  <p className="font-bold text-white text-sm">{p.label}</p>
+                  <p className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${p.pixel ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {p.pixel ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                    {p.pixel ? `${p.pixelName} configured — conversions tracked` : `${p.pixelName} missing — add it in Marketing & socials`}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => copy(link, 'Tracked link copied — paste it as the ad destination.')}
+                      className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 bg-white/10 text-white text-[10px] font-black uppercase tracking-widest hover:bg-white/20 transition-colors"
+                    >
+                      <Copy className="w-3 h-3" /> Copy tracked link
+                    </button>
+                    <a
+                      href={p.manager}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-brand-primary text-black text-[10px] font-black uppercase tracking-widest hover:bg-brand-primary/90 transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Open
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-white/40 mt-3">
+            {campaignSlug ? `Links carry utm_campaign=${campaignSlug}.` : 'Name a campaign above to tag these links with utm_campaign.'}{' '}
+            Server-side conversion uploads (Meta Conversions API / Google offline conversions) are not enabled — they need operator authorization.
+          </p>
+
+          <div className="mt-6 pt-5 border-t border-white/10">
+            <h3 className="font-bold text-white text-sm mb-1 flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-brand-primary" /> Google Search &amp; Maps
+            </h3>
+            <p className="text-sm text-white/60 mb-3">
+              Published events ship Event structured data in the page itself, so Google can show them in Search and on
+              the venue's Maps listing. A Place ID pins the event to the exact venue.
+            </p>
+            <ul className="text-[11px] text-white/70 space-y-1">
+              <li className="flex items-center gap-2">
+                {event.googlePlaceId ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <AlertCircle className="w-3 h-3 text-amber-400" />}
+                {event.googlePlaceId ? 'Venue linked to a Google Place ID.' : (
+                  <>No Place ID yet — <Link to={`/edit-event/${eventId}`} className="text-brand-primary font-bold">add it under Address details</Link>.</>
+                )}
+              </li>
+              <li className="flex items-center gap-2">
+                {event.venueLat != null && event.venueLng != null ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <AlertCircle className="w-3 h-3 text-amber-400" />}
+                {event.venueLat != null && event.venueLng != null ? 'Coordinates set (geo in the event schema).' : 'No coordinates — set latitude / longitude for the map pin.'}
+              </li>
+              <li className="flex items-center gap-2">
+                {published ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <AlertCircle className="w-3 h-3 text-amber-400" />}
+                {published ? 'Published — listed in the events sitemap.' : 'Publish the event to list it in the events sitemap.'}
+              </li>
+            </ul>
+            <p className="text-[10px] text-white/40 mt-3">
+              Submit <button type="button" onClick={() => copy(publicUrl('sitemap-events.xml'), 'Sitemap URL copied.')} className="text-brand-primary font-bold">{publicUrl('sitemap-events.xml')}</button> once in Google Search Console.
+              Business Profile posts and the "Things to do" ticket module need partner authorization and are not enabled.
+            </p>
           </div>
         </section>
 

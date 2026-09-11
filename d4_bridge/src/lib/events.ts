@@ -93,6 +93,9 @@ export function mapEvent(row: any, tiers?: any[], discounts?: any[]): Event {
     releaseCutoffHours: row.release_cutoff_hours ?? undefined,
     seriesId: row.series_id ?? undefined,
     seriesIndex: row.series_index ?? undefined,
+    googlePlaceId: row.google_place_id ?? undefined,
+    venueLat: row.venue_lat != null ? Number(row.venue_lat) : undefined,
+    venueLng: row.venue_lng != null ? Number(row.venue_lng) : undefined,
   };
 }
 
@@ -222,6 +225,9 @@ export interface EventInput {
   distributionNetworks?: string[];
   allowHolderRelease?: boolean;
   releaseCutoffHours?: number;
+  googlePlaceId?: string | null;
+  venueLat?: number | null;
+  venueLng?: number | null;
   tiers?: TierInput[];
 }
 
@@ -235,6 +241,7 @@ const EVENT_COL: Array<[keyof EventInput, string]> = [
   ['imageUrl', 'image_url'], ['totalTickets', 'total_tickets'], ['branding', 'branding'], ['exclusivity', 'exclusivity'],
   ['purchaseLimits', 'purchase_limits'], ['distributionNetworks', 'distribution_networks'],
   ['allowHolderRelease', 'allow_holder_release'], ['releaseCutoffHours', 'release_cutoff_hours'],
+  ['googlePlaceId', 'google_place_id'], ['venueLat', 'venue_lat'], ['venueLng', 'venue_lng'],
 ];
 
 function tierInsertRow(eventId: string, t: TierInput, idx: number) {

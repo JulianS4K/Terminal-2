@@ -49,10 +49,25 @@ export interface SchemaEvent {
     currency?: string;
     availability?: 'InStock' | 'SoldOut' | 'PreOrder';
     url?: string;
+    validFrom?: string;
   };
   image?: string;
   description?: string;
+  // Google Events rich result extras (Stage 5): canonical page url, geo +
+  // Place ID on the venue, performers, and the lifecycle status.
+  url?: string;
+  geo?: { lat: number; lng: number };
+  placeId?: string;
+  performers?: string[];
+  status?: 'scheduled' | 'cancelled' | 'rescheduled' | 'postponed';
 }
+
+const EVENT_STATUS_URI: Record<NonNullable<SchemaEvent['status']>, string> = {
+  scheduled: 'https://schema.org/EventScheduled',
+  cancelled: 'https://schema.org/EventCancelled',
+  rescheduled: 'https://schema.org/EventRescheduled',
+  postponed: 'https://schema.org/EventPostponed',
+};
 
 export function applyMeta(input: MetaInput): void {
   if (typeof document === 'undefined') return;
@@ -116,27 +131,39 @@ function setOrCreateMeta(attr: 'name' | 'property', value: string, content: stri
   el.setAttribute('content', content);
 }
 
-function buildEventJsonLd(ev: SchemaEvent) {
+export function buildEventJsonLd(ev: SchemaEvent) {
+  const place: Record<string, unknown> = {
+    '@type': 'Place',
+    name: ev.location.name,
+    address: {
+      '@type': 'PostalAddress',
+      streetAddress: ev.location.streetAddress,
+      addressLocality: ev.location.city,
+      addressRegion: ev.location.region,
+      postalCode: ev.location.postal,
+      addressCountry: ev.location.country,
+    },
+  };
+  if (ev.geo && Number.isFinite(ev.geo.lat) && Number.isFinite(ev.geo.lng)) {
+    place.geo = { '@type': 'GeoCoordinates', latitude: ev.geo.lat, longitude: ev.geo.lng };
+    place.hasMap = `https://www.google.com/maps/search/?api=1&query=${ev.geo.lat},${ev.geo.lng}${ev.placeId ? `&query_place_id=${encodeURIComponent(ev.placeId)}` : ''}`;
+  } else if (ev.placeId) {
+    place.hasMap = `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(ev.placeId)}`;
+  }
+  if (ev.placeId) place.identifier = ev.placeId;
   const out: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'Event',
     name: ev.name,
     startDate: ev.startDate,
-    location: {
-      '@type': 'Place',
-      name: ev.location.name,
-      address: {
-        '@type': 'PostalAddress',
-        streetAddress: ev.location.streetAddress,
-        addressLocality: ev.location.city,
-        addressRegion: ev.location.region,
-        postalCode: ev.location.postal,
-        addressCountry: ev.location.country,
-      },
-    },
+    location: place,
     eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
-    eventStatus: 'https://schema.org/EventScheduled',
+    eventStatus: EVENT_STATUS_URI[ev.status ?? 'scheduled'],
   };
+  if (ev.url) out.url = ev.url;
+  if (ev.performers && ev.performers.length) {
+    out.performer = ev.performers.map((name) => ({ '@type': 'PerformingGroup', name }));
+  }
   if (ev.endDate) out.endDate = ev.endDate;
   if (ev.image) out.image = ev.image;
   if (ev.description) out.description = ev.description;
@@ -156,6 +183,7 @@ function buildEventJsonLd(ev: SchemaEvent) {
         ? { availability: `https://schema.org/${ev.offers.availability}` }
         : {}),
       ...(ev.offers.url ? { url: ev.offers.url } : {}),
+      ...(ev.offers.validFrom ? { validFrom: ev.offers.validFrom } : {}),
     };
   }
   return out;

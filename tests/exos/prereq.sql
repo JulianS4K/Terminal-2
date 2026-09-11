@@ -96,6 +96,11 @@ CREATE TABLE public.exos_event_checkins (
   scanned_by uuid, scanned_by_email text, source text, verification text,
   scanned_at timestamptz NOT NULL DEFAULT now()
 );
+-- Org follows (phase-1 shape) — campaign 'followers' audience.
+CREATE TABLE public.exos_org_follows (
+  follower_uid uuid NOT NULL, org_id uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (follower_uid, org_id)
+);
 -- Scan-rejection audit log (phase-2 shape; written client-side, read by analytics).
 CREATE TABLE public.exos_scan_rejects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

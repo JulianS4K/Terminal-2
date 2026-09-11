@@ -1050,4 +1050,178 @@ BEGIN
   RAISE NOTICE 'D3 transfer clears name OK';
 END $$;
 SELECT '*** PART H (attendee name) PASSED ***' AS result;
+-- ============================================================================
+-- PART I — EMAIL CAMPAIGNS (mig 20260911140000)
+--   audiences (holders / no_shows / waitlist / followers / past_attendees /
+--   all_buyers) · opt-out by token honoured · save/schedule/cancel · send now
+--   with footer link · cron claims due rows · sms refused · role gates.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+INSERT INTO auth.users(id,email,email_confirmed_at) VALUES
+  ('77777777-7777-7777-7777-777777777777','fan@x.com',now()) ON CONFLICT DO NOTHING;
+-- Event I: started 2h ago; buyer used, holder2 active (no-show), voided excluded.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,timezone) VALUES
+  ('11111111-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','Evt <I>','evti','published',10,3,now()-interval '2 hours','UTC');
+INSERT INTO public.exos_tickets(event_id,org_id,owner_id,buyer_id,status,barcode_secret) VALUES
+  ('11111111-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','used','i1'),
+  ('11111111-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','active','i2'),
+  ('11111111-0000-0000-0000-0000000000e9','aaaaaaaa-0000-0000-0000-000000000001','66666666-6666-6666-6666-666666666666','66666666-6666-6666-6666-666666666666','voided','i3');
+INSERT INTO public.exos_org_follows(follower_uid,org_id) VALUES
+  ('77777777-7777-7777-7777-777777777777','aaaaaaaa-0000-0000-0000-000000000001'),
+  ('22222222-2222-2222-2222-222222222222','aaaaaaaa-0000-0000-0000-000000000001');
+INSERT INTO public.exos_waitlist(event_id,email,status) VALUES
+  ('11111111-0000-0000-0000-0000000000e9','wait@x.com','waiting'),
+  ('11111111-0000-0000-0000-0000000000e9','gone@x.com','cancelled');
+
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE n int; cid uuid; ok boolean; tok uuid; masked text; html text; before int;
+BEGIN
+  -- I1. Audience counts.
+  n := public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001','11111111-0000-0000-0000-0000000000e9','{"kind":"holders"}');
+  ASSERT n = 2, 'holders=2 (voided excluded), got '||n;
+  n := public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001','11111111-0000-0000-0000-0000000000e9','{"kind":"no_shows"}');
+  ASSERT n = 1, 'no_shows=1 (active after start), got '||n;
+  n := public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001','11111111-0000-0000-0000-0000000000e9','{"kind":"waitlist"}');
+  ASSERT n = 1, 'waitlist=1 (cancelled excluded), got '||n;
+  n := public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001',NULL,'{"kind":"followers"}');
+  ASSERT n = 2, 'followers=2, got '||n;
+  n := public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001',NULL,'{"kind":"past_attendees"}');
+  ASSERT n >= 1, 'past_attendees ≥ 1';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001',NULL,'{"kind":"holders"}');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%needs an event%'; END;
+  ASSERT ok, 'event-scoped audience without event refused';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001',NULL,'{"kind":"martians"}');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%unknown audience%'; END;
+  ASSERT ok, 'unknown audience refused';
+  RAISE NOTICE 'I1 audiences OK';
+
+  -- I2. Save draft → send now → recipients + mails + footer link.
+  cid := public.exos_campaign_save(NULL,'aaaaaaaa-0000-0000-0000-000000000001','11111111-0000-0000-0000-0000000000e9',
+           'Thanks for coming','email','{"kind":"holders"}','Thanks <3','See you next time.'||chr(10)||'Team');
+  ASSERT (SELECT status FROM public.exos_campaigns WHERE id=cid) = 'draft', 'saved as draft';
+  SELECT count(*) INTO before FROM public.exos_mail WHERE template='campaign';
+  n := public.exos_campaign_send(cid, 'https://bridge.example.com/bridge/');
+  ASSERT n = 2, 'sent to 2 holders, got '||n;
+  ASSERT (SELECT status='sent' AND recipient_count=2 AND base_url='https://bridge.example.com/bridge' FROM public.exos_campaigns WHERE id=cid), 'campaign sent + base_url trimmed';
+  ASSERT (SELECT count(*) FROM public.exos_campaign_recipients WHERE campaign_id=cid) = 2, 'two recipient rows';
+  ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='campaign') = before + 2, 'two campaign mails';
+  SELECT m.html INTO html FROM public.exos_mail m JOIN public.exos_campaign_recipients r ON r.mail_id = m.id
+   WHERE r.campaign_id = cid AND r.email = 'buyer@x.com';
+  ASSERT html LIKE '%Evt &lt;I&gt;%' AND html LIKE '%See you next time.<br>Team%', 'body escaped + newline → br';
+  ASSERT html LIKE '%https://bridge.example.com/bridge/unsubscribe/%', 'footer carries the unsubscribe link';
+  ASSERT (SELECT subject FROM public.exos_mail m JOIN public.exos_campaign_recipients r ON r.mail_id=m.id WHERE r.campaign_id=cid LIMIT 1) = 'Thanks <3', 'subject verbatim';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_send(cid, NULL);
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%already sent%'; END;
+  ASSERT ok, 'double send refused';
+  RAISE NOTICE 'I2 send now OK';
+
+  -- I3. Opt-out by token → excluded from later audiences (per org).
+  SELECT token INTO tok FROM public.exos_campaign_recipients WHERE campaign_id=cid AND email='buyer@x.com';
+  PERFORM set_config('app.uid','',false);
+  masked := public.exos_marketing_optout(tok);
+  ASSERT masked = 'bu…@x.com', 'masked email, got '||masked;
+  masked := public.exos_marketing_optout(tok);  -- idempotent
+  PERFORM set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+  n := public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001','11111111-0000-0000-0000-0000000000e9','{"kind":"holders"}');
+  ASSERT n = 1, 'opted-out holder excluded, got '||n;
+  n := public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001',NULL,'{"kind":"followers"}');
+  ASSERT n = 1, 'opted-out follower excluded, got '||n;
+  ok := false;
+  BEGIN PERFORM public.exos_marketing_optout(gen_random_uuid());
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%unknown or expired%'; END;
+  ASSERT ok, 'bad token refused';
+  RAISE NOTICE 'I3 opt-out OK';
+
+  -- I4. Schedule → cron claims + sends; cancel blocks; bad base url; sms refused.
+  cid := public.exos_campaign_save(NULL,'aaaaaaaa-0000-0000-0000-000000000001',NULL,
+           'Follower blast','email','{"kind":"followers"}','New season','Dates announced.', now()+interval '1 minute');
+  ASSERT (SELECT status FROM public.exos_campaigns WHERE id=cid) = 'scheduled', 'scheduled';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_save(NULL,'aaaaaaaa-0000-0000-0000-000000000001',NULL,'x','email','{"kind":"followers"}','s','b', now()-interval '1 minute');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%in the future%'; END;
+  ASSERT ok, 'past schedule refused';
+  UPDATE public.exos_campaigns SET scheduled_at = now() - interval '1 second' WHERE id = cid;
+  RAISE NOTICE 'I4a scheduled OK';
+END $$;
+SELECT set_config('app.uid','',false);
+DO $$
+DECLARE r record; cid uuid; ok boolean;
+BEGIN
+  SELECT * INTO r FROM public.exos_send_scheduled_campaigns();
+  ASSERT r.campaigns_sent = 1 AND r.mails_queued = 1 AND r.campaigns_failed = 0, 'cron sent 1 campaign / 1 mail (follower minus opt-out), got '||r::text;
+  SELECT * INTO r FROM public.exos_send_scheduled_campaigns();
+  ASSERT r.campaigns_sent = 0, 'cron idempotent';
+  RAISE NOTICE 'I4b cron OK';
+END $$;
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE cid uuid; ok boolean;
+BEGIN
+  cid := public.exos_campaign_save(NULL,'aaaaaaaa-0000-0000-0000-000000000001',NULL,'Text blast','sms','{"kind":"followers"}','hi','short text');
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_send(cid, NULL);
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%SMS sending is not configured%'; END;
+  ASSERT ok, 'sms send refused with a clear message';
+  ASSERT (SELECT status FROM public.exos_campaigns WHERE id=cid) = 'draft', 'sms campaign stays a draft (nothing attempted)';
+  cid := public.exos_campaign_save(NULL,'aaaaaaaa-0000-0000-0000-000000000001',NULL,'Draft','email','{"kind":"followers"}','s','b');
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_send(cid, 'http://evil.example/x');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%plain https%'; END;
+  ASSERT ok, 'non-https base refused';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_send(cid, 'https://evil.example/x"><script>');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%plain https%'; END;
+  ASSERT ok, 'html-significant characters in base refused';
+  ok := false;
+  BEGIN UPDATE public.exos_campaigns SET base_url = 'https://a.b/"' WHERE id = cid;
+  EXCEPTION WHEN check_violation THEN ok := true; END;
+  ASSERT ok, 'CHECK constraint rejects a quote in base_url even on a direct write';
+  PERFORM public.exos_campaign_cancel(cid);
+  ASSERT (SELECT status FROM public.exos_campaigns WHERE id=cid) = 'cancelled', 'cancelled';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_send(cid, NULL);
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%already sent or cancelled%'; END;
+  ASSERT ok, 'cancelled cannot send';
+  RAISE NOTICE 'I5 sms gate / base url / cancel OK';
+END $$;
+-- I6. Buyer (no org role) refused everywhere staff-side.
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN PERFORM public.exos_campaign_audience_count('aaaaaaaa-0000-0000-0000-000000000001',NULL,'{"kind":"followers"}');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot count audiences';
+  ok := false;
+  BEGIN PERFORM public.exos_campaign_save(NULL,'aaaaaaaa-0000-0000-0000-000000000001',NULL,'x','email','{"kind":"followers"}','s','b');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot save campaigns';
+  RAISE NOTICE 'I6 role gates OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART I (campaigns) PASSED ***' AS result;
+-- ============================================================================
+-- PART J — VENUE PLACE ID + GEO (mig 20260911141000): columns + range checks.
+-- ============================================================================
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  UPDATE public.exos_events SET google_place_id = 'ChIJN1t_tDeuEmsRUsoyG83frY4', venue_lat = 40.7128, venue_lng = -74.0060
+   WHERE id = '11111111-0000-0000-0000-0000000000e9';
+  ASSERT (SELECT venue_lat = 40.7128 AND venue_lng = -74.006 FROM public.exos_events WHERE id='11111111-0000-0000-0000-0000000000e9'), 'geo stored';
+  BEGIN UPDATE public.exos_events SET venue_lat = 91 WHERE id = '11111111-0000-0000-0000-0000000000e9';
+  EXCEPTION WHEN check_violation THEN ok := true; END;
+  ASSERT ok, 'latitude range enforced';
+  ok := false;
+  BEGIN UPDATE public.exos_events SET google_place_id = 'x' WHERE id = '11111111-0000-0000-0000-0000000000e9';
+  EXCEPTION WHEN check_violation THEN ok := true; END;
+  ASSERT ok, 'place id length enforced';
+  RAISE NOTICE 'J1 venue place/geo OK';
+END $$;
+SELECT '*** PART J (venue place) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;

@@ -729,6 +729,9 @@ app.include_router(build_pages_router(
     get_storefront_as_landing=lambda: STOREFRONT_AS_LANDING,
     get_storefront_version=lambda: _STOREFRONT_VERSION,
     get_bridge_dir=lambda: _BRIDGE_DIR,
+    # D4 crawler pre-render + events sitemap read exos_public_events as anon.
+    get_supabase_url=lambda: SUPABASE_URL,
+    get_supabase_anon_key=lambda: SUPABASE_ANON_KEY,
 ))
 
 
