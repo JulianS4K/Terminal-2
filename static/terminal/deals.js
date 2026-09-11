@@ -77,6 +77,53 @@
     if (T && T.setStatus) T.setStatus('Live', 'ok');
     updateScanMeta(d);
     render();
+    loadResults();
+  }
+
+  // RESULTS strip — get_deal_results(30): what we predicted vs what happened (mig 20260911162100).
+  async function loadResults() {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('dealsResultsBody');
+    if (!body || !Auth || !Auth.client || !Auth.getAccessToken()) return;
+    const res = await Auth.client.rpc('get_deal_results', { p_days: 30 });
+    if (res.error) { body.innerHTML = `<div class="empty muted small">results unavailable: ${esc(res.error.message || '')}</div>`; return; }
+    renderResults(res.data || {});
+  }
+  const pct = v => (v == null ? '—' : Math.round(+v * 100) + '%');
+  function calTable(title, rows, extraKey, extraLabel) {
+    if (!rows || !rows.length) return '';
+    const tr = rows.map(r => `<tr><td>${esc(String(r.bucket).replace(/^[a-e] /, ''))}</td><td class="num">${r.n}</td><td class="num"><span class="badge regime-${+r.win_rate >= 0.5 ? 'good' : (+r.win_rate >= 0.3 ? 'warn' : 'neutral')}">${pct(r.win_rate)}</span></td>${extraKey ? `<td class="num">${r[extraKey] == null ? '—' : esc(String(r[extraKey]))}</td>` : ''}</tr>`).join('');
+    return `<div class="deals-cal"><div class="muted small"><b>${esc(title)}</b></div><table class="deals-tbl small"><thead><tr><th>bucket</th><th class="num">n</th><th class="num">won</th>${extraKey ? `<th class="num">${esc(extraLabel)}</th>` : ''}</tr></thead><tbody>${tr}</tbody></table></div>`;
+  }
+  function renderResults(d) {
+    const body = document.getElementById('dealsResultsBody'); const meta = document.getElementById('dealsResultsMeta');
+    if (!body) return;
+    const tot = d.totals || {}; const bys = d.by_source || {}; const pe = d.price_error || {}; const m = d.model || {};
+    if (meta) meta.textContent = `${tot.graded || 0} graded · model ${m.version || '—'} on ${m.train_rows || 0} played event-zones` + (m.refreshed_at ? ` · refit ${ago(m.refreshed_at)}` : '');
+    if (!tot.graded) { body.innerHTML = '<div class="empty muted small">No graded deals in the window yet — deals are graded the day after their event.</div>'; return; }
+    const src = Object.keys(bys).map(k => `${k === 'evo' ? 'EVO' : 'GT'} ${bys[k].win}/${bys[k].graded} (${pct(bys[k].win_rate)})`).join(' · ');
+    const errLine = pe.n_model ? `price model median error ${Math.round(Math.abs(+pe.model_median_abs_log) * 100)}% (bias ${Math.round(+pe.model_median_bias_log * 100)}%) vs legacy ${Math.round(Math.abs(+pe.legacy_median_abs_log) * 100)}% (bias ${Math.round(+pe.legacy_median_bias_log * 100)}%) on ${pe.n_model} deals`
+                              : `price model has no graded deals yet (rows flagged before it went live carry no prediction); legacy estimate median error ${pe.legacy_median_abs_log != null ? Math.round(Math.abs(+pe.legacy_median_abs_log) * 100) + '%' : '—'}`;
+    const recent = (d.recent || []).slice(0, 12).map(r => `<tr>
+        <td><span class="badge regime-neutral">${r.source === 'evo' ? 'EVO' : 'GT'}</span> ${esc(r.event || '')} <span class="muted">· ${esc(fmtDate(r.event_date))}</span></td>
+        <td>${esc(r.section || '')}</td><td class="num">${$r(r.cost)}</td>
+        <td class="num">${r.pred_final != null ? $r(r.pred_final) : '—'}${r.pred_roi_pct != null ? ` <span class="muted small">${r.pred_roi_pct >= 0 ? '+' : ''}${r.pred_roi_pct}%</span>` : ''}</td>
+        <td class="num">${r.pred_p15 != null ? pct(r.pred_p15) : '—'}</td>
+        <td class="num">${r.score_v1 != null ? pct(r.score_v1) : '—'}</td>
+        <td class="num">${$r(r.actual_final)} <span class="muted small">${r.actual_roi_pct != null ? (r.actual_roi_pct >= 0 ? '+' : '') + Math.round(r.actual_roi_pct) + '%' : ''}</span></td>
+        <td><span class="badge regime-${r.outcome === 'WIN' ? 'good' : (r.outcome === 'FLAT' ? 'warn' : 'neutral')}">${esc(r.outcome || '')}</span></td>
+      </tr>`).join('');
+    body.innerHTML = `
+      <div class="deals-results-head small">
+        <b>${tot.win} won · ${tot.flat} flat · ${tot.loss} lost</b> of ${tot.graded} graded (${pct(tot.win_rate)} win rate, median realized ${tot.median_actual_roi_pct != null ? (tot.median_actual_roi_pct >= 0 ? '+' : '') + tot.median_actual_roi_pct + '%' : '—'})${src ? ' · ' + src : ''}<br/>
+        <span class="muted">${errLine}</span>
+      </div>
+      <div class="deals-cal-row">
+        ${calTable('by predicted P15', d.by_pred_p15, 'avg_p15', 'avg P15')}
+        ${calTable('by predicted net ROI', d.by_pred_roi, 'median_actual_roi', 'median actual')}
+        ${calTable('by Score v1', d.by_score_v1)}
+      </div>
+      <table class="deals-tbl small"><thead><tr><th>Event</th><th>Section</th><th class="num">Cost</th><th class="num">Pred final · ROI</th><th class="num">P15</th><th class="num">Score v1</th><th class="num">Actual final · ROI</th><th>Outcome</th></tr></thead><tbody>${recent}</tbody></table>`;
   }
 
   async function poll() {
