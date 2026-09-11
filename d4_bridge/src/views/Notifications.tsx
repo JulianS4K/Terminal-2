@@ -1,11 +1,12 @@
 // Notifications — the /alerts feed. Punk "// what you missed" design from the
-// Exos set. Backed by real transfer signals via lib/notifications.ts (no faked
-// items); event-side alerts (reminders/drops/price steps) will merge in as
-// those get a backend. Read-state is client-only for now (mark-all-read).
+// Exos set. Backed by real signals via lib/notifications.ts (no faked items):
+// transfers, upcoming-event reminders, cancellations, organizer announcements,
+// reschedules, and price-step nudges for saved events. Read-state is
+// server-side (exos_notification_reads) unioned with this session's clears.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Ticket, ArrowLeftRight, Bell, Zap, DollarSign, ChevronRight } from 'lucide-react';
+import { Ticket, ArrowLeftRight, Bell, Zap, DollarSign, ChevronRight, Megaphone, Ban } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   listNotifications,
@@ -22,6 +23,8 @@ const ICONS: Record<NotificationIcon, typeof Ticket> = {
   reminder: Bell,
   drop: Zap,
   price: DollarSign,
+  announce: Megaphone,
+  cancel: Ban,
 };
 
 const TABS: [string, string][] = [
@@ -47,7 +50,7 @@ export default function Notifications() {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('all');
-  // Client-only read state (no server read-state yet): ids the user has cleared.
+  // Read ids: server read-state unioned with anything cleared this session.
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -161,7 +164,7 @@ export default function Notifications() {
             <p className="disp text-2xl tracking-tight mb-2">ALL CLEAR</p>
             <p className="type text-white/45 text-sm">
               {tab === 'events'
-                ? 'No event alerts yet — follow organizers to hear about drops.'
+                ? 'No event alerts yet — reminders, organizer updates and price changes for your tickets and saved events land here.'
                 : "You're all caught up. Nothing new here."}
             </p>
           </div>
