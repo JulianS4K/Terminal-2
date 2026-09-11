@@ -17,7 +17,8 @@
 --           20260911040000 (n2s_map_events rules 0–0e), 20260804230000 (gt_map_events),
 --           20260810184500 (match_gotickets_us_events), 20260516240000 (auto_match_sg_canonical_v3)
 --
--- NOT APPLIED. Authored 2026-09-11 (operator: "merge all these mappers into one function and
+-- Already applied to prod · via MCP 2026-09-11 ~18:05 UTC under operator direction ("Apply all three now").
+-- Authored 2026-09-11 (operator: "merge all these mappers into one function and
 -- strengthen so they map to evo and cross map, then have all current users call them after a dry run").
 --
 -- ============================================================================

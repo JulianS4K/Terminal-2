@@ -9,7 +9,8 @@
 --           applied in prod 2026-09-11; file on branch claude/underpriced-listing-detector-8hdzzb),
 --           20260911161000 (our_purchases_map v1 + map_score — applied in prod; same branch)
 --
--- NOT APPLIED. Authored 2026-09-11. Supersedes the UNAPPLIED 20260911161100_our_purchases_map_evo.sql
+-- Already applied to prod · via MCP 2026-09-11 ~18:05 UTC under operator direction ("Apply all three now").
+-- Authored 2026-09-11. Supersedes the UNAPPLIED 20260911161100_our_purchases_map_evo.sql
 -- (same branch): its per-table matching SQL becomes one call per row into event_mapper_resolve(),
 -- and its cold path is now the SHARED one in 20260911200000 (which also serves s4kcs / N2S /
 -- TickPick / Vivid needs — one TEvo venue pull per venue instead of one per surface).

@@ -17,7 +17,8 @@
 --           20260515250000 (cron_policy + cron_should_fire). Vault: TEVO_API_TOKEN / TEVO_SECRET
 --           (read by the reused helpers only).
 --
--- NOT APPLIED. Authored 2026-09-11 (operator: "merge all event mappers into one so we can
+-- Already applied to prod · via MCP 2026-09-11 ~18:05 UTC under operator direction ("Apply all three now").
+-- Authored 2026-09-11 (operator: "merge all event mappers into one so we can
 -- utilize the same resources instead of reinventing every time" · "all event mappers" ·
 -- "utilize evo performer and venue search where necessary"). Supersedes the UNAPPLIED
 -- 20260911161100_our_purchases_map_evo.sql on branch claude/underpriced-listing-detector-8hdzzb
