@@ -25,8 +25,10 @@
 --                as written this would have dropped the live waitlist mail path)
 --              + 'event-announcement' (0703121000) + 'event-rescheduled' (0703124000).
 --
--- D4 authors; A1/operator applies. Already live on prod (hzrizjeaxlqcxfrtczpq)
--- via the reconciled 0703121000/0703124000 applies — this only aligns the repo.
+-- D4 authors; A1/operator applies. (The earlier claim that this was "already
+-- live via the 0703 applies" was wrong — prod's CHECK lacked event-announcement
+-- and event-rescheduled until 2026-09-11.)
+-- Already applied to prod · via MCP 2026-09-11 (operator-directed; PR #975)
 -- ============================================================================
 
 ALTER TABLE public.exos_mail DROP CONSTRAINT IF EXISTS exos_mail_template_check;

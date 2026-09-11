@@ -13,6 +13,8 @@
 -- Pre-reqs: 20260520160000 (exos_mail), 20260520130000 (exos_tickets),
 --           20260523220000 (holder fan-out pattern), 20260515250000 (cron_should_fire),
 --           edge fn exos-mail-drain + cron exos-mail-drain-2min (already live)
+-- Already applied to prod · via MCP 2026-09-11 (operator-directed; PR #975) —
+--   cron exos_send_event_reminders scheduled, verified in cron.job.
 --
 -- KANBAN D4-OPS-21 (free-first backlog) + d4_bridge/KANBAN "Commit 10".
 -- Attendees expect "your event is tomorrow" / "doors open soon" mail. Nothing

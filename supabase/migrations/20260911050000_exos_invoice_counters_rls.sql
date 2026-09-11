@@ -4,6 +4,7 @@
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  exos_invoice_counters (DDL: ENABLE ROW LEVEL SECURITY, no policies)
 -- Pre-reqs: 20260616240000 (exos_invoice_counters + exos_next_invoice_number)
+-- Already applied to prod · via MCP 2026-09-11 (operator-directed; PR #975)
 --
 -- Readiness sweep 2026-09-11: exos_invoice_counters was the ONE exos_* table
 -- in prod with rowsecurity = false. It was already unreachable from clients
