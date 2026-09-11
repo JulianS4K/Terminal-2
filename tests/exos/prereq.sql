@@ -51,12 +51,16 @@ $$;
 CREATE TABLE public.exos_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id uuid NOT NULL, name text, slug text, status text NOT NULL DEFAULT 'draft',
-  starts_at timestamptz, doors_at timestamptz, currency text DEFAULT 'usd',
+  starts_at timestamptz, doors_at timestamptz, timezone text, currency text DEFAULT 'usd',
   total_tickets integer NOT NULL DEFAULT 0, tickets_sold integer NOT NULL DEFAULT 0,
   purchase_limits jsonb,
   occurs_at_local text, venue_name text, venue_location text,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- cron_should_fire() stub (prod: 20260515250000 4-stage policy gate). The
+-- harness has no cron_policy table; cron-entry RPCs gate on it, so always fire.
+CREATE OR REPLACE FUNCTION public.cron_should_fire(p_jobname text) RETURNS boolean
+  LANGUAGE sql VOLATILE AS $$ SELECT true $$;
 -- exos_is_admin() stub (prod: phase-1 SECDEF role check). Tests never grant
 -- platform-admin, so a constant false is the faithful default.
 CREATE OR REPLACE FUNCTION public.exos_is_admin() RETURNS boolean

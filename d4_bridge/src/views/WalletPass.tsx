@@ -291,7 +291,7 @@ export default function WalletPass() {
             <div className="text-left">
               <p className="type text-[9px] uppercase tracking-widest text-black/40 mb-1">holder</p>
               <p className="disp text-lg tracking-tight leading-none">
-                {user.displayName || user.email || 'Guest'}
+                {ticket.attendeeName || user.displayName || user.email || 'Guest'}
               </p>
             </div>
             <div className="text-right">

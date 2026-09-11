@@ -24,10 +24,12 @@ lock, ScanReport field rename).
 - **Commit 9** — Wallet pass route. `/wallet/pass/:ticketId`
   fullscreen browser-only pass with rotating QR + screen wake-lock
   + status overlays. Bare layout (no chrome).
-- **Commit 10** — Manual "Send reminder now" button on both
-  OrganizerEventReport and OrganizerCheckIn. Queues
-  `event-reminder` email per active ticket holder. 6-hour cooldown
-  via `events/{eventId}.lastReminderSentAt`.
+- **Commit 10** — ✅ SHIPPED 2026-09-11 (Supabase form): "Send
+  reminder now" on OrganizerEventReport (`RemindersPanel`) →
+  `exos_send_event_reminder_now`, 6-hour cooldown via
+  `exos_events.reminder_manual_sent_at`. Automatic T-24h / T-2h
+  sends ride the `exos_send_event_reminders` cron (mig
+  20260911051000). Not on OrganizerCheckIn (door staff don't mail).
 - **Commit 11** — Scanner offline improvements: 5-min registry
   auto-refresh while online, attest-and-admit escape hatch,
   audit-backfill writes `events/{id}/checkIns` on sync with
@@ -77,8 +79,9 @@ indie-primary + secondary-market positioning. `[ ]` = not started,
   physical ticket stock printing. *(OpenDate, AXS venues.)* Online-only.
 - `[ ]` **Booking + artist settlement** — holds/offers calendar, deal
   terms, payout/settlement accounting. *(OpenDate signature.)*
-- `[ ]` **Auto pre-event reminders** (T-1d / T-1h). Manual announcement
-  shipped; needs a scheduled send (cron/drainer) to auto-fire.
+- `[x]` **Auto pre-event reminders** (T-24h / T-2h). Shipped 2026-09-11:
+  cron RPC `exos_send_event_reminders` + manual send-now (mig
+  20260911051000); delivery still gated on the Resend key (D4-OPS-19).
 - `[ ]` **Group sales / comp allocations** workflow. *(TM, AXS.)*
 - `[ ]` **RFID / hardware access control + entry zones.** *(Enterprise
   venues.)* We have phone-camera scan only.
@@ -198,10 +201,8 @@ indie-cap + secondary-market positioning.
 
 ## To Do (existing kanban, deferred)
 
-- **Auto-firing pre-event reminder emails** — Cloud Function cron
-  for T-1 day and T-1 hour reminders. Manual button (Commit 10)
-  ships the template; cron fires it automatically. Blocker: Cloud
-  Functions surface.
+- ~~**Auto-firing pre-event reminder emails**~~ — ✅ done 2026-09-11 as a
+  pg_cron RPC (no Cloud Functions needed); see Commit 10 above.
 - **Outbound webhook system** — per-org webhook config + signed
   HTTP delivery worker. Foundational for CRM/automation.
 - **MailChimp / Salesforce / Zapier** — connectors that subscribe

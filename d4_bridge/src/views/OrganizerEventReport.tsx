@@ -22,6 +22,7 @@ import SalesChart from '../components/SalesChart';
 import ScanReport from '../components/ScanReport';
 import WaitlistPanel from '../components/WaitlistPanel';
 import AnnouncementsPanel from '../components/AnnouncementsPanel';
+import RemindersPanel from '../components/RemindersPanel';
 import TierPricingPanel from '../components/TierPricingPanel';
 import ReschedulePanel from '../components/ReschedulePanel';
 import { formatCurrency } from '../lib/utils';
@@ -289,6 +290,14 @@ export default function OrganizerEventReport() {
         <AnnouncementsPanel
           eventId={eventId!}
           canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+        />
+
+        {/* Pre-event reminders — automatic T-24h / T-2h holder mail (cron) +
+            a manual "send now" for owner/manager (6h cooldown, server-enforced). */}
+        <RemindersPanel
+          eventId={eventId!}
+          canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          isPublished={event.status === 'published'}
         />
 
         {/* Tier breakdown. */}
