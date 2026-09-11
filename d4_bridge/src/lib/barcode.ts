@@ -233,10 +233,345 @@ export async function verifyBarcode(
  * Parse an old-format barcode for the docId. Used when verifyBarcode
  * fails — the OrganizerCheckIn UI wants to surface the docId in the
  * error message and audit log even when the signature didn't validate.
+ *
+ * Handles v1 (`T-{ticketId}:...`) AND v2 (`T2-{scheme}{b64url}`) shapes so
+ * the audit log always records the attempted ticket id, whatever the format.
  */
 export function extractTicketIdFromAny(payload: string): string | null {
   if (!payload || typeof payload !== 'string') return null;
+  if (payload.startsWith(V2_PREFIX)) {
+    // v2 packs the ticket id as the first 16 bytes; decode just those.
+    try {
+      const bytes = b64urlToBytes(payload.slice(V2_PREFIX.length + 1));
+      return bytes.length >= 16 ? bytesToUuid(bytes, 0) : null;
+    } catch {
+      return null;
+    }
+  }
   const trimmed = payload.startsWith('T-') ? payload.slice(2) : payload;
   const id = trimmed.split(':')[0];
   return id || null;
+}
+
+// ===========================================================================
+// v2 barcodes — binary-packed, multi-scheme, offline-verifiable
+// ===========================================================================
+//
+// Why a v2 at all (the limits we're pushing, honestly):
+//
+//   * Payload size / scan speed. v1 is text: `T-{uuid}:{uuid}:{bucket}:{b64sig}`
+//     — two 36-char hex UUIDs carrying only 32 bytes of real entropy, ~120+
+//     chars total. A denser symbol focuses/decodes slower under bad stadium
+//     lighting. v2 packs the UUIDs to raw 16-byte values + a varint bucket +
+//     a truncated/compact signature, roughly HALVING the module count for the
+//     HMAC scheme while staying a plain QR any phone camera reads.
+//
+//   * Offline verification WITHOUT a shared secret (the Ed25519 scheme). v1 is
+//     symmetric HMAC, so an offline door device must hold each ticket's
+//     `barcode_secret` (the exos_ticket_barcode_secrets registry). A stolen
+//     scanner can then FORGE codes. v2's `ed25519` scheme signs with the org's
+//     PRIVATE key (held only server-side / in the owner's device) and the
+//     scanner verifies with the org PUBLIC key — a leaked scanner can verify
+//     but never forge. This is the airline/SafeTix-grade offline model.
+//
+// Both schemes are offered ("all options"): `hmac` for the smallest symbol and
+// drop-in secret compatibility, `ed25519` for no-secret-on-the-scanner offline
+// verification. The wire format self-identifies which one it is.
+//
+// Format:  `T2-{schemeTag}{base64url(binary)}`   schemeTag ∈ { 'h', 'e' }
+// Binary:  [16 bytes ticketId][16 bytes ownerId][varint bucket][signature]
+//            signature = 16 bytes (hmac, truncated HMAC-SHA256)
+//                      | 64 bytes (ed25519)
+// The message that is signed is the bytes BEFORE the signature (ticketId ||
+// ownerId || bucketVarint), so the layout is self-delimiting: a verifier reads
+// the two UUIDs and the varint, and everything left over is the signature.
+
+export type BarcodeScheme = 'hmac' | 'ed25519';
+
+const V2_PREFIX = 'T2-';
+const SCHEME_TAG: Record<BarcodeScheme, string> = { hmac: 'h', ed25519: 'e' };
+const TAG_SCHEME: Record<string, BarcodeScheme> = { h: 'hmac', e: 'ed25519' };
+// Truncate the HMAC to 128 bits. Full SHA-256 (256 bits) is overkill for a
+// code that also rotates every 30s and is backstopped by the atomic status
+// flip; 128 bits keeps the symbol smaller with no practical forgeability loss.
+const HMAC_TRUNC_BYTES = 16;
+const ED25519_SIG_BYTES = 64;
+
+const HEX = '0123456789abcdef';
+
+function uuidToBytes(uuid: string): Uint8Array {
+  const hex = uuid.replace(/-/g, '').toLowerCase();
+  if (hex.length !== 32 || /[^0-9a-f]/.test(hex)) {
+    throw new Error(`barcode v2: not a uuid: ${uuid}`);
+  }
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+
+function bytesToUuid(b: Uint8Array, off = 0): string {
+  let hex = '';
+  for (let i = 0; i < 16; i++) {
+    const v = b[off + i];
+    hex += HEX[(v >> 4) & 0xf] + HEX[v & 0xf];
+  }
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// Unsigned LEB128. Uses Math (not <<) so a bucket beyond 2^28 still encodes
+// correctly — bitwise ops in JS are 32-bit signed and would corrupt large
+// buckets decades out.
+function writeVarint(n: number): number[] {
+  if (n < 0 || !Number.isFinite(n)) throw new Error('barcode v2: bad varint input');
+  const out: number[] = [];
+  let v = Math.floor(n);
+  while (v > 0x7f) {
+    out.push((v & 0x7f) | 0x80);
+    v = Math.floor(v / 128);
+  }
+  out.push(v & 0x7f);
+  return out;
+}
+
+function readVarint(b: Uint8Array, off: number): { value: number; next: number } {
+  let shift = 1;
+  let result = 0;
+  let pos = off;
+  for (;;) {
+    if (pos >= b.length) throw new Error('barcode v2: truncated varint');
+    const byte = b[pos++];
+    result += (byte & 0x7f) * shift;
+    if ((byte & 0x80) === 0) break;
+    shift *= 128;
+  }
+  return { value: result, next: pos };
+}
+
+function bytesToB64url(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function b64urlToBytes(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const len = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(len);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
+
+/** Constant-time byte compare (see timingSafeEqual for the string version). */
+function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/** The bytes that a v2 signature covers: ticketId || ownerId || bucketVarint. */
+function v2Message(ticketId: string, ownerId: string, bucket: number): Uint8Array {
+  return concatBytes(
+    uuidToBytes(ticketId),
+    uuidToBytes(ownerId),
+    Uint8Array.from(writeVarint(bucket)),
+  );
+}
+
+/**
+ * Probe whether this runtime's Web Crypto exposes Ed25519. Not all engines do
+ * yet; callers fall back to the `hmac` scheme when this is false rather than
+ * throwing at scan time. Result is cached after the first probe.
+ */
+let _ed25519Probe: Promise<boolean> | null = null;
+export function ed25519Supported(): Promise<boolean> {
+  if (_ed25519Probe) return _ed25519Probe;
+  _ed25519Probe = (async () => {
+    try {
+      ensureCryptoSubtleAvailable();
+      await crypto.subtle.generateKey({ name: 'Ed25519' } as any, false, ['sign', 'verify']);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  return _ed25519Probe;
+}
+
+/** Import a raw 32-byte Ed25519 public key (base64url) for verification. */
+export async function importEd25519PublicKey(rawB64url: string): Promise<CryptoKey> {
+  ensureCryptoSubtleAvailable();
+  return crypto.subtle.importKey('raw', b64urlToBytes(rawB64url), { name: 'Ed25519' } as any, false, [
+    'verify',
+  ]);
+}
+
+/** Import a PKCS#8 Ed25519 private key (base64url) for signing. */
+export async function importEd25519PrivateKey(pkcs8B64url: string): Promise<CryptoKey> {
+  ensureCryptoSubtleAvailable();
+  return crypto.subtle.importKey('pkcs8', b64urlToBytes(pkcs8B64url), { name: 'Ed25519' } as any, false, [
+    'sign',
+  ]);
+}
+
+export interface SignV2Options {
+  ticketId: string;
+  ownerId: string;
+  scheme: BarcodeScheme;
+  /** Required for the `hmac` scheme — the per-ticket barcode secret. */
+  secret?: string;
+  /** Required for the `ed25519` scheme — the org's Ed25519 private CryptoKey. */
+  privateKey?: CryptoKey;
+  bucket?: number;
+}
+
+/**
+ * Compute a v2 signed barcode. Async; the caller refreshes every 30s at the
+ * bucket boundary, exactly like v1's signBarcode.
+ */
+export async function signBarcodeV2(opts: SignV2Options): Promise<string> {
+  const bucket = opts.bucket ?? currentBucket();
+  const msg = v2Message(opts.ticketId, opts.ownerId, bucket);
+  let sig: Uint8Array;
+
+  if (opts.scheme === 'hmac') {
+    if (!opts.secret) throw new Error('barcode v2 hmac: missing per-ticket secret');
+    ensureCryptoSubtleAvailable();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(opts.secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const full = new Uint8Array(await crypto.subtle.sign('HMAC', key, msg));
+    sig = full.slice(0, HMAC_TRUNC_BYTES);
+  } else {
+    if (!opts.privateKey) throw new Error('barcode v2 ed25519: missing private key');
+    ensureCryptoSubtleAvailable();
+    sig = new Uint8Array(await crypto.subtle.sign('Ed25519' as any, opts.privateKey, msg));
+  }
+
+  return `${V2_PREFIX}${SCHEME_TAG[opts.scheme]}${bytesToB64url(concatBytes(msg, sig))}`;
+}
+
+export type VerifyV2Reason =
+  | 'malformed'
+  | 'unsupported-scheme'
+  | 'no-key'
+  | 'bucket-expired'
+  | 'signature-mismatch';
+
+export interface VerifyResultV2 {
+  ok: boolean;
+  version: 1 | 2;
+  scheme?: BarcodeScheme;
+  reason?: VerifyResult['reason'] | VerifyV2Reason;
+  legacy: boolean;
+  ticketId?: string;
+  ownerId?: string;
+  bucket?: number;
+}
+
+export interface VerifyKeys {
+  /** Per-ticket secret — used to verify the `hmac` scheme. */
+  secret?: string;
+  /** Org Ed25519 public CryptoKey — used to verify the `ed25519` scheme. */
+  publicKey?: CryptoKey;
+}
+
+/** Verify a v2 (`T2-`) barcode against the supplied keys. */
+export async function verifyBarcodeV2(
+  payload: string,
+  keys: VerifyKeys,
+  options: { now?: number } = {},
+): Promise<VerifyResultV2> {
+  if (typeof payload !== 'string' || !payload.startsWith(V2_PREFIX)) {
+    return { ok: false, version: 2, reason: 'malformed', legacy: false };
+  }
+  const tag = payload.charAt(V2_PREFIX.length);
+  const scheme = TAG_SCHEME[tag];
+  if (!scheme) return { ok: false, version: 2, reason: 'unsupported-scheme', legacy: false };
+
+  let bytes: Uint8Array;
+  let ticketId: string;
+  let ownerId: string;
+  let bucket: number;
+  let sig: Uint8Array;
+  let msg: Uint8Array;
+  try {
+    bytes = b64urlToBytes(payload.slice(V2_PREFIX.length + 1));
+    if (bytes.length < 34) throw new Error('short');
+    ticketId = bytesToUuid(bytes, 0);
+    ownerId = bytesToUuid(bytes, 16);
+    const v = readVarint(bytes, 32);
+    bucket = v.value;
+    sig = bytes.slice(v.next);
+    msg = bytes.slice(0, v.next);
+  } catch {
+    return { ok: false, version: 2, scheme, reason: 'malformed', legacy: false };
+  }
+
+  const now = options.now ?? Date.now();
+  if (Math.abs(currentBucket(now) - bucket) > BUCKET_TOLERANCE) {
+    return { ok: false, version: 2, scheme, reason: 'bucket-expired', legacy: false, ticketId, ownerId, bucket };
+  }
+
+  const base = { version: 2 as const, scheme, legacy: false, ticketId, ownerId, bucket };
+  try {
+    if (scheme === 'hmac') {
+      if (!keys.secret) return { ok: false, reason: 'no-key', ...base };
+      ensureCryptoSubtleAvailable();
+      const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(keys.secret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign'],
+      );
+      const full = new Uint8Array(await crypto.subtle.sign('HMAC', key, msg));
+      const expected = full.slice(0, HMAC_TRUNC_BYTES);
+      if (sig.length !== HMAC_TRUNC_BYTES || !timingSafeEqualBytes(expected, sig)) {
+        return { ok: false, reason: 'signature-mismatch', ...base };
+      }
+    } else {
+      if (!keys.publicKey) return { ok: false, reason: 'no-key', ...base };
+      if (sig.length !== ED25519_SIG_BYTES) return { ok: false, reason: 'signature-mismatch', ...base };
+      ensureCryptoSubtleAvailable();
+      const ok = await crypto.subtle.verify('Ed25519' as any, keys.publicKey, sig, msg);
+      if (!ok) return { ok: false, reason: 'signature-mismatch', ...base };
+    }
+  } catch {
+    return { ok: false, reason: 'signature-mismatch', ...base };
+  }
+  return { ok: true, ...base };
+}
+
+/**
+ * Unified verifier the scanner should call: dispatches v2 (`T2-`) to
+ * verifyBarcodeV2 and everything else to the v1 verifyBarcode, normalizing to
+ * one result shape. Back-compatible — a v1 caller that passes only `secret`
+ * keeps its exact v1 behavior.
+ */
+export async function verifyAnyBarcode(
+  payload: string,
+  keys: VerifyKeys,
+  options: { now?: number } = {},
+): Promise<VerifyResultV2> {
+  if (typeof payload === 'string' && payload.startsWith(V2_PREFIX)) {
+    return verifyBarcodeV2(payload, keys, options);
+  }
+  const r = await verifyBarcode(payload, keys.secret ?? '', options);
+  return { ...r, version: 1 };
 }

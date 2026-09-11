@@ -16,8 +16,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { verifyBarcode, extractTicketIdFromAny } from '../lib/barcode';
+import { verifyAnyBarcode, extractTicketIdFromAny } from '../lib/barcode';
 import { joinCheckinChannel } from '../lib/checkinChannel';
+import { OfflineCheckInQueue, type PendingCheckIn } from '../lib/offlineQueue';
 
 // Anything older than this is dropped from localStorage when the page mounts.
 // Set to a generous 7 days so a multi-day festival is still cached on day 3.
@@ -78,6 +79,7 @@ function pruneStaleCheckInCaches() {
     localStorage.removeItem(k);
     const eventId = k.slice('registry_'.length);
     localStorage.removeItem(`pending_updates_${eventId}`);
+    localStorage.removeItem(`pending_checkins_v2_${eventId}`);
   }
 }
 
@@ -104,7 +106,12 @@ export default function OrganizerCheckIn() {
   const [offlineRegistry, setOfflineRegistry] = useState<Record<string, OfflineTicketEntry>>({});
   const [downloading, setDownloading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [pendingUpdates, setPendingUpdates] = useState<string[]>([]);
+  // Durable, crash-safe offline check-in queue (lib/offlineQueue.ts). Each item
+  // carries a stable idempotency key so a reconnect replay after a crash is a
+  // server-side no-op (mig 20260713120000) rather than a second audit row.
+  // `pending` mirrors the queue for rendering; `queueRef` is the source of truth.
+  const [pending, setPending] = useState<PendingCheckIn[]>([]);
+  const queueRef = useRef<OfflineCheckInQueue | null>(null);
   const [recentScans, setRecentScans] = useState<{ id: string, name: string, time: Date, status: string }[]>([]);
   // "Inside venue" = tickets actually scanned in (exos_event_checkins count),
   // NOT tickets sold. Seeded on mount; refreshed by the realtime channel below
@@ -162,14 +169,26 @@ export default function OrganizerCheckIn() {
           localStorage.removeItem(`registry_${eventId}`);
         }
       }
-      const pending = localStorage.getItem(`pending_updates_${eventId}`);
-      if (pending) {
+      const queue = new OfflineCheckInQueue(localStorage, eventId);
+      queueRef.current = queue;
+      // One-time migration: fold any legacy `pending_updates_<id>` array (bare
+      // ids, no idempotency key) into the new queue, then drop the old key so a
+      // partially-upgraded device doesn't replay from two stores.
+      const legacy = localStorage.getItem(`pending_updates_${eventId}`);
+      if (legacy) {
         try {
-          setPendingUpdates(JSON.parse(pending));
+          const ids: unknown = JSON.parse(legacy);
+          if (Array.isArray(ids)) {
+            for (const id of ids) {
+              if (typeof id === 'string') queue.enqueue({ ticketId: id, source: 'manual', verification: 'manual' });
+            }
+          }
         } catch {
-          localStorage.removeItem(`pending_updates_${eventId}`);
+          /* corrupt legacy value — dropped below */
         }
+        localStorage.removeItem(`pending_updates_${eventId}`);
       }
+      setPending(queue.list());
     }
 
     return () => {
@@ -180,38 +199,55 @@ export default function OrganizerCheckIn() {
   }, [eventId]);
 
   useEffect(() => {
-    if (!isOffline && pendingUpdates.length > 0) {
+    if (!isOffline && pending.length > 0) {
       syncPendingUpdates();
     }
-  }, [isOffline, pendingUpdates.length]);
+  }, [isOffline, pending.length]);
 
   const syncPendingUpdates = async () => {
-    if (pendingUpdates.length === 0 || syncing) return;
+    const queue = queueRef.current;
+    if (!queue || queue.size() === 0 || syncing) return;
     setSyncing(true);
-    const successfulSyncs: string[] = [];
     try {
-      // Per-item try/catch so one failing replay doesn't abort the rest of the
-      // queue. With a single outer catch the first failure silently skipped
-      // all subsequent IDs (they'd also miss the successfulSyncs push so they'd
-      // stay queued indefinitely even though they hadn't been tried yet).
-      for (const tId of pendingUpdates) {
-        try {
-          // Replay an offline check-in. checkInTicket is forgiving on replay:
-          // a second flip of an already-used ticket returns {ok:false,
-          // reason:'used'} (no throw), so we still drop it from the queue.
-          // Only a real network/auth error throws and keeps it queued.
-          await checkInTicket(tId, 'manual', 'manual', undefined, eventId);
-          successfulSyncs.push(tId);
-        } catch (err) {
-          console.error(`Error syncing pending update ${tId}:`, err);
-        }
-      }
+      // queue.flush retries each item independently (one failure never aborts
+      // the rest) and drops committed OR already-'used' items while keeping ones
+      // that only threw (network/auth) for next time — same drop semantics as
+      // the old loop. The crash-safety upgrade: each replay carries the item's
+      // stable idempotency key, so a check-in the server already committed
+      // (crash between commit and dequeue) returns the stored result and writes
+      // NO second exos_event_checkins row.
+      //
+      // Replays go through as a manual override (source/verification 'manual',
+      // no barcode payload): by reconnect time the 30s barcode bucket is stale
+      // and would be rejected — the admission decision was already made offline,
+      // so this records it rather than re-verifying. Mirrors the prior behavior.
+      await queue.flush((item) =>
+        checkInTicket(item.ticketId, 'manual', 'manual', undefined, eventId, item.idempotencyKey),
+      );
     } finally {
-      const remainingUpdates = pendingUpdates.filter(id => !successfulSyncs.includes(id));
-      setPendingUpdates(remainingUpdates);
-      localStorage.setItem(`pending_updates_${eventId}`, JSON.stringify(remainingUpdates));
+      setPending(queue.list());
       setSyncing(false);
     }
+  };
+
+  // Queue an offline-admitted check-in for durable, crash-safe replay. Dedupes
+  // by ticket id (a double-scan at the door can't enqueue twice) and mints a
+  // stable idempotency key. Records the original source/verification for the
+  // audit even though the replay itself goes through as a manual override.
+  const enqueueOffline = (
+    docId: string,
+    barcodePayload: string,
+    offlineTicket: OfflineTicketEntry,
+  ) => {
+    const queue = queueRef.current;
+    if (!queue) return;
+    queue.enqueue({
+      ticketId: docId,
+      source: scanning ? 'camera' : 'manual',
+      verification: offlineTicket.barcodeSecret ? 'verified' : 'manual',
+      barcodePayload,
+    });
+    setPending(queue.list());
   };
 
   // Tear down the live camera scanner safely. stop() rejects if the camera
@@ -534,7 +570,9 @@ export default function OrganizerCheckIn() {
       // secret; we surface a clear "code rejected, please re-sync"
       // error to the operator instead of silently admitting a screenshot.
       if (offlineTicket.barcodeSecret && !isBareManualEntry) {
-        const verify = await verifyBarcode(probeValue, offlineTicket.barcodeSecret);
+        // verifyAnyBarcode handles both v1 (`T-`) and v2 (`T2-`) codes; the
+        // per-ticket secret covers the v1 + v2-hmac schemes offline.
+        const verify = await verifyAnyBarcode(probeValue, { secret: offlineTicket.barcodeSecret });
         if (!verify.ok) {
           setStatus('invalid-barcode');
           const reasonText: Record<string, string> = {
@@ -654,14 +692,10 @@ export default function OrganizerCheckIn() {
           }
         } catch (err) {
           console.error('Server check-in failed; admitting on offline registry and queuing replay.', err);
-          const newPending = [...pendingUpdates, docId];
-          setPendingUpdates(newPending);
-          localStorage.setItem(`pending_updates_${eventId}`, JSON.stringify(newPending));
+          enqueueOffline(docId, probeValue, offlineTicket);
         }
       } else {
-         const newPending = [...pendingUpdates, docId];
-         setPendingUpdates(newPending);
-         localStorage.setItem(`pending_updates_${eventId}`, JSON.stringify(newPending));
+        enqueueOffline(docId, probeValue, offlineTicket);
       }
 
       // Mark locally as used
@@ -748,7 +782,7 @@ export default function OrganizerCheckIn() {
       // HMAC verification path for actual barcode payloads. Legacy 3-segment
       // shapes are REJECTED (verifyBarcode returns ok:false for them) — an
       // unsigned code is forgeable from a screenshot.
-      const verify = await verifyBarcode(probeValue, scanTicket.barcodeSecret || '');
+      const verify = await verifyAnyBarcode(probeValue, { secret: scanTicket.barcodeSecret || '' });
       if (!verify.ok) {
         setStatus('invalid-barcode');
         const reasonText: Record<string, string> = {
@@ -939,10 +973,10 @@ export default function OrganizerCheckIn() {
         </div>
       </div>
 
-      {pendingUpdates.length > 0 && (
+      {pending.length > 0 && (
          <div className="mb-6 flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
            <div className="text-[11px] font-bold text-amber-700 uppercase tracking-widest">
-             {pendingUpdates.length} unsynced validations
+             {pending.length} unsynced validations
            </div>
            {!isOffline && (
              <button

@@ -406,8 +406,9 @@ export async function checkInTicket(
   verification: 'verified' | 'legacy' | 'manual',
   barcodePayload?: string,
   eventId?: string,
+  idempotencyKey?: string,
 ): Promise<CheckInResult> {
-  const { data, error } = await supabase.rpc('exos_check_in_ticket', {
+  const params: Record<string, unknown> = {
     p_ticket_id: ticketId,
     p_source: source,
     p_verification: verification,
@@ -415,7 +416,12 @@ export async function checkInTicket(
     p_barcode_payload: barcodePayload ?? null,
     // Event scoping (D4-OPS-18): server rejects a cross-event scan. NULL = skip.
     p_event_id: eventId ?? null,
-  });
+  };
+  // Crash-safe replay dedupe (migration 20260713120000). Only sent when a key
+  // is supplied so calls against the pre-migration 5-arg RPC stay unchanged —
+  // PostgREST rejects unknown params, so we must not send it unconditionally.
+  if (idempotencyKey) params.p_idempotency_key = idempotencyKey;
+  const { data, error } = await supabase.rpc('exos_check_in_ticket', params);
   if (error) throw error;
   return (data ?? { ok: false, reason: 'not-found' }) as CheckInResult;
 }

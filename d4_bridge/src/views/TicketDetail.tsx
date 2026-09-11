@@ -7,7 +7,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { publicUrl } from '../lib/utils';
 import { ArrowLeft, Share2, ShieldCheck, RefreshCw, Ticket as TicketIcon, Calendar, Download, PlusCircle, Instagram, Send, ChevronLeft, ChevronRight, Smartphone, Lock } from 'lucide-react';
 import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
-import { signBarcode, currentBucket } from '../lib/barcode';
+import { signBarcode, signBarcodeV2, currentBucket } from '../lib/barcode';
+import { issueV2 } from '../lib/barcodeFlags';
 import { motion, AnimatePresence } from 'motion/react';
 import AddToCalendar from '../components/AddToCalendar';
 import { shareEventToStory } from '../lib/poster';
@@ -104,7 +105,11 @@ export default function TicketDetail() {
       lastBucket = bucket;
       if (td_secret) {
         try {
-          const signed = await signBarcode(td_id, td_uid, td_secret, bucket);
+          // v2 issuance (flag-gated) emits the compact binary `T2-` code (hmac
+          // scheme, client-signed). Default stays on the v1 `T-` HMAC code.
+          const signed = issueV2
+            ? await signBarcodeV2({ ticketId: td_id, ownerId: td_uid, scheme: 'hmac', secret: td_secret, bucket })
+            : await signBarcode(td_id, td_uid, td_secret, bucket);
           if (!cancelled) setBarcode(signed);
           return;
         } catch (err) {
@@ -225,7 +230,7 @@ export default function TicketDetail() {
                  <div className="bg-white p-8 md:p-10 flex flex-col items-center justify-center group mb-8 relative">
                     <div className={`relative p-5 bg-white border-[3px] border-black transition-transform duration-500 flex flex-col items-center w-full max-w-[300px] ${currentTicket.status === 'used' || currentTicket.status === 'voided' || (currentTicket as any).pendingTransferId ? 'opacity-20 grayscale' : 'group-hover:scale-[1.02]'}`}>
                       {qrUnlocked ? (
-                        <QRCodeSVG value={barcode} size={220} level="H" includeMargin={false} fgColor="#000000" />
+                        <QRCodeSVG value={barcode} size={220} level="H" marginSize={4} fgColor="#000000" />
                       ) : (
                         <div className="w-[220px] h-[220px] flex flex-col items-center justify-center text-center px-4 bg-slate-50 border border-dashed border-black/20">
                           <Lock className="w-8 h-8 text-black/30 mb-3" aria-hidden="true" />

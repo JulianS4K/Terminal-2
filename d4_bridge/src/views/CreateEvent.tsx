@@ -14,6 +14,8 @@ import {
 } from '../lib/datetime';
 import { EVENT_CATEGORIES, genresFor } from '../lib/eventTaxonomy';
 import { normalizeArtistLinks } from '../lib/artistLinks';
+import SetTimesEditor from '../components/SetTimesEditor';
+import { normalizeSetTimes, type SetTimeRow } from '../lib/setTimes';
 import ArtistLinksEditor from '../components/ArtistLinksEditor';
 import type { ArtistLink } from '../types';
 
@@ -196,6 +198,9 @@ export default function CreateEvent() {
   // don't want the empty initial state to immediately overwrite a saved
   // draft on mount.
   const [autosaveReady, setAutosaveReady] = useState(false);
+  // Optional set-times (lineup schedule) rows — venue wall-clock, normalized to
+  // UTC on submit. Empty by default; most events have none.
+  const [setTimeRows, setSetTimeRows] = useState<SetTimeRow[]>([]);
   // Two separate refs instead of one:
   //   draftCheckDoneRef — "have we run the draft check?" (prevents double run)
   //   draftAppliedRef   — "did the user actually restore a saved draft?"
@@ -816,6 +821,7 @@ export default function CreateEvent() {
           startsAt: startUtc.toISOString(),
           doorsAt: doorsUtc ? doorsUtc.toISOString() : null,
           endsAt: endUtc ? endUtc.toISOString() : null,
+          setTimes: normalizeSetTimes(setTimeRows, tz),
           timezone: tz,
           currency: formData.currency.toUpperCase(),
           venueName: formData.location.trim(),
@@ -1196,6 +1202,14 @@ export default function CreateEvent() {
                   onChange={(e) => setFormData({ ...formData, timing: { ...formData.timing, endTime: e.target.value } })}
                 />
               </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <SetTimesEditor
+                rows={setTimeRows}
+                onChange={setSetTimeRows}
+                timezoneNote={formData.timezone}
+              />
             </div>
 
             <div className="md:col-span-2 space-y-2">
