@@ -46,6 +46,23 @@ lock, ScanReport field rename).
   with setup hints until env vars set. APPLE + GOOGLE buttons on
   TicketDetail.
 
+## Stage 5 — organizer growth (2026-09-11, PR #977)
+
+Operator brief: "selling via Google Maps, promotion on FB/Google Ads, text
+and email campaigns". Stacked on #976; migrations `20260911140000`/`141000`
+apply-pending; Python pages router + bridge rebuild to deploy.
+
+- **Campaigns** — `CampaignsPanel` (audience segments with live count, send
+  now / schedule, history) → `exos_campaign_*`; `/unsubscribe/:token`.
+  SMS drafts save; sending waits on a provider decision.
+- **Google Search & Maps** — Place ID + lat/lng on Create/Edit; full Event
+  JSON-LD client-side AND pre-rendered server-side at `/bridge/event/:id`;
+  `/bridge/sitemap-events.xml`. Business Profile posts / Things-to-do feed
+  gated (partner + Hard Rule 2).
+- **Ads** — Boost section on PromoteEvent: tracked link per platform, pixel
+  status, Ads Manager hand-off, Maps readiness checklist. Conversion uploads
+  gated.
+
 ## Stage 3 — organizer side (2026-09-11, PR #976, Supabase form)
 
 Shipped in source on `claude/d4-organizer-stage3` (stacked on #975); migrations
