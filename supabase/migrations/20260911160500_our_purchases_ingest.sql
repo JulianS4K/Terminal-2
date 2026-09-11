@@ -12,6 +12,10 @@
 --           cron_policy (+4 rows), cron.job (4 jobs)
 --           Reads: sg_events_canonical, aq_event_map, gotickets_event, v_s4kcs_orders,
 --           order_fee_schedule
+-- Already applied to prod · via MCP 2026-09-11 (operator approved this file alone; 160300/160400 stay apply-pending).
+--   First live pull: GoTickets 400 "Date range cannot exceed 30 days" → fixed in mig 20260911160700 (30-day chunks;
+--   then 633 purchases / 338 hub-mapped on the first drain). SeatGeek 401 code 421004 "Your token does not allow
+--   access to this endpoint at the moment" → /purchases scope still not granted; visible in sg_purchases_pending.
 -- Pre-reqs: 20260909220000 (gotickets_sales pattern + vault GOTICKETS_*),
 --           20260910200000 (get_app_secret('SEATGEEK_API_TOKEN') pattern),
 --           vault secrets
