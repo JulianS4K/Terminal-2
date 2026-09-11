@@ -167,3 +167,60 @@ def test_other_bridge_routes_still_fall_through(bridge_dir, monkeypatch):
     r = client.get("/bridge/my-tickets")
     assert r.status_code == 200 and not calls and "<title>Exos | Live the Moment</title>" in r.text
     assert os.path.isfile(os.path.join(str(bridge_dir), "index.html"))
+
+
+def _ld(body: str) -> dict:
+    start = body.index('id="vibepass-jsonld">') + len('id="vibepass-jsonld">')
+    return json.loads(body[start: body.index("</script>", start)])
+
+
+def test_event_page_sparse_event_place_id_only(bridge_dir, monkeypatch):
+    """Minimal published row: address arrives as a string (legacy free-text),
+    no geo, a Place ID only, an end time, no image / doors / description /
+    performers, tickets remaining. Exercises the fallback branches of the
+    JSON-LD builder and the no-image branch of the meta injection."""
+    sparse = {
+        "id": EVENT["id"], "name": "Sparse", "description": None,
+        "starts_at": "2026-10-30T20:00:00-04:00", "ends_at": "2026-10-30T23:00:00-04:00",
+        "doors_at": None, "currency": None, "venue_name": None,
+        "venue_address": "319 Frost St, Brooklyn", "performer_names": "not-a-list",
+        "image_url": None, "total_tickets": 10, "tickets_sold": 3,
+        "google_place_id": "ChIJonly", "venue_lat": None, "venue_lng": None,
+    }
+    monkeypatch.setattr(pages_mod.requests, "get", _fake_get([sparse]))
+    r = client.get(f"/bridge/event/{EVENT['id']}")
+    assert r.status_code == 200
+    body = r.text
+    ld = _ld(body)
+    assert ld["endDate"] == sparse["ends_at"]
+    assert ld["offers"]["priceCurrency"] == "USD"
+    assert ld["offers"]["availability"] == "https://schema.org/InStock"
+    assert ld["location"] == {
+        "@type": "Place", "name": "",
+        "hasMap": "https://www.google.com/maps/place/?q=place_id:ChIJonly",
+        "identifier": "ChIJonly",
+    }
+    for absent in ("doorTime", "image", "description", "performer"):
+        assert absent not in ld
+    # No image → the shell's OG image + twitter card are left as they were.
+    assert '<meta property="og:image" content="/bridge/icon-512.png" />' in body
+    assert '<meta name="twitter:card" content="summary" />' in body
+    assert "<title>Sparse | Exos</title>" in body
+
+
+def test_event_page_bare_event_no_place(bridge_dir, monkeypatch):
+    """No Place ID, no geo, empty performer list → a Place with just a name
+    and no map / identifier keys."""
+    bare = {**EVENT, "google_place_id": None, "venue_lat": None, "venue_lng": None,
+            "performer_names": [], "venue_address": {}}
+    monkeypatch.setattr(pages_mod.requests, "get", _fake_get([bare]))
+    ld = _ld(client.get(f"/bridge/event/{EVENT['id']}").text)
+    assert ld["location"] == {"@type": "Place", "name": "Brooklyn Steel"}
+    assert "performer" not in ld
+
+
+def test_event_page_404_when_build_missing(bridge_dir, monkeypatch):
+    os.remove(bridge_dir / "index.html")
+    monkeypatch.setattr(pages_mod.requests, "get", _fake_get([EVENT]))
+    r = client.get(f"/bridge/event/{EVENT['id']}")
+    assert r.status_code == 404
