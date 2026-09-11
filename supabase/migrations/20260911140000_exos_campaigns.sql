@@ -451,7 +451,9 @@ AS $$
 DECLARE v_start timestamptz := clock_timestamp(); v_id uuid; v_n int;
         v_sent int := 0; v_mails int := 0; v_failed int := 0;
 BEGIN
-  IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN
+  -- session_user, not current_user: inside a SECURITY DEFINER body current_user
+  -- is the DEFINER, so a current_user check never trips (see 20260911070000).
+  IF session_user NOT IN ('service_role','postgres','supabase_admin') THEN
     RAISE EXCEPTION 'exos_send_scheduled_campaigns: service role only' USING ERRCODE = '42501';
   END IF;
   IF NOT public.cron_should_fire('exos_send_scheduled_campaigns') THEN
