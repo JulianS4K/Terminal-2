@@ -298,6 +298,11 @@ export interface Event {
     marketplaceBlocklist?: string[];
   };
   distributionNetworks?: string[];
+  // Self-serve RSVP release policy (mig 20260911131000). Holder-side release
+  // is allowed by default; the cutoff closes it N hours before start (0 = up to
+  // the start time). Staff releases ignore both.
+  allowHolderRelease?: boolean;
+  releaseCutoffHours?: number;
   purchaseLimits?: {
     maxPerOrder?: number;
     maxPerAccount?: number;
@@ -336,6 +341,9 @@ export interface Ticket {
   voidedAt?: Timestamp;
   voidedBy?: string;
   voidedReason?: string;
+  // Set when the seat was given back via exos_release_ticket (status is
+  // 'voided' — distinguishes a release from a refund-void).
+  releasedAt?: Timestamp;
   purchaseDate: Timestamp;
   barcodeValue: string;
   barcodeSecret?: string;

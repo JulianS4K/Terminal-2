@@ -89,6 +89,8 @@ export function mapEvent(row: any, tiers?: any[], discounts?: any[]): Event {
     exclusivity: row.exclusivity ?? undefined,
     distributionNetworks: row.distribution_networks ?? undefined,
     purchaseLimits: row.purchase_limits ?? undefined,
+    allowHolderRelease: row.allow_holder_release ?? undefined,
+    releaseCutoffHours: row.release_cutoff_hours ?? undefined,
   };
 }
 
@@ -216,6 +218,8 @@ export interface EventInput {
   exclusivity?: Record<string, unknown>;
   purchaseLimits?: Record<string, unknown>;
   distributionNetworks?: string[];
+  allowHolderRelease?: boolean;
+  releaseCutoffHours?: number;
   tiers?: TierInput[];
 }
 
@@ -228,6 +232,7 @@ const EVENT_COL: Array<[keyof EventInput, string]> = [
   ['eventType', 'event_type'], ['category', 'category'], ['genres', 'genres'], ['subgenres', 'subgenres'],
   ['imageUrl', 'image_url'], ['totalTickets', 'total_tickets'], ['branding', 'branding'], ['exclusivity', 'exclusivity'],
   ['purchaseLimits', 'purchase_limits'], ['distributionNetworks', 'distribution_networks'],
+  ['allowHolderRelease', 'allow_holder_release'], ['releaseCutoffHours', 'release_cutoff_hours'],
 ];
 
 function tierInsertRow(eventId: string, t: TierInput, idx: number) {

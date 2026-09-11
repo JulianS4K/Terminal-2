@@ -34,8 +34,10 @@ for m in 20260911050000_exos_invoice_counters_rls \
          20260911051000_exos_event_reminders; do
   $PSQL -f "$MIG/${m}.sql"
 done
-# 2026-09-11 stage 3 (organizer side): analytics document RPC.
-for m in 20260911130000_exos_event_analytics; do
+# 2026-09-11 stage 3 (organizer side): analytics document RPC, self-serve
+# RSVP release (frees tier capacity → waitlist auto-offer trigger).
+for m in 20260911130000_exos_event_analytics \
+         20260911131000_exos_rsvp_release; do
   $PSQL -f "$MIG/${m}.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"

@@ -11,9 +11,9 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { ArrowLeft, BarChart3, DollarSign, Tag, Users, Ban } from 'lucide-react';
+import { ArrowLeft, BarChart3, DollarSign, Tag, Users, Ban, Undo2 } from 'lucide-react';
 import { getEventForEdit } from '../lib/events';
-import { listEventTickets, voidTicket } from '../lib/tickets';
+import { listEventTickets, releaseTicket, voidTicket } from '../lib/tickets';
 import { Event, Ticket } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
@@ -24,9 +24,11 @@ import WaitlistPanel from '../components/WaitlistPanel';
 import AnnouncementsPanel from '../components/AnnouncementsPanel';
 import RemindersPanel from '../components/RemindersPanel';
 import EventAnalyticsPanel from '../components/EventAnalyticsPanel';
+import ReleasePolicyPanel from '../components/ReleasePolicyPanel';
 import TierPricingPanel from '../components/TierPricingPanel';
 import ReschedulePanel from '../components/ReschedulePanel';
 import { formatCurrency } from '../lib/utils';
+import { Timestamp } from '../lib/timestamp';
 
 export default function OrganizerEventReport() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -39,6 +41,7 @@ export default function OrganizerEventReport() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [voidingId, setVoidingId] = useState<string | null>(null);
+  const [releasingId, setReleasingId] = useState<string | null>(null);
   // Bumped after any mutation on this page so the analytics document refetches.
   const [analyticsKey, setAnalyticsKey] = useState(0);
 
@@ -137,6 +140,31 @@ export default function OrganizerEventReport() {
       toast({ kind: 'error', message: 'Could not void this ticket. Retry?' });
     } finally {
       setVoidingId(null);
+    }
+  };
+
+  // Give a FREE seat back (D4-OPS-22). Staff path of exos_release_ticket:
+  // voids the ticket, stamps released_at, and returns the seat to the tier
+  // (which auto-offers the waitlist). Unlike a void, this is an inventory
+  // action, not a refund — the RPC refuses paid tickets.
+  const handleReleaseTicket = async (ticket: Ticket) => {
+    if (!user || ticket.status !== 'active' || (ticket.pricePaid ?? 0) !== 0) return;
+    if (!window.confirm(`Release ticket ${ticket.id.slice(0, 8)}? The seat goes back on sale (and to the waitlist) immediately.`)) return;
+    setReleasingId(ticket.id);
+    try {
+      await releaseTicket(ticket.id);
+      const now = Timestamp.now();
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticket.id ? { ...t, status: 'voided' as const, releasedAt: now, voidedReason: 'released-by-staff' } : t)),
+      );
+      setEvent((ev) => (ev ? { ...ev, ticketsSold: Math.max(0, (ev.ticketsSold || 0) - 1) } : ev));
+      setAnalyticsKey((k) => k + 1);
+      toast({ kind: 'success', message: 'Seat released — capacity freed and the waitlist offered it.' });
+    } catch (err: any) {
+      console.error('Release failed:', err);
+      toast({ kind: 'error', message: err?.message || 'Could not release this ticket.' });
+    } finally {
+      setReleasingId(null);
     }
   };
 
@@ -246,6 +274,14 @@ export default function OrganizerEventReport() {
           isPublished={event.status === 'published'}
         />
 
+        {/* Self-serve RSVP release policy (owner/manager) — holders of free
+            tickets can give the seat back; the waitlist auto-offers it. */}
+        <ReleasePolicyPanel
+          event={event}
+          canManage={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          onSaved={(p) => setEvent((ev) => (ev ? { ...ev, ...p } : ev))}
+        />
+
         {/* Attendance funnel + attribution (server-side document) + CSV exports. */}
         <EventAnalyticsPanel
           eventId={eventId!}
@@ -282,7 +318,10 @@ export default function OrganizerEventReport() {
                   {tickets.map((t) => {
                     const isVoided = t.status === 'voided';
                     const isUsed = t.status === 'used';
-                    const statusBadge = isVoided
+                    const isReleased = isVoided && !!t.releasedAt;
+                    const statusBadge = isReleased
+                      ? { text: 'released', cls: 'bg-amber-50 text-amber-700 border-amber-200' }
+                      : isVoided
                       ? { text: 'refunded', cls: 'bg-rose-50 text-rose-600 border-rose-200' }
                       : isUsed
                       ? { text: 'used', cls: 'bg-slate-100 text-slate-500 border-slate-200' }
@@ -298,7 +337,7 @@ export default function OrganizerEventReport() {
                           <span className={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest border rounded-full ${statusBadge.cls}`}>
                             {statusBadge.text}
                           </span>
-                          {isVoided && t.voidedReason ? (
+                          {isVoided && !isReleased && t.voidedReason ? (
                             <span className="block text-[10px] text-slate-400 italic mt-1">
                               {t.voidedReason}
                             </span>
@@ -306,14 +345,27 @@ export default function OrganizerEventReport() {
                         </td>
                         <td className="py-2 text-right">
                           {t.status === 'active' ? (
-                            <button
-                              onClick={() => handleVoidTicket(t)}
-                              disabled={voidingId === t.id}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[10px] font-bold uppercase tracking-widest border border-rose-200 disabled:opacity-40 transition-colors"
-                            >
-                              <Ban size={12} aria-hidden="true" />
-                              {voidingId === t.id ? 'Voiding…' : 'Refund / Void'}
-                            </button>
+                            <span className="inline-flex flex-wrap justify-end gap-1">
+                              {(t.pricePaid ?? 0) === 0 && (
+                                <button
+                                  onClick={() => handleReleaseTicket(t)}
+                                  disabled={releasingId === t.id || voidingId === t.id}
+                                  title="Give the seat back to the tier (free tickets only)"
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded text-[10px] font-bold uppercase tracking-widest border border-amber-200 disabled:opacity-40 transition-colors"
+                                >
+                                  <Undo2 size={12} aria-hidden="true" />
+                                  {releasingId === t.id ? 'Releasing…' : 'Release seat'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleVoidTicket(t)}
+                                disabled={voidingId === t.id || releasingId === t.id}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[10px] font-bold uppercase tracking-widest border border-rose-200 disabled:opacity-40 transition-colors"
+                              >
+                                <Ban size={12} aria-hidden="true" />
+                                {voidingId === t.id ? 'Voiding…' : 'Refund / Void'}
+                              </button>
+                            </span>
                           ) : (
                             <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">—</span>
                           )}

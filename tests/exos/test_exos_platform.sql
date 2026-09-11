@@ -656,4 +656,101 @@ BEGIN
 END $$;
 SELECT set_config('app.uid','',false);
 SELECT '*** PART D (analytics) PASSED ***' AS result;
+-- ============================================================================
+-- PART E — SELF-SERVE RSVP RELEASE (mig 20260911131000)
+--   holder release frees tier + event capacity and auto-offers the waitlist
+--   · paid / used / in-transfer refused · policy off · cutoff · staff override
+--   · analytics splits released out of voided.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+-- Event H: free, published, starts in 3 days, 1-seat tier fully sold to buyer.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,timezone) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','EvtH','evth','published',3,3,
+   now()+interval '3 days','UTC');
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold,ticket_type) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000d1','eeeeeeee-0000-0000-0000-0000000000e1','Free',0,1,1,'free'),
+  ('eeeeeeee-0000-0000-0000-0000000000d2','eeeeeeee-0000-0000-0000-0000000000e1','Paid',20,5,2,'paid');
+INSERT INTO public.exos_tickets(id,event_id,org_id,tier_id,tier_name,owner_id,buyer_id,status,barcode_secret,price_paid) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000a1','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','eeeeeeee-0000-0000-0000-0000000000d1','Free','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','h1',0),
+  ('eeeeeeee-0000-0000-0000-0000000000a2','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','eeeeeeee-0000-0000-0000-0000000000d2','Paid','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','h2',20),
+  ('eeeeeeee-0000-0000-0000-0000000000a3','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','eeeeeeee-0000-0000-0000-0000000000d2','Paid','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','active','h3',0);
+-- Someone is waiting for the free tier.
+INSERT INTO public.exos_waitlist(event_id,tier_id,email,status) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000e1','eeeeeeee-0000-0000-0000-0000000000d1','waiter@x.com','waiting');
+
+-- E1. Holder releases the free ticket → voided + released_at, tier 1→0,
+--     event 3→2, waiter auto-offered.
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE j jsonb; ok boolean;
+BEGIN
+  j := public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a1');
+  ASSERT j->>'by' = 'holder' AND (j->>'freed_tier')::boolean, 'holder release payload, got '||j::text;
+  ASSERT (SELECT status = 'voided' AND released_at IS NOT NULL AND voided_reason = 'released-by-holder'
+            FROM public.exos_tickets WHERE id='eeeeeeee-0000-0000-0000-0000000000a1'), 'ticket voided + released_at';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='eeeeeeee-0000-0000-0000-0000000000d1') = 0, 'tier sold 1→0';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='eeeeeeee-0000-0000-0000-0000000000e1') = 2, 'event tickets_sold 3→2';
+  ASSERT (SELECT status FROM public.exos_waitlist WHERE email='waiter@x.com') = 'offered', 'waiter auto-offered by the tier trigger';
+  -- E2. Second release refused (not active).
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a1');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%only an active ticket%'; END;
+  ASSERT ok, 'double release refused';
+  -- E3. Paid ticket refused.
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a2');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%only free tickets%'; END;
+  ASSERT ok, 'paid ticket refused';
+  -- E4. Someone else's ticket refused (42501).
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'non-owner refused';
+  RAISE NOTICE 'E1-E4 holder release + refusals OK';
+END $$;
+
+-- E5. Policy off / cutoff block the HOLDER; staff still releases.
+SELECT set_config('app.uid','55555555-5555-5555-5555-555555555555',false);
+DO $$
+DECLARE ok boolean; j jsonb;
+BEGIN
+  UPDATE public.exos_events SET allow_holder_release = false WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%turned off self-serve release%'; END;
+  ASSERT ok, 'policy off blocks holder';
+  UPDATE public.exos_events SET allow_holder_release = true, release_cutoff_hours = 96 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%releases closed 96 hours%'; END;
+  ASSERT ok, 'cutoff (96h > 3 days) blocks holder';
+  -- In-transfer lock.
+  UPDATE public.exos_events SET release_cutoff_hours = 0 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  UPDATE public.exos_tickets SET pending_transfer_id = gen_random_uuid() WHERE id='eeeeeeee-0000-0000-0000-0000000000a3';
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%pending transfer%'; END;
+  ASSERT ok, 'pending transfer blocks release';
+  UPDATE public.exos_tickets SET pending_transfer_id = NULL WHERE id='eeeeeeee-0000-0000-0000-0000000000a3';
+  RAISE NOTICE 'E5 policy / cutoff / transfer-lock OK';
+END $$;
+-- Staff (owner) releases t3 even with the cutoff back on; paid-tier free comp.
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE j jsonb;
+BEGIN
+  UPDATE public.exos_events SET release_cutoff_hours = 96 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  j := public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  ASSERT j->>'by' = 'staff', 'staff override';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='eeeeeeee-0000-0000-0000-0000000000d2') = 1, 'paid tier sold 2→1';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='eeeeeeee-0000-0000-0000-0000000000e1') = 1, 'event tickets_sold 2→1';
+  -- E6. Analytics: released reported separately from voided.
+  j := public.exos_event_analytics('eeeeeeee-0000-0000-0000-0000000000e1');
+  ASSERT (j->>'released')::int = 2 AND (j->>'voided')::int = 0 AND (j->>'sold')::int = 1,
+    'analytics released=2 voided=0 sold=1, got '||j::text;
+  RAISE NOTICE 'E6 staff release + analytics split OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART E (rsvp release) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;
