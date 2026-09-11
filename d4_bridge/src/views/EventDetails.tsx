@@ -703,7 +703,7 @@ export default function EventDetails() {
                 {/* Who is going — optional per-ticket names (free claim path;
                     shown on each pass + to the door; editable later on the pass). */}
                 <div className="mb-8">
-                   <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-3">who's going <span className="text-white/20">(optional)</span></p>
+                   <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-3">{t('event.whosGoing')} <span className="text-white/20">{t('event.optional')}</span></p>
                    <div className="space-y-2">
                      {Array.from({ length: quantity }).map((_, i) => (
                        <input
