@@ -88,6 +88,19 @@ BEGIN
   ASSERT v_secrets = 5, 'roster must include barcode_secret for every row';
   ASSERT v_names = 5,   'roster must resolve owner display names';
 
+  -- mig 20260911134000: a holder-set attendee_name beats the profile name;
+  -- blank falls back to the profile name.
+  UPDATE public.exos_tickets SET attendee_name = 'Ada Lovelace'
+   WHERE id = (SELECT id FROM lc_tickets WHERE n = 1);
+  UPDATE public.exos_tickets SET attendee_name = NULL
+   WHERE id = (SELECT id FROM lc_tickets WHERE n = 2);
+  ASSERT (SELECT owner_name FROM public.exos_event_checkin_roster('aaaaaaaa-0000-0000-0000-000000000002')
+           WHERE ticket_id = (SELECT id FROM lc_tickets WHERE n = 1)) = 'Ada Lovelace',
+    'roster shows the attendee name when set';
+  ASSERT (SELECT owner_name FROM public.exos_event_checkin_roster('aaaaaaaa-0000-0000-0000-000000000002')
+           WHERE ticket_id = (SELECT id FROM lc_tickets WHERE n = 2)) IS NOT NULL,
+    'roster falls back to the profile display name';
+
   -- a non-staff caller is refused (42501 → insufficient_privilege)
   PERFORM set_config('app.uid','44444444-4444-4444-4444-444444444444', true);
   PERFORM set_config('app.jwt','{"email":"outsider@x"}', true);

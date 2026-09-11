@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
 import { publicUrl } from '../lib/utils';
 import { useToast } from '../context/ToastContext';
+import { getOrgCompUsage, setOrgCompBudget } from '../lib/comps';
 import { getOrganization, updateOrganization } from '../lib/orgs';
 import { startStripeOnboarding } from '../lib/checkout';
 import { uploadOrgLogo } from '../lib/orgLogo';
@@ -578,6 +579,10 @@ window.addEventListener('message', function(e) {
               )}
             </div>
 
+            {/* Comp budget (owner) — cap on free comps issued via the guest-list
+                batch / box-office paths. Enforced server-side per batch. */}
+            <CompBudgetCard orgId={org.id} initial={org.compBudget ?? null} canEdit={canEdit} />
+
             {/* Meta info */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-xs text-slate-500 space-y-2">
               <div>
@@ -601,5 +606,90 @@ window.addEventListener('message', function(e) {
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function CompBudgetCard({ orgId, initial, canEdit }: { orgId: string; initial: number | null; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [budget, setBudget] = useState<string>(initial === null ? '' : String(initial));
+  const [usage, setUsage] = useState<number | null>(null);
+  const [usageNote, setUsageNote] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setBudget(initial === null ? '' : String(initial));
+  }, [orgId, initial]);
+  useEffect(() => {
+    let cancelled = false;
+    getOrgCompUsage(orgId)
+      .then((n) => { if (!cancelled) { setUsage(n); setUsageNote(null); } })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setUsage(null);
+        // 42501 = the caller's role cannot read usage (owner/manager/finance only);
+        // anything else is a real failure worth surfacing.
+        if (err?.code === '42501') {
+          setUsageNote('Usage is visible to owners, managers and finance.');
+        } else {
+          console.error('exos_org_comp_usage failed:', err);
+          setUsageNote(`Could not load usage${err?.message ? `: ${err.message}` : ''}.`);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [orgId]);
+
+  const save = async () => {
+    const trimmed = budget.trim();
+    const value = trimmed === '' ? null : Math.max(0, Math.round(Number(trimmed)));
+    if (value !== null && !Number.isFinite(value)) {
+      toast({ kind: 'error', message: 'Comp budget must be a whole number (or blank for unlimited).' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await setOrgCompBudget(orgId, value);
+      toast({ kind: 'success', message: value === null ? 'Comp budget cleared (unlimited).' : `Comp budget set to ${value}.` });
+    } catch (err) {
+      toast({ kind: 'error', message: err instanceof Error ? err.message : 'Could not save the comp budget.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+      <h2 className={`${SECTION} mb-3`}>Comp budget</h2>
+      <p className="text-xs text-slate-400 mb-4">
+        Cap on free comp tickets your team can issue (guest lists, box office). Blank = unlimited.
+        A batch that would go over is refused before anything is issued.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          value={budget}
+          disabled={!canEdit || saving}
+          onChange={(e) => setBudget(e.target.value)}
+          placeholder="Unlimited"
+          aria-label="Comp budget"
+          className="w-28 px-2 py-1.5 border border-slate-200 rounded text-sm disabled:bg-slate-50"
+        />
+        {canEdit && (
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className="px-3 py-1.5 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest text-slate-700 hover:border-tm-blue hover:text-tm-blue transition-colors disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        )}
+      </div>
+      <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-3">
+        Used so far: {usage === null ? '—' : usage}
+        {budget.trim() !== '' && usage !== null ? ` of ${budget.trim()}` : ''}
+      </p>
+      {usageNote && <p className="text-[10px] text-slate-400 mt-1">{usageNote}</p>}
+    </div>
   );
 }

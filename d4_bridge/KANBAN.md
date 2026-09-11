@@ -46,6 +46,26 @@ lock, ScanReport field rename).
   with setup hints until env vars set. APPLE + GOOGLE buttons on
   TicketDetail.
 
+## Stage 3 — organizer side (2026-09-11, PR #976, Supabase form)
+
+Shipped in source on `claude/d4-organizer-stage3` (stacked on #975); migrations
+`20260911130000`–`133000` apply-pending. Customer-facing surfaces untouched.
+
+- **Analytics + CSV** — `exos_event_analytics` → `EventAnalyticsPanel`
+  (funnel · sales-by-day · tier/promoter/channel with scan-in) + Summary /
+  Attendees CSV via the shared `lib/csv.ts`.
+- **RSVP release** — `exos_release_ticket` (holder or staff; FREE only;
+  returns tier + house capacity → waitlist auto-offer) + `ReleasePolicyPanel`
+  + staff "Release seat". Attendee button → customer session (bot_chat #3652).
+- **Guest list / comps** — `exos_issue_comp_batch` → `CompIssuancePanel`;
+  org `comp_budget` on OrgSettings.
+- **Refused-scan audit** — `ScanRejectAudit` on OrganizerCheckIn (reads
+  `exos_scan_rejects`, which the scanner had written since phase 2).
+- **Series** — `exos_event_series` + `exos_create_event_series` (template
+  cloned per date, tiers included) → `CreateSeries` at
+  `/dashboard/event/:id/series`; dashboard badge + link. Later: series-wide
+  edit/cancel, storefront grouping.
+
 ## Competitor gap backlog (TM · AXS · SeatGeek · OpenDate — 2026-07-03)
 
 Feature-parity gaps from a scan of Ticketmaster, AXS, SeatGeek, and
