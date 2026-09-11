@@ -32,7 +32,8 @@ done
 # cron.schedule block inside is guarded on pg_cron, so it applies here.
 for m in 20260911050000_exos_invoice_counters_rls \
          20260911051000_exos_event_reminders \
-         20260911060000_exos_ticket_attendee_name; do
+         20260911060000_exos_ticket_attendee_name \
+         20260911070000_exos_event_reminders_hardening; do
   $PSQL -f "$MIG/${m}.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"

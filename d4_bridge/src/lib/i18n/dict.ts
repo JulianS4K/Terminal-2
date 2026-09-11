@@ -46,6 +46,7 @@ export const en = {
 
   'event.whosGoing': "who's going",
   'event.optional': '(optional)',
+  'event.namesNotSaved': 'Tickets reserved, but {n} attendee name(s) could not be saved — open each pass in My Tickets to name it.',
 
   'tickets.vaultHint': '// please sign in to access your secure vault',
   'tickets.syncing': '// syncing tickets...',
@@ -96,6 +97,8 @@ export const en = {
   'alerts.clear': 'ALL CLEAR',
   'alerts.emptyEvents': 'No event alerts yet — reminders, organizer updates and price changes for your tickets and saved events land here.',
   'alerts.emptyAll': "You're all caught up. Nothing new here.",
+  'alerts.degraded': 'Some alerts could not be loaded ({sources}). Refresh to try again.',
+  'alerts.partial': 'NOTHING TO SHOW',
 
   'claim.loading': 'LOADING YOUR TICKET…',
   'claim.expired': 'TRANSFER EXPIRED',
@@ -147,6 +150,7 @@ export const es: Record<DictKey, string> = {
 
   'event.whosGoing': 'quién va',
   'event.optional': '(opcional)',
+  'event.namesNotSaved': 'Entradas reservadas, pero {n} nombre(s) de asistente no se pudieron guardar — abre cada pase en Mis Entradas para nombrarlo.',
 
   'tickets.vaultHint': '// inicia sesión para acceder a tu bóveda segura',
   'tickets.syncing': '// sincronizando entradas...',
@@ -197,6 +201,8 @@ export const es: Record<DictKey, string> = {
   'alerts.clear': 'TODO AL DÍA',
   'alerts.emptyEvents': 'Aún no hay alertas de eventos — aquí llegarán recordatorios, avisos del organizador y cambios de precio de tus entradas y eventos guardados.',
   'alerts.emptyAll': 'Estás al día. Nada nuevo por aquí.',
+  'alerts.degraded': 'Algunas alertas no se pudieron cargar ({sources}). Actualiza para reintentar.',
+  'alerts.partial': 'NADA QUE MOSTRAR',
 
   'claim.loading': 'CARGANDO TU ENTRADA…',
   'claim.expired': 'TRANSFERENCIA EXPIRADA',

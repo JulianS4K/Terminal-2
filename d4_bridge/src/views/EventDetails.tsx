@@ -295,12 +295,20 @@ export default function EventDetails() {
       });
       // Stamp attendee names onto the new tickets (best-effort — a name hiccup
       // must not fail a claim that already minted).
-      await Promise.all(
+      const nameResults = await Promise.allSettled(
         ids.map((id, i) => {
           const name = (attendeeNames[i] || '').trim();
-          return name ? setTicketAttendee(id, name).catch((e) => console.warn('setTicketAttendee failed:', e)) : Promise.resolve(null);
+          return name ? setTicketAttendee(id, name) : Promise.resolve(null);
         }),
       );
+      const nameFailures = nameResults.filter((r) => r.status === 'rejected');
+      if (nameFailures.length > 0) {
+        console.error('setTicketAttendee failed for', nameFailures.length, 'ticket(s):', nameFailures);
+        toast({
+          kind: 'warn',
+          message: t('event.namesNotSaved', { n: nameFailures.length }),
+        });
+      }
       // Attach any free extras (best-effort — a swag hiccup shouldn't fail the
       // ticket claim the buyer already completed).
       if (addonSel.items.length > 0) {
