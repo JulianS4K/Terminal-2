@@ -21,6 +21,8 @@
 -- has. Idempotent: DROP IF EXISTS + re-ADD the full set.
 --
 -- Complete set = base 5 + 'event-announce' + 'ticket-issued' (0523 additions)
+--              + 'waitlist-open' (0616180000 — was MISSING here until 2026-09-11;
+--                as written this would have dropped the live waitlist mail path)
 --              + 'event-announcement' (0703121000) + 'event-rescheduled' (0703124000).
 --
 -- D4 authors; A1/operator applies. Already live on prod (hzrizjeaxlqcxfrtczpq)
@@ -31,5 +33,5 @@ ALTER TABLE public.exos_mail DROP CONSTRAINT IF EXISTS exos_mail_template_check;
 ALTER TABLE public.exos_mail ADD CONSTRAINT exos_mail_template_check CHECK (template IN (
   'transfer-initiated','transfer-claimed','org-invite',
   'event-cancelled','event-updated',
-  'event-announce','ticket-issued',
+  'event-announce','ticket-issued','waitlist-open',
   'event-announcement','event-rescheduled'));
