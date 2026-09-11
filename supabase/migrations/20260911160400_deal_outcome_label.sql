@@ -8,6 +8,9 @@
 --           Reads: gotickets_deals_feed, events, performer_metadata,
 --           performer_zone_rules, seatgeek_sales_snapshots, seatdata_sales_snapshots,
 --           v_s4kcs_orders, order_fee_schedule; fns gt_curated_zone_id, section_in_range
+-- Already applied to prod · via MCP 2026-09-11 (operator: "as recommended"). ⚠ The grader body here
+--   had an ambiguous-column bug (chosen CTE re-emitted a.* next to the aliased counts) that
+--   surfaced on the first run; fixed by mig 20260911161200 (CREATE OR REPLACE, same signature).
 -- Pre-reqs: 20260911160300 (feed prod columns), 20260811272000 (gt_curated_zone_id),
 --           20260811220000 (feed win_prob/confidence cols), 20260909220000 (v_s4kcs_orders)
 --
@@ -335,7 +338,7 @@ BEGIN
   )
   SELECT jsonb_build_object(
     'candidates', v_cand,
-    'written', count(*),
+    'written', coalesce(sum(n) FILTER (WHERE grp = 'o'), 0),
     'by_outcome', jsonb_object_agg(outcome, n) FILTER (WHERE grp = 'o'),
     'by_level',   jsonb_object_agg(match_level, n) FILTER (WHERE grp = 'l')
   ) INTO v_out
