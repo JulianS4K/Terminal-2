@@ -69,3 +69,26 @@ COMMENT ON TABLE public.gotickets_listings_snapshots IS
   'autovacuum parity with listings_snapshots (20260911235000): at the cluster '
   'default 0.2 scale factor this table never reached its vacuum threshold and '
   'grew to an 87 GB heap holding ~21 GB of live rows.';
+
+-- ---------------------------------------------------------------------------
+-- Explicit nightly VACUUM as a safety net
+--
+-- The reloptions above are the real fix, but they are a threshold: autovacuum
+-- still has to win a worker (autovacuum_max_workers=3) against every other
+-- table on a busy instance. An explicit VACUUM in the offpeak window
+-- guarantees the firehose is swept once a day regardless.
+--
+-- Plain VACUUM, never VACUUM FULL: it takes no exclusive lock and does not
+-- rewrite the table, so it is safe to run against a live firehose. It also
+-- does not shrink the file — see the SCOPE NOTE above.
+--
+-- 03:10 ET / 07:10 UTC: inside the offpeak window (ET 02:00-08:59) and clear of
+-- retention_tick at :44 and the 03:30 ET snapshot jobs.
+-- ---------------------------------------------------------------------------
+SELECT cron.unschedule('vacuum_firehose_nightly')
+ WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'vacuum_firehose_nightly');
+
+SELECT cron.schedule(
+  'vacuum_firehose_nightly',
+  '10 7 * * *',
+  $cron$ VACUUM (ANALYZE) public.gotickets_listings_snapshots; $cron$);

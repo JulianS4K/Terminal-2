@@ -7,7 +7,7 @@
 --           cron.job (W), cron_policy (W)
 -- Pre-reqs: 20260804230000 (GT listings firehose + retention), collector_cadence
 --
--- Three separate problems, all landing on the same scheduler:
+-- Four separate problems, all landing on the same scheduler:
 --
 -- 1. GT WAS POLLING ON EVO'S CADENCE. gt_listings_poll_tick called
 --    collector_band('EVO','listings', hte) — hardcoded. collector_cadence has
@@ -37,7 +37,16 @@
 --    the scheduler starts shedding jobs with "job startup timeout" — 91 such
 --    failures in 90 minutes on 2026-09-11. Bounded here.
 --
--- 3. DEADLOCK between gt_ingest_drain_1min and gt_deals_scan_odd_min. Both
+-- 3. GT AND EVO WERE SAMPLING THE SAME INSTANT. They cover the same event set
+--    (GT's scope is the EVO polling set reached through the GT->TEvo mapping)
+--    on the same bands, so their per-event clocks converged: 746 of 1,008
+--    recently-paired events were polled by both within one minute, median gap
+--    0.0 min. Two sources firing together and then both going quiet for a
+--    whole band is redundancy spent for nothing. GT now phase-offsets half a
+--    band behind EVO on the same event, so the pair interleaves and each event
+--    gets roughly twice the temporal coverage at the same request cost.
+--
+-- 4. DEADLOCK between gt_ingest_drain_1min and gt_deals_scan_odd_min. Both
 --    write gt_listings_poll_state; on even/odd minutes they interleave every
 --    other minute. Four 'deadlock detected' aborts in the last 24h. The scan
 --    now takes the same advisory lock the drain holds, so they serialise
@@ -80,10 +89,13 @@ BEGIN
       -- Band hours come from the EVO event's clock so both sources agree on band.
       SELECT g.gt_event_id, g.tevo_event_id,
              EXTRACT(epoch FROM (e.occurs_at_local::timestamptz - now()))/3600.0 AS hte,
-             ps.last_polled_listings_at
+             ps.last_polled_listings_at,
+             pe.last_polled_listings_at AS evo_last
         FROM public.gotickets_event g
         JOIN public.events e ON e.id = g.tevo_event_id
         LEFT JOIN public.gt_listings_poll_state ps ON ps.gt_event_id = g.gt_event_id
+        -- EVO's clock for the SAME event, so GT can phase-offset against it.
+        LEFT JOIN public.evo_listings_poll_state pe ON pe.event_id = g.tevo_event_id
        WHERE g.status = 'AS_SCHEDULED'
          AND e.occurs_at_local IS NOT NULL
          AND e.occurs_at_local::timestamptz > now() - interval '3 hours'
@@ -102,8 +114,26 @@ BEGIN
         FROM ev
         -- 'GT', not 'EVO': the GT collector_cadence rows are live config now.
         JOIN LATERAL public.collector_band('GT','listings', ev.hte) c ON true
-       WHERE ev.last_polled_listings_at IS NULL
-          OR ev.last_polled_listings_at < now() - make_interval(mins => c.required_min)
+       WHERE (ev.last_polled_listings_at IS NULL
+              OR ev.last_polled_listings_at < now() - make_interval(mins => c.required_min))
+         -- PHASE OFFSET vs EVO on the same event. GT and EVO cover the same
+         -- event set on the same bands, so left alone they converge on the
+         -- same instant: of 1,008 recently-paired events, 746 (74%) were
+         -- polled by both within one minute of each other, median gap 0.0 min.
+         -- Both sources then go quiet for a whole band. Holding GT back until
+         -- it is half a band away from EVO's poll interleaves them, so the
+         -- event is observed roughly twice per band instead of twice at once.
+         --
+         -- Two escapes keep this from ever starving GT:
+         --   * the half-band wait is capped at 30 min, so a wide GT band does
+         --     not wait hours behind a tightly-polled EVO event;
+         --   * an event GT is 1.5 bands overdue on fires regardless of phase.
+         AND (ev.evo_last IS NULL
+              OR ev.evo_last < now() - make_interval(
+                   secs => LEAST(c.required_min * 30, 1800)::int)
+              OR ev.last_polled_listings_at IS NULL
+              OR ev.last_polled_listings_at < now() - make_interval(
+                   mins => (c.required_min * 3) / 2))
     ),
     near AS (
       SELECT gt_event_id, tevo_event_id FROM due ORDER BY overdue_ratio DESC LIMIT v_near
