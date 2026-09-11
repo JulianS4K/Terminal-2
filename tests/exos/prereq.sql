@@ -51,7 +51,7 @@ $$;
 CREATE TABLE public.exos_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id uuid NOT NULL, name text, slug text, status text NOT NULL DEFAULT 'draft',
-  starts_at timestamptz, doors_at timestamptz, timezone text, currency text DEFAULT 'usd',
+  starts_at timestamptz, doors_at timestamptz, ends_at timestamptz, timezone text, currency text DEFAULT 'usd',
   total_tickets integer NOT NULL DEFAULT 0, tickets_sold integer NOT NULL DEFAULT 0,
   purchase_limits jsonb,
   occurs_at_local text, venue_name text, venue_location text,

@@ -306,6 +306,10 @@ export interface Event {
   // the start time). Staff releases ignore both.
   allowHolderRelease?: boolean;
   releaseCutoffHours?: number;
+  // Series membership (mig 20260911133000): recurring run / timed-entry slot
+  // set. The template is index 0; undefined = standalone event.
+  seriesId?: string;
+  seriesIndex?: number;
   purchaseLimits?: {
     maxPerOrder?: number;
     maxPerAccount?: number;

@@ -40,6 +40,7 @@ const OrganizerOnboarding = lazy(() => import('./views/OrganizerOnboarding'));
 const ClaimInvite = lazy(() => import('./views/ClaimInvite'));
 const OrganizerEventReport = lazy(() => import('./views/OrganizerEventReport'));
 const PromoteEvent = lazy(() => import('./views/PromoteEvent'));
+const CreateSeries = lazy(() => import('./views/CreateSeries'));
 const OrgPromote = lazy(() => import('./views/OrgPromote'));
 const NotFound = lazy(() => import('./views/NotFound'));
 const Notifications = lazy(() => import('./views/Notifications'));
@@ -118,6 +119,7 @@ export default function App() {
                     <Route path="/checkin/:eventId" element={<OrganizerCheckIn />} />
                     <Route path="/dashboard/event/:eventId" element={<OrganizerEventReport />} />
                     <Route path="/dashboard/event/:eventId/promote" element={<PromoteEvent />} />
+                    <Route path="/dashboard/event/:eventId/series" element={<CreateSeries />} />
                     <Route path="/edit-event/:eventId" element={<EditEvent />} />
                     {/* Bridge multi-tenant org views (Sprint 1). */}
                     <Route path="/orgs" element={<Orgs />} />

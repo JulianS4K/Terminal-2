@@ -852,4 +852,107 @@ BEGIN
 END $$;
 SELECT set_config('app.uid','',false);
 SELECT '*** PART F (comp batch + budget) PASSED ***' AS result;
+-- ============================================================================
+-- PART G — RECURRING / TIMED-ENTRY SERIES (mig 20260911133000)
+--   clone template + tiers per occurrence · deltas preserved · occurs_at_local
+--   recomputed · counters/markers cleared · slug suffixed · extend an existing
+--   series · dedupe + template-start skip · status override · role gate.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,doors_at,timezone,venue_name,reminder_24h_sent_at) VALUES
+  ('99999999-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','Friday Night','friday-night','published',100,7,
+   '2026-10-30 20:00-04'::timestamptz, '2026-10-30 19:00-04'::timestamptz, 'America/New_York', 'Brooklyn Steel', now());
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold,ticket_type,sort_order) VALUES
+  ('99999999-0000-0000-0000-0000000000d1','99999999-0000-0000-0000-0000000000e1','GA',0,80,7,'free',0),
+  ('99999999-0000-0000-0000-0000000000d2','99999999-0000-0000-0000-0000000000e1','VIP',40,20,0,'paid',1);
+
+-- G0. occurs_at_local helper: DST-correct offset, bad tz → NULL.
+DO $$
+BEGIN
+  ASSERT public.exos_occurs_at_local('2026-10-30 20:00-04'::timestamptz,'America/New_York') = '2026-10-30T20:00:00-04:00', 'EDT offset';
+  ASSERT public.exos_occurs_at_local('2026-11-06 20:00-05'::timestamptz,'America/New_York') = '2026-11-06T20:00:00-05:00', 'EST offset after fall-back';
+  ASSERT public.exos_occurs_at_local('2026-11-06 20:00+00'::timestamptz,'Asia/Kolkata') = '2026-11-07T01:30:00+05:30', 'half-hour zone';
+  ASSERT public.exos_occurs_at_local(now(),'Not/AZone') IS NULL, 'bad tz → NULL';
+  RAISE NOTICE 'G0 occurs_at_local OK';
+END $$;
+
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE r record; n int; v_series uuid; v_new uuid; v_doors timestamptz; v_local text;
+BEGIN
+  -- G1. Weekly × 3 across the DST change (wall-clock 20:00 stays), template
+  --     start included in the array + a duplicate → both dropped.
+  CREATE TEMP TABLE g_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1',
+    ARRAY['2026-10-30 20:00-04','2026-11-06 20:00-05','2026-11-06 20:00-05','2026-11-13 20:00-05','2026-11-20 20:00-05']::timestamptz[],
+    'recurring', 'Friday Nights', '{"freq":"weekly","count":3}'::jsonb, NULL);
+  SELECT count(*) INTO n FROM g_out; ASSERT n = 3, 'three new occurrences (template + dup skipped), got '||n;
+  ASSERT (SELECT array_agg(series_index ORDER BY series_index) FROM g_out) = ARRAY[1,2,3], 'indexes 1..3';
+  SELECT series_id INTO v_series FROM public.exos_events WHERE id='99999999-0000-0000-0000-0000000000e1';
+  ASSERT v_series IS NOT NULL AND (SELECT series_index FROM public.exos_events WHERE id='99999999-0000-0000-0000-0000000000e1') = 0, 'template is member 0';
+  ASSERT (SELECT name='Friday Nights' AND kind='recurring' AND template_event_id='99999999-0000-0000-0000-0000000000e1' AND timezone='America/New_York'
+            FROM public.exos_event_series WHERE id=v_series), 'series row';
+  SELECT event_id INTO v_new FROM g_out WHERE series_index = 1;
+  SELECT doors_at, occurs_at_local INTO v_doors, v_local FROM public.exos_events WHERE id = v_new;
+  ASSERT v_doors = '2026-11-06 19:00-05'::timestamptz, 'doors delta (-1h) preserved, got '||v_doors;
+  ASSERT v_local = '2026-11-06T20:00:00-05:00', 'occurs_at_local recomputed in tz, got '||v_local;
+  ASSERT (SELECT name='Friday Night' AND status='published' AND venue_name='Brooklyn Steel' AND total_tickets=100
+             AND tickets_sold=0 AND reminder_24h_sent_at IS NULL AND slug='friday-night-20261106-2000'
+             AND series_id=v_series AND created_by='11111111-1111-1111-1111-111111111111'
+            FROM public.exos_events WHERE id=v_new), 'clone carries template fields, clears counters/markers, suffixes slug';
+  -- Tiers cloned with sold = 0, both of them, order kept.
+  ASSERT (SELECT count(*) FROM public.exos_ticket_tiers WHERE event_id=v_new) = 2, 'two tiers cloned';
+  ASSERT (SELECT array_agg(name ORDER BY sort_order) FROM public.exos_ticket_tiers WHERE event_id=v_new) = ARRAY['GA','VIP'], 'tier names';
+  ASSERT (SELECT sum(sold) FROM public.exos_ticket_tiers WHERE event_id=v_new) = 0, 'clone tiers unsold';
+  ASSERT (SELECT capacity FROM public.exos_ticket_tiers WHERE event_id=v_new AND name='GA') = 80, 'tier capacity copied';
+  -- Template untouched.
+  ASSERT (SELECT tickets_sold=7 AND slug='friday-night' FROM public.exos_events WHERE id='99999999-0000-0000-0000-0000000000e1'), 'template unchanged';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='99999999-0000-0000-0000-0000000000d1') = 7, 'template tier unchanged';
+  DROP TABLE g_out;
+  RAISE NOTICE 'G1 create series OK';
+
+  -- G2. Extend: same template again → same series, indexes continue at 4;
+  --     p_publish=false → drafts.
+  CREATE TEMP TABLE g_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1',
+    ARRAY['2026-11-27 20:00-05']::timestamptz[], 'recurring', NULL, NULL, false);
+  ASSERT (SELECT series_index FROM g_out) = 4, 'extend continues index at 4';
+  SELECT event_id INTO v_new FROM g_out;
+  ASSERT (SELECT series_id=v_series AND status='draft' FROM public.exos_events WHERE id=v_new), 'same series, draft status';
+  ASSERT (SELECT count(*) FROM public.exos_event_series WHERE org_id='aaaaaaaa-0000-0000-0000-000000000001' AND name='Friday Nights') = 1, 'no second series row';
+  ASSERT (SELECT count(*) FROM public.exos_events WHERE series_id=v_series) = 5, '5 members';
+  DROP TABLE g_out;
+  RAISE NOTICE 'G2 extend series OK';
+
+  -- G3. Timed-entry kind on a fresh template; nothing new → refused.
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2026-10-30 20:00-04']::timestamptz[], 'recurring', NULL, NULL, NULL);
+    ASSERT false, 'template-only array should be refused';
+  EXCEPTION WHEN OTHERS THEN
+    ASSERT SQLERRM LIKE '%no new occurrences%', 'no new occurrences message, got '||SQLERRM;
+  END;
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2027-01-01 20:00-05']::timestamptz[], 'monthly', NULL, NULL, NULL);
+    ASSERT false, 'bad kind should be refused';
+  EXCEPTION WHEN OTHERS THEN
+    ASSERT SQLERRM LIKE '%kind must be%', 'kind check';
+  END;
+  RAISE NOTICE 'G3 refusals OK';
+END $$;
+-- G4. Buyer cannot create a series (42501).
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2027-01-01 20:00-05']::timestamptz[], 'recurring', NULL, NULL, NULL);
+  EXCEPTION WHEN insufficient_privilege THEN ok := true;
+  END;
+  ASSERT ok, 'buyer refused';
+  ASSERT (SELECT rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename='exos_event_series'), 'series RLS on';
+  RAISE NOTICE 'G4 role gate OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART G (event series) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;

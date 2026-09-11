@@ -91,6 +91,8 @@ export function mapEvent(row: any, tiers?: any[], discounts?: any[]): Event {
     purchaseLimits: row.purchase_limits ?? undefined,
     allowHolderRelease: row.allow_holder_release ?? undefined,
     releaseCutoffHours: row.release_cutoff_hours ?? undefined,
+    seriesId: row.series_id ?? undefined,
+    seriesIndex: row.series_index ?? undefined,
   };
 }
 
