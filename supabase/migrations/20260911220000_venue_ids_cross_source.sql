@@ -190,14 +190,21 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN QUERY SELECT 'aq'::text, 'short_ids_filled'::text, v_n;
 
+  -- aq_venue_map keeps sg_venue_id / tickpick_venue_id UNIQUE, so an id already on another hub venue row
+  -- (a hub duplicate to consolidate, not to widen) is skipped, one column at a time.
   UPDATE public.aq_venue_map a
-     SET sg_venue_id       = coalesce(a.sg_venue_id, m.sg_venue_id),
-         tickpick_venue_id = coalesce(a.tickpick_venue_id, m.tickpick_venue_id)
+     SET sg_venue_id = m.sg_venue_id
     FROM public.cross_source_venue_map m
-   WHERE m.tevo_venue_id = a.tevo_venue_id
-     AND ((a.sg_venue_id IS NULL AND m.sg_venue_id IS NOT NULL) OR (a.tickpick_venue_id IS NULL AND m.tickpick_venue_id IS NOT NULL));
+   WHERE m.tevo_venue_id = a.tevo_venue_id AND a.sg_venue_id IS NULL AND m.sg_venue_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.aq_venue_map o WHERE o.sg_venue_id = m.sg_venue_id);
   GET DIAGNOSTICS v_n = ROW_COUNT;
-  RETURN QUERY SELECT 'aq'::text, 'aq_venue_map_ids_filled'::text, v_n;
+  UPDATE public.aq_venue_map a
+     SET tickpick_venue_id = m.tickpick_venue_id
+    FROM public.cross_source_venue_map m
+   WHERE m.tevo_venue_id = a.tevo_venue_id AND a.tickpick_venue_id IS NULL AND m.tickpick_venue_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.aq_venue_map o WHERE o.tickpick_venue_id = m.tickpick_venue_id);
+  GET DIAGNOSTICS v_txt = ROW_COUNT;
+  RETURN QUERY SELECT 'aq'::text, 'aq_venue_map_ids_filled'::text, v_n + v_txt::int;
 
   -- GoTickets NAME aliases from the catalogue (which carries names only), same event-agreement route.
   WITH gt AS (
