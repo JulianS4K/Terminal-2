@@ -14,7 +14,7 @@
 -- lower(trim(venue_name)) equality and a similarity() pass, neither indexable as written, and it is
 -- shared by five other callers so it is not rewritten here. The resolver now asks the hub through
 -- idx_aq_event_map_date + the new expression index whether ANY row for this venue (exact, or
--- similarity >= 0.7) sits within +/-1 day — a superset of everything tier2/tier3 could hit — and
+-- trigram-similar) sits within +/-1 day — a superset of everything tier2/tier3 could hit — and
 -- calls the matcher only then. Identity tiers (source id) always run. Recall unchanged; the
 -- common no-hub-row case drops from ~320 ms to a few ms.
 --
