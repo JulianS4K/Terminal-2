@@ -64,6 +64,13 @@ export const en = {
   'tickets.transferCancelled': 'Transfer cancelled.',
   'tickets.transferCancelFailed': 'Could not cancel the transfer.',
   'tickets.loadFailed': 'Could not load your tickets.',
+  'tickets.emptyActive': '// nothing upcoming — your past passes are in the archive',
+  'tickets.emptyArchive': '// no past or used passes yet',
+  'tickets.stampActive': 'ACTIVE',
+  'tickets.stamp.used': 'USED',
+  'tickets.stamp.voided': 'VOIDED',
+  'tickets.stamp.past': 'PAST',
+  'tickets.stamp.transfer': 'IN TRANSFER',
 
   'ticket.loading': '// loading ticket...',
   'ticket.denied': '// access denied: no tickets found',
@@ -102,6 +109,7 @@ export const en = {
   'alerts.emptyAll': "You're all caught up. Nothing new here.",
   'alerts.degraded': 'Some alerts could not be loaded ({sources}). Refresh to try again.',
   'alerts.partial': 'NOTHING TO SHOW',
+  'alerts.markAllFailed': 'Could not mark alerts as read — they will come back next time.',
 
   'claim.loading': 'LOADING YOUR TICKET…',
   'claim.expired': 'TRANSFER EXPIRED',
@@ -171,6 +179,13 @@ export const es: Record<DictKey, string> = {
   'tickets.transferCancelled': 'Transferencia cancelada.',
   'tickets.transferCancelFailed': 'No se pudo cancelar la transferencia.',
   'tickets.loadFailed': 'No se pudieron cargar tus entradas.',
+  'tickets.emptyActive': '// nada próximo — tus pases pasados están en el archivo',
+  'tickets.emptyArchive': '// aún no hay pases pasados ni usados',
+  'tickets.stampActive': 'ACTIVAS',
+  'tickets.stamp.used': 'USADAS',
+  'tickets.stamp.voided': 'ANULADAS',
+  'tickets.stamp.past': 'PASADO',
+  'tickets.stamp.transfer': 'EN TRANSFERENCIA',
 
   'ticket.loading': '// cargando entrada...',
   'ticket.denied': '// acceso denegado: no se encontraron entradas',
@@ -209,6 +224,7 @@ export const es: Record<DictKey, string> = {
   'alerts.emptyAll': 'Estás al día. Nada nuevo por aquí.',
   'alerts.degraded': 'Algunas alertas no se pudieron cargar ({sources}). Actualiza para reintentar.',
   'alerts.partial': 'NADA QUE MOSTRAR',
+  'alerts.markAllFailed': 'No se pudieron marcar las alertas como leídas — volverán la próxima vez.',
 
   'claim.loading': 'CARGANDO TU ENTRADA…',
   'claim.expired': 'TRANSFERENCIA EXPIRADA',

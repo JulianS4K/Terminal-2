@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Ticket, Event, Transfer } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -14,6 +14,7 @@ import { formatInTz } from '../lib/datetime';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 import { listSavedEvents } from '../lib/saves';
+import { splitGroups, activeCount, groupStamp } from '../lib/ticketGroups';
 import SaveEventButton from '../components/SaveEventButton';
 import { useT } from '../context/LanguageContext';
 
@@ -30,6 +31,11 @@ export default function MyTickets() {
   const [outboundTransfers, setOutboundTransfers] = useState<Transfer[]>([]);
   const [savedEvents, setSavedEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  // ACTIVE = something here can still get you in; ARCHIVE = event over or every
+  // pass used/voided (lib/ticketGroups). The tabs used to be decorative.
+  const [tab, setTab] = useState<'active' | 'archive'>('active');
+  const { active: activeGroups, archive: archiveGroups } = useMemo(() => splitGroups(groupedTickets), [groupedTickets]);
+  const visibleGroups = tab === 'active' ? activeGroups : archiveGroups;
 
   const handleCancelTransfer = async (transferId: string) => {
     // Confirmation lives outside the loading state so a user that backs out
@@ -141,13 +147,27 @@ export default function MyTickets() {
           <div className="relative">
             <p className="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">{t('tickets.kicker')}</p>
             <h1 className="disp text-6xl md:text-7xl tracking-tight leading-none" style={{ transform: 'skewX(-4deg)' }}>MY <span className="neon">TICKETS</span></h1>
-            {Object.keys(groupedTickets).length > 0 && (
-              <span className="marker absolute -right-6 -top-3 text-brand-secondary text-lg rotate-[6deg] hidden md:block">{Object.keys(groupedTickets).length} live ✦</span>
+            {activeGroups.length > 0 && (
+              <span className="marker absolute -right-6 -top-3 text-brand-secondary text-lg rotate-[6deg] hidden md:block">{activeGroups.length} live ✦</span>
             )}
           </div>
-          <div className="flex border border-white/10 bg-white/5">
-            <button className="disp px-8 py-2.5 text-lg tracking-wide bg-brand-primary text-black">{t('tickets.active')}</button>
-            <button className="disp px-8 py-2.5 text-lg tracking-wide text-white/40 hover:text-white transition-colors">{t('tickets.archive')}</button>
+          <div className="flex border border-white/10 bg-white/5" role="tablist">
+            {(['active', 'archive'] as const).map((k) => {
+              const on = tab === k;
+              const n = k === 'active' ? activeGroups.length : archiveGroups.length;
+              return (
+                <button
+                  key={k}
+                  role="tab"
+                  aria-selected={on}
+                  onClick={() => setTab(k)}
+                  className={`disp px-8 py-2.5 text-lg tracking-wide transition-colors ${on ? 'bg-brand-primary text-black' : 'text-white/40 hover:text-white'}`}
+                >
+                  {t(k === 'active' ? 'tickets.active' : 'tickets.archive')}
+                  {n > 0 && <span className={`type text-[10px] ml-2 ${on ? 'text-black/60' : 'text-white/30'}`}>{n}</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -217,17 +237,19 @@ export default function MyTickets() {
           </div>
         )}
 
-        {tickets.length === 0 ? (
+        {visibleGroups.length === 0 ? (
           <div className="text-center py-40 border border-dashed border-white/20">
             <TicketIcon className="w-24 h-24 text-white/5 mx-auto mb-10" />
-            <p className="type text-white/30 mb-12 uppercase tracking-widest text-[12px]">{t('tickets.empty')}</p>
+            <p className="type text-white/30 mb-12 uppercase tracking-widest text-[12px]">
+              {tickets.length === 0 ? t('tickets.empty') : tab === 'active' ? t('tickets.emptyActive') : t('tickets.emptyArchive')}
+            </p>
             <Link to="/" className="disp inline-flex items-center bg-brand-primary text-black px-8 py-3 text-lg tracking-wide hover:bg-white transition-colors">
               FIND EVENTS
             </Link>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-white/10 border border-white/10">
-            {Object.entries(groupedTickets).map(([eventId, tickets]) => {
+            {visibleGroups.map(([eventId, tickets]) => {
               const eventTickets = tickets as (Ticket & { event?: Event })[];
               const mainTicket = eventTickets[0];
               const event = mainTicket.event;
@@ -257,7 +279,15 @@ export default function MyTickets() {
                       </div>
                       <div className="text-right">
                         <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">{t('tickets.passes')}</p>
-                        <span className="stamp neon text-base">{eventTickets.length} ACTIVE</span>
+                        {(() => {
+                          const stamp = groupStamp(eventTickets);
+                          const n = activeCount(eventTickets);
+                          return (
+                            <span className={`stamp text-base ${stamp === 'active' ? 'neon' : 'text-white/40'}`}>
+                              {stamp === 'active' ? `${n} ${t('tickets.stampActive')}` : t(`tickets.stamp.${stamp}` as any)}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
 

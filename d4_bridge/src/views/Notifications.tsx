@@ -18,6 +18,7 @@ import {
 } from '../lib/notifications';
 import { applyMeta } from '../lib/meta';
 import { useT } from '../context/LanguageContext';
+import { useToast } from '../context/ToastContext';
 import type { DictKey } from '../lib/i18n/dict';
 
 const ICONS: Record<NotificationIcon, typeof Ticket> = {
@@ -51,6 +52,7 @@ function relTime(ms: number): string {
 export default function Notifications() {
   const { user, signIn } = useAuth();
   const t = useT();
+  const { toast } = useToast();
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [failedSources, setFailedSources] = useState<SourceName[]>([]);
@@ -100,10 +102,11 @@ export default function Notifications() {
     [items, tab],
   );
 
-  const markAll = () => {
+  const markAll = async () => {
     const ids = items.map((n) => n.id);
     setReadIds(new Set(ids));
-    markNotificationsRead(ids);
+    const ok = await markNotificationsRead(ids);
+    if (!ok) toast({ kind: 'warn', message: t('alerts.markAllFailed') });
   };
 
   if (!user) {
