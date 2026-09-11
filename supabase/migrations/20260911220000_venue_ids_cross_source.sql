@@ -233,6 +233,8 @@ END $function$;
 REVOKE ALL ON FUNCTION public.venue_xref_derive_from_events(boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.venue_xref_derive_from_events(boolean) TO service_role;
 
+-- CREATE OR REPLACE VIEW cannot insert columns mid-list (42P16): drop + recreate (no dependents — verified on prod).
+DROP VIEW IF EXISTS public.v_marketplace_venue_xref;
 CREATE OR REPLACE VIEW public.v_marketplace_venue_xref AS
 SELECT m.tevo_venue_id,
        m.tevo_venue_name,
@@ -664,7 +666,7 @@ END $fn$;
 REVOKE ALL ON FUNCTION public.event_mapper_apply(text, bigint, bigint, text, text, date, numeric, text, bigint) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.event_mapper_apply(text, bigint, bigint, text, text, date, numeric, text, bigint) TO service_role;
 COMMENT ON FUNCTION public.event_mapper_apply(text, bigint, bigint, text, text, date, numeric, text, bigint) IS
-  'Cross-map a resolved (source, source_event_id, venue string, performer name) → tevo_event_id: source id onto the hub row of that tevo id, venue string → cross_source_venue_map alias of the event''s venue, performer name → aq_performer_map alias (+ seatgeek_performer_xref), hub venue/performer short ids, tevo writeback onto gotickets_event / sg_events_canonical. All fill-only. A1 mig 20260911210000.';
+  'Cross-map a resolved (source, source_event_id, venue string, performer name, source venue id) → tevo_event_id: source id onto the hub row of that tevo id, venue string → cross_source_venue_map alias of the event''s venue, source venue id → cross_source_venue_map id column on a strong hit, performer name → aq_performer_map alias (+ seatgeek_performer_xref), hub venue/performer short ids, tevo writeback onto gotickets_event / sg_events_canonical. All fill-only. A1 mig 20260911210000; venue ids mig 20260911220000.';
 
 CREATE OR REPLACE FUNCTION public.event_mapper_surface_sql(p_surface text, p_horizon_days int DEFAULT 180)
 RETURNS TABLE(select_sql text, update_sql text, key_type text)
