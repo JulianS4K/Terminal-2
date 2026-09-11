@@ -51,10 +51,11 @@ $$;
 CREATE TABLE public.exos_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id uuid NOT NULL, name text, slug text, status text NOT NULL DEFAULT 'draft',
-  starts_at timestamptz, doors_at timestamptz, timezone text, currency text DEFAULT 'usd',
+  starts_at timestamptz, doors_at timestamptz, ends_at timestamptz, timezone text, currency text DEFAULT 'usd',
   total_tickets integer NOT NULL DEFAULT 0, tickets_sold integer NOT NULL DEFAULT 0,
   purchase_limits jsonb,
   occurs_at_local text, venue_name text, venue_location text,
+  description text, image_url text, created_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 -- cron_should_fire() stub (prod: 20260515250000 4-stage policy gate). The
@@ -77,22 +78,31 @@ CREATE TABLE public.exos_tickets (
   event_id uuid NOT NULL, org_id uuid NOT NULL, tier_id uuid, tier_name text,
   buyer_id uuid, owner_id uuid, buyer_email text, status text NOT NULL DEFAULT 'active',
   barcode_secret text, price_paid numeric NOT NULL DEFAULT 0, order_ref text,
-  channel_source text NOT NULL DEFAULT 'vibepass', check_in_at timestamptz,
+  channel_source text NOT NULL DEFAULT 'vibepass', promoter_id text, check_in_at timestamptz,
   pending_transfer_id uuid, transfer_id uuid, last_reissue_at timestamptz,
-  voided_at timestamptz, voided_reason text,
+  voided_at timestamptz, voided_by uuid, voided_reason text,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE public.exos_transfers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   ticket_id uuid NOT NULL, org_id uuid NOT NULL, sender_id uuid,
   receiver_email text, status text NOT NULL DEFAULT 'pending',
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()   -- prod shape; catches NULL writes via jsonb_populate_record
 );
 CREATE TABLE public.exos_event_checkins (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id uuid NOT NULL, ticket_id uuid NOT NULL, org_id uuid NOT NULL,
   scanned_by uuid, scanned_by_email text, source text, verification text,
   scanned_at timestamptz NOT NULL DEFAULT now()
+);
+-- Scan-rejection audit log (phase-2 shape; written client-side, read by analytics).
+CREATE TABLE public.exos_scan_rejects (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id uuid NOT NULL, org_id uuid NOT NULL, rejected_by uuid NOT NULL,
+  reason text NOT NULL, source text NOT NULL DEFAULT 'manual',
+  ticket_id_attempted text, wrong_event_id uuid, wrong_event_title text, reason_detail text,
+  rejected_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE public.exos_checkout_sessions (
   session_id text PRIMARY KEY, event_id uuid NOT NULL, tier_id uuid, org_id uuid NOT NULL,

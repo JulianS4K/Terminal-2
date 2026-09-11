@@ -65,6 +65,9 @@ export interface Organization {
   // ISO 4217 currency code (default 'USD', mig 20260709120100). Optional for
   // the same legacy-row reason as country.
   currency?: string;
+  // Max non-voided free comp tickets the org may issue (mig 20260911132000).
+  // null/undefined = unlimited. Set via exos_set_org_comp_budget (owner).
+  compBudget?: number | null;
   // Phase 2 white-label. Filled in by Sprint 2.
   theme?: {
     logoUrl?: string;
@@ -298,6 +301,15 @@ export interface Event {
     marketplaceBlocklist?: string[];
   };
   distributionNetworks?: string[];
+  // Self-serve RSVP release policy (mig 20260911131000). Holder-side release
+  // is allowed by default; the cutoff closes it N hours before start (0 = up to
+  // the start time). Staff releases ignore both.
+  allowHolderRelease?: boolean;
+  releaseCutoffHours?: number;
+  // Series membership (mig 20260911133000): recurring run / timed-entry slot
+  // set. The template is index 0; undefined = standalone event.
+  seriesId?: string;
+  seriesIndex?: number;
   purchaseLimits?: {
     maxPerOrder?: number;
     maxPerAccount?: number;
@@ -336,6 +348,9 @@ export interface Ticket {
   voidedAt?: Timestamp;
   voidedBy?: string;
   voidedReason?: string;
+  // Set when the seat was given back via exos_release_ticket (status is
+  // 'voided' — distinguishes a release from a refund-void).
+  releasedAt?: Timestamp;
   purchaseDate: Timestamp;
   barcodeValue: string;
   barcodeSecret?: string;
