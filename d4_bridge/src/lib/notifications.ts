@@ -308,13 +308,17 @@ export function cancellationItems(tickets: TicketWithEvent[]): NotificationItem[
   return items;
 }
 
-/** Organizer announcements for events the viewer holds a ticket for. */
+/**
+ * Organizer announcements for events the viewer HOLDS A TICKET FOR. RLS also
+ * returns rows to org staff for their own events; those are the organizer's
+ * outbox, not alerts, so they are filtered out here (audit finding).
+ */
 export function announcementItems(
   rows: AnnouncementRow[],
   byEvent: Map<string, { ticket: TicketWithEvent; event?: Event }>,
   now: number = Date.now(),
 ): NotificationItem[] {
-  return rows.map((a) => {
+  return rows.filter((a) => byEvent.has(a.event_id)).map((a) => {
     const hit = byEvent.get(a.event_id);
     const title = hit?.event?.title;
     const ts = isoMs(a.created_at);
@@ -332,13 +336,13 @@ export function announcementItems(
   });
 }
 
-/** Reschedules for events the viewer holds a ticket for. */
+/** Reschedules for events the viewer holds a ticket for (staff rows filtered out). */
 export function rescheduleItems(
   rows: RescheduleRow[],
   byEvent: Map<string, { ticket: TicketWithEvent; event?: Event }>,
   now: number = Date.now(),
 ): NotificationItem[] {
-  return rows.map((r) => {
+  return rows.filter((r) => byEvent.has(r.event_id)).map((r) => {
     const hit = byEvent.get(r.event_id);
     const tz = hit?.event?.timezone;
     const newAt = isoMs(r.new_starts_at);

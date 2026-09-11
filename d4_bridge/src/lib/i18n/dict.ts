@@ -47,6 +47,9 @@ export const en = {
   'event.whosGoing': "who's going",
   'event.optional': '(optional)',
   'event.namesNotSaved': 'Tickets reserved, but {n} attendee name(s) could not be saved — open each pass in My Tickets to name it.',
+  'event.ticketYou': 'Ticket {n} — {name}',
+  'event.ticketFriend': "Ticket {n} — friend's name",
+  'event.you': 'you',
 
   'tickets.vaultHint': '// please sign in to access your secure vault',
   'tickets.syncing': '// syncing tickets...',
@@ -151,6 +154,9 @@ export const es: Record<DictKey, string> = {
   'event.whosGoing': 'quién va',
   'event.optional': '(opcional)',
   'event.namesNotSaved': 'Entradas reservadas, pero {n} nombre(s) de asistente no se pudieron guardar — abre cada pase en Mis Entradas para nombrarlo.',
+  'event.ticketYou': 'Entrada {n} — {name}',
+  'event.ticketFriend': 'Entrada {n} — nombre de tu acompañante',
+  'event.you': 'tú',
 
   'tickets.vaultHint': '// inicia sesión para acceder a tu bóveda segura',
   'tickets.syncing': '// sincronizando entradas...',

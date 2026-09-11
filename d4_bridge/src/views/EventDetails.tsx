@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Event, Organization } from '../types';
 import { getPublicEvent, getEventForEdit } from '../lib/events';
-import { mintTickets, claimFreeTickets, setTicketAttendee } from '../lib/tickets';
+import { mintTickets, claimFreeTickets, setTicketAttendee, listMyTicketsForEvent } from '../lib/tickets';
 import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
 import ArtistLinks from '../components/ArtistLinks';
@@ -295,11 +295,25 @@ export default function EventDetails() {
       });
       // Stamp attendee names onto the new tickets (best-effort — a name hiccup
       // must not fail a claim that already minted).
+      // Pair names with tickets in MINT order. A fresh mint returns ids in
+      // order, but the RPC's idempotent-retry branch (same order_ref) returns
+      // them unordered — so re-read this order's tickets sorted by creation
+      // time rather than trusting the array position.
+      const wanted = attendeeNames.slice(0, ids.length).map((n) => (n || '').trim());
+      let ordered = ids;
+      if (wanted.some(Boolean) && ids.length > 1) {
+        try {
+          const mine = await listMyTicketsForEvent(event.id);
+          const thisOrder = mine
+            .filter((t) => t.orderId === orderRef && ids.includes(t.id))
+            .sort((a, b) => (a.purchaseDate?.toMillis?.() ?? 0) - (b.purchaseDate?.toMillis?.() ?? 0) || a.id.localeCompare(b.id));
+          if (thisOrder.length === ids.length) ordered = thisOrder.map((t) => t.id);
+        } catch (e) {
+          console.warn('could not re-order tickets for naming; using mint order', e);
+        }
+      }
       const nameResults = await Promise.allSettled(
-        ids.map((id, i) => {
-          const name = (attendeeNames[i] || '').trim();
-          return name ? setTicketAttendee(id, name) : Promise.resolve(null);
-        }),
+        ordered.map((id, i) => (wanted[i] ? setTicketAttendee(id, wanted[i]) : Promise.resolve(null))),
       );
       const nameFailures = nameResults.filter((r) => r.status === 'rejected');
       if (nameFailures.length > 0) {
@@ -708,8 +722,10 @@ export default function EventDetails() {
                    <p className="type text-[9px] text-white/20 uppercase tracking-widest mt-2">max per order: {maxPerOrder} · total limit: {maxPerAccount}</p>
                 </div>
 
-                {/* Who is going — optional per-ticket names (free claim path;
-                    shown on each pass + to the door; editable later on the pass). */}
+                {/* Who is going — optional per-ticket names. FREE claim path only:
+                    the paid path hands off to Stripe and never sees these (the
+                    checkout metadata route is a later add). */}
+                {priceToDisplay === 0 && addonSel.totalCents === 0 && (
                 <div className="mb-8">
                    <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-3">{t('event.whosGoing')} <span className="text-white/20">{t('event.optional')}</span></p>
                    <div className="space-y-2">
@@ -719,12 +735,13 @@ export default function EventDetails() {
                          value={attendeeNames[i] ?? ''}
                          maxLength={80}
                          onChange={(e) => setAttendeeNames((prev) => { const next = [...prev]; next[i] = e.target.value; return next; })}
-                         placeholder={i === 0 ? `Ticket 1 — ${user?.displayName || 'you'}` : `Ticket ${i + 1} — friend's name`}
+                         placeholder={i === 0 ? t('event.ticketYou', { n: 1, name: user?.displayName || t('event.you') }) : t('event.ticketFriend', { n: i + 1 })}
                          className="type w-full bg-black border border-white/10 px-3 py-2.5 text-white text-sm placeholder-white/25 focus:border-brand-primary outline-none"
                        />
                      ))}
                    </div>
                 </div>
+                )}
 
                 {/* Tier Selection */}
                 {event.ticketTiers && event.ticketTiers.length > 0 && (

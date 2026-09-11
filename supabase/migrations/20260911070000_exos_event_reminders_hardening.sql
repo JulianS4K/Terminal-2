@@ -27,6 +27,12 @@
 --   A7 (low) — the manual "Send now" consumed its 6h cooldown even when it
 --       reached nobody. Fix: stamp only when at least one mail was queued; lock
 --       the event row so two concurrent clicks cannot both pass the check.
+--   Code review (PR #975): inside a SECURITY DEFINER body `current_user` is the
+--       DEFINER, so the cron guard always passed — assert session_user instead
+--       (the REVOKE/GRANT set was doing the real work). Mail subject was HTML-
+--       escaped (plain-text header) and `&` was not escaped before `<`/`>` in
+--       the body; the cooldown message labelled a session-local time "UTC";
+--       the bad-tz fallback printed the zone twice.
 --
 -- Idempotent (DROP IF EXISTS + CREATE OR REPLACE). The cron job body
 -- (`SELECT * FROM public.exos_send_event_reminders()`) is unchanged and picks
@@ -72,16 +78,18 @@ BEGIN
     RAISE WARNING 'exos_queue_event_reminder: event % has invalid timezone %; falling back to UTC',
       p_event_id, v_ev.timezone;
     v_tz   := 'UTC';
-    v_when := to_char(v_ev.starts_at AT TIME ZONE 'UTC', 'FMDay, FMMonth FMDD "at" FMHH12:MI AM') || ' UTC';
+    v_when := to_char(v_ev.starts_at AT TIME ZONE 'UTC', 'FMDay, FMMonth FMDD "at" FMHH12:MI AM');
     v_doors := '';
   END;
 
-  v_safe := replace(replace(coalesce(v_ev.name, 'your event'), '<', '&lt;'), '>', '&gt;');
+  -- HTML body: escape & first, then < >. The subject is a plain-text header and
+  -- must carry the RAW name (an escaped subject reads "Rock &lt;Live&gt;").
+  v_safe := replace(replace(replace(coalesce(v_ev.name, 'your event'), '&', '&amp;'), '<', '&lt;'), '>', '&gt;');
   IF v_ev.venue_name IS NOT NULL AND v_ev.venue_name <> '' THEN
-    v_venue := ' at ' || replace(replace(v_ev.venue_name, '<', '&lt;'), '>', '&gt;');
+    v_venue := ' at ' || replace(replace(replace(v_ev.venue_name, '&', '&amp;'), '<', '&lt;'), '>', '&gt;');
   END IF;
 
-  v_subj := left('Reminder: ' || v_safe || ' — ' || v_when, 200);
+  v_subj := left('Reminder: ' || coalesce(v_ev.name, 'your event') || ' — ' || v_when, 200);
   v_body := '<p>Your ticket for <strong>' || v_safe || '</strong>' || v_venue ||
             ' is coming up: <strong>' || v_when || '</strong> (' || v_tz || ').' || v_doors ||
             '</p><p>Open the app to show your ticket at the door. Your entry code rotates, so ' ||
@@ -119,7 +127,9 @@ DECLARE
   v_failed  int := 0;
   v_budget  boolean := false;
 BEGIN
-  IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN
+  -- session_user, not current_user: this is SECURITY DEFINER, so current_user
+  -- is always the definer and would never trip.
+  IF session_user NOT IN ('service_role','postgres','supabase_admin') THEN
     RAISE EXCEPTION 'exos_send_event_reminders: service role only' USING ERRCODE = '42501';
   END IF;
   IF NOT public.cron_should_fire('exos_send_event_reminders') THEN
@@ -222,7 +232,7 @@ BEGIN
   END IF;
   IF v_last IS NOT NULL AND v_last > now() - interval '6 hours' THEN
     RAISE EXCEPTION 'exos_send_event_reminder_now: a reminder was sent % ago — wait until %',
-      date_trunc('minute', now() - v_last), to_char(v_last + interval '6 hours', 'HH24:MI "UTC"');
+      date_trunc('minute', now() - v_last), to_char((v_last + interval '6 hours') AT TIME ZONE 'UTC', 'HH24:MI "UTC"');
   END IF;
 
   v_n := public.exos_queue_event_reminder(p_event_id, auth.uid());

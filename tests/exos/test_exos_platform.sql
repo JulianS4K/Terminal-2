@@ -476,7 +476,8 @@ BEGIN
   ASSERT n = 2, 'event-reminder rows=2';
   ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='event-reminder' AND to_email='voided@x.com') = 0, 'voided holder not mailed';
   SELECT subject, html INTO subj, body FROM public.exos_mail WHERE template='event-reminder' AND to_email='buyer@x.com';
-  ASSERT subj LIKE 'Reminder: Evt &lt;C&gt; — %', 'subject escaped + prefixed, got '||subj;
+  ASSERT subj LIKE 'Reminder: Evt <C> — %', 'subject is plain text (raw name) + prefixed, got '||subj;
+  ASSERT body LIKE '%<strong>Evt &lt;C&gt;</strong>%', 'body is HTML-escaped';
   ASSERT body LIKE '%Brooklyn Steel%' AND body LIKE '%Doors open at%' AND body LIKE '%(America/New_York)%', 'body carries venue/doors/tz';
   ASSERT (SELECT reminder_24h_sent_at IS NOT NULL AND reminder_2h_sent_at IS NULL
             FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e1'), '24h marked, 2h not';

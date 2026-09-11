@@ -116,8 +116,13 @@ describe('announcementItems / rescheduleItems', () => {
       byEvent,
       NOW,
     );
+    expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ id: 'ann-a1', title: 'Evt e: Doors 7pm', to: '/ticket/tk', unread: true, icon: 'announce' });
-    expect(items[1]).toMatchObject({ id: 'ann-a2', title: 'Old', to: '/event/other', unread: false });
+  });
+
+  it('drops announcements and reschedules for events the viewer holds no ticket for (staff outbox)', () => {
+    expect(announcementItems([{ id: 'x', event_id: 'other', subject: 'S', body: 'B', created_at: new Date(NOW).toISOString() }], byEvent, NOW)).toEqual([]);
+    expect(rescheduleItems([{ id: 'y', event_id: 'other', old_starts_at: null, new_starts_at: new Date(NOW).toISOString(), reason: null, created_at: new Date(NOW).toISOString() }], byEvent, NOW)).toEqual([]);
   });
 
   it('renders reschedules with old and new times in the event zone', () => {
