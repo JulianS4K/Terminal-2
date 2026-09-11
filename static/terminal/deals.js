@@ -1,4 +1,4 @@
-// D0 Terminal — Deals LIVE FEED (GoTickets-only section outliers, ≥15% profit).
+// D0 Terminal — Deals LIVE FEED (GoTickets + EVO zone outliers, realized-anchored).
 //
 // A background scanner (scan_gotickets_deals, mig 20260811210000, 5-min cron)
 // re-checks the freshest-scanned GoTickets events, flags section-level robust low
@@ -113,9 +113,11 @@
     const el = document.getElementById('dealsScanMeta');
     if (!el) return;
     const active = d.active_deals != null ? d.active_deals : '—';
+    const bys = d.active_by_source || {};
+    const srcs = (bys.gotickets != null || bys.evo != null) ? ` (GT ${bys.gotickets || 0} · EVO ${bys.evo || 0})` : '';
     const hidden = d.suppressed_n ? ` · ${d.suppressed_n} hidden (at-market / falling)` : '';
     const verify = d.verify_n ? ` · ${d.verify_n} to verify` : '';
-    el.textContent = `${active} live deals${hidden}${verify} · last scan ${ago(d.last_scan_at) || '—'}`;
+    el.textContent = `${active} live deals${srcs}${hidden}${verify} · last scan ${ago(d.last_scan_at) || '—'}`;
   }
 
   function pulseDot() {
@@ -172,15 +174,19 @@
       const evLink = `event.html?event=${encodeURIComponent(d.tevo_event_id)}`;
       const dt = d.event_date ? ` <span class="muted">· ${esc(fmtDate(d.event_date))}</span>` : '';
       const winPct = d.win_prob != null ? Math.round(d.win_prob * 100) + '%' : '—';
-      const gtBtn = d.gt_event_id != null
+      const isEvo = d.source === 'evo';
+      const srcChip = isEvo
+        ? `<span class="badge regime-neutral" title="TEvo listing · price = wholesale · ticket group ${esc(String(d.evo_ticket_group_id || ''))}">EVO</span>`
+        : '<span class="badge regime-neutral" title="GoTickets listing · price = all-in">GT</span>';
+      const gtBtn = (!isEvo && d.gt_event_id != null)
         ? `<a class="gt-open-btn" href="https://gotickets.com/tickets/${encodeURIComponent(d.gt_event_id)}" target="_blank" rel="noopener noreferrer" title="Open this event on GoTickets">GT&nbsp;↗</a>`
-        : '<span class="muted">—</span>';
+        : (isEvo ? `<a class="gt-open-btn" href="event.html?event=${encodeURIComponent(d.tevo_event_id)}" title="Open the event in the terminal (TEvo ticket group ${esc(String(d.evo_ticket_group_id || ''))})">EVO&nbsp;↗</a>` : '<span class="muted">—</span>');
       return `<tr class="${d._new ? 'deals-row-new' : ''}">
         <td class="deals-when num">${d._new ? '<span class="deals-new-chip">NEW</span> ' : ''}${esc(ago(d.first_seen_at))}</td>
         <td class="deals-ev"><a href="${evLink}">${esc(d.event_name || ('event ' + d.tevo_event_id))}</a>${dt}</td>
-        <td>${esc(d.section || '')}${d.row ? ' · ' + esc(String(d.row)) : ''}${acc}</td>
+        <td>${srcChip} ${esc(d.section || '')}${d.row ? ' · ' + esc(String(d.row)) : ''}${acc}</td>
         <td class="num">${d.quantity != null ? esc(String(d.quantity)) : '—'}</td>
-        <td class="num"><b>${$r(d.gt_price)}</b></td>
+        <td class="num"><b title="${isEvo ? 'TEvo wholesale' : 'GoTickets all-in'}">${$r(d.gt_price)}</b></td>
         <td class="num">${$r(d.realized_median)}${d.realized_n != null ? ' <span class="muted small">n' + d.realized_n + (d.resale_basis === 'historic_realized' ? '·hist' : '·live') + '</span>' : ''}</td>
         <td class="num">${$r(d.est_net_resale)}</td>
         <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
@@ -192,8 +198,8 @@
     }).join('');
     body.innerHTML = `<table class="deals-tbl">
       <thead><tr>
-        <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
-        <th class="num">Buy (GT)</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
+        <th>Seen</th><th>Event</th><th>Src · Section · Row</th><th class="num">Qty</th>
+        <th class="num">Buy</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
         <th class="num">Net profit</th><th class="num">Win odds</th><th class="num">Score v1</th><th>Conf</th><th>Open</th>
       </tr></thead>
       <tbody>${html}</tbody></table>`;
