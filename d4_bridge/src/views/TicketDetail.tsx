@@ -33,6 +33,12 @@ export default function TicketDetail() {
   // Attendee-name editor (mig 20260911060000): who this pass is FOR.
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
+  // The editor is per-pass: paging the carousel while it is open must not
+  // stamp the draft onto the next ticket (audit finding, PR #975).
+  const currentTicketId = tickets[currentIndex]?.id;
+  useEffect(() => {
+    setNameDraft(null);
+  }, [currentTicketId]);
 
   useEffect(() => {
     async function fetchData() {

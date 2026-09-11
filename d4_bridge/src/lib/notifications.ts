@@ -298,7 +298,9 @@ export function cancellationItems(tickets: TicketWithEvent[]): NotificationItem[
       body: event.cancelReason
         ? truncate(event.cancelReason)
         : 'Open your ticket for details and any refund information.',
-      ts: tsToMs(event.cancelledAt) || Date.now(),
+      // A cancelled row should carry cancelled_at; if it does not, sort with the
+      // event rather than pretending it just happened (and say so once).
+      ts: tsToMs(event.cancelledAt) || (console.warn(`notifications: cancelled event ${eventId} has no cancelledAt`), eventMs(event)),
       unread: true,
       to: `/ticket/${ticket.id}`,
     });
@@ -306,13 +308,17 @@ export function cancellationItems(tickets: TicketWithEvent[]): NotificationItem[
   return items;
 }
 
-/** Organizer announcements for events the viewer holds a ticket for. */
+/**
+ * Organizer announcements for events the viewer HOLDS A TICKET FOR. RLS also
+ * returns rows to org staff for their own events; those are the organizer's
+ * outbox, not alerts, so they are filtered out here (audit finding).
+ */
 export function announcementItems(
   rows: AnnouncementRow[],
   byEvent: Map<string, { ticket: TicketWithEvent; event?: Event }>,
   now: number = Date.now(),
 ): NotificationItem[] {
-  return rows.map((a) => {
+  return rows.filter((a) => byEvent.has(a.event_id)).map((a) => {
     const hit = byEvent.get(a.event_id);
     const title = hit?.event?.title;
     const ts = isoMs(a.created_at);
@@ -330,13 +336,13 @@ export function announcementItems(
   });
 }
 
-/** Reschedules for events the viewer holds a ticket for. */
+/** Reschedules for events the viewer holds a ticket for (staff rows filtered out). */
 export function rescheduleItems(
   rows: RescheduleRow[],
   byEvent: Map<string, { ticket: TicketWithEvent; event?: Event }>,
   now: number = Date.now(),
 ): NotificationItem[] {
-  return rows.map((r) => {
+  return rows.filter((r) => byEvent.has(r.event_id)).map((r) => {
     const hit = byEvent.get(r.event_id);
     const tz = hit?.event?.timezone;
     const newAt = isoMs(r.new_starts_at);
@@ -399,74 +405,96 @@ export function priceStepItems(
   return items;
 }
 
-// --- Fetchers (best-effort) ---------------------------------------------------
+// --- Fetchers (best-effort, but never silent) ---------------------------------
+// Each source is isolated so one failing table cannot blank the feed, but every
+// failure is logged with its code AND reported back to the view as a named
+// failed source, so the UI can say "some alerts could not be loaded" instead
+// of "all clear" (silent-failure audit 2026-09-11).
 
-async function fetchAnnouncements(): Promise<AnnouncementRow[]> {
+export type SourceName = 'transfers' | 'tickets' | 'announcements' | 'reschedules' | 'saved' | 'tiers';
+
+interface SourceResult<T> {
+  rows: T[];
+  failed?: SourceName;
+}
+
+async function guard<T>(name: SourceName, run: () => Promise<T[]>): Promise<SourceResult<T>> {
   try {
-    const { data, error } = await supabase
+    return { rows: await run() };
+  } catch (err) {
+    console.warn(`notifications: source "${name}" failed`, err);
+    return { rows: [], failed: name };
+  }
+}
+
+async function selectRows<T>(name: SourceName, build: () => PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }>): Promise<SourceResult<T>> {
+  return guard<T>(name, async () => {
+    const { data, error } = await build();
+    if (error) throw new Error(`${error.code ?? ''} ${error.message ?? 'query failed'}`.trim());
+    return (data ?? []) as T[];
+  });
+}
+
+function fetchAnnouncements(): Promise<SourceResult<AnnouncementRow>> {
+  return selectRows<AnnouncementRow>('announcements', () =>
+    supabase
       .from('exos_event_announcements')
       .select('id, event_id, subject, body, created_at')
       .order('created_at', { ascending: false })
-      .limit(50);
-    if (error) return [];
-    return (data ?? []) as AnnouncementRow[];
-  } catch {
-    return [];
-  }
+      .limit(50),
+  );
 }
 
-async function fetchReschedules(): Promise<RescheduleRow[]> {
-  try {
-    const { data, error } = await supabase
+function fetchReschedules(): Promise<SourceResult<RescheduleRow>> {
+  return selectRows<RescheduleRow>('reschedules', () =>
+    supabase
       .from('exos_event_reschedules')
       .select('id, event_id, old_starts_at, new_starts_at, reason, created_at')
       .order('created_at', { ascending: false })
-      .limit(50);
-    if (error) return [];
-    return (data ?? []) as RescheduleRow[];
-  } catch {
-    return [];
-  }
+      .limit(50),
+  );
 }
 
-async function fetchPublicTiers(eventIds: string[]): Promise<TierRow[]> {
-  if (eventIds.length === 0) return [];
-  try {
-    const { data, error } = await supabase
-      .from('exos_public_tiers')
-      .select('event_id, name, price_schedule')
-      .in('event_id', eventIds);
-    if (error) return [];
-    return (data ?? []) as TierRow[];
-  } catch {
-    return [];
-  }
+function fetchPublicTiers(eventIds: string[]): Promise<SourceResult<TierRow>> {
+  if (eventIds.length === 0) return Promise.resolve({ rows: [] });
+  return selectRows<TierRow>('tiers', () =>
+    supabase.from('exos_public_tiers').select('event_id, name, price_schedule').in('event_id', eventIds),
+  );
+}
+
+export interface NotificationFeed {
+  items: NotificationItem[];
+  /** Sources that failed to load this time; the view shows a degraded banner. */
+  failedSources: SourceName[];
 }
 
 /**
- * Build the alerts feed for the signed-in viewer, newest first.
- * Best-effort: a failing source contributes nothing rather than throwing.
+ * Build the alerts feed for the signed-in viewer, newest first. A failing
+ * source contributes nothing but is named in `failedSources` (and logged).
  */
-export async function listNotifications(now: number = Date.now()): Promise<NotificationItem[]> {
+export async function listNotifications(now: number = Date.now()): Promise<NotificationFeed> {
   const [inbound, outbound, tickets, announcements, reschedules, saved] = await Promise.all([
-    listInboundTransfers().catch(() => [] as Transfer[]),
-    listOutboundTransfers().catch(() => [] as Transfer[]),
-    listMyTickets().catch(() => [] as TicketWithEvent[]),
+    guard<Transfer>('transfers', listInboundTransfers),
+    guard<Transfer>('transfers', listOutboundTransfers),
+    guard<TicketWithEvent>('tickets', listMyTickets),
     fetchAnnouncements(),
     fetchReschedules(),
-    listSavedEvents().catch(() => [] as Event[]),
+    guard<Event>('saved', listSavedEvents),
   ]);
-  const tiers = await fetchPublicTiers(saved.map((e) => e.id));
-  const byEvent = ticketsByEvent(tickets);
+  const tiers = await fetchPublicTiers(saved.rows.map((e) => e.id));
+  const byEvent = ticketsByEvent(tickets.rows);
   const items = [
-    ...inbound.map(inboundToItem),
-    ...outbound.map(outboundToItem),
-    ...reminderItems(tickets, now),
-    ...cancellationItems(tickets),
-    ...announcementItems(announcements, byEvent, now),
-    ...rescheduleItems(reschedules, byEvent, now),
-    ...priceStepItems(saved, tiers, now),
+    ...inbound.rows.map(inboundToItem),
+    ...outbound.rows.map(outboundToItem),
+    ...reminderItems(tickets.rows, now),
+    ...cancellationItems(tickets.rows),
+    ...announcementItems(announcements.rows, byEvent, now),
+    ...rescheduleItems(reschedules.rows, byEvent, now),
+    ...priceStepItems(saved.rows, tiers.rows, now),
   ];
   items.sort((a, b) => b.ts - a.ts);
-  return items;
+  const failedSources = Array.from(
+    new Set([inbound, outbound, tickets, announcements, reschedules, saved, tiers].flatMap((r) => (r.failed ? [r.failed] : []))),
+  );
+  return { items, failedSources };
 }
