@@ -27,4 +27,22 @@ for m in 20260702144537_exos_checkin_test_window_autoexpiry \
          20260702144607_exos_waitlist_idor_fix; do
   $PSQL -f "$MIG/${m}.sql"
 done
+# 2026-09-11 readiness stage 1: invoice-counter RLS + automatic pre-event
+# reminders (cron entry RPC + manual staff RPC + starts_at reset trigger). The
+# cron.schedule block inside is guarded on pg_cron, so it applies here.
+for m in 20260911050000_exos_invoice_counters_rls \
+         20260911051000_exos_event_reminders \
+         20260911060000_exos_ticket_attendee_name \
+         20260911070000_exos_event_reminders_hardening; do
+  $PSQL -f "$MIG/${m}.sql"
+done
+# 2026-09-11 stage 3 (organizer side): analytics document RPC, self-serve
+# RSVP release (frees tier capacity → waitlist auto-offer trigger), bulk comp
+# batch + org budget, recurring / timed-entry series (column-agnostic clone).
+for m in 20260911130000_exos_event_analytics \
+         20260911131000_exos_rsvp_release \
+         20260911132000_exos_comp_batch \
+         20260911133000_exos_event_series; do
+  $PSQL -f "$MIG/${m}.sql"
+done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"

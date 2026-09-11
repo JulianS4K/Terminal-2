@@ -48,9 +48,11 @@ export function mapTicket(row: any): Ticket {
     buyerEmail: row.buyer_email ?? undefined,
     transferId: row.transfer_id ?? undefined,
     pendingTransferId: row.pending_transfer_id ?? null,
+    attendeeName: row.attendee_name ?? undefined,
     voidedAt: row.voided_at ? toTs(row.voided_at) : undefined,
     voidedBy: row.voided_by ?? undefined,
     voidedReason: row.voided_reason ?? undefined,
+    releasedAt: row.released_at ? toTs(row.released_at) : undefined,
     purchaseDate: row.created_at ? toTs(row.created_at) : undefined,
     lastReissueDate: row.last_reissue_at ? toTs(row.last_reissue_at) : undefined,
     checkInDate: row.check_in_at ? toTs(row.check_in_at) : undefined,
@@ -90,8 +92,8 @@ export function mapTransfer(row: any): Transfer {
 const TICKET_COLS =
   'id, event_id, org_id, tier_id, tier_name, buyer_id, owner_id, buyer_email, ' +
   'status, price_paid, order_ref, channel_source, promoter_id, ' +
-  'pending_transfer_id, transfer_id, voided_at, voided_by, voided_reason, ' +
-  'check_in_at, last_reissue_at, created_at, updated_at';
+  'pending_transfer_id, transfer_id, voided_at, voided_by, voided_reason, released_at, ' +
+  'check_in_at, last_reissue_at, created_at, updated_at, attendee_name';
 
 const TICKET_WITH_EVENT = `${TICKET_COLS}, event:exos_events(*)`;
 
@@ -235,7 +237,10 @@ export async function getTicketForScan(ticketId: string): Promise<ScanTicket | n
   // Scanner needs the secret for HMAC verification — fetch it from the view.
   const [row] = await withBarcodeSecrets([data]);
   const names = await fetchProfileNames([row.owner_id]);
-  return { ...mapTicket(row), ownerName: names.get(row.owner_id) || 'Anonymous attendee' };
+  const ticket = mapTicket(row);
+  // The person the ticket is FOR (attendee_name, set by the holder) beats the
+  // account that holds it — same coalesce as exos_event_checkin_roster.
+  return { ...ticket, ownerName: ticket.attendeeName || names.get(row.owner_id) || 'Anonymous attendee' };
 }
 
 export interface RegistryEntry {
@@ -497,6 +502,16 @@ export async function voidTicket(ticketId: string, reason?: string): Promise<voi
   if (error) throw error;
 }
 
+/** Give a FREE active ticket back (D4-OPS-22, mig 20260911131000). Holder
+ *  (policy + cutoff gated server-side) or owner/manager/admin. Voids the ticket,
+ *  frees tier + event capacity (fires the waitlist auto-offer). Returns who
+ *  released it. */
+export async function releaseTicket(ticketId: string): Promise<{ by: 'holder' | 'staff'; freedTier: boolean }> {
+  const { data, error } = await supabase.rpc('exos_release_ticket', { p_ticket_id: ticketId });
+  if (error) throw error;
+  return { by: (data?.by ?? 'holder') as 'holder' | 'staff', freedTier: !!data?.freed_tier };
+}
+
 /** Mint tickets directly (comp / admin test-mint). Returns the new ticket ids.
  *  Org-staff or admin only (enforced in the RPC). */
 export async function mintTickets(input: {
@@ -523,6 +538,20 @@ export async function mintTickets(input: {
  *  ids. Server enforces free-tier-only + published + sales window + per-person
  *  limit + capacity (exos_claim_free_tickets). Paid tiers route through Stripe.
  *  promoterId/channel come from the landing URL for campaign attribution. */
+/**
+ * Current owner: name the person this ticket is for (shown on the pass and to
+ * the door). Empty/blank clears it. Server-enforced: owner only, active ticket,
+ * not in transfer, ≤80 chars (mig 20260911060000). Returns the stored name.
+ */
+export async function setTicketAttendee(ticketId: string, name: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('exos_set_ticket_attendee', {
+    p_ticket_id: ticketId,
+    p_name: name,
+  });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
+
 export async function claimFreeTickets(input: {
   eventId: string;
   tierId: string;

@@ -17,6 +17,50 @@
   <title>Terminal — Subs</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
   <link rel="stylesheet" href="style.css?v=20260721a" />
+  <style>
+    /* D7 gate labels. Kept in this file rather than style.css because
+       style.css is D0's surface and subs.* is the D7 subset (PROJECT_BIBLE
+       §2.3). The two variants are styled DIFFERENTLY on purpose: gates 1-2
+       are directly actionable, gates 3-6 move the buyer and need consent
+       first, and a single uniform chip would hide exactly that distinction. */
+    .n2s-gate {
+      display: inline-block; padding: 1px 7px; border-radius: 10px;
+      font-size: 11px; line-height: 1.6; white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .n2s-gate-direct {            /* gates 1-2 — buy it */
+      background: rgba(74, 222, 128, .12);
+      border-color: rgba(74, 222, 128, .45);
+      color: var(--pos, #4ade80);
+    }
+    .n2s-gate-offer {             /* gates 3-6 — ASK THE BUYER FIRST */
+      background: rgba(251, 191, 36, .12);
+      border-color: rgba(251, 191, 36, .5);
+      color: #fbbf24;
+    }
+    .n2s-gate-unver {             /* the caveat, not a gate — muted on purpose */
+      background: rgba(148, 163, 184, .12);
+      border-color: rgba(148, 163, 184, .40);
+      color: var(--muted, #94a3b8);
+    }
+    .n2s-gate-obstructed {        /* a real defect in the seat — loudest chip */
+      background: rgba(248, 113, 113, .14);
+      border-color: rgba(248, 113, 113, .55);
+      color: #f87171;
+    }
+    .n2s-gate-noview {            /* not checked — must not read as "fine" */
+      background: transparent;
+      border-color: rgba(148, 163, 184, .35);
+      border-style: dashed;
+      color: var(--muted, #94a3b8);
+    }
+    .n2s-gate-single {            /* a one-seat SALE — a fact about the order, not the match */
+      background: rgba(96, 165, 250, .12);
+      border-color: rgba(96, 165, 250, .45);
+      color: #60a5fa;
+    }
+    .n2s-gate-cell { max-width: 300px; }
+  </style>
 </head>
 <body data-page="subs">
 
@@ -26,6 +70,88 @@
   </header>
 
   <main class="wrap subs">
+    <section id="n2s-covers-panel">
+      <div class="panel-title row">
+        <span>NEED TO SUB — COVERS</span>
+        <span id="n2sLive" class="live-pill off" title="Auto-refreshes every 60s; pauses while the tab is hidden"><span class="live-dot"></span><span class="live-label">paused</span></span>
+        <span id="n2sMeta" class="muted small"></span>
+      </div>
+      <p class="muted small">
+        <strong>Every open</strong> order that has already failed, with its sub attached
+        where one exists. Rows with <strong>no sub stay listed on purpose</strong> — they
+        are the work, not missing data. The question is not "where is the margin" but
+        <strong>what is the least this obligation can be settled for</strong>, so a cover
+        dearer than the sale is still a result. Actionable rows first, cheapest first;
+        then the gaps, longest-unsettled first. Each listing is offered to
+        <strong>one</strong> order only.
+      </p>
+      <p class="muted small">
+        <strong>No sub</strong> names its reason, because three different situations look
+        identical as a blank: <em>unmapped</em> (event unidentified — nothing was searched),
+        <em>pulling…</em> (sources in flight), <em>no match</em> (searched; nothing had the
+        same section, an equal-or-better row and a usable quantity — the only one meaning
+        go find tickets), <em>event not in catalogue</em> (mapped to a real event we have
+        never ingested, so nothing could be searched — the fix is to ingest the event,
+        not to hunt inventory). A sub may be drawn from a larger listing when the seller's
+        <strong>splits</strong> permit buying exactly what is owed; such a row says
+        <em>of N</em> so you know the vendor console will show the whole lot. Where
+        nothing sells the owed quantity at all, a lot one seat larger is bought
+        whole and the row says <em>buy N</em> — the spare seat is paid for, and is
+        already counted in the cost. <strong>Claim</strong> records an intent and hands you a fill
+        sheet; it buys nothing — the purchase is made by hand in the vendor console.
+        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row.
+      </p>
+      <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="n2sSource">Marketplace</label>
+          <select id="n2sSource">
+            <option value="">all</option>
+            <option>StubHub</option>
+            <option>SeatGeek</option>
+            <option>Gametime</option>
+            <option>TickPick</option>
+            <option>GoTickets</option>
+            <option>Vivid Seats</option>
+            <option>EVO</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sHas">Sub</label>
+          <!-- One control, because these are not independent: "profitable"
+               is a SUBSET of "has sub", so two selects allowed the operator
+               to ask for "no sub" AND "profitable only" — a contradiction
+               that can only ever return an empty page. -->
+          <select id="n2sHas">
+            <option value="">all</option>
+            <option value="true">has sub</option>
+            <option value="false">no sub</option>
+            <option value="profit">profitable only</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sLate">Timer</label>
+          <!-- Default hides anything past the CRM's 15-minute response timer.
+               That is nearly the whole book, so the empty state names the count
+               and this control is the way back. -->
+          <select id="n2sLate">
+            <option value="">in time only</option>
+            <option value="true">include late</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sDays">Within days</label>
+          <input id="n2sDays" type="number" min="1" step="1" placeholder="all" />
+        </div>
+        <div class="subs-field">
+          <button id="n2sRun" type="button" class="btn">Refresh</button>
+        </div>
+        <div class="subs-field">
+          <button id="n2sVerify" type="button" class="btn">Verify buyable</button>
+        </div>
+      </div>
+      <div id="n2sTable"></div>
+    </section>
+
     <section id="subs-form-panel">
       <div class="panel-title">SUBSTITUTION CHECKER</div>
       <p class="muted small">
@@ -123,8 +249,8 @@
   <script src="lib/render.js"></script>
   <!-- Cache-busting: bump ?v=<date> on any first-party asset change. -->
   <script src="auth.js?v=20260608"></script>
-  <script src="app.js?v=20260608"></script>
+  <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="subs.js?v=20260901crm"></script>
+  <script src="subs.js?v=20260910single"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useOrganization } from '../context/OrganizationContext';
 import AccessDenied from '../components/AccessDenied';
 import { Link } from 'react-router-dom';
-import { Plus, Settings, Users, BarChart3, ChevronRight, Music, MapPin, Calendar, CheckCircle2, Download, Megaphone, Search, Sparkles } from 'lucide-react';
+import { Plus, Settings, Users, BarChart3, ChevronRight, Music, MapPin, Calendar, CheckCircle2, Download, Megaphone, Search, Sparkles, Repeat } from 'lucide-react';
 import { motion } from 'motion/react';
 import { formatCurrency } from '../lib/utils';
 import { formatInTz } from '../lib/datetime';
@@ -279,7 +279,14 @@ export default function OrganizerDashboard() {
                             <img src={event.image || ''} alt="" className="w-full h-full object-cover" />
                           </div>
                           <div>
-                            <p className="font-bold text-slate-900 text-sm mb-0.5">{event.title}</p>
+                            <p className="font-bold text-slate-900 text-sm mb-0.5">
+                              {event.title}
+                              {event.seriesId != null && (
+                                <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[9px] font-black uppercase tracking-widest align-middle" title="Part of a series">
+                                  <Repeat className="w-3 h-3" aria-hidden="true" /> #{event.seriesIndex ?? 0}
+                                </span>
+                              )}
+                            </p>
                             <p className="text-[10px] text-slate-400 uppercase tracking-widest">{formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', year: 'numeric' })} • {event.location}</p>
                           </div>
                         </div>
@@ -301,6 +308,7 @@ export default function OrganizerDashboard() {
                            <Link to={`/dashboard/event/${event.id}/promote`} aria-label="Promote event" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><Megaphone className="w-4 h-4" /></Link>
                            <Link to={`/dashboard/event/${event.id}`} aria-label="Sales report" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><BarChart3 className="w-4 h-4" /></Link>
                            <Link to={`/edit-event/${event.id}`} aria-label="Edit event" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><Settings className="w-4 h-4" /></Link>
+                           <Link to={`/dashboard/event/${event.id}/series`} aria-label={event.seriesId ? 'Add dates to this series' : 'Make this event recurring'} className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><Repeat className="w-4 h-4" /></Link>
                            <Link to={`/create-event?clone=${event.id}`} aria-label="Duplicate event as a new draft" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors text-[10px] font-black uppercase tracking-widest">CLONE</Link>
                            <Link to={`/checkin/${event.id}`} aria-label="Open check-in view" className="p-2 text-slate-400 hover:text-green-600 transition-colors"><CheckCircle2 className="w-4 h-4" /></Link>
                            <Link to={`/event/${event.id}`} aria-label="View public event page" className="p-2 text-slate-400 hover:text-[#026cdf] transition-colors"><ChevronRight className="w-4 h-4" /></Link>

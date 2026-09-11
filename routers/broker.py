@@ -1050,6 +1050,449 @@ def build_broker_router(
 
         return {"window_hours": window_hours, "sort": sort, "count": len(out), "events": out}
 
+    @router.get("/api/broker/n2s-covers")
+    def broker_n2s_covers(
+        limit: int = 200,
+        offset: int = 0,
+        source: str | None = None,
+        days: int | None = None,
+        with_sub: bool | None = None,
+        include_late: bool = False,
+        profitable: bool = False,
+        _=Depends(require_auth),
+    ):
+        """N2S ("Need to Sub") — the WHOLE open book, with the sub attached
+        where one exists.
+
+        Reads `v_n2s_orders`, which LEFT JOINs the precomputed
+        `n2s_cover_queue` onto every open obligation. It is deliberately NOT
+        just the covered rows: measured when this was written, 8 orders had a
+        cover against 105 open ones, so serving only the queue showed 8 and
+        silently omitted 97 that still have to be settled — the ones that most
+        need a person, because nothing automatic is going to happen to them.
+        An order with no cover is the work, not missing data.
+
+        This is a different book from `/api/broker/sub-worklist`. That queue is
+        our own order book looking for a PROFITABLE swap. This one is the CRM's
+        Need-to-Sub list: orders that already failed and must be covered
+        whether or not it pays. Most rows here appear in no order book we hold.
+
+        Read `cover_cost` as what honouring the order COSTS over what it sold
+        for — positive is a loss, negative means the cover is cheaper than the
+        sale. It is NULL where there is no cover.
+
+        `no_cover_reason` separates three situations a bare dash would conflate,
+        and they call for opposite responses:
+
+        * ``unmapped`` — we cannot identify the event, so we never looked. A
+          mapping problem; more inventory will not help.
+        * ``awaiting_source_pull`` — mapped, the four-source pull is in flight.
+          Wait a couple of minutes.
+        * ``no_match`` — we looked at live listings and none satisfied same
+          section / same-or-better row / a usable quantity. The only one of the
+          three that means "go find tickets".
+
+        `sub_qty` is how many tickets to BUY, which is not always how many we
+        owe. Read it against the other two quantity columns:
+
+        * ``sub_qty == quantity``, ``sub_avail == sub_qty`` — an exact match.
+        * ``sub_qty == quantity``, ``sub_avail > sub_qty`` — a SPLIT take: the
+          listing is bigger than the obligation and its published splits permit
+          buying exactly what is owed.
+        * ``sub_qty > quantity`` — an OVER-DELIVERY: nothing sold the owed
+          quantity, so the whole (quantity + 1) lot is bought and the spare
+          seat is paid for. Only ever allocated when the order has no exact or
+          split candidate at all, however cheap the spare seat looks.
+
+        `sub_total` and `cover_cost` are computed on `sub_qty`, so the spare
+        seat is charged to the cover rather than quietly omitted.
+
+        `profitable=true` narrows to covers where `cover_cost < 0` — the
+        obligation settles for less than the seat sold for, so the difference
+        is kept. Break-even is excluded: it is not making money. Note this
+        filter necessarily empties the uncovered book, since a gap row has a
+        NULL `cover_cost`; it is the one view of this panel where absent rows
+        are not the work.
+
+        `cover_label` is a WORKFLOW INSTRUCTION, not a quality score, and
+        `cover_gate` (1-6) is its stable machine form — filter on the gate, not
+        the label text.
+
+        * gates 1-2 (`Index`, `S4KTrading`) keep the buyer in the exact section
+          they purchased, so they are directly actionable.
+        * gates 3-6 carry ``offer subs`` because they MOVE the buyer — a
+          different section within the same curated zone, or up to five rows
+          further back. The substitute must be offered and accepted BEFORE it
+          is bought; acting on one unasked turns a covered order into a dispute.
+        * ``Index`` vs ``S4KTrading`` is profit, not quality: Index covers make
+          money, S4KTrading covers cost more than the sale but stay inside a
+          200% ceiling. Nothing above 200% is offered on any gate.
+        * suffix ``repost single`` means `sub_qty` is one over the obligation
+          and the spare seat is reposted — buy `sub_qty`, not `quantity`.
+
+        `n2s_order_key` is the marketplace's order id on its own. For every
+        source but EVO it equals `order_number`; EVO's `order_number` is an
+        `<invoice>-<order>` composite, and pasting the whole thing into its
+        console finds nothing.
+
+        `cover_rank` is which of that order's own candidates it was allocated:
+        1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed
+        the cheaper listing. Each listing is offered to exactly one order.
+
+        `refreshed_at` is load-bearing, not decoration. Covers are only true
+        while the listing is live, and the matcher only considers listings seen
+        in the last hour, so a stale payload means "no answer", never "no
+        covers". It is NULL on an uncovered row because nothing was computed.
+
+        Pass `with_sub=true` for only the actionable rows, `false` for only the
+        gaps. Omit it for the whole book, which is the default on purpose.
+
+        ⚠ `include_late` DEFAULTS TO FALSE AND THAT HIDES ALMOST EVERYTHING.
+        The CRM gives each N2S alert a 15-minute response timer; `timer_expired`
+        is true once it lapses and it never goes back. Measured when this was
+        added: **108 of 108** open obligations were expired — least 42 minutes
+        over, most 4 days, mean ~50 hours — so the default returns an EMPTY
+        page and will almost always do so. That is the operator's explicit
+        choice (2026-09-10), made after being shown those numbers, not an
+        oversight.
+
+        Because of that, `hidden_late` is always returned. A caller MUST show
+        it: an empty page here means "everything was filtered", never "nothing
+        needs covering", and the two are opposite. Pass `include_late=true` to
+        see the whole book.
+        """
+        db = get_require_sb()()
+        q = (db.table("v_n2s_orders")
+             .select("n2s_id,order_number,s4k_source,n2s_status,fail_reason,"
+                     "timer_expired,alert_at,event_name,event_date,venue,"
+                     "tevo_event_id,section,order_row,quantity,sold_ea,"
+                     "sub_source,sub_listing_id,sub_section,sub_row,sub_qty,"
+                     "sub_avail,"
+                     "sub_ea,sub_total,cover_cost,rows_closer,buy_url,"
+                     "captured_at,cover_rank,fifo_position,refreshed_at,"
+                     "has_cover,no_cover_reason,open_intent_id,open_intent_by,"
+                     "n2s_order_key,cover_gate,cover_label,sub_view,sub_notes"))
+        if source:
+            q = q.eq("s4k_source", source)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+            q = q.lte("event_date", cutoff)
+        if with_sub is not None:
+            q = q.eq("has_cover", with_sub)
+        if not include_late:
+            # timer_expired is COALESCEd to false at ingest, never NULL, so a
+            # plain equality is safe and an untimed row is not treated as late.
+            q = q.eq("timer_expired", False)
+        if profitable:
+            # cover_cost is outlay MINUS revenue, so negative means the cover
+            # settles for less than the seat sold for and we keep the
+            # difference. Strictly < 0: break-even is not making money.
+            #
+            # ⚠ THIS NECESSARILY HIDES THE UNCOVERED BOOK. An order with no
+            # cover has a NULL cover_cost and cannot satisfy the comparison, so
+            # every gap row disappears — including the ones most needing a
+            # person. That is the point of the filter, but it inverts this
+            # panel's usual "gaps are the work" stance, so `uncovered` and
+            # `by_no_cover_reason` come back as zeros here and the UI says
+            # which book you are looking at.
+            q = q.lt("cover_cost", 0)
+        # Actionable rows first, cheapest cover first; then the uncovered block
+        # oldest-alert first, since that is the longest-unsettled obligation.
+        # Postgres sorts NULLs last on ASC, so uncovered rows fall through
+        # cover_cost without any special handling.
+        rows = (q.order("has_cover", desc=True)
+                 .order("cover_cost", desc=False)
+                 .order("alert_at", desc=False)
+                 .range(offset, offset + max(limit, 1) - 1)
+                 .execute().data) or []
+
+        # ⚠ THESE AGGREGATES COVER THE PAGE, NOT THE BOOK. They are computed
+        # from `rows`, which `range()` has already truncated to `limit`. Named
+        # page_* so a caller cannot read "to settle" as a total obligation when
+        # it is only the first N. `truncated` says when that matters.
+        # How many the timer filter removed. Counted separately and ALWAYS
+        # reported: without it an empty page is indistinguishable from a clear
+        # book, which is the one confusion this filter is guaranteed to cause.
+        hidden_late = 0
+        if not include_late:
+            lq = (db.table("v_n2s_orders").select("n2s_id", count="exact")
+                    .eq("timer_expired", True))
+            if source:
+                lq = lq.eq("s4k_source", source)
+            if days is not None:
+                lq = lq.lte("event_date", cutoff)
+            if with_sub is not None:
+                lq = lq.eq("has_cover", with_sub)
+            if profitable:
+                # ⚠ MUST MIRROR EVERY FILTER ABOVE. This counts what the timer
+                # filter removed, so it has to count the same book the page is
+                # showing. Without this it reports the whole timer-expired book
+                # under profitable=true — "108 hidden (timer expired)" when
+                # including them would in fact reveal zero profitable covers,
+                # which sends the operator to a switch that cannot help.
+                lq = lq.lt("cover_cost", 0)
+            # count="exact" makes PostgREST return the row count, which is the
+            # whole point of the query — the rows themselves are discarded.
+            hidden_late = int(getattr(lq.execute(), "count", 0) or 0)
+
+        costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
+        covered = [r for r in rows if r.get("has_cover")]
+
+        # ⚠ THE STAMP DESCRIBES THE PIPELINE, NOT THIS PAGE. Sourcing it only
+        # from the rows we served makes a *filter* look like an outage: with
+        # include_late=false and every open order late — which is the normal
+        # state of this book — the page is empty, so no served row carries a
+        # refreshed_at and the panel reads "never refreshed" while the matcher
+        # is in fact running every minute. `range()` can do the same on a later
+        # page. So when the page yields no stamp, ask the view directly. The
+        # probe is deliberately unfiltered: the question it answers is "when
+        # did the matcher last run", which no display filter changes.
+        stamp = next((r.get("refreshed_at") for r in covered
+                      if r.get("refreshed_at")), None)
+        if stamp is None:
+            probe = ((db.table("v_n2s_orders").select("refreshed_at")
+                      .eq("has_cover", True)
+                      .order("refreshed_at", desc=True)
+                      .limit(1).execute().data) or [])
+            # Still None on a genuinely empty book — an absent payload must read
+            # as "no answer", never as "no covers".
+            stamp = probe[0].get("refreshed_at") if probe else None
+        reasons: dict[str, int] = {}
+        for r in rows:
+            why = r.get("no_cover_reason")
+            if why:
+                reasons[why] = reasons.get(why, 0) + 1
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "covered": len(covered),
+            "uncovered": len(rows) - len(covered),
+            "by_no_cover_reason": reasons,
+            "at_or_below_sale": sum(1 for c in costs if c <= 0),
+            "displaced": sum(1 for r in covered if (r.get("cover_rank") or 1) > 1),
+            "total_cover_cost": (round(sum(costs), 2) if costs else 0),
+            "truncated": len(rows) >= max(limit, 1),
+            "hidden_late": hidden_late,
+            "refreshed_at": stamp,
+            "filters": {"source": source, "days": days, "with_sub": with_sub,
+                        "include_late": include_late, "profitable": profitable,
+                        "limit": limit, "offset": offset},
+        }
+
+    @router.get("/api/broker/n2s-covers/verify")
+    def broker_n2s_covers_verify(
+        freshness_minutes: int = 60,
+        _=Depends(require_auth),
+    ):
+        """Pre-purchase gate: is each queued cover still good to buy RIGHT NOW?
+
+        A cover is two claims made at different moments — the listing was live
+        when its snapshot was captured (up to an hour ago), and the order was
+        open when the queue last refreshed. Both can go stale before anyone
+        acts, and a stale cover costs money in a way a stale read never does.
+
+        Verdicts: `ok`, `price_up` (still there, dearer — `price_delta_ea` says
+        by how much), `gone` (absent from the newest snapshot of that event),
+        `order_closed` (the N2S order is already resolved or allocated), and
+        `stale_data`.
+
+        `gone` and `order_closed` are hard blocks. `price_up` is a judgement
+        call reported WITH the delta, because a slightly dearer cover may still
+        be the right buy on an obligation.
+
+        `stale_data` means "we cannot tell", NOT "fine" — it is returned when
+        nothing has been captured for that event inside the window, and it is
+        never `buyable`. This endpoint re-checks the newest data we HOLD; it
+        does not pull upstream. TicketsData always reads stale_data because it
+        is a change feed, where absence means unchanged rather than sold.
+
+        See docs/evo_buy_side.md for the buy-side flow this gates.
+        """
+        db = get_require_sb()()
+        rows = db.rpc("n2s_cover_verify",
+                      {"p_freshness": f"{max(1, freshness_minutes)} minutes"}
+                      ).execute().data or []
+        by_verdict: dict[str, int] = {}
+        for r in rows:
+            v = r.get("verdict") or "unknown"
+            by_verdict[v] = by_verdict.get(v, 0) + 1
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "buyable": sum(1 for r in rows if r.get("buyable")),
+            "by_verdict": by_verdict,
+            "freshness_minutes": freshness_minutes,
+        }
+
+    @router.post("/api/broker/n2s-covers/{n2s_id}/buy-intent")
+    def broker_n2s_buy_intent(
+        n2s_id: int,
+        requested_by: str | None = None,
+        notes: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """Record that a human wants to buy this cover. **Buys nothing.**
+
+        This is OUR write surface, added because the CRM has none — its API is
+        GET-only per its own docs and our keys are read-scoped, so data cannot
+        be pushed into it. The CRM (or the terminal) pulls covers from
+        `/api/broker/n2s-covers` and calls this to trigger a buy.
+
+        An intent is refused unless the cover verifies buyable RIGHT NOW: a
+        `gone` or `order_closed` cover cannot become one, and `stale_data` is
+        refused too — "we cannot tell" is not consent to spend money. The
+        verdict is stored on the row, so it records what was true when the
+        human asked rather than whenever someone reads it back.
+
+        Only ONE open intent may exist per order. Two people acting on the same
+        failed order would otherwise buy two covers for one obligation.
+
+        The intent is a FILL SHEET, not a request we send. Nothing in this
+        codebase places an order; the buy happens by hand in the vendor
+        console. `payload` is what we know, and the two absence lists are split
+        by who owes them:
+
+        * ``operator_fills`` — what the human types at checkout (payment token,
+          delivery method, buyer contact, recipient). Expected and normal; a
+          non-empty list is the ordinary case for both vendors.
+        * ``payload_gaps`` — data OUR side owed and could not produce, e.g. an
+          unmapped ``gt_event_id``, or a match on a source we hold no purchase
+          path to. A real defect, and what ``payload_ready`` reports on.
+
+        Keeping them apart matters: if the human's checkout fields counted as
+        gaps, every intent would read defective and a genuine gap would be
+        ignored along with them. See docs/buy_side_evo_gotickets.md.
+        """
+        db = get_require_sb()()
+        try:
+            rows = db.rpc("n2s_buy_intent_create",
+                          {"p_n2s_id": n2s_id,
+                           "p_requested_by": requested_by,
+                           "p_notes": notes}).execute().data or []
+        except Exception as exc:  # noqa: BLE001 - surfaced verbatim below
+            # The refusals are deliberate and each says why (not buyable, no
+            # queued cover, duplicate open intent). Return the reason rather
+            # than a bare 500, so the caller can show it to the operator.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not rows:
+            raise HTTPException(status_code=409,
+                                detail="intent not created (no cover, or not buyable)")
+        return {"intent": rows[0], "bought": False,
+                "note": "intent recorded only — nothing was purchased"}
+
+    @router.post("/api/broker/buy-intents/{intent_id}/cancel")
+    def broker_n2s_buy_intent_cancel(
+        intent_id: int,
+        by: str | None = None,
+        reason: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """Cancel an open buy intent, freeing the order for a new one."""
+        db = get_require_sb()()
+        ok = db.rpc("n2s_buy_intent_cancel",
+                    {"p_intent_id": intent_id, "p_by": by,
+                     "p_reason": reason}).execute().data
+        cancelled = bool(ok[0] if isinstance(ok, list) and ok else ok)
+        if not cancelled:
+            raise HTTPException(status_code=409,
+                                detail="no open intent with that id")
+        return {"intent_id": intent_id, "status": "cancelled"}
+
+    @router.get("/api/broker/buy-intents")
+    def broker_n2s_buy_intents(
+        status: str | None = "requested",
+        limit: int = 100,
+        _=Depends(require_auth),
+    ):
+        """Open buy intents — what someone has committed to acting on.
+
+        Defaults to `requested` (still open). Pass `status=` empty for all.
+
+        Each row carries its fill sheet: `payload` plus `operator_fills` (the
+        human's checkout fields) and `payload_gaps` (what our side still owes).
+        """
+        db = get_require_sb()()
+        q = db.table("n2s_buy_intent").select(
+            "intent_id,n2s_id,order_number,s4k_source,sub_source,sub_listing_id,"
+            "sub_section,sub_row,sub_qty,quoted_ea,quoted_total,cover_cost,"
+            "buy_url,verify_verdict,verify_delta,status,requested_by,"
+            "requested_at,payload,payload_ready,payload_gaps,operator_fills,notes")
+        if status:
+            q = q.eq("status", status)
+        rows = (q.order("requested_at", desc=True)
+                 .range(0, max(limit, 1) - 1).execute().data) or []
+        # `complete` counts sheets with nothing left on OUR side. It is not
+        # "ready to send" — nothing sends, and the operator's checkout fields
+        # are still theirs to fill.
+        return {"rows": rows, "count": len(rows),
+                "complete": sum(1 for r in rows if r.get("payload_ready")),
+                "needs_us": sum(1 for r in rows if not r.get("payload_ready")),
+                "status": status}
+
+    @router.get("/api/broker/sub-worklist")
+    def broker_sub_worklist(
+        limit: int = 100,
+        offset: int = 0,
+        source: str | None = None,
+        with_sub: bool | None = None,
+        days: int | None = None,
+        _=Depends(require_auth),
+    ):
+        """Substitution QUEUE — the whole order book with its best sub, if any.
+
+        Reads `s4kcs_sub_worklist`, which a scheduled refresh rebuilds off the
+        GoTickets and EVO pull cadence. This is deliberately a CHEAP read of
+        precomputed current state: it answers "which orders should I look at",
+        ranked by the money on the table. The authoritative per-order answer is
+        still `/api/broker/event/{id}/substitutions`, which recomputes live
+        against the current book and carries the GA / splits / ambiguous
+        handling the queue's summary row cannot.
+
+        A row with `candidates == 0` is in scope but had nothing qualify — it
+        stays in the queue on purpose, so the screen shows the real book rather
+        than only the orders that happened to match.
+
+        Query params:
+          limit/offset  page size (default 100) and cursor
+          source        filter to one marketplace (StubHub, Gametime, …)
+          with_sub      true = only orders with a candidate; false = only those
+                        without; omit for everything
+          days          only events inside the next N days
+        """
+        db = get_require_sb()()
+        q = (db.table("s4kcs_sub_worklist")
+             .select("source,s4k_order_id,tevo_event_id,event_name,event_date,venue_name,"
+                     "order_status,sub_signal,section,order_row,quantity,sold_ea,sold_total,"
+                     "candidates,best_sub_source,best_price_basis,best_listing_id,"
+                     "best_section,best_row,best_qty,best_ea,best_total,margin_ea,"
+                     "margin_total,rows_closer,buy_url,listing_captured_at,refreshed_at"))
+        if source:
+            q = q.eq("source", source)
+        if with_sub is True:
+            q = q.gt("candidates", 0)
+        elif with_sub is False:
+            q = q.eq("candidates", 0)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+            q = q.lte("event_date", cutoff)
+        # ⚠ NULLS LAST IS REQUIRED, NOT COSMETIC. Postgres sorts NULLs FIRST on
+        # DESC, and margin_total is NULL for every candidates=0 row (LEFT JOIN
+        # in the refresh). Without this the first page is entirely rows with no
+        # sub — with_candidate reads 0 on a healthy book — and the table's own
+        # (margin_total DESC NULLS LAST) index cannot be used.
+        rows = (q.order("margin_total", desc=True, nullsfirst=False)
+                 .range(offset, offset + max(limit, 1) - 1)
+                 .execute().data) or []
+        with_candidate = sum(1 for r in rows if (r.get("candidates") or 0) > 0)
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "with_candidate": with_candidate,
+            "refreshed_at": (rows[0].get("refreshed_at") if rows else None),
+            "filters": {"source": source, "with_sub": with_sub, "days": days,
+                        "limit": limit, "offset": offset},
+        }
+
     @router.get("/api/broker/event/{event_id}/orders")
     def broker_event_orders(event_id: int, _=Depends(require_auth)):
         """Read persisted evo_orders + items for an event. Free, no TEvo call.

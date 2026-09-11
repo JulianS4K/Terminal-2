@@ -431,4 +431,623 @@ BEGIN
 END $$;
 
 SELECT '*** PART B (end-to-end platform) PASSED ***' AS result;
+-- ============================================================================
+-- PART C — PRE-EVENT REMINDERS (mig 20260911051000)
+--   cron entry (T-24h / T-2h, once each, catch-up safe) · manual send + cooldown
+--   · role gate · postpone resets the cycle · invoice-counter RLS (mig 050000).
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+-- Isolate from Parts A/B: their events (some published inside the windows by
+-- the doors-gate tests) are treated as already reminded.
+UPDATE public.exos_events SET reminder_24h_sent_at = now(), reminder_2h_sent_at = now();
+INSERT INTO auth.users(id,email,email_confirmed_at) VALUES
+  ('55555555-5555-5555-5555-555555555555','holder2@x.com',now()),
+  ('66666666-6666-6666-6666-666666666666','voided@x.com',now());
+-- Event C: published, starts in 20h (inside the 24h window, outside 2h), NY tz.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,doors_at,timezone,venue_name) VALUES
+  ('cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','Evt <C>','evtc','published',10,3,
+   now()+interval '20 hours', now()+interval '19 hours', 'America/New_York', 'Brooklyn Steel');
+-- Event D: published but starts in 5 days — nothing due.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,starts_at,timezone) VALUES
+  ('cccccccc-0000-0000-0000-0000000000e2','aaaaaaaa-0000-0000-0000-000000000001','EvtD','evtd','published',10,
+   now()+interval '5 days','Bad/Zone');
+-- Event E: draft, starts in 3h — never mailed.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,starts_at) VALUES
+  ('cccccccc-0000-0000-0000-0000000000e3','aaaaaaaa-0000-0000-0000-000000000001','EvtE','evte','draft',10,
+   now()+interval '3 hours');
+-- Holders of C: buyer (2 tickets → ONE mail), holder2 (1), voided (excluded).
+INSERT INTO public.exos_tickets(event_id,org_id,owner_id,buyer_id,status,barcode_secret) VALUES
+  ('cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','s1'),
+  ('cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','s2'),
+  ('cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','used','s3'),
+  ('cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','66666666-6666-6666-6666-666666666666','66666666-6666-6666-6666-666666666666','voided','s4');
+
+DO $$
+DECLARE r record; n int; subj text; body text;
+BEGIN
+  -- C1. First cron pass: only C is due (24h window). 2 distinct non-voided holders.
+  SELECT * INTO r FROM public.exos_send_event_reminders();
+  ASSERT r.events_24h = 1, 'first pass events_24h=1, got '||r.events_24h;
+  ASSERT r.events_2h = 0,  'first pass events_2h=0, got '||r.events_2h;
+  ASSERT r.mails_queued = 2, 'first pass mails=2 (dedupe per holder, voided excluded), got '||r.mails_queued;
+  ASSERT r.events_failed = 0, 'no per-event failures';
+  SELECT count(*) INTO n FROM public.exos_mail WHERE template='event-reminder';
+  ASSERT n = 2, 'event-reminder rows=2';
+  ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='event-reminder' AND to_email='voided@x.com') = 0, 'voided holder not mailed';
+  SELECT subject, html INTO subj, body FROM public.exos_mail WHERE template='event-reminder' AND to_email='buyer@x.com';
+  ASSERT subj LIKE 'Reminder: Evt <C> — %', 'subject is plain text (raw name) + prefixed, got '||subj;
+  ASSERT body LIKE '%<strong>Evt &lt;C&gt;</strong>%', 'body is HTML-escaped';
+  ASSERT body LIKE '%Brooklyn Steel%' AND body LIKE '%Doors open at%' AND body LIKE '%(America/New_York)%', 'body carries venue/doors/tz';
+  ASSERT (SELECT reminder_24h_sent_at IS NOT NULL AND reminder_2h_sent_at IS NULL
+            FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e1'), '24h marked, 2h not';
+  ASSERT (SELECT reminder_24h_sent_at IS NULL FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e2'), 'D (5 days out) untouched';
+  ASSERT (SELECT reminder_24h_sent_at IS NULL FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e3'), 'E (draft) untouched';
+
+  -- C2. Idempotent: a second pass sends nothing.
+  SELECT * INTO r FROM public.exos_send_event_reminders();
+  ASSERT r.events_24h = 0 AND r.events_2h = 0 AND r.mails_queued = 0, 'second pass is a no-op';
+  RAISE NOTICE 'C1-C2 T-24h reminder + idempotency OK';
+
+  -- C3. Time moves on: C now starts in 90 min → T-2h fires once, 24h not re-sent.
+  --     (Direct starts_at edit that moves EARLIER must not reset markers.)
+  UPDATE public.exos_events SET starts_at = now()+interval '90 minutes', doors_at = now()+interval '60 minutes'
+   WHERE id='cccccccc-0000-0000-0000-0000000000e1';
+  ASSERT (SELECT reminder_24h_sent_at IS NOT NULL FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e1'), 'earlier move keeps 24h marker';
+  SELECT * INTO r FROM public.exos_send_event_reminders();
+  ASSERT r.events_24h = 0 AND r.events_2h = 1 AND r.mails_queued = 2, 'T-2h pass: 1 event / 2 mails, got '||r.events_2h||'/'||r.mails_queued;
+  SELECT count(*) INTO n FROM public.exos_mail WHERE template='event-reminder';
+  ASSERT n = 4, 'total reminder rows=4';
+  SELECT * INTO r FROM public.exos_send_event_reminders();
+  ASSERT r.mails_queued = 0, 'T-2h idempotent';
+  RAISE NOTICE 'C3 T-2h reminder OK';
+
+  -- C4. Event published inside the last 2h gets ONE mail (2h pass marks 24h too).
+  INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,starts_at) VALUES
+    ('cccccccc-0000-0000-0000-0000000000e4','aaaaaaaa-0000-0000-0000-000000000001','EvtF','evtf','published',10,now()+interval '1 hour');
+  INSERT INTO public.exos_tickets(event_id,org_id,owner_id,buyer_id,status,barcode_secret) VALUES
+    ('cccccccc-0000-0000-0000-0000000000e4','aaaaaaaa-0000-0000-0000-000000000001','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','active','s5');
+  SELECT * INTO r FROM public.exos_send_event_reminders();
+  ASSERT r.events_24h = 0 AND r.events_2h = 1 AND r.mails_queued = 1, 'late-published event: one mail';
+  ASSERT (SELECT reminder_24h_sent_at IS NOT NULL AND reminder_2h_sent_at IS NOT NULL FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e4'), 'both markers set';
+  RAISE NOTICE 'C4 late-publish single mail OK';
+
+  -- C5. Postpone C by 3 days → trigger clears both markers → a fresh cycle later.
+  UPDATE public.exos_events SET starts_at = now()+interval '3 days' WHERE id='cccccccc-0000-0000-0000-0000000000e1';
+  ASSERT (SELECT reminder_24h_sent_at IS NULL AND reminder_2h_sent_at IS NULL FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e1'), 'postpone resets markers';
+  SELECT * INTO r FROM public.exos_send_event_reminders();
+  ASSERT r.mails_queued = 0, 'nothing due after postpone';
+  RAISE NOTICE 'C5 postpone reset OK';
+END $$;
+
+-- C6. Manual "send now": owner OK, cooldown blocks a repeat, buyer forbidden,
+--     draft refused. (Bad/Zone on D must degrade to UTC, not fail.)
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE n int; ok boolean;
+BEGIN
+  n := public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e1');
+  ASSERT n = 2, 'manual send → 2 holders, got '||n;
+  ok := false;
+  BEGIN
+    PERFORM public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e1');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%wait until%';
+  END;
+  ASSERT ok, 'second manual send within 6h blocked by cooldown';
+  ok := false;
+  BEGIN
+    PERFORM public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e3');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%not published%';
+  END;
+  ASSERT ok, 'draft refused';
+  -- Bad timezone degrades to UTC.
+  n := public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e2');
+  ASSERT n = 0, 'D has no holders → 0 mails, but no error on Bad/Zone';
+  ASSERT (SELECT reminder_manual_sent_at IS NULL FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e2'), 'a send that reached nobody does not consume the cooldown';
+  n := public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e2');
+  ASSERT n = 0, 'repeat manual send on a holder-less event is still allowed';
+  RAISE NOTICE 'C6 manual send + cooldown + tz fallback OK';
+END $$;
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e1');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true;
+  END;
+  ASSERT ok, 'buyer cannot send reminders (42501)';
+  RAISE NOTICE 'C7 role gate OK';
+END $$;
+SELECT set_config('app.uid','',false);
+
+-- C8. exos_invoice_counters: RLS enabled, no policies, SECDEF numbering still works.
+DO $$
+DECLARE nxt text;
+BEGIN
+  ASSERT (SELECT rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename='exos_invoice_counters'), 'invoice counters RLS enabled';
+  ASSERT (SELECT count(*) FROM pg_policies WHERE tablename='exos_invoice_counters') = 0, 'no policies (deny-by-default)';
+  nxt := public.exos_next_invoice_number('aaaaaaaa-0000-0000-0000-000000000001');
+  ASSERT nxt LIKE 'INV-%', 'numbering still works under RLS, got '||nxt;
+  RAISE NOTICE 'C8 invoice-counter RLS OK';
+END $$;
+
+SELECT '*** PART C (reminders + invoice RLS) PASSED ***' AS result;
+-- ============================================================================
+-- PART D — ORGANIZER ANALYTICS DOCUMENT (mig 20260911130000)
+--   totals · no-show only after start · tz day buckets · axes with scan-in
+--   · checkin + reject rollups · role gate.
+-- =====================================================================SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+-- Event G: started 1h ago (NY tz). 5 tickets: 3 used, 1 active, 1 voided.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,timezone) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','EvtG','evtg','published',50,4,
+   now()-interval '1 hour','America/New_York');
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold) VALUES
+  ('dddddddd-0000-0000-0000-0000000000d1','dddddddd-0000-0000-0000-0000000000e1','GA',0,50,4);
+INSERT INTO public.exos_tickets(event_id,org_id,tier_id,tier_name,owner_id,buyer_id,status,barcode_secret,price_paid,channel_source,promoter_id,created_at) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','used','g1',10,'vibepass','promoA',now()-interval '3 days'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','used','g2',10,'vibepass','promoA',now()-interval '3 days'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','used','g3',0,'boxoffice',NULL,now()-interval '1 day'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','active','g4',0,'boxoffice','',now()-interval '1 day'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','dddddddd-0000-0000-0000-0000000000d1','GA','66666666-6666-6666-6666-666666666666','66666666-6666-6666-6666-666666666666','voided','g5',99,'vibepass','promoB',now()-interval '1 day');
+INSERT INTO public.exos_event_checkins(event_id,ticket_id,org_id,scanned_by,source,verification) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1',gen_random_uuid(),'aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','camera','verified'),
+  ('dddddddd-0000-0000-0000-0000000000e1',gen_random_uuid(),'aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','camera','verified'),
+  ('dddddddd-0000-0000-0000-0000000000e1',gen_random_uuid(),'aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','manual','manual');
+INSERT INTO public.exos_scan_rejects(event_id,org_id,rejected_by,reason,source) VALUES
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','used','camera'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','used','camera'),
+  ('dddddddd-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','wrong-event','manual');
+
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE j jsonb; a jsonb;
+BEGIN
+  j := public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000e1');
+  ASSERT (j->>'sold')::int = 4, 'sold=4 (voided excluded), got '||(j->>'sold');
+  ASSERT (j->>'used')::int = 3, 'used=3';
+  ASSERT (j->>'unscanned')::int = 1, 'unscanned=1';
+  ASSERT (j->>'voided')::int = 1, 'voided=1';
+  ASSERT (j->>'revenue')::numeric = 20, 'revenue=20 (voided 99 excluded), got '||(j->>'revenue');
+  ASSERT (j->>'capacity')::int = 50, 'capacity from event';
+  ASSERT (j->>'event_started')::boolean, 'started';
+  ASSERT (j->>'checkin_rate')::numeric = 0.75, 'checkin_rate=.75';
+  ASSERT (j->>'no_show_rate')::numeric = 0.25, 'no_show_rate=.25 after start';
+  ASSERT j->>'timezone' = 'America/New_York', 'tz carried';
+  -- Day buckets: two distinct days (3d ago × 2, 1d ago × 2), cumulative 2 → 4.
+  ASSERT jsonb_array_length(j->'sales_by_day') = 2, 'two day buckets, got '||jsonb_array_length(j->'sales_by_day');
+  ASSERT (j->'sales_by_day'->0->>'sold')::int = 2 AND (j->'sales_by_day'->1->>'cumulative')::int = 4, 'daily + cumulative';
+  -- Axes with scan-in.
+  ASSERT jsonb_array_length(j->'by_tier') = 1 AND (j->'by_tier'->0->>'used')::int = 3, 'by_tier used=3';
+  ASSERT jsonb_array_length(j->'by_promoter') = 1, 'blank/NULL/voided promoters excluded → 1 row';
+  ASSERT j->'by_promoter'->0->>'promoter' = 'promoA' AND (j->'by_promoter'->0->>'used')::int = 2, 'promoA sold 2 used 2';
+  SELECT x INTO a FROM jsonb_array_elements(j->'by_channel') x WHERE x->>'channel' = 'boxoffice';
+  ASSERT (a->>'sold')::int = 2 AND (a->>'used')::int = 1, 'boxoffice 2 sold / 1 used';
+  -- Door rollups.
+  ASSERT (j->'scans'->>'total')::int = 3, 'scans total=3';
+  ASSERT (j->'scans'->'by_source'->>'camera')::int = 2, 'scans by_source camera=2';
+  ASSERT (j->'rejects'->>'total')::int = 3, 'rejects total=3';
+  ASSERT j->'rejects'->'by_reason'->0->>'reason' = 'used' AND (j->'rejects'->'by_reason'->0->>'count')::int = 2, 'rejects by_reason sorted desc';
+  RAISE NOTICE 'D1 analytics document OK';
+
+  -- D2. Not started yet → no_show_rate is NULL, checkin_rate still reported.
+  UPDATE public.exos_events SET starts_at = now()+interval '2 days', timezone = 'Not/AZone'
+   WHERE id='dddddddd-0000-0000-0000-0000000000e1';
+  j := public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000e1');
+  ASSERT NOT (j->>'event_started')::boolean AND j->'no_show_rate' = 'null'::jsonb, 'no-show NULL before start';
+  ASSERT (j->>'checkin_rate')::numeric = 0.75, 'checkin_rate independent of start';
+  ASSERT j->>'timezone' = 'UTC', 'bad tz degrades to UTC';
+  RAISE NOTICE 'D2 pre-start + tz fallback OK';
+END $$;
+-- D3. Buyer (no org role) refused; unknown event refused.
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000e1');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true;
+  END;
+  ASSERT ok, 'buyer cannot read analytics (42501)';
+  ok := false;
+  BEGIN
+    PERFORM public.exos_event_analytics('dddddddd-0000-0000-0000-0000000000ff');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%not found%';
+  END;
+  ASSERT ok, 'unknown event refused';
+  RAISE NOTICE 'D3 role gate OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART D (analytics) PASSED ***' AS result;
+-- ============================================================================
+-- PART E — SELF-SERVE RSVP RELEASE (mig 20260911131000)
+--   holder release frees tier + event capacity and auto-offers the waitlist
+--   · paid / used / in-transfer refused · policy off · cutoff · staff override
+--   · analytics splits released out of voided.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+-- Event H: free, published, starts in 3 days, 1-seat tier fully sold to buyer.
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,timezone) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','EvtH','evth','published',3,3,
+   now()+interval '3 days','UTC');
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold,ticket_type) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000d1','eeeeeeee-0000-0000-0000-0000000000e1','Free',0,1,1,'free'),
+  ('eeeeeeee-0000-0000-0000-0000000000d2','eeeeeeee-0000-0000-0000-0000000000e1','Paid',20,5,2,'paid');
+INSERT INTO public.exos_tickets(id,event_id,org_id,tier_id,tier_name,owner_id,buyer_id,status,barcode_secret,price_paid) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000a1','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','eeeeeeee-0000-0000-0000-0000000000d1','Free','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','h1',0),
+  ('eeeeeeee-0000-0000-0000-0000000000a2','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','eeeeeeee-0000-0000-0000-0000000000d2','Paid','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','h2',20),
+  ('eeeeeeee-0000-0000-0000-0000000000a3','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','eeeeeeee-0000-0000-0000-0000000000d2','Paid','55555555-5555-5555-5555-555555555555','55555555-5555-5555-5555-555555555555','active','h3',0);
+-- Someone is waiting for the free tier.
+INSERT INTO public.exos_waitlist(event_id,tier_id,email,status) VALUES
+  ('eeeeeeee-0000-0000-0000-0000000000e1','eeeeeeee-0000-0000-0000-0000000000d1','waiter@x.com','waiting');
+
+-- E1. Holder releases the free ticket → voided + released_at, tier 1→0,
+--     event 3→2, waiter auto-offered.
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE j jsonb; ok boolean;
+BEGIN
+  j := public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a1');
+  ASSERT j->>'by' = 'holder' AND (j->>'freed_tier')::boolean, 'holder release payload, got '||j::text;
+  ASSERT (SELECT status = 'voided' AND released_at IS NOT NULL AND voided_reason = 'released-by-holder'
+            FROM public.exos_tickets WHERE id='eeeeeeee-0000-0000-0000-0000000000a1'), 'ticket voided + released_at';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='eeeeeeee-0000-0000-0000-0000000000d1') = 0, 'tier sold 1→0';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='eeeeeeee-0000-0000-0000-0000000000e1') = 2, 'event tickets_sold 3→2';
+  ASSERT (SELECT status FROM public.exos_waitlist WHERE email='waiter@x.com') = 'offered', 'waiter auto-offered by the tier trigger';
+  -- E2. Second release refused (not active).
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a1');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%only an active ticket%'; END;
+  ASSERT ok, 'double release refused';
+  -- E3. Paid ticket refused.
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a2');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%only free tickets%'; END;
+  ASSERT ok, 'paid ticket refused';
+  -- E4. Someone else's ticket refused (42501).
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'non-owner refused';
+  RAISE NOTICE 'E1-E4 holder release + refusals OK';
+END $$;
+
+-- E5. Policy off / cutoff block the HOLDER; staff still releases.
+SELECT set_config('app.uid','55555555-5555-5555-5555-555555555555',false);
+DO $$
+DECLARE ok boolean; j jsonb;
+BEGIN
+  UPDATE public.exos_events SET allow_holder_release = false WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%turned off self-serve release%'; END;
+  ASSERT ok, 'policy off blocks holder';
+  UPDATE public.exos_events SET allow_holder_release = true, release_cutoff_hours = 96 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%releases closed 96 hours%'; END;
+  ASSERT ok, 'cutoff (96h > 3 days) blocks holder';
+  -- In-transfer lock.
+  UPDATE public.exos_events SET release_cutoff_hours = 0 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  UPDATE public.exos_tickets SET pending_transfer_id = gen_random_uuid() WHERE id='eeeeeeee-0000-0000-0000-0000000000a3';
+  ok := false;
+  BEGIN PERFORM public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%pending transfer%'; END;
+  ASSERT ok, 'pending transfer blocks release';
+  UPDATE public.exos_tickets SET pending_transfer_id = NULL WHERE id='eeeeeeee-0000-0000-0000-0000000000a3';
+  RAISE NOTICE 'E5 policy / cutoff / transfer-lock OK';
+END $$;
+-- Staff (owner) releases t3 even with the cutoff back on; paid-tier free comp.
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE j jsonb;
+BEGIN
+  UPDATE public.exos_events SET release_cutoff_hours = 96 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  j := public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a3');
+  ASSERT j->>'by' = 'staff', 'staff override';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='eeeeeeee-0000-0000-0000-0000000000d2') = 1, 'paid tier sold 2→1';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='eeeeeeee-0000-0000-0000-0000000000e1') = 1, 'event tickets_sold 2→1';
+  -- E5b. Tier-less ticket: no tier trigger, so the RPC offers the general
+  --      waitlist directly.
+  INSERT INTO public.exos_tickets(id,event_id,org_id,owner_id,buyer_id,status,barcode_secret,price_paid) VALUES
+    ('eeeeeeee-0000-0000-0000-0000000000a4','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','h4',0);
+  UPDATE public.exos_events SET tickets_sold = tickets_sold + 1 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  INSERT INTO public.exos_waitlist(event_id,tier_id,email,status) VALUES
+    ('eeeeeeee-0000-0000-0000-0000000000e1',NULL,'general@x.com','waiting');
+  j := public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a4');
+  ASSERT (j->>'freed_tier')::boolean, 'tier-less release reports freed';
+  ASSERT (SELECT status FROM public.exos_waitlist WHERE email='general@x.com') = 'offered', 'tier-less release offers the general waitlist';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='eeeeeeee-0000-0000-0000-0000000000e1') = 1, 'house cap decremented';
+
+  -- E6. Analytics: released reported separately from voided.
+  j := public.exos_event_analytics('eeeeeeee-0000-0000-0000-0000000000e1');
+  ASSERT (j->>'released')::int = 3 AND (j->>'voided')::int = 0 AND (j->>'sold')::int = 1,
+    'analytics released=3 voided=0 sold=1, got '||j::text;
+  RAISE NOTICE 'E6 staff release + analytics split OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART E (rsvp release) PASSED ***' AS result;
+-- ============================================================================
+-- PART F — BULK COMP ISSUANCE + ORG COMP BUDGET (mig 20260911132000)
+--   account → issued + mail · no account → caller-held + pending transfer +
+--   mail · invalid / dedupe / self · per-row capacity · whole-batch budget gate
+--   · usage + budget setter role gates.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,created_by) VALUES
+  ('ffffffff-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','Evt <Comp>','evtcomp','published',6,0,
+   now()+interval '10 days','11111111-1111-1111-1111-111111111111');
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold) VALUES
+  ('ffffffff-0000-0000-0000-0000000000d1','ffffffff-0000-0000-0000-0000000000e1','VIP',100,3,0);
+
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+SELECT set_config('app.jwt','{"email":"owner@s4kent.com"}',false);
+DO $$
+DECLARE r record; n int; v_tr uuid;
+BEGIN
+  -- F1. Mixed list: account holder, stranger, junk, duplicate, self.
+  CREATE TEMP TABLE f_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1',
+    ARRAY['Buyer@X.com','  new.person@x.com ','nope','buyer@x.com','owner@s4kent.com'], 1, 'press');
+  SELECT count(*) INTO n FROM f_out; ASSERT n = 4, 'dedupe → 4 result rows, got '||n;
+  SELECT * INTO r FROM f_out WHERE email='buyer@x.com';
+  ASSERT r.outcome = 'issued' AND array_length(r.ticket_ids,1) = 1, 'account holder issued';
+  ASSERT (SELECT owner_id FROM public.exos_tickets WHERE id = r.ticket_ids[1]) = '22222222-2222-2222-2222-222222222222', 'owned by recipient';
+  ASSERT (SELECT channel_source='comp' AND price_paid=0 AND promoter_id='press' AND order_ref LIKE 'comp:%' FROM public.exos_tickets WHERE id = r.ticket_ids[1]), 'comp ticket shape';
+  ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='ticket-issued' AND to_email='buyer@x.com' AND html LIKE '%Evt &lt;Comp&gt;%') = 1, 'ticket-issued mail, escaped';
+  SELECT * INTO r FROM f_out WHERE email='new.person@x.com';
+  ASSERT r.outcome = 'invited', 'stranger invited, got '||r.outcome;
+  ASSERT (SELECT owner_id FROM public.exos_tickets WHERE id = r.ticket_ids[1]) = '11111111-1111-1111-1111-111111111111', 'stranger ticket parked on caller';
+  SELECT pending_transfer_id INTO v_tr FROM public.exos_tickets WHERE id = r.ticket_ids[1];
+  ASSERT v_tr IS NOT NULL, 'pending transfer lock set';
+  ASSERT (SELECT receiver_email='new.person@x.com' AND status='pending' AND sender_id='11111111-1111-1111-1111-111111111111' FROM public.exos_transfers WHERE id = v_tr), 'transfer row addressed to the stranger';
+  ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='transfer-initiated' AND to_email='new.person@x.com') = 1, 'transfer-initiated mail';
+  ASSERT (SELECT outcome FROM f_out WHERE email='nope') = 'invalid', 'junk invalid';
+  ASSERT (SELECT outcome FROM f_out WHERE email='owner@s4kent.com') = 'invalid', 'self invalid';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 2, 'tier sold 2';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='ffffffff-0000-0000-0000-0000000000e1') = 2, 'event sold 2';
+  ASSERT public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001') >= 2, 'usage counts comps';
+  ASSERT (SELECT detail FROM f_out WHERE email='owner@s4kent.com') LIKE '%cannot comp yourself%', 'self gets its own reason';
+  ASSERT (SELECT updated_at IS NOT NULL FROM public.exos_transfers WHERE id = v_tr), 'transfer row carries updated_at (NOT NULL DEFAULT in prod)';
+  RAISE NOTICE 'F1 mixed batch OK';
+  DROP TABLE f_out;
+  CREATE TEMP TABLE f_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['a@b','x@y.z'], 1, NULL);
+  ASSERT (SELECT outcome FROM f_out WHERE email='a@b') = 'invalid', 'a@b is not an email';
+  ASSERT (SELECT outcome FROM f_out WHERE email='x@y.z') = 'invalid', 'one-letter TLD rejected';
+  DROP TABLE f_out;
+  RAISE NOTICE 'F1b validation OK';
+
+  -- F2. Per-row capacity: tier has 1 seat left; 2 recipients → 1 issued, 1 sold-out.
+  --     A waiter on the VIP tier must NOT be auto-offered by the sold-out undo
+  --     (the undo now hits the trigger-free event counter, not the tier).
+  INSERT INTO public.exos_waitlist(event_id,tier_id,email,status) VALUES
+    ('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1','vipwait@x.com','waiting');
+  CREATE TEMP TABLE f_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1',
+    ARRAY['c1@x.com','c2@x.com'], 1, NULL);
+  ASSERT (SELECT count(*) FROM f_out WHERE outcome='invited') = 1 AND (SELECT count(*) FROM f_out WHERE outcome='sold-out') = 1, 'one invited, one sold-out';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 3, 'tier at cap';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='ffffffff-0000-0000-0000-0000000000e1') = 3, 'house cap undone for the sold-out row';
+  ASSERT (SELECT status FROM public.exos_waitlist WHERE email='vipwait@x.com') = 'waiting', 'sold-out undo did NOT auto-offer the tier waiter';
+  DROP TABLE f_out;
+  RAISE NOTICE 'F2 per-row capacity OK';
+END $$;
+
+-- F3. Budget: owner sets 4 (usage in this org ≥ 3 comps from F1/F2 + earlier
+--     boxoffice rows) → a 2-seat batch is refused WHOLE, nothing issued.
+DO $$
+DECLARE ok boolean := false; before int; n int; usage int;
+BEGIN
+  usage := public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001');
+  PERFORM public.exos_set_org_comp_budget('aaaaaaaa-0000-0000-0000-000000000001', usage + 1);
+  SELECT count(*) INTO before FROM public.exos_tickets WHERE event_id='ffffffff-0000-0000-0000-0000000000e1';
+  BEGIN
+    PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['d1@x.com','d2@x.com'], 1, NULL);
+  EXCEPTION WHEN check_violation THEN ok := SQLERRM LIKE '%comp budget exceeded%';
+  END;
+  ASSERT ok, 'over-budget batch refused (23514)';
+  SELECT count(*) INTO n FROM public.exos_tickets WHERE event_id='ffffffff-0000-0000-0000-0000000000e1';
+  ASSERT n = before, 'nothing issued on refusal';
+  -- Exactly within budget (1 left) → allowed, no tier (house cap only).
+  PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['d1@x.com'], 1, NULL);
+  ASSERT public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001') = usage + 1, 'usage advanced to the budget';
+  -- Clear the cap (NULL) → unlimited again.
+  PERFORM public.exos_set_org_comp_budget('aaaaaaaa-0000-0000-0000-000000000001', NULL);
+  PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['d2@x.com'], 1, NULL);
+  RAISE NOTICE 'F3 budget gate OK';
+END $$;
+-- F4. Role gates: buyer cannot issue, read usage, or set the budget.
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+SELECT set_config('app.jwt','',false);
+DO $$
+DECLARE ok boolean;
+BEGIN
+  ok := false;
+  BEGIN PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['z@x.com'], 1, NULL);
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot issue comps';
+  ok := false;
+  BEGIN PERFORM public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot read usage';
+  ok := false;
+  BEGIN PERFORM public.exos_set_org_comp_budget('aaaaaaaa-0000-0000-0000-000000000001', 1);
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot set budget';
+  RAISE NOTICE 'F4 role gates OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART F (comp batch + budget) PASSED ***' AS result;
+-- ============================================================================
+-- PART G — RECURRING / TIMED-ENTRY SERIES (mig 20260911133000)
+--   clone template + tiers per occurrence · deltas preserved · occurs_at_local
+--   recomputed · counters/markers cleared · slug suffixed · extend an existing
+--   series · dedupe + template-start skip · status override · role gate.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,doors_at,timezone,venue_name,reminder_24h_sent_at) VALUES
+  ('99999999-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','Friday Night','friday-night','published',100,7,
+   '2026-10-30 20:00-04'::timestamptz, '2026-10-30 19:00-04'::timestamptz, 'America/New_York', 'Brooklyn Steel', now());
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold,ticket_type,sort_order) VALUES
+  ('99999999-0000-0000-0000-0000000000d1','99999999-0000-0000-0000-0000000000e1','GA',0,80,7,'free',0),
+  ('99999999-0000-0000-0000-0000000000d2','99999999-0000-0000-0000-0000000000e1','VIP',40,20,0,'paid',1);
+
+-- G0. occurs_at_local helper: DST-correct offset, bad tz → NULL.
+DO $$
+BEGIN
+  ASSERT public.exos_occurs_at_local('2026-10-30 20:00-04'::timestamptz,'America/New_York') = '2026-10-30T20:00:00-04:00', 'EDT offset';
+  ASSERT public.exos_occurs_at_local('2026-11-06 20:00-05'::timestamptz,'America/New_York') = '2026-11-06T20:00:00-05:00', 'EST offset after fall-back';
+  ASSERT public.exos_occurs_at_local('2026-11-06 20:00+00'::timestamptz,'Asia/Kolkata') = '2026-11-07T01:30:00+05:30', 'half-hour zone';
+  ASSERT public.exos_occurs_at_local(now(),'Not/AZone') IS NULL, 'bad tz → NULL';
+  RAISE NOTICE 'G0 occurs_at_local OK';
+END $$;
+
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE r record; n int; v_series uuid; v_new uuid; v_doors timestamptz; v_local text;
+BEGIN
+  -- G1. Weekly × 3 across the DST change (wall-clock 20:00 stays), template
+  --     start included in the array + a duplicate → both dropped.
+  CREATE TEMP TABLE g_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1',
+    ARRAY['2026-10-30 20:00-04','2026-11-06 20:00-05','2026-11-06 20:00-05','2026-11-13 20:00-05','2026-11-20 20:00-05']::timestamptz[],
+    'recurring', 'Friday Nights', '{"freq":"weekly","count":3}'::jsonb, NULL);
+  SELECT count(*) INTO n FROM g_out; ASSERT n = 3, 'three new occurrences (template + dup skipped), got '||n;
+  ASSERT (SELECT array_agg(series_index ORDER BY series_index) FROM g_out) = ARRAY[1,2,3], 'indexes 1..3';
+  SELECT series_id INTO v_series FROM public.exos_events WHERE id='99999999-0000-0000-0000-0000000000e1';
+  ASSERT v_series IS NOT NULL AND (SELECT series_index FROM public.exos_events WHERE id='99999999-0000-0000-0000-0000000000e1') = 0, 'template is member 0';
+  ASSERT (SELECT name='Friday Nights' AND kind='recurring' AND template_event_id='99999999-0000-0000-0000-0000000000e1' AND timezone='America/New_York'
+            FROM public.exos_event_series WHERE id=v_series), 'series row';
+  SELECT event_id INTO v_new FROM g_out WHERE series_index = 1;
+  SELECT doors_at, occurs_at_local INTO v_doors, v_local FROM public.exos_events WHERE id = v_new;
+  ASSERT v_doors = '2026-11-06 19:00-05'::timestamptz, 'doors delta (-1h) preserved, got '||v_doors;
+  ASSERT v_local = '2026-11-06T20:00:00-05:00', 'occurs_at_local recomputed in tz, got '||v_local;
+  ASSERT (SELECT name='Friday Night' AND status='published' AND venue_name='Brooklyn Steel' AND total_tickets=100
+             AND tickets_sold=0 AND reminder_24h_sent_at IS NULL AND slug='friday-night-20261106-2000'
+             AND series_id=v_series AND created_by='11111111-1111-1111-1111-111111111111'
+            FROM public.exos_events WHERE id=v_new), 'clone carries template fields, clears counters/markers, suffixes slug';
+  -- Tiers cloned with sold = 0, both of them, order kept.
+  ASSERT (SELECT count(*) FROM public.exos_ticket_tiers WHERE event_id=v_new) = 2, 'two tiers cloned';
+  ASSERT (SELECT array_agg(name ORDER BY sort_order) FROM public.exos_ticket_tiers WHERE event_id=v_new) = ARRAY['GA','VIP'], 'tier names';
+  ASSERT (SELECT sum(sold) FROM public.exos_ticket_tiers WHERE event_id=v_new) = 0, 'clone tiers unsold';
+  ASSERT (SELECT capacity FROM public.exos_ticket_tiers WHERE event_id=v_new AND name='GA') = 80, 'tier capacity copied';
+  -- Template untouched.
+  ASSERT (SELECT tickets_sold=7 AND slug='friday-night' FROM public.exos_events WHERE id='99999999-0000-0000-0000-0000000000e1'), 'template unchanged';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='99999999-0000-0000-0000-0000000000d1') = 7, 'template tier unchanged';
+  DROP TABLE g_out;
+  RAISE NOTICE 'G1 create series OK';
+
+  -- G2. Extend: same template again → same series, indexes continue at 4;
+  --     p_publish=false → drafts.
+  CREATE TEMP TABLE g_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1',
+    ARRAY['2026-11-27 20:00-05']::timestamptz[], 'recurring', NULL, NULL, false);
+  ASSERT (SELECT series_index FROM g_out) = 4, 'extend continues index at 4';
+  SELECT event_id INTO v_new FROM g_out;
+  ASSERT (SELECT series_id=v_series AND status='draft' FROM public.exos_events WHERE id=v_new), 'same series, draft status';
+  ASSERT (SELECT count(*) FROM public.exos_event_series WHERE org_id='aaaaaaaa-0000-0000-0000-000000000001' AND name='Friday Nights') = 1, 'no second series row';
+  ASSERT (SELECT count(*) FROM public.exos_events WHERE series_id=v_series) = 5, '5 members';
+  DROP TABLE g_out;
+  -- G2b. Extend with dates that are ALREADY members → skipped, only the new one lands.
+  CREATE TEMP TABLE g_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1',
+    ARRAY['2026-11-06 20:00-05','2026-11-27 20:00-05','2026-12-04 20:00-05']::timestamptz[], 'recurring', NULL, NULL, false);
+  ASSERT (SELECT count(*) FROM g_out) = 1 AND (SELECT series_index FROM g_out) = 5, 'existing members skipped, one new at index 5';
+  ASSERT (SELECT count(*) FROM public.exos_events WHERE series_id=v_series) = 6, '6 members, no duplicates';
+  DROP TABLE g_out;
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2026-11-06 20:00-05','2026-11-13 20:00-05']::timestamptz[], 'recurring', NULL, NULL, NULL);
+    ASSERT false, 'all-existing extend should be refused';
+  EXCEPTION WHEN OTHERS THEN
+    ASSERT SQLERRM LIKE '%already in this series%', 'clear all-existing message, got '||SQLERRM;
+  END;
+  RAISE NOTICE 'G2 extend series OK';
+
+  -- G3. Timed-entry kind on a fresh template; nothing new → refused.
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2026-10-30 20:00-04']::timestamptz[], 'recurring', NULL, NULL, NULL);
+    ASSERT false, 'template-only array should be refused';
+  EXCEPTION WHEN OTHERS THEN
+    ASSERT SQLERRM LIKE '%no new occurrences%', 'no new occurrences message, got '||SQLERRM;
+  END;
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2027-01-01 20:00-05']::timestamptz[], 'monthly', NULL, NULL, NULL);
+    ASSERT false, 'bad kind should be refused';
+  EXCEPTION WHEN OTHERS THEN
+    ASSERT SQLERRM LIKE '%kind must be%', 'kind check';
+  END;
+  RAISE NOTICE 'G3 refusals OK';
+END $$;
+-- G4. Buyer cannot create a series (42501).
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2027-01-01 20:00-05']::timestamptz[], 'recurring', NULL, NULL, NULL);
+  EXCEPTION WHEN insufficient_privilege THEN ok := true;
+  END;
+  ASSERT ok, 'buyer refused';
+  ASSERT (SELECT rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename='exos_event_series'), 'series RLS on';
+  RAISE NOTICE 'G4 role gate OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART G (event series) PASSED ***' AS result;
+-- PART H — ATTENDEE NAME ON TICKETS (mig 20260911060000; customer session — relabelled D→H
+--   in the Stage 3 merge so Parts D–G stay the organizer blocks)
+-- ============================================================================
+INSERT INTO public.exos_tickets(id,event_id,org_id,owner_id,buyer_id,status,barcode_secret) VALUES
+  ('dddddddd-0000-0000-0000-0000000000d1','cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','sd1'),
+  ('dddddddd-0000-0000-0000-0000000000d2','cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','used','sd2');
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE n text; ok boolean;
+BEGIN
+  n := public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', '  Ada   Lovelace ');
+  ASSERT n = 'Ada Lovelace', 'whitespace collapsed, got '||coalesce(n,'null');
+  ASSERT (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') = 'Ada Lovelace', 'persisted';
+  n := public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', '   ');
+  ASSERT n IS NULL AND (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') IS NULL, 'blank clears';
+  ok := false;
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', repeat('x', 81));
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%too long%'; END;
+  ASSERT ok, '81 chars rejected';
+  ok := false;
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d2', 'Grace');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%is used%'; END;
+  ASSERT ok, 'used ticket refused';
+  PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', 'Ada Lovelace');
+  UPDATE public.exos_tickets SET pending_transfer_id = gen_random_uuid() WHERE id='dddddddd-0000-0000-0000-0000000000d1';
+  ok := false;
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', 'Grace');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%in transfer%'; END;
+  ASSERT ok, 'in-transfer ticket refused';
+  UPDATE public.exos_tickets SET pending_transfer_id = NULL WHERE id='dddddddd-0000-0000-0000-0000000000d1';
+  RAISE NOTICE 'D1 set/clear/validate attendee name OK';
+END $$;
+-- Non-owner (org owner account) cannot set it, even as staff.
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', 'Mallory');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'non-owner refused (42501)';
+  ASSERT (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') = 'Ada Lovelace', 'unchanged';
+  RAISE NOTICE 'D2 owner-only gate OK';
+END $$;
+SELECT set_config('app.uid','',false);
+-- Ownership change (what exos_claim_transfer does) clears the name.
+UPDATE public.exos_tickets SET owner_id = '55555555-5555-5555-5555-555555555555' WHERE id='dddddddd-0000-0000-0000-0000000000d1';
+DO $$
+BEGIN
+  ASSERT (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') IS NULL, 'owner change clears attendee_name';
+  RAISE NOTICE 'D3 transfer clears name OK';
+END $$;
+SELECT '*** PART H (attendee name) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;

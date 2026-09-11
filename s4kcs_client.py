@@ -1,4 +1,4 @@
-"""S4K CRM marketplace-orders API client (read-only).
+"""S4K CRM API client — marketplace orders + N2S (read-only).
 
 Host: https://crm.s4kcs.com/api/v1
 Auth: an `X-API-Key: s4k_…` header, resolved arg → env `S4KCS_API_KEY` →
@@ -10,16 +10,38 @@ marketplaces, adding **StubHub and Gametime — which we ingest nowhere**. The
 substitution checker's order lookup falls back to it so a broker can paste any
 marketplace's order number instead of retyping the sold ticket by hand.
 
+The CRM's SECOND book is **N2S ("Need to Sub")**: orders that need a substitute
+— the ones agents add by hand from Order Lookup, plus the ones the CRM picks up
+automatically from Automatiq failed-order alerts across every marketplace. Same
+host and same `X-API-Key` scheme, but a different scope on the key
+(**`n2s:read`**); `ping()` reports the scopes a key actually carries. Unlike the
+marketplace book it reads the CRM's own database — no Gmail or marketplace
+round-trip — so it answers in milliseconds, has no 10/min live-fetch limit, and
+needs no cache. Likewise GET-only.
+
 Endpoints used (all GET — per its own docs the API has no write surface):
-  GET /ping                          key check
+  GET /ping                          key check + the key's scopes
   GET /marketplace/marketplaces      the six markets + whether creds are set
   GET /marketplace/columns           the column set every order row carries
   GET /marketplace/orders            live fetch across markets (can take ~60s)
+  GET /n2s/meta                      workflow definition (statuses/transitions)
+  GET /n2s/intake                    health of the Automatiq intake loop
+  GET /n2s/items                     the N2S book — filter / page / CSV
+  GET /n2s/items/{id}                one row + history, raw fields, payload
+  GET /n2s/items/{id}/history        just that row's events, oldest first
+  GET /n2s/orders/{order_number}     the same row by marketplace order number
+  GET /n2s/stats                     counts for dashboards
 
-Rate limits are 120 req/min general but only **10/min** on the live-fetch
-endpoints, and one fetch returns every open order (tens of thousands of rows,
-~10 MB). So `orders()` memoises per parameter set for `cache_ttl` seconds and
-`find_order` scans that cached list — the API has no by-id endpoint.
+Rate limits are 120 req/min general (which covers all of `/api/v1`, N2S
+included) but only **10/min** on the marketplace live-fetch endpoints, and one
+fetch returns every open order (tens of thousands of rows, ~10 MB). So
+`orders()` memoises per parameter set for `cache_ttl` seconds and `find_order`
+scans that cached list — the API has no by-id endpoint. The N2S endpoints are
+cheap and filterable, so they are passed straight through.
+
+Timestamps: every instant the CRM returns is UTC with a trailing `Z`. The ONE
+exception is `event_dt` — the venue-local show time as printed on the ticket,
+with no zone at all. Never read it as UTC.
 
 RULE 2: this is an upstream read source like the order/listing clients. The
 runtime guard below raises on any non-GET before a network call is made.
@@ -28,7 +50,9 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Iterator
+from urllib.parse import quote
 
 import requests
 
@@ -63,29 +87,88 @@ _assert_readonly_method = build_readonly_guard(
 # and a rotation has exactly one place to land.
 VAULT_SECRET_NAME = "crm.s4kcs.com"
 
+# The N2S key is a SEPARATE secret under its own name — not a rotation of the
+# one above. The CRM issues per-scope keys and the two we hold are disjoint
+# (verified live against /ping 2026-09-08): 'crm.s4kcs.com' carries
+# ["marketplace:read"], this one ["n2s:read"]. Neither serves both surfaces, so
+# collapsing them onto one name would 403 whichever endpoint lost — and if the
+# N2S key were written to the marketplace name it would silently stop the
+# 10-minute s4kcs_orders ingest. Whitelisted by mig 20260908170721.
+N2S_VAULT_SECRET_NAME = "crm.s4kcs.com/n2s"
+
+# N2S vocabulary, mirrored from `GET /n2s/meta` so a typo is a ValueError here
+# instead of a 400/422 round trip. `/meta` stays the source of truth: if the CRM
+# ships a new status or sort key, widen these — never silently drop the filter.
+N2S_STATUSES = frozenset({"n2s", "subbed", "resolved", "no_subs", "allocated"})
+N2S_SOURCES = frozenset({"manual", "automatiq"})
+N2S_SORT_KEYS = frozenset({"updated_at", "created_at", "alert_at", "event_dt"})
+N2S_ORDER_BYS = frozenset({"asc", "desc"})
+N2S_MAX_LIMIT = 1000  # the API's own ceiling; over it answers 422
+
 # {(markets, ev_from, ev_to): (fetched_at_monotonic, rows)}. Module-level so the
 # cache survives per-request client construction in the route.
 _ORDERS_CACHE: dict[tuple, tuple[float, list[dict[str, Any]]]] = {}
 
 
-def _resolve_key(api_key: str | None, db: Any | None) -> str | None:
-    """arg → env → vault. Never logs the value."""
+def _resolve_key(api_key: str | None, db: Any | None, *,
+                 env_var: str = "S4KCS_API_KEY",
+                 vault_name: str = VAULT_SECRET_NAME,
+                 label: str = "s4kcs") -> str | None:
+    """arg → env → vault. Never logs the value.
+
+    Parameterised because the host needs two independently-scoped keys; the
+    lookup order is identical for both, only the names differ.
+    """
     if api_key:
         return api_key
-    env = os.environ.get("S4KCS_API_KEY")
+    env = os.environ.get(env_var)
     if env:
         return env
     return vault_secret(
-        db, VAULT_SECRET_NAME,
-        on_error=lambda e: print(f"s4kcs: vault lookup failed: {e}"),
+        db, vault_name,
+        on_error=lambda e: print(f"{label}: vault lookup failed: {e}"),
     )
+
+
+def _error_detail(resp: Any) -> str:
+    """`": <detail>"` from an error body, or `""`.
+
+    The CRM answers every error with `{"detail": "…"}` and that text names the
+    actual problem — a 403 says the key lacks the `n2s:read` scope, a 422 says
+    which parameter is out of range. Worth carrying into the exception; the
+    request (and so the key) is never included.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return ""
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return f": {detail}" if isinstance(detail, str) and detail.strip() else ""
+
+
+def _instant(value: Any) -> str | None:
+    """Render a datetime as the UTC `…Z` instant the API expects; pass strings
+    through untouched (a bare `YYYY-MM-DD` is valid for the alert window).
+
+    A naive datetime is read as UTC — the CRM's own screens render Eastern, so
+    a local-time value passed here without a tzinfo would silently shift the
+    window; attach a tzinfo when that matters.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return aware.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    text = str(value).strip()
+    return text or None
 
 
 class S4KCSClient:
     BASE_URL = "https://crm.s4kcs.com/api/v1"
 
     def __init__(self, api_key: str | None = None, db: Any | None = None,
-                 *, timeout: int = 120, cache_ttl: float = 600.0):
+                 *, n2s_api_key: str | None = None,
+                 timeout: int = 120, cache_ttl: float = 600.0):
         key = _resolve_key(api_key, db)
         if not key:
             raise S4KCSError(
@@ -100,14 +183,46 @@ class S4KCSClient:
         self.api_key = key.strip()
         self.timeout = timeout
         self.cache_ttl = cache_ttl
+        # The N2S key is resolved lazily and only if an /n2s/* call is made:
+        # a caller that never touches N2S must not need it to exist, and the
+        # marketplace surface must keep working when it doesn't.
+        self._db = db
+        self._n2s_api_key = n2s_api_key
+        self._n2s_key_cache: str | None = None
+
+    def _n2s_key(self) -> str:
+        """The key for `/n2s/*` — arg → env `S4KCS_N2S_API_KEY` → vault
+        `crm.s4kcs.com/n2s`, falling back to the marketplace key.
+
+        The fallback is not a guess that it will work: it is what makes a
+        single dual-scope key (should the CRM ever issue one) usable under the
+        existing name. With today's disjoint keys it simply produces the
+        honest `HTTP 403: API key lacks the 'n2s:read' scope` instead of a
+        construction-time failure on a client that may only ever have been
+        built for the marketplace book.
+        """
+        if self._n2s_key_cache is None:
+            key = _resolve_key(
+                self._n2s_api_key, self._db,
+                env_var="S4KCS_N2S_API_KEY", vault_name=N2S_VAULT_SECRET_NAME,
+                label="s4kcs n2s",
+            ) or self.api_key
+            self._n2s_key_cache = key.strip()
+        return self._n2s_key_cache
 
     # ---------- transport ----------
 
-    def _get(self, path: str, params: dict | None = None) -> Any:
+    def _get(self, path: str, params: dict | None = None, *,
+             raw: bool = False, not_found_ok: bool = False) -> Any:
+        """One GET. `raw` returns the body as text (the CSV export is not
+        JSON); `not_found_ok` turns a 404 into `None` for the lookups whose
+        documented answer to "no such row" is a 404, not an error."""
         _assert_readonly_method("GET")  # RULE 2 enforcement
         url = f"{self.BASE_URL}{path}"
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        headers = {"X-API-Key": self.api_key, "Accept": "application/json"}
+        # Two surfaces, two scoped keys — see N2S_VAULT_SECRET_NAME.
+        key = self._n2s_key() if path.startswith("/n2s") else self.api_key
+        headers = {"X-API-Key": key, "Accept": "application/json"}
         try:
             r = fetch_with_retry(
                 lambda: requests.get(url, headers=headers, params=clean,
@@ -117,8 +232,12 @@ class S4KCSClient:
             )
         except (requests.ConnectionError, requests.Timeout) as e:
             raise S4KCSError(f"network error: {type(e).__name__}") from e
+        if r.status_code == 404 and not_found_ok:
+            return None
         if not r.ok:
-            raise S4KCSError(f"HTTP {r.status_code}")
+            raise S4KCSError(f"HTTP {r.status_code}{_error_detail(r)}")
+        if raw:
+            return r.text
         try:
             return r.json()
         except ValueError:
@@ -181,3 +300,189 @@ class S4KCSClient:
             if str(row.get("id") or "").strip() == wanted:
                 return row
         return None
+
+    # ---------- N2S (Need to Sub) ----------
+    #
+    # A key must carry the `n2s:read` scope for any of these; a 403 means the
+    # key is valid but unscoped (`ping()["scopes"]` says which it has). Every
+    # instant returned is UTC `…Z` — except `event_dt`, which is venue-local.
+
+    def _n2s_query(self, *, status: str | None = None, source: str | None = None,
+                   marketplace: str | None = None, search: str | None = None,
+                   order: str | None = None, include_allocated: bool = False,
+                   alert_from: Any = None, alert_to: Any = None,
+                   updated_since: Any = None, sort: str | None = None,
+                   order_by: str | None = None, limit: int | None = None,
+                   offset: int | None = None) -> dict[str, Any]:
+        """Validate + render the `/n2s/items` filter set. Unknown values raise
+        `ValueError` locally rather than spending a request on a 400/422."""
+        if status is not None and status not in N2S_STATUSES:
+            raise ValueError(f"status must be one of {sorted(N2S_STATUSES)}")
+        if source is not None and source not in N2S_SOURCES:
+            raise ValueError(f"source must be one of {sorted(N2S_SOURCES)}")
+        if sort is not None and sort not in N2S_SORT_KEYS:
+            raise ValueError(f"sort must be one of {sorted(N2S_SORT_KEYS)}")
+        if order_by is not None and order_by not in N2S_ORDER_BYS:
+            raise ValueError("order_by must be 'asc' or 'desc'")
+        if limit is not None and not 1 <= limit <= N2S_MAX_LIMIT:
+            raise ValueError(f"limit must be between 1 and {N2S_MAX_LIMIT}")
+        if offset is not None and offset < 0:
+            raise ValueError("offset must not be negative")
+        return {
+            "status": status, "source": source, "marketplace": marketplace,
+            "search": search, "order": order,
+            # Sent only when set: `false` is the server's own default, and the
+            # flag is ignored outright when `status` is given.
+            "include_allocated": "true" if include_allocated else None,
+            "alert_from": _instant(alert_from), "alert_to": _instant(alert_to),
+            "updated_since": _instant(updated_since),
+            "sort": sort, "order_by": order_by,
+            "limit": limit, "offset": offset,
+        }
+
+    def n2s_meta(self) -> dict[str, Any]:
+        """GET /n2s/meta — the workflow definition: statuses (+ their Gmail
+        labels and which are terminal), legal transitions, sources, the seven
+        marketplaces, `csv_columns`, `sort_keys` and `timer_minutes`.
+
+        It changes only with a CRM deploy, so cache it caller-side rather than
+        re-fetching per poll.
+        """
+        body = self._get("/n2s/meta")
+        return body if isinstance(body, dict) else {}
+
+    def n2s_intake(self) -> dict[str, Any]:
+        """GET /n2s/intake — health of the automated Automatiq intake loop.
+
+        Read this before trusting an empty `n2s_items()`: `running` or
+        `gmail_connected` false, or a `last_pass.error`, means the absence of
+        rows is the loop's, not the book's.
+        """
+        body = self._get("/n2s/intake")
+        return body if isinstance(body, dict) else {}
+
+    def n2s_items(self, **filters: Any) -> dict[str, Any]:
+        """GET /n2s/items — one page of the N2S book.
+
+        Filters (all optional, all validated by `_n2s_query`): `status`,
+        `source`, `marketplace`, `search`, `order`, `include_allocated`,
+        `alert_from`, `alert_to`, `updated_since`, `sort`, `order_by`,
+        `limit`, `offset`.
+
+        Returns the API's own envelope — `count` / `total` / `limit` /
+        `offset` / `items` / `filters` / `generated_at` — not just the rows:
+        `total` is what drives paging, and `generated_at` is the cursor for an
+        incremental mirror (feed it back as the next call's `updated_since`).
+        `items` is always a list.
+
+        Allocated rows (filled from our own inventory, no sub needed) are
+        excluded unless asked for by `status="allocated"` or
+        `include_allocated=True`.
+        """
+        body = self._get("/n2s/items", self._n2s_query(**filters))
+        body = body if isinstance(body, dict) else {}
+        rows = body.get("items")
+        body["items"] = rows if isinstance(rows, list) else []
+        return body
+
+    def n2s_iter_items(self, *, page_size: int = 200,
+                       max_items: int | None = None,
+                       **filters: Any) -> Iterator[dict[str, Any]]:
+        """Yield every matching row, paging by offset until the book runs out.
+
+        The loop owns `limit`/`offset`, so passing either raises. Page with a
+        stable ascending sort (`sort="updated_at", order_by="asc"` for the
+        mirror recipe) — under the default descending `updated_at` a row
+        touched mid-walk moves between pages and can be seen twice or skipped.
+        """
+        if "limit" in filters or "offset" in filters:
+            raise ValueError("n2s_iter_items owns limit/offset — filter without them")
+        if not 1 <= page_size <= N2S_MAX_LIMIT:
+            raise ValueError(f"page_size must be between 1 and {N2S_MAX_LIMIT}")
+        offset = yielded = 0
+        while True:
+            page = self.n2s_items(limit=page_size, offset=offset, **filters)
+            rows = page["items"]
+            if not rows:
+                return
+            for row in rows:
+                yield row
+                yielded += 1
+                if max_items is not None and yielded >= max_items:
+                    return
+            if len(rows) < page_size:
+                return
+            offset += len(rows)
+            total = page.get("total")
+            # Belt-and-braces: without this, a server that ignored `offset`
+            # would hand back a full page forever and the walk never ends.
+            if isinstance(total, int) and offset >= total:
+                return
+
+    def n2s_items_csv(self, **filters: Any) -> str:
+        """GET /n2s/items?format=csv — the same rows flattened to CSV text,
+        columns per `/meta`'s `csv_columns`. Returned as the raw body: it is
+        not JSON, so it never goes near the JSON decoder."""
+        params = self._n2s_query(**filters)
+        params["format"] = "csv"
+        return self._get("/n2s/items", params, raw=True)
+
+    def _n2s_one(self, path: str, include_body: bool) -> dict[str, Any] | None:
+        body = self._get(path, {"include": "body"} if include_body else None,
+                         not_found_ok=True)
+        if body is None:
+            return None
+        return body if isinstance(body, dict) else {}
+
+    def n2s_item(self, item_id: Any, *, include_body: bool = False) -> dict[str, Any] | None:
+        """GET /n2s/items/{id} — one row by CRM id, with everything the list
+        returns plus `events` (its history), `deliveries`, `raw_fields` (the
+        raw parsed tables, keyed by where they came from) and `payload_json`
+        (the webhook envelope the CRM would send). `None` when there is no
+        such row.
+
+        `include_body=True` also pulls `body_html` / `source_body_html` — the
+        sales-email and alert HTML, which are large; leave it off for polling.
+        """
+        ident = str(item_id or "").strip()
+        if not ident:
+            return None
+        return self._n2s_one(f"/n2s/items/{quote(ident, safe='')}", include_body)
+
+    def n2s_order(self, order_number: Any, *, include_body: bool = False) -> dict[str, Any] | None:
+        """GET /n2s/orders/{order_number} — the same item addressed by the
+        marketplace's order number instead of the CRM id.
+
+        `None` means the order was never in N2S. That is the API's documented
+        404 and a normal answer here, not a failure — it is how the broker's
+        order lookup asks "does this one need a sub?".
+        """
+        ident = str(order_number or "").strip()
+        if not ident:
+            return None
+        return self._n2s_one(f"/n2s/orders/{quote(ident, safe='')}", include_body)
+
+    def n2s_history(self, item_id: Any) -> list[dict[str, Any]]:
+        """GET /n2s/items/{id}/history — that row's events, oldest first.
+
+        Unlike `n2s_item`, an unknown id raises: every real row carries at
+        least its `created` event, so an empty list means "no history", never
+        "no such row", and conflating the two would hide a bad id.
+        """
+        ident = str(item_id or "").strip()
+        if not ident:
+            return []
+        body = self._get(f"/n2s/items/{quote(ident, safe='')}/history")
+        events = body.get("events") if isinstance(body, dict) else None
+        return events if isinstance(events, list) else []
+
+    def n2s_stats(self, *, alert_from: Any = None, alert_to: Any = None) -> dict[str, Any]:
+        """GET /n2s/stats — counts for dashboards.
+
+        `by_status` / `by_source` always cover every row; `alert_from` /
+        `alert_to` bound only the `automated_window` section, which otherwise
+        defaults to the intake window (since yesterday midnight Eastern).
+        """
+        body = self._get("/n2s/stats", {"alert_from": _instant(alert_from),
+                                        "alert_to": _instant(alert_to)})
+        return body if isinstance(body, dict) else {}

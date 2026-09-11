@@ -1,11 +1,12 @@
 // Notifications — the /alerts feed. Punk "// what you missed" design from the
-// Exos set. Backed by real transfer signals via lib/notifications.ts (no faked
-// items); event-side alerts (reminders/drops/price steps) will merge in as
-// those get a backend. Read-state is client-only for now (mark-all-read).
+// Exos set. Backed by real signals via lib/notifications.ts (no faked items):
+// transfers, upcoming-event reminders, cancellations, organizer announcements,
+// reschedules, and price-step nudges for saved events. Read-state is
+// server-side (exos_notification_reads) unioned with this session's clears.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Ticket, ArrowLeftRight, Bell, Zap, DollarSign, ChevronRight } from 'lucide-react';
+import { Ticket, ArrowLeftRight, Bell, Zap, DollarSign, ChevronRight, Megaphone, Ban } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
   listNotifications,
@@ -13,8 +14,11 @@ import {
   markNotificationsRead,
   NotificationItem,
   NotificationIcon,
+  SourceName,
 } from '../lib/notifications';
 import { applyMeta } from '../lib/meta';
+import { useT } from '../context/LanguageContext';
+import type { DictKey } from '../lib/i18n/dict';
 
 const ICONS: Record<NotificationIcon, typeof Ticket> = {
   transfer: ArrowLeftRight,
@@ -22,12 +26,14 @@ const ICONS: Record<NotificationIcon, typeof Ticket> = {
   reminder: Bell,
   drop: Zap,
   price: DollarSign,
+  announce: Megaphone,
+  cancel: Ban,
 };
 
-const TABS: [string, string][] = [
-  ['all', 'All'],
-  ['tickets', 'Tickets'],
-  ['events', 'Events'],
+const TABS: [string, DictKey][] = [
+  ['all', 'alerts.tabAll'],
+  ['tickets', 'alerts.tabTickets'],
+  ['events', 'alerts.tabEvents'],
 ];
 
 function relTime(ms: number): string {
@@ -44,15 +50,18 @@ function relTime(ms: number): string {
 
 export default function Notifications() {
   const { user, signIn } = useAuth();
+  const t = useT();
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failedSources, setFailedSources] = useState<SourceName[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState('all');
-  // Client-only read state (no server read-state yet): ids the user has cleared.
+  // Read ids: server read-state unioned with anything cleared this session.
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    applyMeta({ title: 'Alerts', description: 'What you missed on Exos.' });
-  }, []);
+    applyMeta({ title: t('alerts.title'), description: t('alerts.kicker').replace('// ', '') });
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,13 +73,18 @@ export default function Notifications() {
     // Load the feed and the server-side read-state in parallel. The read-state
     // is best-effort (empty Set until mig 20260709120000 is applied) and is
     // unioned with any read ids the user cleared locally this session.
+    setLoadError(null);
     Promise.all([listNotifications(), listReadNotificationIds()])
-      .then(([list, serverRead]) => {
+      .then(([feed, serverRead]) => {
         if (cancelled) return;
-        setItems(list);
+        setItems(feed.items);
+        setFailedSources(feed.failedSources);
         setReadIds((prev) => new Set([...prev, ...serverRead]));
       })
-      .catch((err) => console.error('Failed to load notifications', err))
+      .catch((err: any) => {
+        console.error('Failed to load notifications', err);
+        if (!cancelled) setLoadError(err?.message || 'Could not load alerts.');
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -96,16 +110,16 @@ export default function Notifications() {
     return (
       <div className="wall min-h-[80vh] flex flex-col items-center justify-center text-center px-6">
         <h1 className="disp text-4xl md:text-5xl tracking-tight mb-4" style={{ transform: 'skewX(-4deg)' }}>
-          SIGN IN FOR <span className="neon">ALERTS</span>
+          {t('alerts.signInFor')} <span className="neon">{t('alerts.alerts')}</span>
         </h1>
         <p className="type text-white/55 mb-8 max-w-sm">
-          Your transfers, drops, and reminders live here once you're on the list.
+          {t('alerts.signInBody')}
         </p>
         <button
           onClick={signIn}
           className="disp bg-brand-primary text-black px-7 py-3 text-lg tracking-wide hover:scale-[1.02] transition-transform"
         >
-          SIGN IN
+          {t('alerts.signIn')}
         </button>
       </div>
     );
@@ -116,9 +130,9 @@ export default function Notifications() {
       <div className="max-w-2xl mx-auto px-4 py-10">
         <div className="flex items-end justify-between mb-8">
           <div>
-            <p className="type text-brand-primary text-xs tracking-[0.3em] uppercase mb-2">// what you missed</p>
+            <p className="type text-brand-primary text-xs tracking-[0.3em] uppercase mb-2">{t('alerts.kicker')}</p>
             <h1 className="disp text-5xl md:text-6xl leading-none" style={{ transform: 'skewX(-4deg)' }}>
-              ALERTS
+              {t('alerts.alerts')}
             </h1>
           </div>
           {items.some(isUnread) && (
@@ -126,7 +140,7 @@ export default function Notifications() {
               onClick={markAll}
               className="type text-[11px] uppercase tracking-widest text-white/40 hover:text-brand-primary"
             >
-              Mark all read
+              {t('alerts.markAll')}
             </button>
           )}
         </div>
@@ -144,25 +158,34 @@ export default function Notifications() {
                   on ? 'border-brand-primary text-brand-primary' : 'border-white/12 text-white/40 hover:text-white'
                 }`}
               >
-                {label}
+                {t(label)}
                 {unread > 0 && <span className="text-brand-secondary"> {unread}</span>}
               </button>
             );
           })}
         </div>
 
+        {/* Degraded / failed load — never show "all clear" over a failure. */}
+        {(loadError || failedSources.length > 0) && !loading && (
+          <div className="border border-brand-accent/40 bg-brand-accent/5 p-4 mb-4 type text-[12px] text-white/70">
+            {loadError
+              ? loadError
+              : t('alerts.degraded', { sources: failedSources.join(', ') })}
+          </div>
+        )}
+
         {/* Feed */}
         {loading ? (
           <div className="text-center text-white/40 py-20 type uppercase tracking-[0.3em] animate-pulse">
-            Loading…
+            {t('alerts.loading')}
           </div>
         ) : visible.length === 0 ? (
           <div className="border border-white/10 bg-[#0d0d0d] p-12 text-center">
-            <p className="disp text-2xl tracking-tight mb-2">ALL CLEAR</p>
+            <p className="disp text-2xl tracking-tight mb-2">
+              {loadError || failedSources.length > 0 ? t('alerts.partial') : t('alerts.clear')}
+            </p>
             <p className="type text-white/45 text-sm">
-              {tab === 'events'
-                ? 'No event alerts yet — follow organizers to hear about drops.'
-                : "You're all caught up. Nothing new here."}
+              {tab === 'events' ? t('alerts.emptyEvents') : t('alerts.emptyAll')}
             </p>
           </div>
         ) : (

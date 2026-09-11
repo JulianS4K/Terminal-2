@@ -24,10 +24,12 @@ lock, ScanReport field rename).
 - **Commit 9** — Wallet pass route. `/wallet/pass/:ticketId`
   fullscreen browser-only pass with rotating QR + screen wake-lock
   + status overlays. Bare layout (no chrome).
-- **Commit 10** — Manual "Send reminder now" button on both
-  OrganizerEventReport and OrganizerCheckIn. Queues
-  `event-reminder` email per active ticket holder. 6-hour cooldown
-  via `events/{eventId}.lastReminderSentAt`.
+- **Commit 10** — ✅ SHIPPED 2026-09-11 (Supabase form): "Send
+  reminder now" on OrganizerEventReport (`RemindersPanel`) →
+  `exos_send_event_reminder_now`, 6-hour cooldown via
+  `exos_events.reminder_manual_sent_at`. Automatic T-24h / T-2h
+  sends ride the `exos_send_event_reminders` cron (mig
+  20260911051000). Not on OrganizerCheckIn (door staff don't mail).
 - **Commit 11** — Scanner offline improvements: 5-min registry
   auto-refresh while online, attest-and-admit escape hatch,
   audit-backfill writes `events/{id}/checkIns` on sync with
@@ -43,6 +45,26 @@ lock, ScanReport field rename).
   endpoints with idToken verify + ownership check, returning 503
   with setup hints until env vars set. APPLE + GOOGLE buttons on
   TicketDetail.
+
+## Stage 3 — organizer side (2026-09-11, PR #976, Supabase form)
+
+Shipped in source on `claude/d4-organizer-stage3` (stacked on #975); migrations
+`20260911130000`–`133000` apply-pending. Customer-facing surfaces untouched.
+
+- **Analytics + CSV** — `exos_event_analytics` → `EventAnalyticsPanel`
+  (funnel · sales-by-day · tier/promoter/channel with scan-in) + Summary /
+  Attendees CSV via the shared `lib/csv.ts`.
+- **RSVP release** — `exos_release_ticket` (holder or staff; FREE only;
+  returns tier + house capacity → waitlist auto-offer) + `ReleasePolicyPanel`
+  + staff "Release seat". Attendee button → customer session (bot_chat #3652).
+- **Guest list / comps** — `exos_issue_comp_batch` → `CompIssuancePanel`;
+  org `comp_budget` on OrgSettings.
+- **Refused-scan audit** — `ScanRejectAudit` on OrganizerCheckIn (reads
+  `exos_scan_rejects`, which the scanner had written since phase 2).
+- **Series** — `exos_event_series` + `exos_create_event_series` (template
+  cloned per date, tiers included) → `CreateSeries` at
+  `/dashboard/event/:id/series`; dashboard badge + link. Later: series-wide
+  edit/cancel, storefront grouping.
 
 ## Competitor gap backlog (TM · AXS · SeatGeek · OpenDate — 2026-07-03)
 
@@ -77,8 +99,9 @@ indie-primary + secondary-market positioning. `[ ]` = not started,
   physical ticket stock printing. *(OpenDate, AXS venues.)* Online-only.
 - `[ ]` **Booking + artist settlement** — holds/offers calendar, deal
   terms, payout/settlement accounting. *(OpenDate signature.)*
-- `[ ]` **Auto pre-event reminders** (T-1d / T-1h). Manual announcement
-  shipped; needs a scheduled send (cron/drainer) to auto-fire.
+- `[x]` **Auto pre-event reminders** (T-24h / T-2h). Shipped 2026-09-11:
+  cron RPC `exos_send_event_reminders` + manual send-now (mig
+  20260911051000); delivery still gated on the Resend key (D4-OPS-19).
 - `[ ]` **Group sales / comp allocations** workflow. *(TM, AXS.)*
 - `[ ]` **RFID / hardware access control + entry zones.** *(Enterprise
   venues.)* We have phone-camera scan only.
@@ -198,10 +221,8 @@ indie-cap + secondary-market positioning.
 
 ## To Do (existing kanban, deferred)
 
-- **Auto-firing pre-event reminder emails** — Cloud Function cron
-  for T-1 day and T-1 hour reminders. Manual button (Commit 10)
-  ships the template; cron fires it automatically. Blocker: Cloud
-  Functions surface.
+- ~~**Auto-firing pre-event reminder emails**~~ — ✅ done 2026-09-11 as a
+  pg_cron RPC (no Cloud Functions needed); see Commit 10 above.
 - **Outbound webhook system** — per-org webhook config + signed
   HTTP delivery worker. Foundational for CRM/automation.
 - **MailChimp / Salesforce / Zapier** — connectors that subscribe

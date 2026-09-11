@@ -15,12 +15,14 @@ import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 import { listSavedEvents } from '../lib/saves';
 import SaveEventButton from '../components/SaveEventButton';
+import { useT } from '../context/LanguageContext';
 
 export default function MyTickets() {
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const t = useT();
   const [tickets, setTickets] = useState<(Ticket & { event?: Event })[]>([]);
   const [groupedTickets, setGroupedTickets] = useState<{ [eventId: string]: (Ticket & { event?: Event })[] }>({});
   const [showReceipts, setShowReceipts] = useState<string | null>(null); // eventId
@@ -39,10 +41,10 @@ export default function MyTickets() {
       // and door-scan flow start honoring the ticket again immediately.
       await cancelTransfer(transferId);
       setOutboundTransfers((prev) => prev.filter((t) => t.id !== transferId));
-      toast({ kind: 'success', message: 'Transfer cancelled.' });
+      toast({ kind: 'success', message: t('tickets.transferCancelled') });
     } catch (err) {
       console.error('Cancel transfer failed:', err);
-      toast({ kind: 'error', message: 'Could not cancel the transfer.' });
+      toast({ kind: 'error', message: t('tickets.transferCancelFailed') });
     }
   };
 
@@ -107,7 +109,7 @@ export default function MyTickets() {
       } catch (err) {
         if (!cancelled) {
           console.error('Failed to load tickets:', err);
-          toast({ kind: 'error', message: 'Could not load your tickets.' });
+          toast({ kind: 'error', message: t('tickets.loadFailed') });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -122,12 +124,12 @@ export default function MyTickets() {
 
   if (!user) return (
     <div className="wall min-h-screen flex items-center justify-center p-20 text-center">
-      <p className="type text-white/50 uppercase tracking-widest text-[12px]">// please sign in to access your secure vault</p>
+      <p className="type text-white/50 uppercase tracking-widest text-[12px]">{t('tickets.vaultHint')}</p>
     </div>
   );
   if (loading) return (
     <div className="wall min-h-screen flex items-center justify-center p-24 text-center">
-      <p className="type text-brand-primary uppercase tracking-[0.3em] text-[12px] animate-pulse">// syncing tickets...</p>
+      <p className="type text-brand-primary uppercase tracking-[0.3em] text-[12px] animate-pulse">{t('tickets.syncing')}</p>
     </div>
   );
 
@@ -137,15 +139,15 @@ export default function MyTickets() {
         {/* HEADER */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-14 gap-6">
           <div className="relative">
-            <p className="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">// secure vault</p>
+            <p className="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">{t('tickets.kicker')}</p>
             <h1 className="disp text-6xl md:text-7xl tracking-tight leading-none" style={{ transform: 'skewX(-4deg)' }}>MY <span className="neon">TICKETS</span></h1>
             {Object.keys(groupedTickets).length > 0 && (
               <span className="marker absolute -right-6 -top-3 text-brand-secondary text-lg rotate-[6deg] hidden md:block">{Object.keys(groupedTickets).length} live ✦</span>
             )}
           </div>
           <div className="flex border border-white/10 bg-white/5">
-            <button className="disp px-8 py-2.5 text-lg tracking-wide bg-brand-primary text-black">ACTIVE</button>
-            <button className="disp px-8 py-2.5 text-lg tracking-wide text-white/40 hover:text-white transition-colors">ARCHIVE</button>
+            <button className="disp px-8 py-2.5 text-lg tracking-wide bg-brand-primary text-black">{t('tickets.active')}</button>
+            <button className="disp px-8 py-2.5 text-lg tracking-wide text-white/40 hover:text-white transition-colors">{t('tickets.archive')}</button>
           </div>
         </div>
 
@@ -218,7 +220,7 @@ export default function MyTickets() {
         {tickets.length === 0 ? (
           <div className="text-center py-40 border border-dashed border-white/20">
             <TicketIcon className="w-24 h-24 text-white/5 mx-auto mb-10" />
-            <p className="type text-white/30 mb-12 uppercase tracking-widest text-[12px]">// you have no tickets yet</p>
+            <p className="type text-white/30 mb-12 uppercase tracking-widest text-[12px]">{t('tickets.empty')}</p>
             <Link to="/" className="disp inline-flex items-center bg-brand-primary text-black px-8 py-3 text-lg tracking-wide hover:bg-white transition-colors">
               FIND EVENTS
             </Link>
@@ -250,11 +252,11 @@ export default function MyTickets() {
                   <div className="p-6">
                     <div className="flex justify-between items-end mb-7">
                       <div>
-                        <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">date</p>
+                        <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">{t('tickets.date')}</p>
                         <p className="disp text-lg text-white tracking-wide">{event?.date ? formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}</p>
                       </div>
                       <div className="text-right">
-                        <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">passes</p>
+                        <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">{t('tickets.passes')}</p>
                         <span className="stamp neon text-base">{eventTickets.length} ACTIVE</span>
                       </div>
                     </div>
@@ -309,7 +311,7 @@ export default function MyTickets() {
                   </Link>
                   <div className="p-6 flex items-center justify-between gap-4">
                     <div>
-                      <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">date</p>
+                      <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">{t('tickets.date')}</p>
                       <p className="disp text-lg text-white tracking-wide">
                         {ev.date ? formatInTz(ev.date.toDate(), ev.timezone, { month: 'short', day: 'numeric', year: 'numeric' }) : 'TBA'}
                       </p>
@@ -336,8 +338,8 @@ export default function MyTickets() {
            <div className="absolute inset-0 bg-black/90" onClick={() => setShowReceipts(null)}></div>
            <div className="relative bg-[#111] border border-white/10 w-full max-w-2xl max-h-[80vh] overflow-y-auto">
               <div className="p-8 border-b border-white/5 flex justify-between items-center bg-black">
-                 <h2 className="disp text-2xl tracking-tight">PURCHASE HISTORY</h2>
-                 <button onClick={() => setShowReceipts(null)} className="type text-white/40 hover:text-white text-[11px] uppercase tracking-widest">close [x]</button>
+                 <h2 className="disp text-2xl tracking-tight">{t('tickets.history')}</h2>
+                 <button onClick={() => setShowReceipts(null)} className="type text-white/40 hover:text-white text-[11px] uppercase tracking-widest">{t('tickets.close')}</button>
               </div>
               <div className="p-8 space-y-6">
                  {(() => {
