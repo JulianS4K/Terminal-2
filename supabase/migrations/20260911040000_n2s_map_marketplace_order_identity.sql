@@ -58,9 +58,12 @@
 -- ── THE RULES ──────────────────────────────────────────────────────────────
 -- Rule 0b  n2s_evo_order_identity   evo_orders.evo_order_id = n2s_order_key
 -- Rule 0c  n2s_gt_order_identity    gotickets_sales.gt_sale_id = order_number
---                                   -> gotickets_event.gt_event_id -> tevo id,
+--                                   -> gt_event_id -> gotickets_event, else the
+--                                   hub (aq_event_map.gotickets_event_id);
 --                                   unique-or-decline across the sale's rows
 -- Rule 0d  n2s_vivid_order_identity vivid_orders.vivid_order_id = order_number
+--                                   -> tevo id from the row, else the hub on
+--                                   raw.productionId (= aq_event_map.vivid_event_id)
 -- Rule 0e  n2s_sg_order_identity    seatgeek_orders.sg_order_id = order_number
 --                                   -> tevo id from the order row, else its
 --                                   sg_event_id through seatgeek_event_xref,
@@ -107,31 +110,42 @@ BEGIN
     E'       AND NOT n.is_terminal;\n' ||
     E'    GET DIAGNOSTICS v_n = ROW_COUNT; v_mapped := v_mapped + v_n;\n' ||
     E'\n' ||
-    E'    -- Rule 0c: the SAME SALE is in our GoTickets sales feed, whose gt_event_id\n' ||
-    E'    -- gotickets_event already resolves. Unique-or-decline across the sale''s rows.\n' ||
+    E'    -- Rule 0c: the SAME SALE is in our GoTickets sales feed. Its gt_event_id\n' ||
+    E'    -- resolves through gotickets_event (the GT mappers) or, failing that, the\n' ||
+    E'    -- hub (aq_event_map.gotickets_event_id). Unique-or-decline across both.\n' ||
     E'    UPDATE public.n2s_items n\n' ||
     E'       SET tevo_event_id = s.eid, mapped_via = ''n2s_gt_order_identity''\n' ||
-    E'      FROM (SELECT n2.n2s_id, min(g.tevo_event_id) AS eid\n' ||
+    E'      FROM (SELECT n2.n2s_id, min(coalesce(g.tevo_event_id, a.tevo_event_id)) AS eid\n' ||
     E'              FROM public.n2s_items n2\n' ||
     E'              JOIN public.gotickets_sales gs ON gs.gt_sale_id::text = n2.order_number\n' ||
-    E'              JOIN public.gotickets_event g ON g.gt_event_id = gs.gt_event_id\n' ||
-    E'                                           AND g.tevo_event_id IS NOT NULL\n' ||
+    E'              LEFT JOIN public.gotickets_event g ON g.gt_event_id = gs.gt_event_id\n' ||
+    E'              LEFT JOIN public.aq_event_map a ON a.gotickets_event_id = gs.gt_event_id\n' ||
+    E'                                             AND a.tevo_event_id IS NOT NULL\n' ||
     E'             WHERE n2.s4k_source = ''GoTickets''\n' ||
     E'               AND n2.tevo_event_id IS NULL AND NOT n2.is_terminal\n' ||
     E'             GROUP BY n2.n2s_id\n' ||
-    E'            HAVING count(DISTINCT g.tevo_event_id) = 1) s\n' ||
+    E'            HAVING count(DISTINCT coalesce(g.tevo_event_id, a.tevo_event_id)) = 1) s\n' ||
     E'     WHERE n.n2s_id = s.n2s_id AND n.tevo_event_id IS NULL;\n' ||
     E'    GET DIAGNOSTICS v_n = ROW_COUNT; v_mapped := v_mapped + v_n;\n' ||
     E'\n' ||
-    E'    -- Rule 0d: the SAME ORDER is in our own Vivid broker-order pull.\n' ||
+    E'    -- Rule 0d: the SAME ORDER is in our own Vivid broker-order pull. The tevo\n' ||
+    E'    -- id comes from the order row, else from the hub on Vivid''s production id\n' ||
+    E'    -- (raw.productionId = aq_event_map.vivid_event_id; measured 2,533 agree /\n' ||
+    E'    -- 2 disagree against the AQ-name path). Unique-or-decline.\n' ||
     E'    UPDATE public.n2s_items n\n' ||
-    E'       SET tevo_event_id = o.tevo_event_id, mapped_via = ''n2s_vivid_order_identity''\n' ||
-    E'      FROM public.vivid_orders o\n' ||
-    E'     WHERE n.s4k_source = ''Vivid Seats''\n' ||
-    E'       AND o.vivid_order_id = n.order_number\n' ||
-    E'       AND o.tevo_event_id IS NOT NULL\n' ||
-    E'       AND n.tevo_event_id IS NULL\n' ||
-    E'       AND NOT n.is_terminal;\n' ||
+    E'       SET tevo_event_id = s.eid, mapped_via = ''n2s_vivid_order_identity''\n' ||
+    E'      FROM (SELECT n2.n2s_id, min(coalesce(o.tevo_event_id, a.tevo_event_id)) AS eid\n' ||
+    E'              FROM public.n2s_items n2\n' ||
+    E'              JOIN public.vivid_orders o ON o.vivid_order_id = n2.order_number\n' ||
+    E'              LEFT JOIN public.aq_event_map a\n' ||
+    E'                     ON o.raw->>''productionId'' ~ ''^[0-9]+$''\n' ||
+    E'                    AND a.vivid_event_id = (o.raw->>''productionId'')::bigint\n' ||
+    E'                    AND a.tevo_event_id IS NOT NULL\n' ||
+    E'             WHERE n2.s4k_source = ''Vivid Seats''\n' ||
+    E'               AND n2.tevo_event_id IS NULL AND NOT n2.is_terminal\n' ||
+    E'             GROUP BY n2.n2s_id\n' ||
+    E'            HAVING count(DISTINCT coalesce(o.tevo_event_id, a.tevo_event_id)) = 1) s\n' ||
+    E'     WHERE n.n2s_id = s.n2s_id AND n.tevo_event_id IS NULL;\n' ||
     E'    GET DIAGNOSTICS v_n = ROW_COUNT; v_mapped := v_mapped + v_n;\n' ||
     E'\n' ||
     E'    -- Rule 0e: the SAME ORDER is in our SeatGeek SellerDirect order pull. The\n' ||
