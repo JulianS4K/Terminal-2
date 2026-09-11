@@ -4,10 +4,12 @@ import { Ticket, User, LogOut, PlusCircle, LayoutDashboard, Bell } from 'lucide-
 import { motion } from 'motion/react';
 import { useT } from '../context/LanguageContext';
 import LanguageSwitcher from './LanguageSwitcher';
+import { useUnreadAlerts } from '../hooks/useUnreadAlerts';
 
 export default function Navbar() {
   const { user, signIn, logout } = useAuth();
   const t = useT();
+  const unread = useUnreadAlerts(!!user);
 
   return (
     <nav className="sticky top-0 z-50 bg-black/90 border-b border-white/10 backdrop-blur-xl">
@@ -33,10 +35,15 @@ export default function Navbar() {
                 </Link>
                 <Link
                   to="/alerts"
-                  aria-label="Alerts"
-                  className="text-white/60 hover:text-brand-primary transition-colors"
+                  aria-label={unread > 0 ? t('nav.alertsUnread', { n: unread }) : t('nav.alerts')}
+                  className="relative text-white/60 hover:text-brand-primary transition-colors"
                 >
                   <Bell className="w-5 h-5" />
+                  {unread > 0 && (
+                    <span className="absolute -top-2 -right-2.5 min-w-[18px] h-[18px] px-1 bg-brand-primary text-black type text-[10px] font-black leading-[18px] text-center rounded-full">
+                      {unread > 99 ? '99+' : unread}
+                    </span>
+                  )}
                 </Link>
                 <div className="relative group/user">
                   <button className="flex items-center gap-3 bg-white/5 p-1 pr-5 border border-white/10 hover:border-brand-primary/60 transition-colors">

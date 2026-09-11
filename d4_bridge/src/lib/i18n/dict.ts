@@ -18,6 +18,8 @@ export const en = {
   'nav.signIn': 'Sign In',
   'nav.signOut': 'Sign Out',
   'nav.profile': 'Profile',
+  'nav.alerts': 'Alerts',
+  'nav.alertsUnread': 'Alerts — {n} unread',
 
   'event.buy': 'Buy Tickets',
   'event.soldOut': 'Sold Out',
@@ -133,6 +135,8 @@ export const es: Record<DictKey, string> = {
   'nav.signIn': 'Iniciar Sesión',
   'nav.signOut': 'Cerrar Sesión',
   'nav.profile': 'Perfil',
+  'nav.alerts': 'Alertas',
+  'nav.alertsUnread': 'Alertas — {n} sin leer',
 
   'event.buy': 'Comprar Entradas',
   'event.soldOut': 'Agotado',
