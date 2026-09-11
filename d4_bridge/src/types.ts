@@ -65,6 +65,9 @@ export interface Organization {
   // ISO 4217 currency code (default 'USD', mig 20260709120100). Optional for
   // the same legacy-row reason as country.
   currency?: string;
+  // Max non-voided free comp tickets the org may issue (mig 20260911132000).
+  // null/undefined = unlimited. Set via exos_set_org_comp_budget (owner).
+  compBudget?: number | null;
   // Phase 2 white-label. Filled in by Sprint 2.
   theme?: {
     logoUrl?: string;

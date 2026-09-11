@@ -753,4 +753,103 @@ BEGIN
 END $$;
 SELECT set_config('app.uid','',false);
 SELECT '*** PART E (rsvp release) PASSED ***' AS result;
+-- ============================================================================
+-- PART F — BULK COMP ISSUANCE + ORG COMP BUDGET (mig 20260911132000)
+--   account → issued + mail · no account → caller-held + pending transfer +
+--   mail · invalid / dedupe / self · per-row capacity · whole-batch budget gate
+--   · usage + budget setter role gates.
+-- ============================================================================
+SELECT set_config('app.uid','',false);
+SELECT set_config('app.jwt','',false);
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold,starts_at,created_by) VALUES
+  ('ffffffff-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','Evt <Comp>','evtcomp','published',6,0,
+   now()+interval '10 days','11111111-1111-1111-1111-111111111111');
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold) VALUES
+  ('ffffffff-0000-0000-0000-0000000000d1','ffffffff-0000-0000-0000-0000000000e1','VIP',100,3,0);
+
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+SELECT set_config('app.jwt','{"email":"owner@s4kent.com"}',false);
+DO $$
+DECLARE r record; n int; v_tr uuid;
+BEGIN
+  -- F1. Mixed list: account holder, stranger, junk, duplicate, self.
+  CREATE TEMP TABLE f_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1',
+    ARRAY['Buyer@X.com','  new.person@x.com ','nope','buyer@x.com','owner@s4kent.com'], 1, 'press');
+  SELECT count(*) INTO n FROM f_out; ASSERT n = 4, 'dedupe → 4 result rows, got '||n;
+  SELECT * INTO r FROM f_out WHERE email='buyer@x.com';
+  ASSERT r.outcome = 'issued' AND array_length(r.ticket_ids,1) = 1, 'account holder issued';
+  ASSERT (SELECT owner_id FROM public.exos_tickets WHERE id = r.ticket_ids[1]) = '22222222-2222-2222-2222-222222222222', 'owned by recipient';
+  ASSERT (SELECT channel_source='comp' AND price_paid=0 AND promoter_id='press' AND order_ref LIKE 'comp:%' FROM public.exos_tickets WHERE id = r.ticket_ids[1]), 'comp ticket shape';
+  ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='ticket-issued' AND to_email='buyer@x.com' AND html LIKE '%Evt &lt;Comp&gt;%') = 1, 'ticket-issued mail, escaped';
+  SELECT * INTO r FROM f_out WHERE email='new.person@x.com';
+  ASSERT r.outcome = 'invited', 'stranger invited, got '||r.outcome;
+  ASSERT (SELECT owner_id FROM public.exos_tickets WHERE id = r.ticket_ids[1]) = '11111111-1111-1111-1111-111111111111', 'stranger ticket parked on caller';
+  SELECT pending_transfer_id INTO v_tr FROM public.exos_tickets WHERE id = r.ticket_ids[1];
+  ASSERT v_tr IS NOT NULL, 'pending transfer lock set';
+  ASSERT (SELECT receiver_email='new.person@x.com' AND status='pending' AND sender_id='11111111-1111-1111-1111-111111111111' FROM public.exos_transfers WHERE id = v_tr), 'transfer row addressed to the stranger';
+  ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='transfer-initiated' AND to_email='new.person@x.com') = 1, 'transfer-initiated mail';
+  ASSERT (SELECT outcome FROM f_out WHERE email='nope') = 'invalid', 'junk invalid';
+  ASSERT (SELECT outcome FROM f_out WHERE email='owner@s4kent.com') = 'invalid', 'self invalid';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 2, 'tier sold 2';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='ffffffff-0000-0000-0000-0000000000e1') = 2, 'event sold 2';
+  ASSERT public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001') >= 2, 'usage counts comps';
+  RAISE NOTICE 'F1 mixed batch OK';
+  DROP TABLE f_out;
+
+  -- F2. Per-row capacity: tier has 1 seat left; 2 recipients → 1 issued, 1 sold-out.
+  CREATE TEMP TABLE f_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1',
+    ARRAY['c1@x.com','c2@x.com'], 1, NULL);
+  ASSERT (SELECT count(*) FROM f_out WHERE outcome='invited') = 1 AND (SELECT count(*) FROM f_out WHERE outcome='sold-out') = 1, 'one invited, one sold-out';
+  ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 3, 'tier at cap';
+  DROP TABLE f_out;
+  RAISE NOTICE 'F2 per-row capacity OK';
+END $$;
+
+-- F3. Budget: owner sets 4 (usage in this org ≥ 3 comps from F1/F2 + earlier
+--     boxoffice rows) → a 2-seat batch is refused WHOLE, nothing issued.
+DO $$
+DECLARE ok boolean := false; before int; n int; usage int;
+BEGIN
+  usage := public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001');
+  PERFORM public.exos_set_org_comp_budget('aaaaaaaa-0000-0000-0000-000000000001', usage + 1);
+  SELECT count(*) INTO before FROM public.exos_tickets WHERE event_id='ffffffff-0000-0000-0000-0000000000e1';
+  BEGIN
+    PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['d1@x.com','d2@x.com'], 1, NULL);
+  EXCEPTION WHEN check_violation THEN ok := SQLERRM LIKE '%comp budget exceeded%';
+  END;
+  ASSERT ok, 'over-budget batch refused (23514)';
+  SELECT count(*) INTO n FROM public.exos_tickets WHERE event_id='ffffffff-0000-0000-0000-0000000000e1';
+  ASSERT n = before, 'nothing issued on refusal';
+  -- Exactly within budget (1 left) → allowed, no tier (house cap only).
+  PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['d1@x.com'], 1, NULL);
+  ASSERT public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001') = usage + 1, 'usage advanced to the budget';
+  -- Clear the cap (NULL) → unlimited again.
+  PERFORM public.exos_set_org_comp_budget('aaaaaaaa-0000-0000-0000-000000000001', NULL);
+  PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['d2@x.com'], 1, NULL);
+  RAISE NOTICE 'F3 budget gate OK';
+END $$;
+-- F4. Role gates: buyer cannot issue, read usage, or set the budget.
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+SELECT set_config('app.jwt','',false);
+DO $$
+DECLARE ok boolean;
+BEGIN
+  ok := false;
+  BEGIN PERFORM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['z@x.com'], 1, NULL);
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot issue comps';
+  ok := false;
+  BEGIN PERFORM public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot read usage';
+  ok := false;
+  BEGIN PERFORM public.exos_set_org_comp_budget('aaaaaaaa-0000-0000-0000-000000000001', 1);
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'buyer cannot set budget';
+  RAISE NOTICE 'F4 role gates OK';
+END $$;
+SELECT set_config('app.uid','',false);
+SELECT '*** PART F (comp batch + budget) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;

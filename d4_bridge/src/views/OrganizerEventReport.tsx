@@ -25,6 +25,7 @@ import AnnouncementsPanel from '../components/AnnouncementsPanel';
 import RemindersPanel from '../components/RemindersPanel';
 import EventAnalyticsPanel from '../components/EventAnalyticsPanel';
 import ReleasePolicyPanel from '../components/ReleasePolicyPanel';
+import CompIssuancePanel from '../components/CompIssuancePanel';
 import TierPricingPanel from '../components/TierPricingPanel';
 import ReschedulePanel from '../components/ReschedulePanel';
 import { formatCurrency } from '../lib/utils';
@@ -141,6 +142,18 @@ export default function OrganizerEventReport() {
     } finally {
       setVoidingId(null);
     }
+  };
+
+  // Re-pull the ticket list after a server-side mutation that adds rows
+  // (comp batch) — the optimistic patches above only cover in-place changes.
+  const reloadTickets = async () => {
+    if (!eventId) return;
+    try {
+      setTickets(await listEventTickets(eventId));
+    } catch (err) {
+      console.error('listEventTickets reload failed:', err);
+    }
+    setAnalyticsKey((k) => k + 1);
   };
 
   // Give a FREE seat back (D4-OPS-22). Staff path of exos_release_ticket:
@@ -272,6 +285,14 @@ export default function OrganizerEventReport() {
           eventId={eventId!}
           canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
           isPublished={event.status === 'published'}
+        />
+
+        {/* Guest list / bulk comps (owner/manager) — one call issues to a
+            pasted email list; budget enforced server-side. */}
+        <CompIssuancePanel
+          event={event}
+          canIssue={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          onIssued={() => void reloadTickets()}
         />
 
         {/* Self-serve RSVP release policy (owner/manager) — holders of free

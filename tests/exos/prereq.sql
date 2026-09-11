@@ -55,6 +55,7 @@ CREATE TABLE public.exos_events (
   total_tickets integer NOT NULL DEFAULT 0, tickets_sold integer NOT NULL DEFAULT 0,
   purchase_limits jsonb,
   occurs_at_local text, venue_name text, venue_location text,
+  description text, image_url text, created_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 -- cron_should_fire() stub (prod: 20260515250000 4-stage policy gate). The
