@@ -14,6 +14,7 @@ import {
   markNotificationsRead,
   NotificationItem,
   NotificationIcon,
+  SourceName,
 } from '../lib/notifications';
 import { applyMeta } from '../lib/meta';
 import { useT } from '../context/LanguageContext';
@@ -52,6 +53,8 @@ export default function Notifications() {
   const t = useT();
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [failedSources, setFailedSources] = useState<SourceName[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState('all');
   // Read ids: server read-state unioned with anything cleared this session.
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
@@ -70,13 +73,18 @@ export default function Notifications() {
     // Load the feed and the server-side read-state in parallel. The read-state
     // is best-effort (empty Set until mig 20260709120000 is applied) and is
     // unioned with any read ids the user cleared locally this session.
+    setLoadError(null);
     Promise.all([listNotifications(), listReadNotificationIds()])
-      .then(([list, serverRead]) => {
+      .then(([feed, serverRead]) => {
         if (cancelled) return;
-        setItems(list);
+        setItems(feed.items);
+        setFailedSources(feed.failedSources);
         setReadIds((prev) => new Set([...prev, ...serverRead]));
       })
-      .catch((err) => console.error('Failed to load notifications', err))
+      .catch((err: any) => {
+        console.error('Failed to load notifications', err);
+        if (!cancelled) setLoadError(err?.message || 'Could not load alerts.');
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -157,6 +165,15 @@ export default function Notifications() {
           })}
         </div>
 
+        {/* Degraded / failed load — never show "all clear" over a failure. */}
+        {(loadError || failedSources.length > 0) && !loading && (
+          <div className="border border-brand-accent/40 bg-brand-accent/5 p-4 mb-4 type text-[12px] text-white/70">
+            {loadError
+              ? loadError
+              : t('alerts.degraded', { sources: failedSources.join(', ') })}
+          </div>
+        )}
+
         {/* Feed */}
         {loading ? (
           <div className="text-center text-white/40 py-20 type uppercase tracking-[0.3em] animate-pulse">
@@ -164,7 +181,9 @@ export default function Notifications() {
           </div>
         ) : visible.length === 0 ? (
           <div className="border border-white/10 bg-[#0d0d0d] p-12 text-center">
-            <p className="disp text-2xl tracking-tight mb-2">{t('alerts.clear')}</p>
+            <p className="disp text-2xl tracking-tight mb-2">
+              {loadError || failedSources.length > 0 ? t('alerts.partial') : t('alerts.clear')}
+            </p>
             <p className="type text-white/45 text-sm">
               {tab === 'events' ? t('alerts.emptyEvents') : t('alerts.emptyAll')}
             </p>

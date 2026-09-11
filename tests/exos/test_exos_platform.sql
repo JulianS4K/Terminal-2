@@ -471,11 +471,13 @@ BEGIN
   ASSERT r.events_24h = 1, 'first pass events_24h=1, got '||r.events_24h;
   ASSERT r.events_2h = 0,  'first pass events_2h=0, got '||r.events_2h;
   ASSERT r.mails_queued = 2, 'first pass mails=2 (dedupe per holder, voided excluded), got '||r.mails_queued;
+  ASSERT r.events_failed = 0, 'no per-event failures';
   SELECT count(*) INTO n FROM public.exos_mail WHERE template='event-reminder';
   ASSERT n = 2, 'event-reminder rows=2';
   ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='event-reminder' AND to_email='voided@x.com') = 0, 'voided holder not mailed';
   SELECT subject, html INTO subj, body FROM public.exos_mail WHERE template='event-reminder' AND to_email='buyer@x.com';
-  ASSERT subj LIKE 'Reminder: Evt &lt;C&gt; — %', 'subject escaped + prefixed, got '||subj;
+  ASSERT subj LIKE 'Reminder: Evt <C> — %', 'subject is plain text (raw name) + prefixed, got '||subj;
+  ASSERT body LIKE '%<strong>Evt &lt;C&gt;</strong>%', 'body is HTML-escaped';
   ASSERT body LIKE '%Brooklyn Steel%' AND body LIKE '%Doors open at%' AND body LIKE '%(America/New_York)%', 'body carries venue/doors/tz';
   ASSERT (SELECT reminder_24h_sent_at IS NOT NULL AND reminder_2h_sent_at IS NULL
             FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e1'), '24h marked, 2h not';
@@ -541,6 +543,9 @@ BEGIN
   -- Bad timezone degrades to UTC.
   n := public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e2');
   ASSERT n = 0, 'D has no holders → 0 mails, but no error on Bad/Zone';
+  ASSERT (SELECT reminder_manual_sent_at IS NULL FROM public.exos_events WHERE id='cccccccc-0000-0000-0000-0000000000e2'), 'a send that reached nobody does not consume the cooldown';
+  n := public.exos_send_event_reminder_now('cccccccc-0000-0000-0000-0000000000e2');
+  ASSERT n = 0, 'repeat manual send on a holder-less event is still allowed';
   RAISE NOTICE 'C6 manual send + cooldown + tz fallback OK';
 END $$;
 SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
