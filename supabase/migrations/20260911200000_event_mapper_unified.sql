@@ -51,7 +51,13 @@
 --                         overlap. A tie is a decline. (from mig 161100, verified on the 7 twins)
 --     Rule 2 venue±24h  — matcher v3 (gotickets_attempt_event_xref shape): venue-anchored
 --                         ±24h with performer/name containment; 0.80 + 0.10 venue-id + 0.05
---                         exact venue. Declines when two candidates share the instant.
+--                         exact venue. Declines when two EQUALLY-LIVE candidates share the instant.
+--     Liveness tie-break (rules 1 + 2): TEvo re-lists an event under a new id and the mirror
+--     keeps both (e.g. Colts at Titans 2026-12-20 = 3286193 seen daily + 3381900 last seen
+--     in May, 0 listings). The twin the mirror saw 7+ days more recently wins; twins seen
+--     within 7 days of each other stay a tie. gt_map_events' row_number tie had picked the
+--     stale id on 4 future catalogue rows (found 2026-09-11). Parking pseudo-events are
+--     never candidates.
 --     Rule 3 name+day   — exact normalised name on the same local day, unique across venues,
 --                         ≥ 2 distinctive tokens. 0.70. (s4kcs rule 2 shape)
 --     Rule 4 AQ 4-tier  — match_to_aq_event_id → hub row that already carries a tevo id.
@@ -225,7 +231,7 @@ BEGIN
   -- ── Rule 1: venue + same LOCAL day + token overlap, twin tie-breaks ───────
   IF p_local_date IS NOT NULL AND v_venue IS NOT NULL AND v_ntok >= 1 THEN
     WITH cand AS (
-      SELECT e.id,
+      SELECT e.id, e.last_seen,
              public.event_mapper_overlap(v_nm, e.name) AS ov,
              ((e.name ~* 'reschedul') = v_resched)::int
              + (v_num IS NOT NULL
@@ -233,6 +239,7 @@ BEGIN
         FROM public.events e
        WHERE left(e.occurs_at_local, 10) = p_local_date::text
          AND (e.venue_name ILIKE v_venue OR (v_vid IS NOT NULL AND e.venue_id = v_vid))
+         AND NOT (e.name ILIKE '%parking%' OR coalesce(e.venue_name, '') ILIKE '%parking%')
     ), scored AS (
       SELECT c.*, count(*) OVER () AS n_cand FROM cand c
     ), good AS (
@@ -240,14 +247,18 @@ BEGIN
         FROM scored s
        WHERE s.ov >= CASE WHEN s.n_cand = 1 THEN p_min_overlap ELSE greatest(p_min_overlap, 0.6) END
     ), ranked AS (
-      SELECT g.*, row_number() OVER w AS rn, lead(g.keys) OVER w AS next_keys, lead(g.ov) OVER w AS next_ov
+      SELECT g.*, row_number() OVER w AS rn, lead(g.keys) OVER w AS next_keys, lead(g.ov) OVER w AS next_ov,
+             lead(g.last_seen) OVER w AS next_seen
         FROM good g
-      WINDOW w AS (ORDER BY g.keys DESC, g.ov DESC, g.id)
+      WINDOW w AS (ORDER BY g.keys DESC, g.ov DESC, g.last_seen DESC NULLS LAST, g.id)
     )
+    -- Liveness tie-break: TEvo re-lists an event under a new id and the mirror keeps both;
+    -- the live one keeps getting seen. Two twins seen within 7 days of each other stay a tie.
     SELECT r.id, r.ov INTO v_tevo, v_score
       FROM ranked r
      WHERE r.rn = 1
-       AND (r.n_good = 1 OR r.keys > coalesce(r.next_keys, -1) OR r.ov > coalesce(r.next_ov, -1));
+       AND (r.n_good = 1 OR r.keys > coalesce(r.next_keys, -1) OR r.ov > coalesce(r.next_ov, -1)
+            OR r.last_seen > coalesce(r.next_seen, '-infinity'::timestamptz) + interval '7 days');
     IF v_tevo IS NOT NULL THEN
       tevo_event_id := v_tevo; method := 'venue_day_name'; score := v_score;
       RETURN NEXT; RETURN;
@@ -258,31 +269,40 @@ BEGIN
   IF p_event_time_utc IS NOT NULL AND v_venue IS NOT NULL AND v_needle <> '' THEN
     SELECT x.id, x.sc, x.n_same INTO v_tevo, v_score, v_n
       FROM (
-        SELECT e.id,
-               0.80
-               + CASE WHEN v_vid IS NOT NULL AND e.venue_id = v_vid THEN 0.10 ELSE 0 END
-               + CASE WHEN lower(trim(coalesce(e.venue_name, ''))) = lower(v_venue) THEN 0.05 ELSE 0 END AS sc,
-               count(*) OVER (PARTITION BY e.occurs_at_local) AS n_same
-          FROM public.events e
-          LEFT JOIN public.event_lifecycle lc ON lc.event_id = e.id
-         WHERE e.occurs_at_local ~ '^\d{4}-\d{2}-\d{2}'
-           AND e.occurs_at_local::timestamptz BETWEEN p_event_time_utc - interval '24 hours'
-                                                  AND p_event_time_utc + interval '24 hours'
-           AND (   (v_vid IS NOT NULL AND e.venue_id = v_vid)
-                OR lower(trim(coalesce(e.venue_name, ''))) = lower(v_venue)
-                OR lower(trim(coalesce(e.venue_name, ''))) LIKE lower(v_venue) || '%'
-                OR lower(v_venue) LIKE lower(trim(coalesce(e.venue_name, ''))) || '%')
-           AND (   lower(coalesce(e.primary_performer_name, '')) LIKE '%' || v_needle || '%'
-                OR lower(coalesce(e.name, '')) LIKE '%' || v_needle || '%'
-                OR (char_length(coalesce(e.primary_performer_name, '')) >= 4
-                    AND v_needle LIKE '%' || lower(e.primary_performer_name) || '%'))
-         ORDER BY CASE WHEN lower(trim(coalesce(e.venue_name, ''))) = lower(v_venue) THEN 0 ELSE 1 END,
-                  CASE WHEN v_vid IS NOT NULL AND e.venue_id = v_vid THEN 0 ELSE 1 END,
-                  abs(extract(epoch FROM (e.occurs_at_local::timestamptz - p_event_time_utc))),
-                  CASE WHEN coalesce(lc.is_active, true) THEN 0 ELSE 1 END,
-                  e.id
-         LIMIT 1
-      ) x;
+        SELECT y.id, y.sc,
+               -- twins at one instant: a twin the mirror has not seen for 7+ days longer than
+               -- the freshest one is a stale re-list, not a competitor (liveness tie-break)
+               count(*) FILTER (WHERE y.last_seen IS NULL OR y.last_seen >= y.max_seen - interval '7 days')
+                 OVER (PARTITION BY y.occurs_at_local) AS n_same,
+               y.exact_venue, y.by_vid, y.dist, y.active, y.last_seen
+          FROM (
+            SELECT e.id, e.occurs_at_local, e.last_seen,
+                   0.80
+                   + CASE WHEN v_vid IS NOT NULL AND e.venue_id = v_vid THEN 0.10 ELSE 0 END
+                   + CASE WHEN lower(trim(coalesce(e.venue_name, ''))) = lower(v_venue) THEN 0.05 ELSE 0 END AS sc,
+                   max(e.last_seen) OVER (PARTITION BY e.occurs_at_local) AS max_seen,
+                   (lower(trim(coalesce(e.venue_name, ''))) = lower(v_venue)) AS exact_venue,
+                   (v_vid IS NOT NULL AND e.venue_id = v_vid) AS by_vid,
+                   abs(extract(epoch FROM (e.occurs_at_local::timestamptz - p_event_time_utc))) AS dist,
+                   coalesce(lc.is_active, true) AS active
+              FROM public.events e
+              LEFT JOIN public.event_lifecycle lc ON lc.event_id = e.id
+             WHERE e.occurs_at_local ~ '^\d{4}-\d{2}-\d{2}'
+               AND NOT (e.name ILIKE '%parking%' OR coalesce(e.venue_name, '') ILIKE '%parking%')
+               AND e.occurs_at_local::timestamptz BETWEEN p_event_time_utc - interval '24 hours'
+                                                      AND p_event_time_utc + interval '24 hours'
+               AND (   (v_vid IS NOT NULL AND e.venue_id = v_vid)
+                    OR lower(trim(coalesce(e.venue_name, ''))) = lower(v_venue)
+                    OR lower(trim(coalesce(e.venue_name, ''))) LIKE lower(v_venue) || '%'
+                    OR lower(v_venue) LIKE lower(trim(coalesce(e.venue_name, ''))) || '%')
+               AND (   lower(coalesce(e.primary_performer_name, '')) LIKE '%' || v_needle || '%'
+                    OR lower(coalesce(e.name, '')) LIKE '%' || v_needle || '%'
+                    OR (char_length(coalesce(e.primary_performer_name, '')) >= 4
+                        AND v_needle LIKE '%' || lower(e.primary_performer_name) || '%'))
+          ) y
+      ) x
+     ORDER BY x.exact_venue DESC, x.by_vid DESC, x.dist, x.active DESC, x.last_seen DESC NULLS LAST, x.id
+     LIMIT 1;
     IF v_tevo IS NOT NULL AND v_n = 1 THEN
       tevo_event_id := v_tevo; method := 'venue_24h_performer'; score := v_score;
       RETURN NEXT; RETURN;
