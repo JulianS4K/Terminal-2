@@ -109,6 +109,13 @@ export default function EventDetails() {
                     availability: remaining > 0 ? 'InStock' : 'SoldOut',
                     url: publicUrl(`event/${data.id}`),
                   },
+                  // Google Events extras (Stage 5, organizer session): geo /
+                  // Place ID, performers, lifecycle status, canonical url.
+                  url: publicUrl(`event/${data.id}`),
+                  geo: data.venueLat != null && data.venueLng != null ? { lat: data.venueLat, lng: data.venueLng } : undefined,
+                  placeId: data.googlePlaceId,
+                  performers: data.performers,
+                  status: data.status === 'cancelled' ? 'cancelled' : 'scheduled',
                 }
               : undefined,
           });

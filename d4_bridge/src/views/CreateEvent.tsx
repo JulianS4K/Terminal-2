@@ -125,6 +125,11 @@ export default function CreateEvent() {
       country: '',
       postal: '',
     },
+    // Google Places ID + coordinates (mig 20260911141000) — feed the Event
+    // JSON-LD geo, the Maps deep link and the crawler pre-render.
+    googlePlaceId: '',
+    venueLat: '',
+    venueLng: '',
     genres: [] as string[],
     subgenres: [] as string[],
     performers: [] as string[],
@@ -291,6 +296,9 @@ export default function CreateEvent() {
             country: src.address?.country || '',
             postal: src.address?.postal || '',
           },
+          googlePlaceId: src.googlePlaceId || '',
+          venueLat: src.venueLat != null ? String(src.venueLat) : '',
+          venueLng: src.venueLng != null ? String(src.venueLng) : '',
           genres: Array.isArray(src.genres) ? src.genres : [],
           subgenres: Array.isArray(src.subgenres) ? src.subgenres : [],
           performers: Array.isArray(src.performers) ? src.performers : [],
@@ -807,8 +815,13 @@ export default function CreateEvent() {
         : undefined;
 
       try {
+        const lat = formData.venueLat.trim() === '' ? null : Number(formData.venueLat);
+        const lng = formData.venueLng.trim() === '' ? null : Number(formData.venueLng);
         await createEvent({
           orgId: activeOrg.id,
+          googlePlaceId: formData.googlePlaceId.trim() || null,
+          venueLat: lat !== null && Number.isFinite(lat) ? lat : null,
+          venueLng: lng !== null && Number.isFinite(lng) ? lng : null,
           name: formData.title.trim(),
           description: formData.description.trim(),
           status: publish ? 'published' : 'draft',
@@ -1304,6 +1317,38 @@ export default function CreateEvent() {
                     value={formData.address.country}
                     onChange={(e) => setFormData({ ...formData, address: { ...formData.address, country: e.target.value } })}
                   />
+                  {/* Google Maps identity — a Place ID pins the event to the exact
+                      venue listing; coordinates feed the Event schema `geo`. */}
+                  <input
+                    type="text"
+                    placeholder="Google Place ID (ChIJ…)"
+                    aria-label="Google Place ID"
+                    maxLength={300}
+                    className="md:col-span-4 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    value={formData.googlePlaceId}
+                    onChange={(e) => setFormData({ ...formData, googlePlaceId: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Lat"
+                    aria-label="Venue latitude"
+                    className="md:col-span-1 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    value={formData.venueLat}
+                    onChange={(e) => setFormData({ ...formData, venueLat: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Lng"
+                    aria-label="Venue longitude"
+                    className="md:col-span-1 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
+                    value={formData.venueLng}
+                    onChange={(e) => setFormData({ ...formData, venueLng: e.target.value })}
+                  />
+                  <p className="md:col-span-6 type text-[9px] text-white/40 uppercase tracking-widest">
+                    Find the venue on Google Maps → share → the Place ID and coordinates make the event show on the venue's Maps listing.
+                  </p>
                 </div>
               </details>
             </div>

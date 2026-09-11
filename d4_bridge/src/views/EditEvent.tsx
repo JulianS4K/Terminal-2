@@ -467,6 +467,9 @@ export default function EditEvent() {
         venueName: ed.location,
         venueLocation: ed.location,
         venueAddress: ed.address as any,
+        googlePlaceId: (ed.googlePlaceId || '').trim() || null,
+        venueLat: Number.isFinite(Number(ed.venueLat)) && ed.venueLat !== undefined ? Number(ed.venueLat) : null,
+        venueLng: Number.isFinite(Number(ed.venueLng)) && ed.venueLng !== undefined ? Number(ed.venueLng) : null,
         primaryPerformerName: ed.performers?.[0],
         performerNames: ed.performers,
         // Always send the array (never undefined) so clearing every link
@@ -936,6 +939,34 @@ export default function EditEvent() {
                         }
                       />
                     ))}
+                    {/* Google Maps identity (mig 20260911141000). */}
+                    <input
+                      type="text"
+                      placeholder="Google Place ID (ChIJ…)"
+                      aria-label="Google Place ID"
+                      maxLength={300}
+                      className="md:col-span-4 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
+                      value={eventData.googlePlaceId || ''}
+                      onChange={(e) => setEventData({ ...eventData, googlePlaceId: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Lat"
+                      aria-label="Venue latitude"
+                      className="md:col-span-1 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
+                      value={eventData.venueLat ?? ''}
+                      onChange={(e) => setEventData({ ...eventData, venueLat: e.target.value === '' ? undefined : (Number(e.target.value) as any) })}
+                    />
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Lng"
+                      aria-label="Venue longitude"
+                      className="md:col-span-1 bg-black border border-white/20 py-3 px-4 text-white text-sm font-medium focus:outline-none focus:border-brand-primary"
+                      value={eventData.venueLng ?? ''}
+                      onChange={(e) => setEventData({ ...eventData, venueLng: e.target.value === '' ? undefined : (Number(e.target.value) as any) })}
+                    />
                   </div>
                 </details>
               </div>
