@@ -26,6 +26,7 @@ import RemindersPanel from '../components/RemindersPanel';
 import EventAnalyticsPanel from '../components/EventAnalyticsPanel';
 import ReleasePolicyPanel from '../components/ReleasePolicyPanel';
 import CompIssuancePanel from '../components/CompIssuancePanel';
+import CampaignsPanel from '../components/CampaignsPanel';
 import TierPricingPanel from '../components/TierPricingPanel';
 import ReschedulePanel from '../components/ReschedulePanel';
 import { formatCurrency } from '../lib/utils';
@@ -278,6 +279,17 @@ export default function OrganizerEventReport() {
           eventId={eventId!}
           canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
         />
+
+        {/* Email campaigns — audience segments (holders / no-shows / waitlist /
+            followers / buyers), send now or schedule; opt-outs honoured. */}
+        {event.orgId && (
+          <CampaignsPanel
+            orgId={event.orgId}
+            eventId={eventId!}
+            eventStarted={event.date.toDate().getTime() <= Date.now()}
+            canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          />
+        )}
 
         {/* Pre-event reminders — automatic T-24h / T-2h holder mail (cron) +
             a manual "send now" for owner/manager (6h cooldown, server-enforced). */}

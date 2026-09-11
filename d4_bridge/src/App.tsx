@@ -41,6 +41,7 @@ const ClaimInvite = lazy(() => import('./views/ClaimInvite'));
 const OrganizerEventReport = lazy(() => import('./views/OrganizerEventReport'));
 const PromoteEvent = lazy(() => import('./views/PromoteEvent'));
 const CreateSeries = lazy(() => import('./views/CreateSeries'));
+const Unsubscribe = lazy(() => import('./views/Unsubscribe'));
 const OrgPromote = lazy(() => import('./views/OrgPromote'));
 const NotFound = lazy(() => import('./views/NotFound'));
 const Notifications = lazy(() => import('./views/Notifications'));
@@ -137,6 +138,7 @@ export default function App() {
                     {/* Embed widget (Sprint 6) — chromeless event card for
                         venues to iframe on their own site. */}
                     <Route path="/embed/event/:eventId" element={<EmbedEvent />} />
+                    <Route path="/unsubscribe/:token" element={<Unsubscribe />} />
                     <Route path="/privacy" element={<Privacy />} />
                     <Route path="/terms" element={<Terms />} />
                     <Route path="/status" element={<Status />} />
