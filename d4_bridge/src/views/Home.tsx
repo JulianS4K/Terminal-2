@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Event } from '../types';
 import { listPublicEvents } from '../lib/events';
+import { collapseSeries } from '../lib/seriesGroups';
 import { Link } from 'react-router-dom';
 import { Calendar, MapPin, Search } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -117,6 +118,16 @@ export default function Home() {
     });
   }, [events, searchTerm, selectedDay]);
 
+  // Card sections show ONE card per series (its next date, with an N-dates
+  // badge); the day-by-day agenda keeps every occurrence on its own day.
+  const collapsed = useMemo(() => collapseSeries(filteredEvents), [filteredEvents]);
+  const seriesBadge = (event: Event) => {
+    const n = collapsed.dates.get(event.id);
+    return n ? (
+      <span className="disp absolute top-4 right-4 bg-white text-black px-2 py-0.5 text-sm tracking-wide z-10">{n} DATES</span>
+    ) : null;
+  };
+
   useEffect(() => {
     async function fetchEvents() {
       try {
@@ -161,8 +172,8 @@ export default function Home() {
     return ['ALL', ...Array.from(set)];
   }, [events]);
 
-  const featured = filteredEvents.slice(0, 2);
-  const popular = filteredEvents.slice(2, 6);
+  const featured = collapsed.list.slice(0, 2);
+  const popular = collapsed.list.slice(2, 6);
 
   // Agenda grouped by day, preserving the ascending (starts_at) order the
   // public view already returns.
@@ -398,6 +409,7 @@ export default function Home() {
                           <span className="stamp text-brand-primary absolute top-4 left-4 rotate-[-6deg] bg-black/50 text-base">
                             {(event.category || 'LIVE').toUpperCase()}
                           </span>
+                          {seriesBadge(event)}
                         </div>
                         <div className="p-6">
                           <p className="type text-[11px] uppercase tracking-widest text-brand-primary mb-1">{eventMeta(event)}</p>
@@ -440,6 +452,9 @@ export default function Home() {
                           <span className="disp absolute top-2 left-2 bg-brand-primary text-black px-2 text-sm tracking-wide">
                             {(event.category || 'EVENT').toUpperCase()}
                           </span>
+                          {collapsed.dates.get(event.id) ? (
+                            <span className="disp absolute top-2 right-2 bg-white text-black px-2 text-sm tracking-wide">{collapsed.dates.get(event.id)} DATES</span>
+                          ) : null}
                           <div className="absolute bottom-3 left-3 right-3">
                             <p className="type text-[10px] uppercase tracking-widest text-brand-primary mb-0.5">
                               {`${eventDayLabel(event)} · ${eventTime(event)}`.toLowerCase()}
@@ -496,6 +511,9 @@ export default function Home() {
                               <h3 className="disp text-xl md:text-2xl text-white leading-none tracking-tight truncate group-hover:neon transition-all">
                                 {event.title}
                               </h3>
+                              {event.seriesId && (
+                                <span className="type text-[9px] uppercase tracking-widest text-white/35 border border-white/15 px-1.5 py-0.5 shrink-0">series</span>
+                              )}
                             </div>
                             <p className="type text-[11px] uppercase tracking-wide text-white/40 mt-1 truncate">
                               {event.location}

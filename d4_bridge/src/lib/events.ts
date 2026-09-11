@@ -108,6 +108,17 @@ export async function listPublicEvents(limit = 50): Promise<Event[]> {
   return (data ?? []).map((r: any) => mapEvent(r));
 }
 
+/** Published members of a series (public view; anon-readable). */
+export async function listPublicSeriesEvents(seriesId: string): Promise<Event[]> {
+  const { data, error } = await supabase
+    .from('exos_public_events')
+    .select('*')
+    .eq('series_id', seriesId)
+    .order('starts_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((r: any) => mapEvent(r));
+}
+
 // Published events for a specific org (public org storefront).
 export async function listPublicEventsForOrg(orgId: string): Promise<Event[]> {
   const { data, error } = await supabase

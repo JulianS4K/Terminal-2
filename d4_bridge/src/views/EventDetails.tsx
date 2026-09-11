@@ -23,6 +23,7 @@ import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
 import SaveEventButton from '../components/SaveEventButton';
+import SeriesDates from '../components/SeriesDates';
 import { effectiveTierPrice, nextPriceStep } from '../lib/pricing';
 import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
 import { claimFreeAddons } from '../lib/addons';
@@ -550,6 +551,9 @@ export default function EventDetails() {
                 <h1 className="disp text-5xl md:text-7xl tracking-tight leading-[0.85]">{event.title}</h1>
               </div>
             </div>
+
+            {/* Other dates in this series (recurring / timed-entry) — pick another. */}
+            <SeriesDates event={event} />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-white/10 border border-white/10 mb-14">
               <div className="flex items-center gap-5 p-7 bg-[#111]">
