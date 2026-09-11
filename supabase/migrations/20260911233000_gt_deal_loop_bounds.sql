@@ -15,12 +15,20 @@
 --    changed nothing, which defeats the whole point of a data-driven cadence
 --    ("data -> instant revert", RESOURCES_BIBLE §5). Now it reads 'GT'.
 --
---    EVO's bands were set for a source documented as "≈unlimited". On GT's
---    4,221-event pollable set they work out to ~53k polls/day -> ~5.4M
---    snapshot rows/day, and gotickets_listings_snapshots is now the largest
---    table in the database at 130 GB / 135.6M live rows / 18.2M dead. The GT
---    rows below land at ~25k polls/day, keeping the ≤3d band tight (10 min)
---    and paying for it in the 61d+ tail, where 2,870 of those events sit.
+--    CORRECTED after measuring: an earlier draft of this migration loosened
+--    every GT band on the theory that poll rate was behind the table's 130 GB.
+--    It is not. GT polls 4.4x/event/day against EVO's 4.6, ingests 2.6x FEWER
+--    rows, and its live rows are NARROWER (128 B vs 147 B) — yet its heap is
+--    87 GB against EVO's 35 GB. The gap is dead space: 12.5% dead tuples and
+--    58 lifetime autovacuums vs EVO's 0.7% and 201, because GT never got the
+--    per-table autovacuum settings listings_snapshots has. That is fixed in
+--    20260911235000, where it belongs.
+--
+--    So the near-term bands are left AT EVO PARITY (≤3d 5m, 4-7d 15m, 8-14d
+--    30/60m, 15-30d 60m) — those feed cover pricing and buying nothing back by
+--    starving them. Only the far tail is trimmed, 31-60d 240m->360m, where
+--    freshness matters least. That is ~53k -> ~45k polls/day: a modest
+--    scheduler saving with no cost to the surfaces anyone reads.
 --
 -- 2. THE TICK COULD OUTRUN ITS OWN PERIOD. gt_listings_poll_tick(300) fires up
 --    to 300 async requests with no wall-clock bound and has been averaging
@@ -141,31 +149,33 @@ COMMENT ON FUNCTION public.gt_listings_poll_tick(integer, integer)
      'loop-level wall-clock budget so it cannot outrun its own schedule.';
 
 -- ---------------------------------------------------------------------------
--- 2. GT cadence — its own bands, sized for its own catalogue
+-- 2. GT cadence — point it at its OWN rows, and trim only the far tail
 --
--- Inflow arithmetic on the current 4,221-event pollable set:
---   band      events   old (EVO)  ->  new     polls/day old -> new
---   ≤3d           86     5m           10m        24,768 ->  12,384
---   4–7d          41    15m           30m         3,936 ->   1,968
---   8–14d        151    30m/60m       60m/180m    5,436 ->   2,718
---   15–30d       394    60m          180m         9,456 ->   3,152
---   31–60d       679   240m          480m         4,074 ->   2,037
---   61d+       2,870   720m         1440m         5,740 ->   2,870
---                                       total    53,410 ->  25,129
--- ~2.6M snapshot rows/day, comfortably under what retention_tick clears.
--- The sub finder is unaffected: N2S cover pulls go through
--- n2s_pull_events() on demand, not through this background cadence.
--- ---------------------------------------------------------------------------
+-- The important half of this section is the source fix in part 1: GT now reads
+-- the 'GT' collector_cadence rows instead of EVO's, so these values are live
+-- config and retunable in one UPDATE. The values themselves stay at EVO parity
+-- except the 31-60d band, for the reasons in the header — the 130 GB is a
+-- vacuum problem (20260911235000), not a cadence problem, and loosening the
+-- near bands would cost cover freshness to fix nothing.
+--
+--   band      events   before -> after    note
+--   ≤3d           86     5m       5m      EVO parity, feeds covers
+--   4–7d          41    15m      15m      EVO parity
+--   8–14d        151    30/60m   30/60m   EVO parity
+--   15–30d       394    60m      60m      EVO parity
+--   31–60d       679   240m     360m      trimmed (far tail)
+--   61d+       2,870   720m    1440m      trimmed (far tail)
+--
 UPDATE public.collector_cadence SET
   peak_interval_min = v.peak, offpeak_interval_min = v.offpeak, updated_at = now(),
   notes = 'GT catalogue cadence (20260911233000). Was inert while '
           'gt_listings_poll_tick hardcoded collector_band(''EVO'',...).'
 FROM (VALUES
-  ('le3d',    10,   10),
-  ('le7d',    30,   30),
-  ('d8_14',   60,  180),
-  ('d15_30', 180,  180),
-  ('d31_60', 480,  480),
+  ('le3d',     5,    5),
+  ('le7d',    15,   15),
+  ('d8_14',   30,   60),
+  ('d15_30',  60,   60),
+  ('d31_60', 360,  360),
   ('d61p',  1440, 1440),
   ('d181p', 2880, 2880)
 ) AS v(band, peak, offpeak)
