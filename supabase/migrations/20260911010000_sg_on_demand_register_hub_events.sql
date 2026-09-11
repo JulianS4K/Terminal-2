@@ -1,4 +1,6 @@
 -- Migration 20260911010000 · level:secondary-sales · lane:D7 · writes:sg_events_canonical,seatgeek_event_xref · reads:aq_event_map,events · pre:20260910140000
+--
+-- Already applied to prod · via MCP 2026-09-11 under operator direction.
 -- ============================================================================
 -- Migration 20260911010000 — SeatGeek on-demand pull: register hub-resolved events
 --

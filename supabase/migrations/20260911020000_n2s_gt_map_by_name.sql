@@ -1,4 +1,6 @@
 -- Migration 20260911020000 · level:secondary-sales · lane:D7 · writes:gotickets_event,cron.job · reads:n2s_items,events,gotickets_event · pre:20260911010000
+--
+-- Already applied to prod · via MCP 2026-09-11 under operator direction.
 -- ============================================================================
 -- Migration 20260911020000 — n2s_gt_map_by_name(): GoTickets second-pass mapper
 --
