@@ -33,10 +33,13 @@
 -- not on the scheduled poller's radar at all, so there is no clock to reset.
 -- ============================================================================
 
+-- Parameter DEFAULTS (25 / 30 min) must be reproduced exactly: Postgres rejects
+-- a CREATE OR REPLACE that omits them ("cannot remove parameter defaults from
+-- existing function"), and callers rely on them.
 CREATE OR REPLACE FUNCTION public.sg_listings_pull_on_demand(
   p_tevo_event_ids bigint[],
-  p_max_events     integer,
-  p_freshness      interval)
+  p_max_events     integer  DEFAULT 25,
+  p_freshness      interval DEFAULT '00:30:00'::interval)
 RETURNS TABLE(queued integer, skipped_fresh integer, unmapped integer)
 LANGUAGE plpgsql
 SECURITY DEFINER

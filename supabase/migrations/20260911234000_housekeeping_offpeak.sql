@@ -31,28 +31,29 @@
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- 1. Wiki enrichment — the database's biggest IO consumer, off peak
+-- 1. News enrichment off peak
+--
+-- ⚠ THE WIKI SECTION THAT WAS HERE IS DELETED, NOT DISABLED. It throttled
+-- pww_wiki_* and athlete_wiki_* to 20-min at peak — written before the operator
+-- directive to stop wiki entirely (20260911235500). Since that migration
+-- unschedules those jobs and this one ran AFTER it in the prod apply order,
+-- leaving the throttle here would have RESURRECTED nine jobs that were just
+-- stopped. Prod was applied without it; the file now matches.
+--
+-- peak_hours_et is NOT NULL. ET 09:00-01:59 matches is_peak().
 -- ---------------------------------------------------------------------------
 INSERT INTO public.cron_policy(
-  jobname, peak_min_interval_min, offpeak_min_interval_min, daily_max_fires,
-  enabled, notes)
+  jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min,
+  daily_max_fires, enabled, notes)
 VALUES
-  ('pww_wiki_process_1min', 20, 1, NULL, true,
-   'Performer/venue wiki enrichment. Largest source of physical reads in the '
-   'database (7.58B shared_blks_read, mean 38.5s/call) — throttled to 20-min '
-   'at peak, full 1-min cadence offpeak (20260911234000).'),
-  ('pww_wiki_queue_1min', 20, 1, NULL, true,
-   'Paired queue side of pww_wiki_process_1min; same peak/offpeak split so the '
-   'queue does not run ahead of the drain (20260911234000).'),
-  ('wa_news_process_5min', 15, 5, NULL, true,
+  ('wa_news_process_5min', ARRAY[9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1], 15, 5, NULL, true,
    'News enrichment — housekeeping, off peak (20260911234000).'),
-  ('wa_news_queue_10min', 30, 10, NULL, true,
+  ('wa_news_queue_10min', ARRAY[9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1], 30, 10, NULL, true,
    'News enrichment queue — housekeeping, off peak (20260911234000).'),
-  ('athlete_wiki_queue_searches', 120, 30, NULL, true,
-   'Athlete wiki backfill — housekeeping, off peak (20260911234000).'),
-  ('reddit_news_sweep_30min', 120, 30, NULL, true,
+  ('reddit_news_sweep_30min', ARRAY[9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1], 120, 30, NULL, true,
    'Reddit wire sweep — housekeeping, off peak (20260911234000).')
 ON CONFLICT (jobname) DO UPDATE SET
+  peak_hours_et            = EXCLUDED.peak_hours_et,
   peak_min_interval_min    = EXCLUDED.peak_min_interval_min,
   offpeak_min_interval_min = EXCLUDED.offpeak_min_interval_min,
   enabled                  = EXCLUDED.enabled,
@@ -61,27 +62,9 @@ ON CONFLICT (jobname) DO UPDATE SET
 
 -- These jobs gated only on cron_try_lock, so cron_policy had no effect on them.
 -- Re-schedule with the policy gate in front of the existing lock.
-SELECT cron.unschedule('pww_wiki_process_1min')
- WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'pww_wiki_process_1min');
-SELECT cron.schedule(
-  'pww_wiki_process_1min', '* * * * *',
-  $cron$ SET statement_timeout='55s';
-         DO $guard$ BEGIN
-           IF NOT public.cron_should_fire('pww_wiki_process_1min') THEN RETURN; END IF;
-           IF NOT public.cron_try_lock('pww_wiki_process') THEN RETURN; END IF;
-           PERFORM public.pww_wiki_process();
-         END $guard$; $cron$);
-
-SELECT cron.unschedule('pww_wiki_queue_1min')
- WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'pww_wiki_queue_1min');
-SELECT cron.schedule(
-  'pww_wiki_queue_1min', '* * * * *',
-  $cron$ SET statement_timeout='55s';
-         DO $guard$ BEGIN
-           IF NOT public.cron_should_fire('pww_wiki_queue_1min') THEN RETURN; END IF;
-           PERFORM public.pww_wiki_queue(interval '1 minute');
-         END $guard$; $cron$);
-
+--
+-- (The pww_wiki_process_1min / pww_wiki_queue_1min re-schedules that were here
+-- are deleted — see the note above. 20260911235500 stops them outright.)
 SELECT cron.unschedule('wa_news_process_5min')
  WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'wa_news_process_5min');
 SELECT cron.schedule(
@@ -102,15 +85,8 @@ SELECT cron.schedule(
            PERFORM public.wa_news_queue(3);
          END $guard$; $cron$);
 
-SELECT cron.unschedule('athlete_wiki_queue_searches')
- WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'athlete_wiki_queue_searches');
-SELECT cron.schedule(
-  'athlete_wiki_queue_searches', '*/30 * * * *',
-  $cron$ DO $guard$ BEGIN
-           IF NOT public.cron_should_fire('athlete_wiki_queue_searches') THEN RETURN; END IF;
-           PERFORM public.queue_athlete_wiki_searches(15);
-         END $guard$; $cron$);
-
+-- (The athlete_wiki_queue_searches re-schedule that was here is deleted for the
+-- same reason — 20260911235500 stops the athlete wiki jobs outright.)
 SELECT cron.unschedule('reddit_news_sweep_30min')
  WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'reddit_news_sweep_30min');
 SELECT cron.schedule(

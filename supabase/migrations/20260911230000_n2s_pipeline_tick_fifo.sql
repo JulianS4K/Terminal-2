@@ -339,15 +339,18 @@ SELECT cron.schedule(
   '8-59/10 * * * *',
   $cron$ SET statement_timeout='60s'; SELECT public.event_mapper_shadow_tick('n2s_items', 150); $cron$);
 
+-- cron_policy.peak_hours_et is NOT NULL. ET 09:00-01:59 matches is_peak().
 INSERT INTO public.cron_policy(
-  jobname, peak_min_interval_min, offpeak_min_interval_min,
+  jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min,
   daily_max_fires, enabled, notes)
 VALUES (
-  'n2s_mapper_shadow_10min', 10, 30, NULL, true,
+  'n2s_mapper_shadow_10min', ARRAY[9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1],
+  10, 30, NULL, true,
   'Shadow parity dry-run for the event_mapper switchover (20260911210000). '
   'Diagnostic only — split out of n2s_map_events_5min so it cannot delay the '
   'cover path. Retire with the switchover.')
 ON CONFLICT (jobname) DO UPDATE SET
+  peak_hours_et            = EXCLUDED.peak_hours_et,
   peak_min_interval_min    = EXCLUDED.peak_min_interval_min,
   offpeak_min_interval_min = EXCLUDED.offpeak_min_interval_min,
   enabled                  = EXCLUDED.enabled,
