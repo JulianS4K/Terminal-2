@@ -1,4 +1,6 @@
 -- Migration 20260911040000 · level:secondary-sales · lane:D7 · writes:n2s_items · reads:evo_orders,gotickets_sales,gotickets_event,vivid_orders,seatgeek_orders,seatgeek_event_xref,aq_event_map · pre:20260910180000
+--
+-- Already applied to prod · via MCP 2026-09-11 under operator direction.
 -- ============================================================================
 -- Migration 20260911040000 — N2S mapper: identity from the marketplace books
 --                            we ingest directly (EVO, GoTickets, Vivid, SeatGeek)

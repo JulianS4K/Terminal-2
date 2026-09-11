@@ -1,4 +1,6 @@
 -- Migration 20260911090000 · level:secondary-sales · lane:D7 · writes:n2s_order_probe,vivid_orders_pending,gt_sales_sync_state,vivid_orders,gt_sales_drain,cron.job · reads:n2s_items,vivid_orders,gotickets_sales,aq_event_map · pre:20260911040000
+--
+-- Already applied to prod · via MCP 2026-09-11 under operator direction.
 -- ============================================================================
 -- Migration 20260911090000 — N2S: pull the order BY ID the tick it arrives
 -- (authored as 20260911060000; renumbered 2026-09-11 after D4 landed a migration

@@ -1,4 +1,6 @@
 -- Migration 20260911080000 · level:data-collection · lane:D7 · writes:sg_seller_pending · reads:net._http_response,sg_seller_pending · pre:20260515370000
+--
+-- Already applied to prod · via MCP 2026-09-11 under operator direction.
 -- ============================================================================
 -- Migration 20260911080000 — SeatGeek SellerDirect orders: fetch the TAIL pages
 -- (authored as 20260911050000; renumbered 2026-09-11 after D4 landed a migration

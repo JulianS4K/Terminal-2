@@ -1,4 +1,6 @@
 -- Migration 20260911030000 · level:data-collection · lane:D7 · writes:retention_policy,sweep_old_sg_listings · reads:none · pre:20260705153000
+--
+-- Already applied to prod · via MCP 2026-09-11 under operator direction.
 -- ============================================================================
 -- Migration 20260911030000 — SeatGeek snapshots are NEVER purged
 --
