@@ -34,6 +34,17 @@
 --    order the CRM sent them, which is also soonest-timer-first (the timer
 --    is a uniform alert_at + 15 min).
 --
+-- BUDGET SIZING (measured, do not lower without re-measuring). Serialized, the
+-- stages cost ~194s under current contention: drain 12.2s, map 56.4s, cover
+-- refresh 57.6s, sub_ping 56.7s, push 7.7s, queue 3.7s. A 55s statement_timeout
+-- would kill the tick partway through mapping and the cover stages would never
+-- run at all — so the timeout is 240s and the budget 200s. This is safe on a
+-- 1-minute schedule because cron_try_lock() is xact-scoped: while one tick
+-- runs, later ticks take the lock check, return 'overlap' and cost nothing. A
+-- full ordered pass therefore completes every ~3 min today, and faster as the
+-- contention drops — comfortably inside the 15-minute timer, and unlike the old
+-- six-cron arrangement every pass is IN ORDER.
+--
 -- Stage order is the data dependency, and it is deliberate: responses fired
 -- by net.http_get in tick N are only readable in tick N+1, so the CRM fetch
 -- is fired LAST, after this tick has consumed what the previous one queued.
@@ -133,7 +144,7 @@ COMMENT ON FUNCTION public.n2s_pull_all_sources(integer, interval, interval, boo
 -- ---------------------------------------------------------------------------
 -- 2. One ordered tick for the whole sub finder
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.n2s_pipeline_tick(p_budget_seconds integer DEFAULT 45)
+CREATE OR REPLACE FUNCTION public.n2s_pipeline_tick(p_budget_seconds integer DEFAULT 200)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -180,8 +191,20 @@ BEGIN
     END;
   END IF;
 
+  -- n2s_gt_map_by_name is a FALLBACK name-matcher and the single most
+  -- expensive call in this chain: mean 44.3s, max 92.6s over 1,186 calls.
+  -- Running it every cycle is what pushes a full pass past three minutes.
+  -- It can only ever help an order that is still unmapped, so skip it when
+  -- there are none, and otherwise run it at a 5-minute cadence rather than
+  -- every tick. The primary mapper (event_mapper_run, above) still runs
+  -- every cycle.
   v_stage := 'gt_map_by_name';
-  IF clock_timestamp() - v_start < make_interval(secs => p_budget_seconds) THEN
+  IF clock_timestamp() - v_start < make_interval(secs => p_budget_seconds)
+     AND EXTRACT(minute FROM clock_timestamp())::int % 5 = 0
+     AND EXISTS (SELECT 1 FROM public.n2s_items i
+                  WHERE i.tevo_event_id IS NULL
+                    AND NOT i.is_terminal
+                    AND i.event_dt::date >= current_date) THEN
     BEGIN
       PERFORM * FROM public.n2s_gt_map_by_name();
     EXCEPTION WHEN OTHERS THEN
@@ -306,7 +329,7 @@ $do$;
 SELECT cron.schedule(
   'n2s_pipeline_tick_1min',
   '* * * * *',
-  $cron$ SET statement_timeout='55s'; SELECT public.n2s_pipeline_tick(45); $cron$);
+  $cron$ SET statement_timeout='240s'; SELECT public.n2s_pipeline_tick(200); $cron$);
 
 -- The mapper parity shadow was riding inside the old n2s_map_events_5min
 -- command. It is a dry-run diagnostic for the 20260911210000 switchover, not
