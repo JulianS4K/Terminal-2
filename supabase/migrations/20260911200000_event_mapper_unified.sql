@@ -13,6 +13,7 @@
 --           helper BODIES are prod-only, applied via MCP 2026-09-09 — signatures verified live
 --           2026-09-11), 20260810184500 (matcher v3 guards), 20260610100000
 --           (match_to_aq_event_id 8-arg), 20260908235500 (cross_source_venue_resolve),
+--           20260608194500 (aq_name_consistent),
 --           20260515250000 (cron_policy + cron_should_fire). Vault: TEVO_API_TOKEN / TEVO_SECRET
 --           (read by the reused helpers only).
 --
@@ -62,8 +63,10 @@
 --                         ≥ 2 distinctive tokens. 0.70. (s4kcs rule 2 shape)
 --     Rule 4 AQ 4-tier  — match_to_aq_event_id → hub row that already carries a tevo id.
 --                         Score = its confidence, capped 0.95 (identity is the only 1.0).
---     Global guards: parking pseudo-events, "(Date TBD)" / "If Necessary" (date unreliable —
---     rule 0 still allowed), no date at all. Unique-or-decline everywhere; never a guess.
+--     Global guards: parking pseudo-events (input AND candidates), "(Date TBD)" / "If Necessary"
+--     (date unreliable — rule 0 still allowed), no date at all, and aq_name_consistent() on every
+--     name-driven candidate (the s4kcs rule-8 / SG matcher-v3 matchup guard: "A at B" vs "C at B"
+--     must agree on the away side). Unique-or-decline everywhere; never a guess.
 --
 --   v_event_mapper_needs — the union of every unmapped row (surface, row_key, the resolver
 --     inputs). 20260911200100 adds the two purchase books. This is what the cold path feeds
@@ -240,6 +243,9 @@ BEGIN
        WHERE left(e.occurs_at_local, 10) = p_local_date::text
          AND (e.venue_name ILIKE v_venue OR (v_vid IS NOT NULL AND e.venue_id = v_vid))
          AND NOT (e.name ILIKE '%parking%' OR coalesce(e.venue_name, '') ILIKE '%parking%')
+         -- matchup guard shared with s4kcs rule 8 / SG matcher v3: "A at B" vs "C at B" on the
+         -- same day at the same venue (doubleheaders, tournaments) must agree on the away side
+         AND public.aq_name_consistent(e.name, p_name)
     ), scored AS (
       SELECT c.*, count(*) OVER () AS n_cand FROM cand c
     ), good AS (
@@ -289,6 +295,7 @@ BEGIN
               LEFT JOIN public.event_lifecycle lc ON lc.event_id = e.id
              WHERE e.occurs_at_local ~ '^\d{4}-\d{2}-\d{2}'
                AND NOT (e.name ILIKE '%parking%' OR coalesce(e.venue_name, '') ILIKE '%parking%')
+               AND (v_name = '' OR public.aq_name_consistent(e.name, p_name))
                AND e.occurs_at_local::timestamptz BETWEEN p_event_time_utc - interval '24 hours'
                                                       AND p_event_time_utc + interval '24 hours'
                AND (   (v_vid IS NOT NULL AND e.venue_id = v_vid)
@@ -315,7 +322,9 @@ BEGIN
     SELECT count(*), min(e.id) INTO v_n, v_tevo
       FROM public.events e
      WHERE left(e.occurs_at_local, 10) = p_local_date::text
-       AND public.event_mapper_norm_name(e.name) = v_nm;
+       AND NOT (e.name ILIKE '%parking%' OR coalesce(e.venue_name, '') ILIKE '%parking%')
+       AND public.event_mapper_norm_name(e.name) = v_nm
+       AND public.aq_name_consistent(e.name, p_name);
     IF v_n = 1 THEN
       tevo_event_id := v_tevo; method := 'name_day_exact'; score := 0.70;
       RETURN NEXT; RETURN;
