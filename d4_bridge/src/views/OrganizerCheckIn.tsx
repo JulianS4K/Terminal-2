@@ -18,6 +18,8 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { verifyBarcode, extractTicketIdFromAny } from '../lib/barcode';
 import { joinCheckinChannel } from '../lib/checkinChannel';
+import { csvFileName, downloadCsv, toCsv } from '../lib/csv';
+import ScanRejectAudit from '../components/ScanRejectAudit';
 
 // Anything older than this is dropped from localStorage when the page mounts.
 // Set to a generous 7 days so a multi-day festival is still cached on day 3.
@@ -289,7 +291,7 @@ export default function OrganizerCheckIn() {
 
   /**
    * Build a CSV from the in-memory offline registry and trigger a browser
-   * download. We deliberately don't refetch from Firestore — the registry
+   * download. We deliberately don't refetch — the registry
    * already represents what the organizer cares about (ticket id, attendee
    * name, tier, used/unused). For a richer export with email/checkInDate
    * the organizer can extend this.
@@ -327,35 +329,17 @@ export default function OrganizerCheckIn() {
         return;
       }
     }
-    const escape = (v: unknown) => {
-      const s = String(v ?? '');
-      // Wrap in quotes and escape any internal quotes/commas/newlines.
-      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-      return s;
-    };
-    const header = ['ticket_id', 'attendee', 'tier', 'status', 'promoter'];
     const rows = entries.map(([id, raw]) => {
       // `Object.entries` widens our typed Record values to `unknown`; cast
       // back to the row shape we put in.
       const e = raw as OfflineTicketEntry;
       return [id, e.name, e.tier, e.voided ? 'voided' : e.used ? 'used' : 'active', e.promoterId || ''];
     });
-    const csv = [header, ...rows]
-      .map((row) => row.map(escape).join(','))
-      .join('\r\n');
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `attendees-${eventId || 'event'}-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    // Free the blob URL after the download tick.
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    // Shared builder (lib/csv): RFC 4180 quoting + formula-injection guard.
+    downloadCsv(
+      csvFileName(['attendees', event?.title ?? eventId]),
+      toCsv(['ticket_id', 'attendee', 'tier', 'status', 'promoter'], rows),
+    );
 
     toast({ kind: 'success', message: `Exported ${rows.length} attendee(s).` });
   };
@@ -1188,6 +1172,10 @@ export default function OrganizerCheckIn() {
               </ul>
             )}
           </div>
+
+          {/* Refused-scan audit — reads exos_scan_rejects (written by the
+              scanner above on every refusal); polled, exportable. */}
+          {eventId && <ScanRejectAudit eventId={eventId} eventTitle={event.title} />}
         </div>
       </div>
     </div>

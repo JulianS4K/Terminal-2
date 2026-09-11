@@ -24,7 +24,9 @@ for m in \
   20260702120000_exos_checkin_harden_doors_gate \
   20260702121000_exos_transfer_secret_leak_fix \
   20260702123000_exos_barcode_secret_least_privilege \
-  20260702240000_exos_event_checkin_roster_rpc; do
+  20260702240000_exos_event_checkin_roster_rpc \
+  20260911060000_exos_ticket_attendee_name \
+  20260911134000_exos_roster_attendee_name; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_lifecycle.sql"
