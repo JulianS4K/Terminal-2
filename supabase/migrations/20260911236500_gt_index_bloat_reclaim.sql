@@ -1,15 +1,16 @@
 -- ============================================================================
 -- Migration 20260911236500 — reclaim the GoTickets index bloat online
--- Migration 20260911236500 · level:data-collection · lane:A1 · writes:cron.job · reads:pg_class,pg_index · pre:20260911235000
+-- Migration 20260911236500 · level:data-collection · lane:A1 · writes:cron.job · reads:pg_class,pg_index · pre:20260911250000,20260911235000
 --
 -- Lane:     A1 (data plane)
 -- Touches:  cron.job (W) — maintenance jobs only; no table or data is altered
--- Pre-reqs: 20260911235000 (autovacuum parity — reindexing before that fix
---           would simply re-bloat)
+-- Pre-reqs: 20260911250000 (autovacuum tuning for the high-churn tables —
+--           reindexing before that fix would simply re-bloat),
+--           20260911235000 (the nightly VACUUM this schedules around)
 --
--- 20260911235000 stopped gotickets_listings_snapshots GROWING. It could not
--- give back what is already allocated. Splitting that 130 GB by where the
--- waste actually sits:
+-- 20260911250000 stopped gotickets_listings_snapshots GROWING. It could not
+-- give back what is already allocated — it says so explicitly. Splitting that
+-- 130 GB by where the waste actually sits:
 --
 --   object                              size     live estimate   bloat
 --   gotickets_listings_snapshots_pkey   33 GB      ~5 GB         ~6x

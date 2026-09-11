@@ -1,6 +1,11 @@
 -- ============================================================================
--- Migration 20260911230000 — N2S sub finder: one ordered pipeline, FIFO by CRM send order
--- Migration 20260911230000 · level:secondary-sales · lane:A1,D7 · writes:cron.job,cron_policy,n2s_items,n2s_cover_queue · reads:n2s_items_pending,ticketsdata_event_xref · pre:20260910100000,20260911090000,20260911210000
+-- Migration 20260911230050 — N2S sub finder: one ordered pipeline, FIFO by CRM send order
+-- Migration 20260911230050 · level:secondary-sales · lane:A1,D7 · writes:cron.job,cron_policy,n2s_items,n2s_cover_queue · reads:n2s_items_pending,ticketsdata_event_xref · pre:20260910100000,20260911090000,20260911210000
+--
+-- Prefix bumped 230000 -> 230050 per MIGRATION_CONVENTIONS rule #2: main landed
+-- 20260911230000_venue_section_rollup_reenable and 20260911230000_vivid_surface_ids
+-- while this branch was open. +50s sorts unambiguously after both and before
+-- this PR's 231000. Nothing about the migration's content changed.
 --
 -- Lane:     A1 (crons + pipeline) / D7 (n2s_* surface)
 -- Touches:  n2s_items (W via existing fns), cron.job (W), cron_policy (W),

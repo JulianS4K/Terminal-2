@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Migration 20260911236000 — drive the cron failure rate to zero, N2S first in line
--- Migration 20260911236000 · level:data-collection · lane:A1 · writes:cron.job,cron_policy · reads:cron.job_run_details · pre:20260911230000,20260911232000,20260911233000,20260911234000,20260911235500
+-- Migration 20260911236000 · level:data-collection · lane:A1 · writes:cron.job,cron_policy · reads:cron.job_run_details · pre:20260911230050,20260911232000,20260911233000,20260911234000,20260911235500
 --
 -- Lane:     A1 (crons)
 -- Touches:  cron.job (W), cron_policy (W)

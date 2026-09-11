@@ -22,7 +22,7 @@
 --    87 GB against EVO's 35 GB. The gap is dead space: 12.5% dead tuples and
 --    58 lifetime autovacuums vs EVO's 0.7% and 201, because GT never got the
 --    per-table autovacuum settings listings_snapshots has. That is fixed in
---    20260911235000, where it belongs.
+--    20260911250000, where it belongs.
 --
 --    So the near-term bands are left AT EVO PARITY (≤3d 5m, 4-7d 15m, 8-14d
 --    30/60m, 15-30d 60m) — those feed cover pricing and buying nothing back by
@@ -185,7 +185,7 @@ COMMENT ON FUNCTION public.gt_listings_poll_tick(integer, integer)
 -- the 'GT' collector_cadence rows instead of EVO's, so these values are live
 -- config and retunable in one UPDATE. The values themselves stay at EVO parity
 -- except the 31-60d band, for the reasons in the header — the 130 GB is a
--- vacuum problem (20260911235000), not a cadence problem, and loosening the
+-- vacuum problem (20260911250000), not a cadence problem, and loosening the
 -- near bands would cost cover freshness to fix nothing.
 --
 --   band      events   before -> after    note
