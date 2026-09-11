@@ -16,6 +16,7 @@ import { getEventForEdit } from '../lib/events';
 import {
   createEventSeries,
   generateOccurrences,
+  listSeriesEvents,
   localDateRange,
   occurrenceLabel,
   MAX_OCCURRENCES,
@@ -48,6 +49,10 @@ export default function CreateSeries() {
 
   const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  // Start instants already in this series (extend mode) — never regenerated.
+  const [existing, setExisting] = useState<Set<number>>(new Set());
   const [kind, setKind] = useState<SeriesKind>('recurring');
   const [name, setName] = useState('');
   const [publish, setPublish] = useState<'copy' | 'draft' | 'published'>('copy');
@@ -73,26 +78,38 @@ export default function CreateSeries() {
     let cancelled = false;
     (async () => {
       if (!eventId) return;
+      setLoading(true);
+      setLoadError(null);
       try {
         const ev = await getEventForEdit(eventId);
         if (cancelled) return;
         setEvent(ev);
         if (ev) {
           setName(ev.title);
-          const wall = utcToZonedWallClock(ev.date.toDate(), ev.timezone);
+          // The RPC falls back to UTC when the template has no timezone — use
+          // the same fallback here so the preview matches what gets created.
+          const wall = utcToZonedWallClock(ev.date.toDate(), ev.timezone || 'UTC');
           const day = wall.slice(0, 10);
           setFromDay(day);
           setToDay(day);
           setFirstSlot(wall.slice(11, 16) || '10:00');
+          if (ev.seriesId) {
+            const members = await listSeriesEvents(ev.seriesId);
+            if (!cancelled) setExisting(new Set(members.map((m) => m.date.toDate().getTime())));
+          }
         }
+      } catch (err: any) {
+        console.error('CreateSeries load failed:', err);
+        if (!cancelled) setLoadError(err?.message || 'Could not load the event.');
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [eventId]);
+  }, [eventId, reloadKey]);
 
-  const tz = event?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const tz = event?.timezone || 'UTC';
+  const tzMissing = !!event && !event.timezone;
   const templateWall = event ? utcToZonedWallClock(event.date.toDate(), tz) : '';
 
   const rule: SeriesRule | null = useMemo(() => {
@@ -113,7 +130,11 @@ export default function CreateSeries() {
     return r;
   }, [event, kind, templateWall, tz, freq, interval, weekdays, stop, count, until, fromDay, toDay, firstSlot, slotMinutes, slotsPerDay]);
 
-  const occurrences = useMemo(() => (rule ? generateOccurrences(rule) : []), [rule]);
+  // Drop dates the series already has (extend mode) — the RPC skips them too.
+  const occurrences = useMemo(
+    () => (rule ? generateOccurrences(rule).filter((d) => !existing.has(d.getTime())) : []),
+    [rule, existing],
+  );
   const kept = occurrences.filter((_, i) => !removed.has(i));
 
   useEffect(() => { setRemoved(new Set()); }, [rule]);
@@ -121,6 +142,16 @@ export default function CreateSeries() {
   if (!user) return <div className="max-w-3xl mx-auto p-12 text-center text-slate-500">Sign in to manage events.</div>;
   if (loading) {
     return <div className="max-w-7xl mx-auto p-24 text-center text-slate-300 font-bold uppercase tracking-[0.3em] animate-pulse">Loading…</div>;
+  }
+  if (loadError) {
+    return (
+      <div className="max-w-3xl mx-auto p-12 text-center text-slate-500">
+        <p className="mb-4">{loadError}</p>
+        <button type="button" onClick={() => setReloadKey((k) => k + 1)} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-black uppercase tracking-widest">
+          Retry
+        </button>
+      </div>
+    );
   }
   if (!event) return <div className="max-w-3xl mx-auto p-12 text-center text-slate-500">Event not found.</div>;
   const canManage = isAdmin || activeRole === 'owner' || activeRole === 'manager' || event.organizerId === user.uid;
@@ -166,6 +197,14 @@ export default function CreateSeries() {
           <p className="text-xs text-slate-400 mt-2">
             Template: {templateWall.replace('T', ' ')} ({tz}). This date stays as it is; every generated date is a copy with its own capacity.
           </p>
+          {tzMissing && (
+            <p className="text-xs text-amber-600 mt-1">
+              This event has no timezone set, so dates are generated in UTC. Set the timezone on the event first for local times.
+            </p>
+          )}
+          {existing.size > 1 && (
+            <p className="text-xs text-slate-400 mt-1">Dates already in this series are skipped automatically.</p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">

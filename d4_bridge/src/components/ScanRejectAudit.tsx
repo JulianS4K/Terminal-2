@@ -32,21 +32,28 @@ export default function ScanRejectAudit({ eventId, eventTitle }: { eventId: stri
   const [rows, setRows] = useState<ScanRejectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Set when a poll fails AFTER we already have rows: keep showing the last
+  // good list with a stale banner instead of replacing it with an error.
+  const [stale, setStale] = useState<string | null>(null);
 
   useEffect(() => {
     if (!eventId) return undefined;
     let cancelled = false;
+    let haveRows = false;
     const load = async () => {
       try {
         const next = await listEventScanRejects(eventId);
         if (cancelled) return;
         setRows(next);
+        haveRows = true;
         setError(null);
-      } catch (err) {
-        if (!cancelled) {
-          console.warn('listEventScanRejects failed:', err);
-          setError('Could not load the reject log.');
-        }
+        setStale(null);
+      } catch (err: any) {
+        if (cancelled) return;
+        console.warn('listEventScanRejects failed:', err);
+        const msg = err?.message ? String(err.message) : 'unknown error';
+        if (haveRows) setStale(`Refresh failed (${msg}) — showing the last loaded list.`);
+        else setError(`Could not load the reject log: ${msg}`);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -111,6 +118,9 @@ export default function ScanRejectAudit({ eventId, eventTitle }: { eventId: stri
         <p className="px-5 py-6 text-xs text-slate-400 font-bold uppercase tracking-widest">No refusals yet.</p>
       ) : (
         <>
+          {stale && (
+            <p className="px-5 py-2 text-[10px] text-amber-700 bg-amber-50 border-b border-amber-100">{stale}</p>
+          )}
           <ul className="px-5 py-3 border-b border-slate-100 flex flex-wrap gap-2">
             {byReason.map((r) => (
               <li

@@ -613,6 +613,7 @@ function CompBudgetCard({ orgId, initial, canEdit }: { orgId: string; initial: n
   const { toast } = useToast();
   const [budget, setBudget] = useState<string>(initial === null ? '' : String(initial));
   const [usage, setUsage] = useState<number | null>(null);
+  const [usageNote, setUsageNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -621,8 +622,19 @@ function CompBudgetCard({ orgId, initial, canEdit }: { orgId: string; initial: n
   useEffect(() => {
     let cancelled = false;
     getOrgCompUsage(orgId)
-      .then((n) => { if (!cancelled) setUsage(n); })
-      .catch(() => { if (!cancelled) setUsage(null); });
+      .then((n) => { if (!cancelled) { setUsage(n); setUsageNote(null); } })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setUsage(null);
+        // 42501 = the caller's role cannot read usage (owner/manager/finance only);
+        // anything else is a real failure worth surfacing.
+        if (err?.code === '42501') {
+          setUsageNote('Usage is visible to owners, managers and finance.');
+        } else {
+          console.error('exos_org_comp_usage failed:', err);
+          setUsageNote(`Could not load usage${err?.message ? `: ${err.message}` : ''}.`);
+        }
+      });
     return () => { cancelled = true; };
   }, [orgId]);
 
@@ -677,6 +689,7 @@ function CompBudgetCard({ orgId, initial, canEdit }: { orgId: string; initial: n
         Used so far: {usage === null ? '—' : usage}
         {budget.trim() !== '' && usage !== null ? ` of ${budget.trim()}` : ''}
       </p>
+      {usageNote && <p className="text-[10px] text-slate-400 mt-1">{usageNote}</p>}
     </div>
   );
 }

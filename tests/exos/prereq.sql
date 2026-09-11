@@ -87,7 +87,8 @@ CREATE TABLE public.exos_transfers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   ticket_id uuid NOT NULL, org_id uuid NOT NULL, sender_id uuid,
   receiver_email text, status text NOT NULL DEFAULT 'pending',
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()   -- prod shape; catches NULL writes via jsonb_populate_record
 );
 CREATE TABLE public.exos_event_checkins (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

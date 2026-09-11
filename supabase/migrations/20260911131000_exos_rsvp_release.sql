@@ -83,6 +83,9 @@ BEGIN
     RAISE EXCEPTION 'exos_release_ticket: ticket not found';
   END IF;
   SELECT * INTO v_ev FROM public.exos_events WHERE id = t.event_id;
+  IF v_ev.id IS NULL THEN
+    RAISE EXCEPTION 'exos_release_ticket: event not found';
+  END IF;
 
   v_staff := exos_is_admin() OR exos_has_org_role(t.org_id, ARRAY['owner','manager']);
   IF NOT v_staff AND t.owner_id <> v_uid THEN
@@ -125,16 +128,29 @@ BEGIN
    WHERE id = p_ticket_id;
 
   -- Give the seat back. Tier first (this fires the waitlist auto-offer
-  -- trigger when someone is waiting), then the house cap.
+  -- trigger when someone is waiting), then the house cap. v_freed reflects an
+  -- ACTUAL decrement — a counter already at 0 means the books were off, so warn.
   IF t.tier_id IS NOT NULL THEN
     UPDATE public.exos_ticket_tiers
-       SET sold = greatest(sold - 1, 0)
-     WHERE id = t.tier_id;
+       SET sold = sold - 1
+     WHERE id = t.tier_id AND sold > 0;
     v_freed := FOUND;
+    IF NOT v_freed THEN
+      RAISE WARNING 'exos_release_ticket: tier % sold counter was already 0 for ticket %', t.tier_id, p_ticket_id;
+    END IF;
   END IF;
   UPDATE public.exos_events
-     SET tickets_sold = greatest(tickets_sold - 1, 0)
-   WHERE id = t.event_id;
+     SET tickets_sold = tickets_sold - 1
+   WHERE id = t.event_id AND tickets_sold > 0;
+  IF NOT FOUND THEN
+    RAISE WARNING 'exos_release_ticket: event % tickets_sold was already 0 for ticket %', t.event_id, p_ticket_id;
+  END IF;
+  -- A tier-less ticket never touches exos_ticket_tiers, so the auto-offer
+  -- trigger cannot fire — offer the freed seat to the general waitlist directly.
+  IF t.tier_id IS NULL THEN
+    PERFORM public._exos_waitlist_offer_core(t.event_id, NULL, 1, 48);
+    v_freed := true;
+  END IF;
 
   RETURN jsonb_build_object(
     'ticket_id',   p_ticket_id,
@@ -190,7 +206,8 @@ BEGIN
   v_tz := coalesce(nullif(v_ev.timezone, ''), 'UTC');
   BEGIN
     PERFORM now() AT TIME ZONE v_tz;
-  EXCEPTION WHEN OTHERS THEN
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RAISE WARNING 'exos_event_analytics: event % has an invalid timezone (%) — using UTC', p_event_id, v_tz;
     v_tz := 'UTC';
   END;
   v_started := v_ev.starts_at IS NOT NULL AND v_ev.starts_at <= now();
