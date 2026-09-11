@@ -48,7 +48,7 @@
 --             because the SellerDirect pull fetches PAGE 1 of each status,
 --             ascending by creation: the 400 rows we hold are from 2019-2025
 --             (confirmed total 6,633 / fulfilled 582,238 upstream). Fixed by
---             20260911050000 (tail-page pull). Rule wired now, same reason.
+--             20260911080000 (tail-page pull). Rule wired now, same reason.
 --   TickPick  tickpick_orders -> 0 of 107; that ingest stopped 2026-05-31
 --             (cron OFF, RESOURCES_BIBLE §5). No rule: nothing to read yet.
 --   StubHub / Gametime reach us only through the CRM book (rule 0, 92%).
@@ -180,4 +180,4 @@ BEGIN
 END $do$;
 
 COMMENT ON FUNCTION public.n2s_map_events(boolean) IS
-  'Map open N2S obligations to a tevo_event_id, fill-only and unique-or-decline. Order: rule 0 CRM order identity (s4kcs_orders) · 0b EVO order identity (evo_orders, via the n2s_order_key split, 20260911040000) · 0c GoTickets sale identity (gotickets_sales.gt_event_id -> gotickets_event) · 0d Vivid order identity (vivid_orders) · 0e SeatGeek order identity (seatgeek_orders, tevo id from the row / xref / hub) — all four 20260911040000 · 1 name+local date (+venue guard) · 2-4 venue+date (unique / session / name guard) · 5 GoTickets name alias. Identity rules run first because an order we already hold beats any inference. 0d/0e map nothing until the Vivid pull is widened beyond PENDING_SHIPMENT and the SeatGeek pull reaches current pages (20260911050000); TickPick ingest is off, so no rule. Run by cron 598 every minute; n2s_gt_map_by_name() and n2s_pull_all_sources() follow in the same command.';
+  'Map open N2S obligations to a tevo_event_id, fill-only and unique-or-decline. Order: rule 0 CRM order identity (s4kcs_orders) · 0b EVO order identity (evo_orders, via the n2s_order_key split, 20260911040000) · 0c GoTickets sale identity (gotickets_sales.gt_event_id -> gotickets_event) · 0d Vivid order identity (vivid_orders) · 0e SeatGeek order identity (seatgeek_orders, tevo id from the row / xref / hub) — all four 20260911040000 · 1 name+local date (+venue guard) · 2-4 venue+date (unique / session / name guard) · 5 GoTickets name alias. Identity rules run first because an order we already hold beats any inference. 0d/0e map nothing until the Vivid pull is widened beyond PENDING_SHIPMENT and the SeatGeek pull reaches current pages (20260911080000); TickPick ingest is off, so no rule. Run by cron 598 every minute; n2s_gt_map_by_name() and n2s_pull_all_sources() follow in the same command.';

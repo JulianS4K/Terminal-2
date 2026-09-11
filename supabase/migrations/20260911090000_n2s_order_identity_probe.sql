@@ -1,6 +1,8 @@
--- Migration 20260911060000 · level:secondary-sales · lane:D7 · writes:n2s_order_probe,vivid_orders_pending,gt_sales_sync_state,vivid_orders,gt_sales_drain,cron.job · reads:n2s_items,vivid_orders,gotickets_sales,aq_event_map · pre:20260911040000
+-- Migration 20260911090000 · level:secondary-sales · lane:D7 · writes:n2s_order_probe,vivid_orders_pending,gt_sales_sync_state,vivid_orders,gt_sales_drain,cron.job · reads:n2s_items,vivid_orders,gotickets_sales,aq_event_map · pre:20260911040000
 -- ============================================================================
--- Migration 20260911060000 — N2S: pull the order BY ID the tick it arrives
+-- Migration 20260911090000 — N2S: pull the order BY ID the tick it arrives
+-- (authored as 20260911060000; renumbered 2026-09-11 after D4 landed a migration
+--  with that prefix on main — PR #975)
 --                            (Vivid getOrder, GoTickets /rest/sales/{id}),
 --                            then cross-map what comes back
 --
@@ -72,7 +74,7 @@ BEGIN
     n2 := 'jsonb_array_elements(r.content::jsonb) AS e';
     IF (length(d) - length(replace(d, n1, ''))) / length(n1) <> 1
        OR (length(d) - length(replace(d, n2, ''))) / length(n2) <> 1 THEN
-      RAISE EXCEPTION 'gt_sales_drain anchors not found exactly once — body drifted, re-derive 20260911060000';
+      RAISE EXCEPTION 'gt_sales_drain anchors not found exactly once — body drifted, re-derive 20260911090000';
     END IF;
     d := replace(d, n1, 'left(r.content, 1) IN (''['', ''{'') THEN');
     d := replace(d, n2, 'jsonb_array_elements(CASE WHEN left(r.content, 1) = ''{'' THEN jsonb_build_array(r.content::jsonb) ELSE r.content::jsonb END) AS e');
@@ -81,7 +83,7 @@ BEGIN
 END $do$;
 
 COMMENT ON FUNCTION public.gt_sales_drain() IS
-  'Drain pg_net responses recorded in gt_sales_sync_state into gotickets_sales (upsert on gt_sale_id). Accepts the list shape (JSON array, /rest/sales) and — since 20260911060000 — the per-sale shape (one JSON object, /rest/sales/{id}) fired by n2s_order_identity_pull().';
+  'Drain pg_net responses recorded in gt_sales_sync_state into gotickets_sales (upsert on gt_sale_id). Accepts the list shape (JSON array, /rest/sales) and — since 20260911090000 — the per-sale shape (one JSON object, /rest/sales/{id}) fired by n2s_order_identity_pull().';
 
 -- ── 2. Probe ledger ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.n2s_order_probe (
@@ -94,7 +96,7 @@ CREATE TABLE IF NOT EXISTS public.n2s_order_probe (
   found_at      timestamptz
 );
 COMMENT ON TABLE public.n2s_order_probe IS
-  'One row per N2S obligation whose order was fetched BY ID from its marketplace (Vivid getOrder, GoTickets /rest/sales/{id}) because the scheduled feeds did not hold it (20260911060000). found_at is set once the order is in our book. Re-probed after 6h while unmapped, at most 3 attempts.';
+  'One row per N2S obligation whose order was fetched BY ID from its marketplace (Vivid getOrder, GoTickets /rest/sales/{id}) because the scheduled feeds did not hold it (20260911090000). found_at is set once the order is in our book. Re-probed after 6h while unmapped, at most 3 attempts.';
 ALTER TABLE public.n2s_order_probe ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.n2s_order_probe FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.n2s_order_probe TO service_role;
@@ -212,7 +214,7 @@ BEGIN
   ELSIF position('n2s_order_identity_pull' in v_cmd) > 0 THEN
     RAISE NOTICE 'cron 598 already runs n2s_order_identity_pull — skipping';
   ELSIF position('SELECT public.n2s_map_events(true);' in v_cmd) = 0 THEN
-    RAISE EXCEPTION 'cron 598 command drifted (no n2s_map_events(true) anchor) — re-derive 20260911060000';
+    RAISE EXCEPTION 'cron 598 command drifted (no n2s_map_events(true) anchor) — re-derive 20260911090000';
   ELSE
     PERFORM cron.alter_job(598, command := replace(v_cmd,
       'SELECT public.n2s_map_events(true);',

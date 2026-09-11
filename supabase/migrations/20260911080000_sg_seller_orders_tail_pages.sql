@@ -1,6 +1,8 @@
--- Migration 20260911050000 · level:data-collection · lane:D7 · writes:sg_seller_pending · reads:net._http_response,sg_seller_pending · pre:20260515370000
+-- Migration 20260911080000 · level:data-collection · lane:D7 · writes:sg_seller_pending · reads:net._http_response,sg_seller_pending · pre:20260515370000
 -- ============================================================================
--- Migration 20260911050000 — SeatGeek SellerDirect orders: fetch the TAIL pages
+-- Migration 20260911080000 — SeatGeek SellerDirect orders: fetch the TAIL pages
+-- (authored as 20260911050000; renumbered 2026-09-11 after D4 landed a migration
+--  with that prefix on main — PR #975)
 --
 -- Lane:     D7 (operator-directed; the function is A1's order ingest — flagged)
 -- Touches:  sg_seller_orders_queue(integer, text) — body replace, same signature,
@@ -89,7 +91,7 @@ BEGIN
     VALUES (v_req_id, 'orders', 1, 200, v_status);
     v_count := v_count + 1;
 
-    -- Tail pages (20260911050000): the newest orders live on the LAST page.
+    -- Tail pages (20260911080000): the newest orders live on the LAST page.
     -- Total comes from the latest resolved page-1 response for this status.
     SELECT NULLIF(h.content::jsonb->'meta'->>'total', '')::int INTO v_total
       FROM sg_seller_pending p
@@ -121,4 +123,4 @@ REVOKE ALL ON FUNCTION public.sg_seller_orders_queue(integer, text) FROM PUBLIC,
 GRANT EXECUTE ON FUNCTION public.sg_seller_orders_queue(integer, text) TO service_role;
 
 COMMENT ON FUNCTION public.sg_seller_orders_queue(integer, text) IS
-  'Queue SellerDirect GET /orders pulls per status (RULE 2: GET only). Page 1 as before, plus — since 20260911050000 — the last two pages of each status, sized from the previous cycle''s meta.total, because the API pages ASCENDING by creation and page 1 alone re-pulled the same 2019 orders every cycle (0 of 16 live N2S SeatGeek orders were ever in seatgeek_orders). Drained by sg_seller_process(); tevo ids arrive via backfill_order_tevo_from_aq (hourly :40); read by n2s_map_events rule 0e.';
+  'Queue SellerDirect GET /orders pulls per status (RULE 2: GET only). Page 1 as before, plus — since 20260911080000 — the last two pages of each status, sized from the previous cycle''s meta.total, because the API pages ASCENDING by creation and page 1 alone re-pulled the same 2019 orders every cycle (0 of 16 live N2S SeatGeek orders were ever in seatgeek_orders). Drained by sg_seller_process(); tevo ids arrive via backfill_order_tevo_from_aq (hourly :40); read by n2s_map_events rule 0e.';
