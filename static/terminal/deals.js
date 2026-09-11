@@ -113,7 +113,9 @@
     const el = document.getElementById('dealsScanMeta');
     if (!el) return;
     const active = d.active_deals != null ? d.active_deals : '—';
-    el.textContent = `${active} live deals · last scan ${ago(d.last_scan_at) || '—'}`;
+    const hidden = d.suppressed_n ? ` · ${d.suppressed_n} hidden (at-market / falling)` : '';
+    const verify = d.verify_n ? ` · ${d.verify_n} to verify` : '';
+    el.textContent = `${active} live deals${hidden}${verify} · last scan ${ago(d.last_scan_at) || '—'}`;
   }
 
   function pulseDot() {
@@ -123,6 +125,13 @@
   }
 
   function winClass(p) { return p >= 0.85 ? 'good' : (p >= 0.70 ? 'warn' : 'neutral'); }
+  // score_v1 (market-only, label-calibrated): ≥0.50 won 94% of the graded set, <0.15 won 0%.
+  function scoreClass(p) { return p >= 0.5 ? 'good' : (p >= 0.3 ? 'warn' : 'neutral'); }
+  function gateChip(d) {
+    if (!d.gate || d.gate === 'OK') return d.timing === 'LAST-DAY' ? '<span class="deals-new-chip" title="flagged within a day of the event — 9/9 won">LAST-DAY</span>' : '';
+    const t = d.gate.startsWith('VERIFY') ? 'priced far below its zone/anchor — check the seat before buying' : d.gate;
+    return `<span class="badge regime-warn" title="${esc(t)}">${esc(d.gate.replace(/^VERIFY\s*/, 'VERIFY '))}</span>`;
+  }
   function confClass(c) { return c === 'high' ? 'good' : (c === 'med' ? 'warn' : 'neutral'); }
 
   function ago(iso) {
@@ -176,6 +185,7 @@
         <td class="num">${$r(d.est_net_resale)}</td>
         <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
         <td class="num"><span class="badge regime-${wc}">${winPct}</span></td>
+        <td class="num"><span class="badge regime-${d.score_v1 != null ? scoreClass(+d.score_v1) : 'neutral'}" title="market-only winner score (days out, weekend, 7d/14d trend, moneyness, regime, lot, discount)">${d.score_v1 != null ? Math.round(d.score_v1 * 100) + '%' : '—'}</span> ${gateChip(d)}</td>
         <td><span class="badge regime-${cc}">${esc(d.confidence || '')}</span></td>
         <td class="deals-open">${gtBtn}</td>
       </tr>`;
@@ -184,7 +194,7 @@
       <thead><tr>
         <th>Seen</th><th>Event</th><th>Section · Row</th><th class="num">Qty</th>
         <th class="num">Buy (GT)</th><th class="num">Realized med</th><th class="num">Est. net resale</th>
-        <th class="num">Net profit</th><th class="num">Win odds</th><th>Conf</th><th>Open</th>
+        <th class="num">Net profit</th><th class="num">Win odds</th><th class="num">Score v1</th><th>Conf</th><th>Open</th>
       </tr></thead>
       <tbody>${html}</tbody></table>`;
     setTimeout(() => { state.deals.forEach(d => { d._new = false; }); }, 6000);
