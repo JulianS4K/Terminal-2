@@ -1,11 +1,11 @@
--- Migration 20260911040000 · level:secondary-sales · lane:D7 · writes:n2s_items · reads:evo_orders,gotickets_sales,gotickets_event · pre:20260910180000
+-- Migration 20260911040000 · level:secondary-sales · lane:D7 · writes:n2s_items · reads:evo_orders,gotickets_sales,gotickets_event,vivid_orders,seatgeek_orders,seatgeek_event_xref,aq_event_map · pre:20260910180000
 -- ============================================================================
 -- Migration 20260911040000 — N2S mapper: identity from the marketplace books
---                            we ingest directly (EVO, GoTickets)
+--                            we ingest directly (EVO, GoTickets, Vivid, SeatGeek)
 --
 -- Lane:     D7 · Pre-reqs: 20260910180000 (rule 0 / rule 5), 20260910040000
 --           (n2s_order_key = the EVO split), 20260911020000 (cron 598 command)
--- Touches:  n2s_map_events() — two identity rules inserted right after rule 0.
+-- Touches:  n2s_map_events() — four identity rules inserted right after rule 0.
 --           Rules 1-5 unchanged. No new cron; cron 598 already runs this.
 --
 -- READ-ONLY upstream: pure joins over tables we already hold. RULE 2 untouched.
@@ -36,11 +36,22 @@
 --             a GT event id that resolves, 0 disagreements in 5 overlaps.
 --             (gt_order_item_id was also tried: 1 hit, 1 DISAGREEMENT — not
 --             the order key. Left out.)
---   Vivid / TickPick / SeatGeek -> 0 of 117 / 107 / 16 in vivid_orders,
---             tickpick_orders, seatgeek_orders. Same finding as 20260910040000:
---             these are FAILED orders and the seller books hold only orders
---             that processed. There is no identity road for them; they stay on
---             rules 0-5 (the CRM book covers StubHub + Gametime at 92%).
+--   Vivid     vivid_orders.vivid_order_id = order_number -> 0 of 117 TODAY,
+--             but not because the road is missing: the pull is status-filtered
+--             (cron 207 fires vivid_orders_queue_multi('PENDING_SHIPMENT') only)
+--             and the 117 N2S orders are in some other Vivid status — 867 of
+--             our rows sit inside the N2S id range, neighbours of the N2S ids
+--             (81410832/81410849 around N2S 81410869), the N2S ids themselves
+--             absent even from raw. Widening the pull is an A1 ingest change;
+--             the rule is wired now so it starts working the tick that lands.
+--   SeatGeek  seatgeek_orders.sg_order_id = order_number -> 0 of 16 TODAY,
+--             because the SellerDirect pull fetches PAGE 1 of each status,
+--             ascending by creation: the 400 rows we hold are from 2019-2025
+--             (confirmed total 6,633 / fulfilled 582,238 upstream). Fixed by
+--             20260911050000 (tail-page pull). Rule wired now, same reason.
+--   TickPick  tickpick_orders -> 0 of 107; that ingest stopped 2026-05-31
+--             (cron OFF, RESOURCES_BIBLE §5). No rule: nothing to read yet.
+--   StubHub / Gametime reach us only through the CRM book (rule 0, 92%).
 -- "Overlap" = rows both the new rule and an existing rule can map, used as the
 -- correctness check: the new rule must agree everywhere it can be compared.
 --
@@ -49,6 +60,11 @@
 -- Rule 0c  n2s_gt_order_identity    gotickets_sales.gt_sale_id = order_number
 --                                   -> gotickets_event.gt_event_id -> tevo id,
 --                                   unique-or-decline across the sale's rows
+-- Rule 0d  n2s_vivid_order_identity vivid_orders.vivid_order_id = order_number
+-- Rule 0e  n2s_sg_order_identity    seatgeek_orders.sg_order_id = order_number
+--                                   -> tevo id from the order row, else its
+--                                   sg_event_id through seatgeek_event_xref,
+--                                   else the hub; unique-or-decline
 -- Keys are compared as TEXT on purpose: a ::bigint cast on the N2S side would
 -- depend on the planner evaluating a regex guard first, which Postgres does not
 -- promise. The books are 4.7k / 10k rows — a text compare costs nothing.
@@ -106,6 +122,35 @@ BEGIN
     E'            HAVING count(DISTINCT g.tevo_event_id) = 1) s\n' ||
     E'     WHERE n.n2s_id = s.n2s_id AND n.tevo_event_id IS NULL;\n' ||
     E'    GET DIAGNOSTICS v_n = ROW_COUNT; v_mapped := v_mapped + v_n;\n' ||
+    E'\n' ||
+    E'    -- Rule 0d: the SAME ORDER is in our own Vivid broker-order pull.\n' ||
+    E'    UPDATE public.n2s_items n\n' ||
+    E'       SET tevo_event_id = o.tevo_event_id, mapped_via = ''n2s_vivid_order_identity''\n' ||
+    E'      FROM public.vivid_orders o\n' ||
+    E'     WHERE n.s4k_source = ''Vivid Seats''\n' ||
+    E'       AND o.vivid_order_id = n.order_number\n' ||
+    E'       AND o.tevo_event_id IS NOT NULL\n' ||
+    E'       AND n.tevo_event_id IS NULL\n' ||
+    E'       AND NOT n.is_terminal;\n' ||
+    E'    GET DIAGNOSTICS v_n = ROW_COUNT; v_mapped := v_mapped + v_n;\n' ||
+    E'\n' ||
+    E'    -- Rule 0e: the SAME ORDER is in our SeatGeek SellerDirect order pull. The\n' ||
+    E'    -- tevo id comes from the order row, else its sg_event_id through the xref,\n' ||
+    E'    -- else the hub. Unique-or-decline: two candidate tevo ids = no mapping.\n' ||
+    E'    UPDATE public.n2s_items n\n' ||
+    E'       SET tevo_event_id = s.eid, mapped_via = ''n2s_sg_order_identity''\n' ||
+    E'      FROM (SELECT n2.n2s_id, min(coalesce(o.tevo_event_id, x.tevo_event_id, a.tevo_event_id)) AS eid\n' ||
+    E'              FROM public.n2s_items n2\n' ||
+    E'              JOIN public.seatgeek_orders o ON o.sg_order_id = n2.order_number\n' ||
+    E'              LEFT JOIN public.seatgeek_event_xref x ON x.sg_event_id = o.sg_event_id\n' ||
+    E'              LEFT JOIN public.aq_event_map a ON a.sg_event_id = o.sg_event_id\n' ||
+    E'                                             AND a.tevo_event_id IS NOT NULL\n' ||
+    E'             WHERE n2.s4k_source = ''SeatGeek''\n' ||
+    E'               AND n2.tevo_event_id IS NULL AND NOT n2.is_terminal\n' ||
+    E'             GROUP BY n2.n2s_id\n' ||
+    E'            HAVING count(DISTINCT coalesce(o.tevo_event_id, x.tevo_event_id, a.tevo_event_id)) = 1) s\n' ||
+    E'     WHERE n.n2s_id = s.n2s_id AND n.tevo_event_id IS NULL;\n' ||
+    E'    GET DIAGNOSTICS v_n = ROW_COUNT; v_mapped := v_mapped + v_n;\n' ||
     E'  END IF;\n' ||
     E'\n' || n);
 
@@ -114,10 +159,11 @@ BEGIN
   -- Self-check: both rules are in the live body, in order, before the inference block.
   d := pg_get_functiondef('public.n2s_map_events(boolean)'::regprocedure);
   IF position('n2s_evo_order_identity' in d) = 0 OR position('n2s_gt_order_identity' in d) = 0
-     OR position('n2s_evo_order_identity' in d) > position('n2s_name_date_venue' in d) THEN
+     OR position('n2s_vivid_order_identity' in d) = 0 OR position('n2s_sg_order_identity' in d) = 0
+     OR position('n2s_sg_order_identity' in d) > position('n2s_name_date_venue' in d) THEN
     RAISE EXCEPTION 'post-apply check failed: identity rules missing or not ahead of inference';
   END IF;
 END $do$;
 
 COMMENT ON FUNCTION public.n2s_map_events(boolean) IS
-  'Map open N2S obligations to a tevo_event_id, fill-only and unique-or-decline. Order: rule 0 CRM order identity (s4kcs_orders) · 0b EVO order identity (evo_orders, via the n2s_order_key split, 20260911040000) · 0c GoTickets sale identity (gotickets_sales.gt_event_id -> gotickets_event, 20260911040000) · 1 name+local date (+venue guard) · 2-4 venue+date (unique / session / name guard) · 5 GoTickets name alias. Identity rules run first because an order we already hold beats any inference. Vivid, TickPick and SeatGeek failed orders are in no book we hold (measured 0/117, 0/107, 0/16) and rely on the inference rules. Run by cron 598 every minute; n2s_gt_map_by_name() and n2s_pull_all_sources() follow in the same command.';
+  'Map open N2S obligations to a tevo_event_id, fill-only and unique-or-decline. Order: rule 0 CRM order identity (s4kcs_orders) · 0b EVO order identity (evo_orders, via the n2s_order_key split, 20260911040000) · 0c GoTickets sale identity (gotickets_sales.gt_event_id -> gotickets_event) · 0d Vivid order identity (vivid_orders) · 0e SeatGeek order identity (seatgeek_orders, tevo id from the row / xref / hub) — all four 20260911040000 · 1 name+local date (+venue guard) · 2-4 venue+date (unique / session / name guard) · 5 GoTickets name alias. Identity rules run first because an order we already hold beats any inference. 0d/0e map nothing until the Vivid pull is widened beyond PENDING_SHIPMENT and the SeatGeek pull reaches current pages (20260911050000); TickPick ingest is off, so no rule. Run by cron 598 every minute; n2s_gt_map_by_name() and n2s_pull_all_sources() follow in the same command.';
