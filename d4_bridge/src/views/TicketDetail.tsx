@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getTicket, listMyTicketsForEvent } from '../lib/tickets';
+import { getTicket, listMyTicketsForEvent, setTicketAttendee } from '../lib/tickets';
 import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
@@ -28,6 +28,9 @@ export default function TicketDetail() {
   const [barcode, setBarcode] = useState('');
   const [timeLeft, setTimeLeft] = useState(30);
   const [showShare, setShowShare] = useState(false);
+  // Attendee-name editor (mig 20260911060000): who this pass is FOR.
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [savingName, setSavingName] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
@@ -243,7 +246,7 @@ export default function TicketDetail() {
                         <div className="flex justify-between items-end text-left pt-1">
                            <div>
                              <p className="type text-[9px] uppercase tracking-widest text-black/40">pass holder</p>
-                             <p className="disp text-base text-black tracking-tight leading-none mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap max-w-[120px]">{user.displayName || user.email || 'Guest'}</p>
+                             <p className="disp text-base text-black tracking-tight leading-none mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap max-w-[120px]">{currentTicket.attendeeName || user.displayName || user.email || 'Guest'}</p>
                            </div>
                            <div className="text-right">
                              <p className="type text-[9px] uppercase tracking-widest text-black/40">pass id</p>
@@ -330,6 +333,63 @@ export default function TicketDetail() {
                          <span>next</span>
                          <ChevronRight className="w-4 h-4" aria-hidden="true" />
                       </button>
+                   </div>
+                 )}
+
+                 {/* Attendee name — who this pass is for. Owner-only, active +
+                     not-in-transfer (the RPC enforces it; UI just hides the
+                     control otherwise). Cleared server-side on transfer. */}
+                 {currentTicket.status === 'active' && !currentTicket.pendingTransferId && (
+                   <div className="border border-white/5 bg-black p-6 mb-3">
+                      <p className="type text-white/30 uppercase tracking-widest text-[9px] mb-2">attendee</p>
+                      {nameDraft === null ? (
+                        <div className="flex items-center justify-between gap-4">
+                          <p className="disp text-white text-2xl tracking-wide overflow-hidden text-ellipsis whitespace-nowrap">
+                            {currentTicket.attendeeName || <span className="text-white/35">{user.displayName || user.email || 'You'}</span>}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setNameDraft(currentTicket.attendeeName || '')}
+                            className="type text-[10px] uppercase tracking-widest text-white/40 hover:text-brand-primary shrink-0"
+                          >
+                            {currentTicket.attendeeName ? 'edit' : 'name this pass'}
+                          </button>
+                        </div>
+                      ) : (
+                        <form
+                          className="flex items-center gap-2"
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            setSavingName(true);
+                            try {
+                              const stored = await setTicketAttendee(currentTicket.id, nameDraft);
+                              setTickets((prev) => prev.map((t) => (t.id === currentTicket.id ? { ...t, attendeeName: stored ?? undefined } : t)));
+                              setNameDraft(null);
+                              toast({ kind: 'success', message: stored ? `Pass is now for ${stored}.` : 'Attendee name cleared.' });
+                            } catch (err: any) {
+                              toast({ kind: 'error', message: err?.message || 'Could not save the name.' });
+                            } finally {
+                              setSavingName(false);
+                            }
+                          }}
+                        >
+                          <input
+                            autoFocus
+                            value={nameDraft}
+                            maxLength={80}
+                            onChange={(e) => setNameDraft(e.target.value)}
+                            placeholder="Who is going? (leave blank to clear)"
+                            className="type flex-1 min-w-0 bg-black border border-white/20 px-3 py-2 text-white text-sm placeholder-white/30 focus:border-brand-primary outline-none"
+                          />
+                          <button type="submit" disabled={savingName} className="type text-[10px] uppercase tracking-widest bg-brand-primary text-black px-3 py-2 disabled:opacity-40">
+                            {savingName ? '…' : 'save'}
+                          </button>
+                          <button type="button" onClick={() => setNameDraft(null)} className="type text-[10px] uppercase tracking-widest text-white/40 px-2 py-2">
+                            cancel
+                          </button>
+                        </form>
+                      )}
+                      <p className="type text-[9px] text-white/25 mt-2">Shown on the pass and to the door. Clears automatically if you transfer the ticket.</p>
                    </div>
                  )}
 

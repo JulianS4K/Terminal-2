@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Event, Organization } from '../types';
 import { getPublicEvent, getEventForEdit } from '../lib/events';
-import { mintTickets, claimFreeTickets } from '../lib/tickets';
+import { mintTickets, claimFreeTickets, setTicketAttendee } from '../lib/tickets';
 import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
 import ArtistLinks from '../components/ArtistLinks';
@@ -46,6 +46,9 @@ export default function EventDetails() {
   // through to the Stripe metadata and the post-purchase usage increment.
   const [appliedDiscountCode, setAppliedDiscountCode] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  // Optional per-ticket attendee names, index-aligned with quantity. Stamped
+  // onto the minted tickets after a free claim (best-effort, owner RPC).
+  const [attendeeNames, setAttendeeNames] = useState<string[]>([]);
   const [addonSel, setAddonSel] = useState<AddonSelection>({ items: [], totalCents: 0 });
   const [voucher, setVoucher] = useState<{ code: string; canBypass: boolean } | null>(null);
   const [userTicketCount, setUserTicketCount] = useState(0);
@@ -290,6 +293,14 @@ export default function EventDetails() {
         // same tickets instead of minting twice (button is disabled meanwhile).
         orderRef,
       });
+      // Stamp attendee names onto the new tickets (best-effort — a name hiccup
+      // must not fail a claim that already minted).
+      await Promise.all(
+        ids.map((id, i) => {
+          const name = (attendeeNames[i] || '').trim();
+          return name ? setTicketAttendee(id, name).catch((e) => console.warn('setTicketAttendee failed:', e)) : Promise.resolve(null);
+        }),
+      );
       // Attach any free extras (best-effort — a swag hiccup shouldn't fail the
       // ticket claim the buyer already completed).
       if (addonSel.items.length > 0) {
@@ -687,6 +698,24 @@ export default function EventDetails() {
                       </button>
                    </div>
                    <p className="type text-[9px] text-white/20 uppercase tracking-widest mt-2">max per order: {maxPerOrder} · total limit: {maxPerAccount}</p>
+                </div>
+
+                {/* Who is going — optional per-ticket names (free claim path;
+                    shown on each pass + to the door; editable later on the pass). */}
+                <div className="mb-8">
+                   <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-3">who's going <span className="text-white/20">(optional)</span></p>
+                   <div className="space-y-2">
+                     {Array.from({ length: quantity }).map((_, i) => (
+                       <input
+                         key={i}
+                         value={attendeeNames[i] ?? ''}
+                         maxLength={80}
+                         onChange={(e) => setAttendeeNames((prev) => { const next = [...prev]; next[i] = e.target.value; return next; })}
+                         placeholder={i === 0 ? `Ticket 1 — ${user?.displayName || 'you'}` : `Ticket ${i + 1} — friend's name`}
+                         className="type w-full bg-black border border-white/10 px-3 py-2.5 text-white text-sm placeholder-white/25 focus:border-brand-primary outline-none"
+                       />
+                     ))}
+                   </div>
                 </div>
 
                 {/* Tier Selection */}

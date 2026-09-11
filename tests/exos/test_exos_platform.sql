@@ -568,4 +568,56 @@ BEGIN
 END $$;
 
 SELECT '*** PART C (reminders + invoice RLS) PASSED ***' AS result;
+-- ============================================================================
+-- PART D — ATTENDEE NAME ON TICKETS (mig 20260911060000)
+-- ============================================================================
+INSERT INTO public.exos_tickets(id,event_id,org_id,owner_id,buyer_id,status,barcode_secret) VALUES
+  ('dddddddd-0000-0000-0000-0000000000d1','cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','sd1'),
+  ('dddddddd-0000-0000-0000-0000000000d2','cccccccc-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','used','sd2');
+SELECT set_config('app.uid','22222222-2222-2222-2222-222222222222',false);
+DO $$
+DECLARE n text; ok boolean;
+BEGIN
+  n := public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', '  Ada   Lovelace ');
+  ASSERT n = 'Ada Lovelace', 'whitespace collapsed, got '||coalesce(n,'null');
+  ASSERT (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') = 'Ada Lovelace', 'persisted';
+  n := public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', '   ');
+  ASSERT n IS NULL AND (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') IS NULL, 'blank clears';
+  ok := false;
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', repeat('x', 81));
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%too long%'; END;
+  ASSERT ok, '81 chars rejected';
+  ok := false;
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d2', 'Grace');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%is used%'; END;
+  ASSERT ok, 'used ticket refused';
+  PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', 'Ada Lovelace');
+  UPDATE public.exos_tickets SET pending_transfer_id = gen_random_uuid() WHERE id='dddddddd-0000-0000-0000-0000000000d1';
+  ok := false;
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', 'Grace');
+  EXCEPTION WHEN OTHERS THEN ok := SQLERRM LIKE '%in transfer%'; END;
+  ASSERT ok, 'in-transfer ticket refused';
+  UPDATE public.exos_tickets SET pending_transfer_id = NULL WHERE id='dddddddd-0000-0000-0000-0000000000d1';
+  RAISE NOTICE 'D1 set/clear/validate attendee name OK';
+END $$;
+-- Non-owner (org owner account) cannot set it, even as staff.
+SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
+DO $$
+DECLARE ok boolean := false;
+BEGIN
+  BEGIN PERFORM public.exos_set_ticket_attendee('dddddddd-0000-0000-0000-0000000000d1', 'Mallory');
+  EXCEPTION WHEN insufficient_privilege THEN ok := true; END;
+  ASSERT ok, 'non-owner refused (42501)';
+  ASSERT (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') = 'Ada Lovelace', 'unchanged';
+  RAISE NOTICE 'D2 owner-only gate OK';
+END $$;
+SELECT set_config('app.uid','',false);
+-- Ownership change (what exos_claim_transfer does) clears the name.
+UPDATE public.exos_tickets SET owner_id = '55555555-5555-5555-5555-555555555555' WHERE id='dddddddd-0000-0000-0000-0000000000d1';
+DO $$
+BEGIN
+  ASSERT (SELECT attendee_name FROM public.exos_tickets WHERE id='dddddddd-0000-0000-0000-0000000000d1') IS NULL, 'owner change clears attendee_name';
+  RAISE NOTICE 'D3 transfer clears name OK';
+END $$;
+SELECT '*** PART D (attendee name) PASSED ***' AS result;
 SELECT '*** ALL EXOS TESTS PASSED ***' AS result;
