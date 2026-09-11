@@ -78,6 +78,7 @@
     updateScanMeta(d);
     render();
     loadResults();
+    loadSpells();
   }
 
   // RESULTS strip — get_deal_results(30): what we predicted vs what happened (mig 20260911162100).
@@ -124,6 +125,57 @@
         ${calTable('by Score v1', d.by_score_v1)}
       </div>
       <table class="deals-tbl small"><thead><tr><th>Event</th><th>Section</th><th class="num">Cost</th><th class="num">Pred final · ROI</th><th class="num">P15</th><th class="num">Score v1</th><th class="num">Actual final · ROI</th><th>Outcome</th></tr></thead><tbody>${recent}</tbody></table>`;
+  }
+
+  // LIFECYCLE strip — get_deal_spells(14): when each underpriced listing entered the feed, when it
+  // went, and WHY. 'delisted' is the one that matters: it left the book while still underpriced.
+  // 'window' and 'stale' are our own cadence, not the market, so they are shown apart (mig 20260911162300).
+  async function loadSpells() {
+    const Auth = window.TerminalAuth;
+    const body = document.getElementById('dealsSpellsBody');
+    if (!body || !Auth || !Auth.client || !Auth.getAccessToken()) return;
+    const res = await Auth.client.rpc('get_deal_spells', { p_days: 14 });
+    if (res.error) { body.innerHTML = `<div class="empty muted small">lifecycle unavailable: ${esc(res.error.message || '')}</div>`; return; }
+    renderSpells(res.data || {});
+  }
+  const mins = v => {
+    if (v == null) return '—';
+    const n = +v;
+    if (n < 90) return Math.round(n) + 'm';
+    if (n < 60 * 48) return (n / 60).toFixed(1) + 'h';
+    return (n / 1440).toFixed(1) + 'd';
+  };
+  function renderSpells(d) {
+    const body = document.getElementById('dealsSpellsBody'); const meta = document.getElementById('dealsSpellsMeta');
+    if (!body) return;
+    const tot = d.totals || {}; const mix = d.exit_mix || {}; const dw = d.dwell || {};
+    if (meta) meta.textContent = `${tot.spells || 0} tracked · ${tot.open || 0} still live`;
+    const rows = d.recent || [];
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty muted small">No listings tracked since the ledger went live — entries appear as the scanner flags them.</div>';
+      return;
+    }
+    const market = (+mix.delisted || 0) + (+mix.repriced || 0);
+    const mixLine = `<b>${mix.delisted || 0} left the book</b> · ${mix.repriced || 0} repriced out` +
+      (market ? ` (${Math.round((+mix.delisted || 0) / market * 100)}% of market exits were a delist)` : '') +
+      ` · <span class="muted">${mix.window || 0} crossed the 7-day floor, ${mix.stale || 0} lost polling — our cadence, not the market</span>`;
+    const tr = rows.slice(0, 15).map(r => `<tr>
+        <td><span class="badge regime-neutral">${r.source === 'evo' ? 'EVO' : 'GT'}</span> ${esc(r.event_name || '')} <span class="muted">· ${esc(fmtDate(r.event_date))}</span></td>
+        <td>${esc(r.section || '')}${r.row ? ' <span class="muted">row ' + esc(r.row) + '</span>' : ''}</td>
+        <td class="num">${$r(r.entry_price)}</td>
+        <td class="num">${r.entry_roi_pct != null ? (r.entry_roi_pct >= 0 ? '+' : '') + Math.round(r.entry_roi_pct) + '%' : '—'}</td>
+        <td class="muted small">${esc(ago(r.entered_at))}</td>
+        <td class="num">${mins(r.dwell_minutes)}</td>
+        <td>${r.exit_reason
+              ? `<span class="badge regime-${r.exit_reason === 'delisted' ? 'good' : (r.exit_reason === 'repriced' ? 'warn' : 'neutral')}">${esc(r.exit_reason)}</span>`
+              : '<span class="badge regime-warn">live</span>'}</td>
+      </tr>`).join('');
+    body.innerHTML = `
+      <div class="deals-results-head small">
+        ${mixLine}<br/>
+        <span class="muted">median time on the board — delisted ${mins(dw.delisted_median_min)} · repriced ${mins(dw.repriced_median_min)} · still live ${mins(dw.open_median_min)}</span>
+      </div>
+      <table class="deals-tbl small"><thead><tr><th>Event</th><th>Seat</th><th class="num">Entry cost</th><th class="num">Entry net</th><th>Entered</th><th class="num">On board</th><th>Exit</th></tr></thead><tbody>${tr}</tbody></table>`;
   }
 
   async function poll() {

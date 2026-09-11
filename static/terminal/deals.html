@@ -16,7 +16,7 @@
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <title>Terminal — Deals (live)</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260911res" />
+  <link rel="stylesheet" href="style.css?v=20260911spell" />
 </head>
 <body data-page="deals">
 
@@ -62,6 +62,14 @@
       <div id="dealsResultsBody"><div class="empty muted small">Loading results…</div></div>
     </section>
 
+    <section id="deals-lifecycle">
+      <div class="panel-title row">
+        <span>LIFECYCLE · every underpriced listing tracked in and out, last 14 days</span>
+        <span class="muted small" id="dealsSpellsMeta"></span>
+      </div>
+      <div id="dealsSpellsBody"><div class="empty muted small">Loading lifecycle…</div></div>
+    </section>
+
     <section id="deals-note">
       <div class="muted small">
         <b>Live feed — realized-calibrated, two buy sides.</b> <b>GT</b> rows are GoTickets listings (all-in price); <b>EVO</b> rows are TEvo ticket groups (wholesale price, our own inventory excluded). Both are scanned within a minute of the poller capturing new listings, nearest event first; only events <b>7+ days out</b> are carried (under a week is too short to convert). A deal must clear three gates: (1) a robust <b>low outlier within its section</b> on GoTickets (median + MAD, z ≤ −3.5); (2) a <b>realized resale anchor</b> from actual SeatGeek sales for the same event × section number (17.7M sales); and (3) <b>≥70% win odds</b> of a ≥15% net flip — i.e. ≥70% of realized comparable sales, discounted to event day and <b>net of the ~10% resale fee</b>, clear the 15% hurdle. Each row also carries the <b>price model</b>'s predicted event-day clearing price, predicted net ROI and <b>P15</b> (share of comparable played events that cleared a 15% net flip at this cost), and every graded deal lands in the RESULTS strip so predictions can be checked against what actually happened. Each row shows the buy price, the realized median (with sample size), estimated net resale, net profit, <b>win odds</b>, the <b>Score v1</b> (market-only winner score calibrated on graded deals flagged 7+ days out: resale velocity in the prior week, weekend, 7d/14d price trend, cost vs the event median, price vs realized anchor, regime, days out, cost, lot size — ≥50% won 90% of that set, <15% won 2%) and a confidence tag. Deals priced at market (≥0.9× the anchor) or in a falling market (7d trend below the 14d, or DUMPING) are hidden (count in the header); <b>VERIFY</b> marks a price under half the anchor (check the seat) or an event with under 20 resales in the prior week (thin market). Genuine ≥70% deals are rare by design — quality over quantity. Scanner re-checks freshest events every ~5 min; new deals flash <span class="deals-new-chip">NEW</span>. Backed by <span class="num">get_deals_feed</span> / <span class="num">scan_gotickets_deals</span> / <span class="num">get_deal_backtest</span> (mig 20260811220000).
@@ -75,6 +83,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20260811deals"></script>
-  <script src="deals.js?v=20260911res"></script>
+  <script src="deals.js?v=20260911spell"></script>
 </body>
 </html>
