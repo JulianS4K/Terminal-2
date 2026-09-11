@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911231000 — a sub-finder SeatGeek pull now resets that event's poll clock
+-- Migration 20260911231000 · level:data-collection · lane:A1 · writes:sg_event_priority_state,sg_broker_pending,sg_events_canonical,seatgeek_event_xref · reads:seatgeek_listings_snapshots,aq_event_map,events · pre:20260911010000
 --
 -- Lane:     A1 (ingest/crons)
 -- Touches:  sg_event_priority_state (W), sg_broker_pending (W, unchanged),

@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911234000 — move housekeeping off peak hours
+-- Migration 20260911234000 · level:data-collection · lane:A1 · writes:cron.job,cron_policy · reads:none · pre:20260705153000
 --
 -- Lane:     A1 (crons)
 -- Touches:  cron.job (W), cron_policy (W)

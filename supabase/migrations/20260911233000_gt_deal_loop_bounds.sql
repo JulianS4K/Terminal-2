@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911233000 — bind the GoTickets/deal loops, point GT at its own cadence
+-- Migration 20260911233000 · level:data-collection · lane:A1 · writes:cron.job,cron_policy,collector_cadence,gt_listings_poll_state,gt_listings_inflight · reads:gotickets_event,events,gotickets_listings_snapshots · pre:20260804230000
 --
 -- Lane:     A1 (crons + ingest)
 -- Touches:  gt_listings_poll_tick (replaced), collector_cadence (W),
@@ -243,7 +244,7 @@ SELECT cron.unschedule('deal_scan_tick_1min')
 
 SELECT cron.schedule(
   'deal_scan_tick_5min',
-  '2-59/5 * * * *',
+  '1-59/5 * * * *',
   $cron$
     SET statement_timeout='120s';
     DO $b$ BEGIN

@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911232000 — retire the TicketsData crons (upstream dead, operator call)
+-- Migration 20260911232000 · level:data-collection · lane:A1 · writes:cron.job,cron_policy,integration_policy,td_pull_queue · reads:ticketsdata_event_xref,n2s_items · pre:20260527100000,20260630160000
 --
 -- Lane:     A1 (crons + ingest)
 -- Touches:  cron.job (W), integration_policy (W), n2s_td_enqueue (replaced)

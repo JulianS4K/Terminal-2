@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911230000 — N2S sub finder: one ordered pipeline, FIFO by CRM send order
+-- Migration 20260911230000 · level:secondary-sales · lane:A1,D7 · writes:cron.job,cron_policy,n2s_items,n2s_cover_queue · reads:n2s_items_pending,ticketsdata_event_xref · pre:20260910100000,20260911090000,20260911210000
 --
 -- Lane:     A1 (crons + pipeline) / D7 (n2s_* surface)
 -- Touches:  n2s_items (W via existing fns), cron.job (W), cron_policy (W),
