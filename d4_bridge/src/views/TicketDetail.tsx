@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getTicket, listMyTicketsForEvent } from '../lib/tickets';
+import { getTicket, listMyTicketsForEvent, setTicketAttendee } from '../lib/tickets';
 import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
@@ -15,12 +15,14 @@ import { useToast } from '../context/ToastContext';
 import ShareModal from '../components/ShareModal';
 import OrganizerUpdates from '../components/OrganizerUpdates';
 import RescheduleNotice from '../components/RescheduleNotice';
+import { useT } from '../context/LanguageContext';
 
 export default function TicketDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const t = useT();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [event, setEvent] = useState<Event | null>(null);
@@ -28,6 +30,15 @@ export default function TicketDetail() {
   const [barcode, setBarcode] = useState('');
   const [timeLeft, setTimeLeft] = useState(30);
   const [showShare, setShowShare] = useState(false);
+  // Attendee-name editor (mig 20260911060000): who this pass is FOR.
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [savingName, setSavingName] = useState(false);
+  // The editor is per-pass: paging the carousel while it is open must not
+  // stamp the draft onto the next ticket (audit finding, PR #975).
+  const currentTicketId = tickets[currentIndex]?.id;
+  useEffect(() => {
+    setNameDraft(null);
+  }, [currentTicketId]);
 
   useEffect(() => {
     async function fetchData() {
@@ -156,13 +167,13 @@ export default function TicketDetail() {
 
   if (loading) return (
     <div className="wall min-h-screen flex items-center justify-center p-20 text-center">
-      <p className="type text-white/50 uppercase tracking-[0.3em] text-[12px] animate-pulse">// loading ticket...</p>
+      <p className="type text-white/50 uppercase tracking-[0.3em] text-[12px] animate-pulse">{t('ticket.loading')}</p>
     </div>
   );
   if (!tickets.length || !event) {
     return (
       <div className="wall min-h-screen flex items-center justify-center p-20 text-center">
-        <p className="type text-brand-accent uppercase tracking-widest text-[12px]">// access denied: no tickets found</p>
+        <p className="type text-brand-accent uppercase tracking-widest text-[12px]">{t('ticket.denied')}</p>
       </div>
     );
   }
@@ -229,7 +240,7 @@ export default function TicketDetail() {
                       ) : (
                         <div className="w-[220px] h-[220px] flex flex-col items-center justify-center text-center px-4 bg-slate-50 border border-dashed border-black/20">
                           <Lock className="w-8 h-8 text-black/30 mb-3" aria-hidden="true" />
-                          <p className="type text-[10px] uppercase tracking-widest text-black/50">Entry code locked</p>
+                          <p className="type text-[10px] uppercase tracking-widest text-black/50">{t('ticket.locked')}</p>
                           <p className="type text-[10px] text-black/40 mt-1">
                             Unlocks 24h before{event.date ? ` · ${formatInTz(event.date.toDate(), event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ' the event'}
                           </p>
@@ -237,16 +248,16 @@ export default function TicketDetail() {
                       )}
                       <div className="mt-5 w-full text-center border-t-[3px] border-dashed border-black/20 pt-5 space-y-3">
                         <div>
-                          <p className="type text-[9px] uppercase tracking-widest text-black/40">event</p>
+                          <p className="type text-[9px] uppercase tracking-widest text-black/40">{t('ticket.event')}</p>
                           <p className="disp text-lg text-black tracking-tight leading-none mt-0.5">{event.title}</p>
                         </div>
                         <div className="flex justify-between items-end text-left pt-1">
                            <div>
-                             <p className="type text-[9px] uppercase tracking-widest text-black/40">pass holder</p>
-                             <p className="disp text-base text-black tracking-tight leading-none mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap max-w-[120px]">{user.displayName || user.email || 'Guest'}</p>
+                             <p className="type text-[9px] uppercase tracking-widest text-black/40">{t('ticket.holder')}</p>
+                             <p className="disp text-base text-black tracking-tight leading-none mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap max-w-[120px]">{currentTicket.attendeeName || user.displayName || user.email || 'Guest'}</p>
                            </div>
                            <div className="text-right">
-                             <p className="type text-[9px] uppercase tracking-widest text-black/40">pass id</p>
+                             <p className="type text-[9px] uppercase tracking-widest text-black/40">{t('ticket.passId')}</p>
                              <p className="type text-[11px] text-black leading-none mt-0.5">{currentTicket.id}</p>
                            </div>
                         </div>
@@ -296,7 +307,7 @@ export default function TicketDetail() {
                        </div>
                     ) : (
                        <div className="mt-7 flex flex-col items-center">
-                          <p className="type text-[10px] text-black/40 uppercase tracking-widest">code expires in</p>
+                          <p className="type text-[10px] text-black/40 uppercase tracking-widest">{t('ticket.expiresIn')}</p>
                           <p className="disp text-4xl text-black tracking-tight leading-none mt-1">00:{timeLeft.toString().padStart(2, '0')}</p>
                           <div className="w-40 h-[3px] bg-black/10 mt-3">
                              <div className="h-full bg-brand-primary transition-all duration-1000" style={{ width: `${(timeLeft / 30) * 100}%` }}></div>
@@ -314,7 +325,7 @@ export default function TicketDetail() {
                         className="type flex items-center gap-2 text-white/40 hover:text-white disabled:opacity-0 transition-all text-[10px] uppercase tracking-widest"
                       >
                          <ChevronLeft className="w-4 h-4" aria-hidden="true" />
-                         <span>prev</span>
+                         <span>{t('ticket.prev')}</span>
                       </button>
                       <div className="flex gap-1.5">
                         {tickets.map((_, i) => (
@@ -327,15 +338,72 @@ export default function TicketDetail() {
                         aria-label="Next ticket"
                         className="type flex items-center gap-2 text-white/40 hover:text-white disabled:opacity-0 transition-all text-[10px] uppercase tracking-widest"
                       >
-                         <span>next</span>
+                         <span>{t('ticket.next')}</span>
                          <ChevronRight className="w-4 h-4" aria-hidden="true" />
                       </button>
                    </div>
                  )}
 
+                 {/* Attendee name — who this pass is for. Owner-only, active +
+                     not-in-transfer (the RPC enforces it; UI just hides the
+                     control otherwise). Cleared server-side on transfer. */}
+                 {currentTicket.status === 'active' && !currentTicket.pendingTransferId && (
+                   <div className="border border-white/5 bg-black p-6 mb-3">
+                      <p className="type text-white/30 uppercase tracking-widest text-[9px] mb-2">{t('ticket.attendee')}</p>
+                      {nameDraft === null ? (
+                        <div className="flex items-center justify-between gap-4">
+                          <p className="disp text-white text-2xl tracking-wide overflow-hidden text-ellipsis whitespace-nowrap">
+                            {currentTicket.attendeeName || <span className="text-white/35">{user.displayName || user.email || 'You'}</span>}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setNameDraft(currentTicket.attendeeName || '')}
+                            className="type text-[10px] uppercase tracking-widest text-white/40 hover:text-brand-primary shrink-0"
+                          >
+                            {currentTicket.attendeeName ? t('ticket.edit') : t('ticket.namePass')}
+                          </button>
+                        </div>
+                      ) : (
+                        <form
+                          className="flex items-center gap-2"
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            setSavingName(true);
+                            try {
+                              const stored = await setTicketAttendee(currentTicket.id, nameDraft);
+                              setTickets((prev) => prev.map((t) => (t.id === currentTicket.id ? { ...t, attendeeName: stored ?? undefined } : t)));
+                              setNameDraft(null);
+                              toast({ kind: 'success', message: stored ? t('ticket.nameSaved', { name: stored }) : t('ticket.nameCleared') });
+                            } catch (err: any) {
+                              toast({ kind: 'error', message: err?.message || t('ticket.nameSaveFailed') });
+                            } finally {
+                              setSavingName(false);
+                            }
+                          }}
+                        >
+                          <input
+                            autoFocus
+                            value={nameDraft}
+                            maxLength={80}
+                            onChange={(e) => setNameDraft(e.target.value)}
+                            placeholder={t('ticket.namePlaceholder')}
+                            className="type flex-1 min-w-0 bg-black border border-white/20 px-3 py-2 text-white text-sm placeholder-white/30 focus:border-brand-primary outline-none"
+                          />
+                          <button type="submit" disabled={savingName} className="type text-[10px] uppercase tracking-widest bg-brand-primary text-black px-3 py-2 disabled:opacity-40">
+                            {savingName ? '…' : t('ticket.save')}
+                          </button>
+                          <button type="button" onClick={() => setNameDraft(null)} className="type text-[10px] uppercase tracking-widest text-white/40 px-2 py-2">
+                            {t('common.cancel')}
+                          </button>
+                        </form>
+                      )}
+                      <p className="type text-[9px] text-white/25 mt-2">{t('ticket.nameHint')}</p>
+                   </div>
+                 )}
+
                  <div className="grid grid-cols-2 gap-px bg-white/5 border border-white/5 mb-10">
                     <div className="p-6 bg-black">
-                       <p className="type text-white/30 uppercase tracking-widest text-[9px] mb-1">level</p>
+                       <p className="type text-white/30 uppercase tracking-widest text-[9px] mb-1">{t('ticket.level')}</p>
                        <p className="disp neon text-2xl tracking-wide">{currentTicket.tierName || 'GENERAL'}</p>
                     </div>
                     <div className="p-6 bg-black text-right">
@@ -440,7 +508,7 @@ export default function TicketDetail() {
         <div className="mt-10 bg-brand-accent/5 border border-brand-accent/25 p-7 flex items-start gap-5">
            <ShieldCheck className="w-8 h-8 text-brand-accent shrink-0" />
            <div>
-              <p className="disp text-brand-accent text-lg tracking-wide mb-1">SECURITY PROTECTION</p>
+              <p className="disp text-brand-accent text-lg tracking-wide mb-1">{t('ticket.securityTitle')}</p>
               <p className="type text-white/45 text-[12px] leading-relaxed">This code automatically updates every 30 seconds to prevent unauthorized use. Present this live ticket at the entrance instead of a screenshot.</p>
            </div>
         </div>

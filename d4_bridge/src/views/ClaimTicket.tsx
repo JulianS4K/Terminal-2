@@ -8,6 +8,7 @@ import { ShieldCheck, ArrowRight, XCircle, CheckCircle2 } from 'lucide-react';
 import { queueEmail, queueTicketIssued } from '../lib/mail';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
+import { useT } from '../context/LanguageContext';
 
 // NOTE on the data flow.
 //
@@ -31,6 +32,7 @@ export default function ClaimTicket() {
   const { user, logout, openAuthModal } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const t = useT();
   const [transfer, setTransfer] = useState<Transfer | null>(null);
   const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,7 +62,7 @@ export default function ClaimTicket() {
         }
       } catch (error) {
         console.error('Failed to load transfer:', error);
-        toast({ kind: 'error', message: 'Could not load this transfer.' });
+        toast({ kind: 'error', message: t('claim.loadFailed') });
       } finally {
         setLoading(false);
       }
@@ -74,8 +76,8 @@ export default function ClaimTicket() {
     if (user.email?.toLowerCase() !== transfer.receiverEmail.toLowerCase()) {
       toast({
         kind: 'error',
-        title: 'Wrong account',
-        message: 'This transfer was sent to a different email address.',
+        title: t('claim.wrongAccountTitle'),
+        message: t('claim.wrongAccount'),
       });
       return;
     }
@@ -97,7 +99,7 @@ export default function ClaimTicket() {
       // (server-derived recipient; mig 20260523210000).
       void queueTicketIssued(claimedTicketId);
 
-      toast({ kind: 'success', message: 'Ticket claimed.' });
+      toast({ kind: 'success', message: t('claim.claimed') });
       navigate('/my-tickets');
     } catch (error: any) {
       console.error('Claim failed:', error);
@@ -110,7 +112,7 @@ export default function ClaimTicket() {
   if (loading) {
     return (
       <div className="wall min-h-screen flex items-center justify-center">
-        <p className="disp text-3xl tracking-tight text-white/20 animate-pulse" style={{ transform: 'skewX(-4deg)' }}>LOADING YOUR TICKET…</p>
+        <p className="disp text-3xl tracking-tight text-white/20 animate-pulse" style={{ transform: 'skewX(-4deg)' }}>{t('claim.loading')}</p>
       </div>
     );
   }
@@ -120,7 +122,7 @@ export default function ClaimTicket() {
       <div className="wall min-h-screen">
         <div className="max-w-xl mx-auto px-4 py-24 text-center">
           <XCircle className="w-20 h-20 text-white/20 mx-auto mb-8" />
-          <h1 className="disp text-5xl tracking-tight leading-none mb-4" style={{ transform: 'skewX(-4deg)' }}>TRANSFER EXPIRED</h1>
+          <h1 className="disp text-5xl tracking-tight leading-none mb-4" style={{ transform: 'skewX(-4deg)' }}>{t('claim.expired')}</h1>
           <p className="type text-white/40 text-sm mb-10">
             This transfer link is no longer active or the assets have already been claimed.
           </p>
@@ -152,7 +154,7 @@ export default function ClaimTicket() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-primary mb-6">
             <ShieldCheck className="text-black w-8 h-8" aria-hidden="true" />
           </div>
-          <h1 className="disp text-5xl tracking-tight leading-none mb-2" style={{ transform: 'skewX(-4deg)' }}>CLAIM YOUR TICKET</h1>
+          <h1 className="disp text-5xl tracking-tight leading-none mb-2" style={{ transform: 'skewX(-4deg)' }}>{t('claim.title')}</h1>
           <p className="type text-[11px] text-white/40 uppercase tracking-[0.25em]">
             secure exchange · verification
           </p>
@@ -195,7 +197,7 @@ export default function ClaimTicket() {
                   onClick={() =>
                     toast({
                       kind: 'info',
-                      message: 'Sign in from the navbar to claim this ticket.',
+                      message: t('claim.signInHint'),
                     })
                   }
                   className="disp w-full bg-white text-black py-4 text-lg tracking-wide hover:bg-brand-primary transition-all"
@@ -206,7 +208,7 @@ export default function ClaimTicket() {
             ) : isWrongUser ? (
               <div className="bg-brand-accent/10 p-8 border border-brand-accent/30 text-center">
                 <XCircle className="w-12 h-12 text-brand-accent mx-auto mb-4" aria-hidden="true" />
-                <p className="disp text-xl tracking-tight text-white mb-2">IDENTIFICATION CONFLICT</p>
+                <p className="disp text-xl tracking-tight text-white mb-2">{t('claim.conflict')}</p>
                 <p className="type text-white/60 text-sm mb-6">
                   This asset is registered for <strong className="text-white">{transfer.receiverEmail}</strong>, but you are
                   identified as <strong className="text-white">{user.email}</strong>.
@@ -229,7 +231,7 @@ export default function ClaimTicket() {
                       <p className="type text-[9px] text-white/30 uppercase tracking-widest mb-1">
                         from
                       </p>
-                      <p className="disp text-lg tracking-tight">SECURE SENDER</p>
+                      <p className="disp text-lg tracking-tight">{t('claim.sender')}</p>
                     </div>
                     <ArrowRight className="text-brand-primary w-6 h-6 mx-4 shrink-0" aria-hidden="true" />
                     <div className="text-right min-w-0">
