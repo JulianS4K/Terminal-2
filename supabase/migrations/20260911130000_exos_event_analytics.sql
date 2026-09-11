@@ -69,7 +69,8 @@ BEGIN
   v_tz := coalesce(nullif(v_ev.timezone, ''), 'UTC');
   BEGIN
     PERFORM now() AT TIME ZONE v_tz;
-  EXCEPTION WHEN OTHERS THEN
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RAISE WARNING 'exos_event_analytics: event % has an invalid timezone (%) — using UTC', p_event_id, v_tz;
     v_tz := 'UTC';
   END;
   v_started := v_ev.starts_at IS NOT NULL AND v_ev.starts_at <= now();

@@ -131,6 +131,7 @@ DECLARE
   v_safe      text;
   v_valid     text[] := '{}';
   v_invalid   text[] := '{}';
+  v_self      text[] := '{}';
   v_seen      text[] := '{}';
   v_raw       text;
   v_e         text;
@@ -180,7 +181,9 @@ BEGIN
     IF v_e = '' THEN CONTINUE; END IF;
     IF v_e = ANY (v_seen) THEN CONTINUE; END IF;
     v_seen := array_append(v_seen, v_e);
-    IF position('@' in v_e) <= 1 OR length(v_e) > 320 OR v_e = v_uid_email THEN
+    IF v_e = v_uid_email THEN
+      v_self := array_append(v_self, v_e);
+    ELSIF length(v_e) > 320 OR v_e !~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN
       v_invalid := array_append(v_invalid, v_e);
     ELSE
       v_valid := array_append(v_valid, v_e);
@@ -206,12 +209,28 @@ BEGIN
     email := v_e; outcome := 'invalid'; ticket_ids := '{}'; detail := 'not a valid recipient email';
     RETURN NEXT;
   END LOOP;
+  FOREACH v_e IN ARRAY v_self LOOP
+    email := v_e; outcome := 'invalid'; ticket_ids := '{}'; detail := 'you cannot comp yourself — use the box-office mint';
+    RETURN NEXT;
+  END LOOP;
 
   FOREACH v_e IN ARRAY v_valid LOOP
     email := v_e; ticket_ids := '{}'; detail := NULL; v_ids := '{}';
 
-    -- Capacity claim for this recipient (tier, then house cap). A miss leaves
-    -- earlier rows issued and reports 'sold-out' for this and later rows.
+    -- Capacity claim for this recipient: HOUSE CAP FIRST, then the tier. The
+    -- order matters — exos_ticket_tiers.sold carries the waitlist auto-offer
+    -- trigger (AFTER UPDATE OF sold), so an undo on the TIER would mint bypass
+    -- vouchers for capacity that was never freed. exos_events.tickets_sold has
+    -- no trigger, so it is the safe one to undo. A miss leaves earlier rows
+    -- issued and reports 'sold-out' for this row.
+    UPDATE public.exos_events
+       SET tickets_sold = tickets_sold + p_qty_each
+     WHERE id = p_event_id
+       AND (total_tickets = 0 OR tickets_sold + p_qty_each <= total_tickets);
+    GET DIAGNOSTICS v_updated = ROW_COUNT;
+    IF v_updated = 0 THEN
+      outcome := 'sold-out'; detail := 'event capacity reached'; RETURN NEXT; CONTINUE;
+    END IF;
     IF p_tier_id IS NOT NULL THEN
       UPDATE public.exos_ticket_tiers
          SET sold = sold + p_qty_each
@@ -219,20 +238,10 @@ BEGIN
          AND (capacity = 0 OR sold + p_qty_each <= capacity);
       GET DIAGNOSTICS v_updated = ROW_COUNT;
       IF v_updated = 0 THEN
+        -- Undo the house-cap claim (trigger-free counter).
+        UPDATE public.exos_events SET tickets_sold = greatest(tickets_sold - p_qty_each, 0) WHERE id = p_event_id;
         outcome := 'sold-out'; detail := 'tier capacity reached'; RETURN NEXT; CONTINUE;
       END IF;
-    END IF;
-    UPDATE public.exos_events
-       SET tickets_sold = tickets_sold + p_qty_each
-     WHERE id = p_event_id
-       AND (total_tickets = 0 OR tickets_sold + p_qty_each <= total_tickets);
-    GET DIAGNOSTICS v_updated = ROW_COUNT;
-    IF v_updated = 0 THEN
-      -- Undo the tier claim we just took.
-      IF p_tier_id IS NOT NULL THEN
-        UPDATE public.exos_ticket_tiers SET sold = greatest(sold - p_qty_each, 0) WHERE id = p_tier_id;
-      END IF;
-      outcome := 'sold-out'; detail := 'event capacity reached'; RETURN NEXT; CONTINUE;
     END IF;
 
     SELECT u.id INTO v_rcpt FROM auth.users u WHERE lower(u.email) = v_e LIMIT 1;
@@ -257,7 +266,9 @@ BEGIN
           'sender_id', v_uid, 'sender_email', nullif(v_uid_email, ''), 'receiver_email', v_e,
           'status', 'pending', 'event_id', p_event_id, 'event_title', v_ev.name,
           'event_image', v_ev.image_url, 'tier_name', v_tier_name, 'organizer_id', v_ev.created_by,
-          'created_at', now()))
+          -- jsonb_populate_record yields NULL (not DEFAULT) for absent keys —
+          -- every NOT NULL DEFAULT column must be set here (§3 landmine).
+          'created_at', now(), 'updated_at', now()))
         RETURNING id INTO v_tr;
         UPDATE public.exos_tickets
            SET pending_transfer_id = v_tr, last_reissue_at = now()

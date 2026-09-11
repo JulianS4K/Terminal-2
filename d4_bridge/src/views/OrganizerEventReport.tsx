@@ -85,6 +85,10 @@ export default function OrganizerEventReport() {
   const allowedByRole =
     isAdmin || activeRole === 'owner' || activeRole === 'manager' || activeRole === 'finance';
   const allowedByLegacy = event?.organizerId === user.uid;
+  // Actions below go through org-role-gated RPCs (owner/manager) — a legacy
+  // organizerId match can read the report but cannot act, so it must not open
+  // the action panels (they would just 42501).
+  const canAct = isAdmin || activeRole === 'owner' || activeRole === 'manager';
   if (event && !allowedByRole && !allowedByLegacy) {
     return (
       <div className="max-w-3xl mx-auto p-12 text-center text-slate-500">
@@ -152,6 +156,7 @@ export default function OrganizerEventReport() {
       setTickets(await listEventTickets(eventId));
     } catch (err) {
       console.error('listEventTickets reload failed:', err);
+      toast({ kind: 'warn', message: 'Tickets were issued, but the attendee list could not refresh — reload the page.' });
     }
     setAnalyticsKey((k) => k + 1);
   };
@@ -165,14 +170,19 @@ export default function OrganizerEventReport() {
     if (!window.confirm(`Release ticket ${ticket.id.slice(0, 8)}? The seat goes back on sale (and to the waitlist) immediately.`)) return;
     setReleasingId(ticket.id);
     try {
-      await releaseTicket(ticket.id);
+      const { freedTier } = await releaseTicket(ticket.id);
       const now = Timestamp.now();
       setTickets((prev) =>
         prev.map((t) => (t.id === ticket.id ? { ...t, status: 'voided' as const, releasedAt: now, voidedReason: 'released-by-staff' } : t)),
       );
       setEvent((ev) => (ev ? { ...ev, ticketsSold: Math.max(0, (ev.ticketsSold || 0) - 1) } : ev));
       setAnalyticsKey((k) => k + 1);
-      toast({ kind: 'success', message: 'Seat released — capacity freed and the waitlist offered it.' });
+      toast({
+        kind: 'success',
+        message: freedTier
+          ? 'Seat released — capacity freed and the next person on the waitlist was offered it.'
+          : 'Ticket released. The seat counter was already at zero, so no capacity changed — check the tier.',
+      });
     } catch (err: any) {
       console.error('Release failed:', err);
       toast({ kind: 'error', message: err?.message || 'Could not release this ticket.' });
@@ -258,13 +268,13 @@ export default function OrganizerEventReport() {
         {/* Reschedule — postpone/move the event + notify holders (owner/manager). */}
         <ReschedulePanel
           event={event}
-          canManage={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          canManage={canAct}
         />
 
         {/* Scheduled pricing — time-based price steps per tier (owner/manager). */}
         <TierPricingPanel
           event={event}
-          canManage={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          canManage={canAct}
         />
 
         {/* Waitlist — demand captured after sell-out; release spots to notify. */}
@@ -276,14 +286,14 @@ export default function OrganizerEventReport() {
             still see the sent history read-only. */}
         <AnnouncementsPanel
           eventId={eventId!}
-          canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          canSend={canAct}
         />
 
         {/* Pre-event reminders — automatic T-24h / T-2h holder mail (cron) +
             a manual "send now" for owner/manager (6h cooldown, server-enforced). */}
         <RemindersPanel
           eventId={eventId!}
-          canSend={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          canSend={canAct}
           isPublished={event.status === 'published'}
         />
 
@@ -291,7 +301,7 @@ export default function OrganizerEventReport() {
             pasted email list; budget enforced server-side. */}
         <CompIssuancePanel
           event={event}
-          canIssue={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          canIssue={canAct}
           onIssued={() => void reloadTickets()}
         />
 
@@ -299,7 +309,7 @@ export default function OrganizerEventReport() {
             tickets can give the seat back; the waitlist auto-offers it. */}
         <ReleasePolicyPanel
           event={event}
-          canManage={isAdmin || activeRole === 'owner' || activeRole === 'manager' || allowedByLegacy}
+          canManage={canAct}
           onSaved={(p) => setEvent((ev) => (ev ? { ...ev, ...p } : ev))}
         />
 

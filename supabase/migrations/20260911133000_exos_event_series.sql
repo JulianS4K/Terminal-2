@@ -105,6 +105,8 @@ BEGIN
   v_m    := abs(extract(minute FROM v_off))::int;
   RETURN to_char(v_local, 'YYYY-MM-DD"T"HH24:MI:SS') || v_sign || lpad(v_h::text, 2, '0') || ':' || lpad(v_m::text, 2, '0');
 END $$;
+REVOKE ALL ON FUNCTION public.exos_occurs_at_local(timestamptz, text) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.exos_occurs_at_local(timestamptz, text) TO authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- 3. Create / extend a series from a template event.
@@ -158,18 +160,31 @@ BEGIN
   END IF;
 
   -- Distinct, sorted, future-of-nothing (any time is allowed — a back-dated
-  -- occurrence is the organizer's call), minus the template's own start.
+  -- occurrence is the organizer's call), minus the template's own start AND
+  -- minus any date already in the series (an "extend" call that repeats dates
+  -- must not fail on the deterministic slug, nor duplicate slug-less events).
   SELECT array_agg(DISTINCT o ORDER BY o) INTO v_occs
     FROM unnest(coalesce(p_starts_at, '{}')) AS o
-   WHERE o IS NOT NULL AND o <> v_tpl.starts_at;
+   WHERE o IS NOT NULL AND o <> v_tpl.starts_at
+     AND (v_tpl.series_id IS NULL OR NOT EXISTS (
+           SELECT 1 FROM public.exos_events m
+            WHERE m.series_id = v_tpl.series_id AND m.starts_at = o));
   IF coalesce(array_length(v_occs, 1), 0) = 0 THEN
-    RAISE EXCEPTION 'exos_create_event_series: no new occurrences';
+    RAISE EXCEPTION 'exos_create_event_series: no new occurrences — every date given is the template or already in this series';
   END IF;
   IF array_length(v_occs, 1) > 200 THEN
     RAISE EXCEPTION 'exos_create_event_series: max 200 occurrences per call';
   END IF;
 
-  v_tz      := coalesce(nullif(v_tpl.timezone, ''), 'UTC');
+  -- Validate the template timezone up front so occurs_at_local is never NULL
+  -- on a clone; a bad name degrades to UTC with a warning, matching the app.
+  v_tz := coalesce(nullif(v_tpl.timezone, ''), 'UTC');
+  BEGIN
+    PERFORM now() AT TIME ZONE v_tz;
+  EXCEPTION WHEN invalid_parameter_value THEN
+    RAISE WARNING 'exos_create_event_series: template % has an invalid timezone (%) — using UTC', v_tpl.id, v_tz;
+    v_tz := 'UTC';
+  END;
   v_d_doors := v_tpl.doors_at - v_tpl.starts_at;
   v_d_ends  := v_tpl.ends_at  - v_tpl.starts_at;
   v_status  := CASE WHEN p_publish IS TRUE THEN 'published'

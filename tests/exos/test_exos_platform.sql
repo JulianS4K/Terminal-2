@@ -749,10 +749,22 @@ BEGIN
   ASSERT j->>'by' = 'staff', 'staff override';
   ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='eeeeeeee-0000-0000-0000-0000000000d2') = 1, 'paid tier sold 2→1';
   ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='eeeeeeee-0000-0000-0000-0000000000e1') = 1, 'event tickets_sold 2→1';
+  -- E5b. Tier-less ticket: no tier trigger, so the RPC offers the general
+  --      waitlist directly.
+  INSERT INTO public.exos_tickets(id,event_id,org_id,owner_id,buyer_id,status,barcode_secret,price_paid) VALUES
+    ('eeeeeeee-0000-0000-0000-0000000000a4','eeeeeeee-0000-0000-0000-0000000000e1','aaaaaaaa-0000-0000-0000-000000000001','22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222','active','h4',0);
+  UPDATE public.exos_events SET tickets_sold = tickets_sold + 1 WHERE id='eeeeeeee-0000-0000-0000-0000000000e1';
+  INSERT INTO public.exos_waitlist(event_id,tier_id,email,status) VALUES
+    ('eeeeeeee-0000-0000-0000-0000000000e1',NULL,'general@x.com','waiting');
+  j := public.exos_release_ticket('eeeeeeee-0000-0000-0000-0000000000a4');
+  ASSERT (j->>'freed_tier')::boolean, 'tier-less release reports freed';
+  ASSERT (SELECT status FROM public.exos_waitlist WHERE email='general@x.com') = 'offered', 'tier-less release offers the general waitlist';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='eeeeeeee-0000-0000-0000-0000000000e1') = 1, 'house cap decremented';
+
   -- E6. Analytics: released reported separately from voided.
   j := public.exos_event_analytics('eeeeeeee-0000-0000-0000-0000000000e1');
-  ASSERT (j->>'released')::int = 2 AND (j->>'voided')::int = 0 AND (j->>'sold')::int = 1,
-    'analytics released=2 voided=0 sold=1, got '||j::text;
+  ASSERT (j->>'released')::int = 3 AND (j->>'voided')::int = 0 AND (j->>'sold')::int = 1,
+    'analytics released=3 voided=0 sold=1, got '||j::text;
   RAISE NOTICE 'E6 staff release + analytics split OK';
 END $$;
 SELECT set_config('app.uid','',false);
@@ -798,15 +810,29 @@ BEGIN
   ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 2, 'tier sold 2';
   ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='ffffffff-0000-0000-0000-0000000000e1') = 2, 'event sold 2';
   ASSERT public.exos_org_comp_usage('aaaaaaaa-0000-0000-0000-000000000001') >= 2, 'usage counts comps';
+  ASSERT (SELECT detail FROM f_out WHERE email='owner@s4kent.com') LIKE '%cannot comp yourself%', 'self gets its own reason';
+  ASSERT (SELECT updated_at IS NOT NULL FROM public.exos_transfers WHERE id = v_tr), 'transfer row carries updated_at (NOT NULL DEFAULT in prod)';
   RAISE NOTICE 'F1 mixed batch OK';
   DROP TABLE f_out;
+  CREATE TEMP TABLE f_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1', NULL, ARRAY['a@b','x@y.z'], 1, NULL);
+  ASSERT (SELECT outcome FROM f_out WHERE email='a@b') = 'invalid', 'a@b is not an email';
+  ASSERT (SELECT outcome FROM f_out WHERE email='x@y.z') = 'invalid', 'one-letter TLD rejected';
+  DROP TABLE f_out;
+  RAISE NOTICE 'F1b validation OK';
 
   -- F2. Per-row capacity: tier has 1 seat left; 2 recipients → 1 issued, 1 sold-out.
+  --     A waiter on the VIP tier must NOT be auto-offered by the sold-out undo
+  --     (the undo now hits the trigger-free event counter, not the tier).
+  INSERT INTO public.exos_waitlist(event_id,tier_id,email,status) VALUES
+    ('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1','vipwait@x.com','waiting');
   CREATE TEMP TABLE f_out ON COMMIT DROP AS
   SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1',
     ARRAY['c1@x.com','c2@x.com'], 1, NULL);
   ASSERT (SELECT count(*) FROM f_out WHERE outcome='invited') = 1 AND (SELECT count(*) FROM f_out WHERE outcome='sold-out') = 1, 'one invited, one sold-out';
   ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 3, 'tier at cap';
+  ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='ffffffff-0000-0000-0000-0000000000e1') = 3, 'house cap undone for the sold-out row';
+  ASSERT (SELECT status FROM public.exos_waitlist WHERE email='vipwait@x.com') = 'waiting', 'sold-out undo did NOT auto-offer the tier waiter';
   DROP TABLE f_out;
   RAISE NOTICE 'F2 per-row capacity OK';
 END $$;
@@ -927,6 +953,19 @@ BEGIN
   ASSERT (SELECT count(*) FROM public.exos_event_series WHERE org_id='aaaaaaaa-0000-0000-0000-000000000001' AND name='Friday Nights') = 1, 'no second series row';
   ASSERT (SELECT count(*) FROM public.exos_events WHERE series_id=v_series) = 5, '5 members';
   DROP TABLE g_out;
+  -- G2b. Extend with dates that are ALREADY members → skipped, only the new one lands.
+  CREATE TEMP TABLE g_out ON COMMIT DROP AS
+  SELECT * FROM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1',
+    ARRAY['2026-11-06 20:00-05','2026-11-27 20:00-05','2026-12-04 20:00-05']::timestamptz[], 'recurring', NULL, NULL, false);
+  ASSERT (SELECT count(*) FROM g_out) = 1 AND (SELECT series_index FROM g_out) = 5, 'existing members skipped, one new at index 5';
+  ASSERT (SELECT count(*) FROM public.exos_events WHERE series_id=v_series) = 6, '6 members, no duplicates';
+  DROP TABLE g_out;
+  BEGIN
+    PERFORM public.exos_create_event_series('99999999-0000-0000-0000-0000000000e1', ARRAY['2026-11-06 20:00-05','2026-11-13 20:00-05']::timestamptz[], 'recurring', NULL, NULL, NULL);
+    ASSERT false, 'all-existing extend should be refused';
+  EXCEPTION WHEN OTHERS THEN
+    ASSERT SQLERRM LIKE '%already in this series%', 'clear all-existing message, got '||SQLERRM;
+  END;
   RAISE NOTICE 'G2 extend series OK';
 
   -- G3. Timed-entry kind on a fresh template; nothing new → refused.

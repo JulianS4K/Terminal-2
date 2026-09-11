@@ -96,15 +96,14 @@ export function generateRecurring(rule: RecurringRule): Date[] {
   // weekly: walk day by day from the template, firing on the chosen weekdays;
   // `interval` skips whole weeks (weeks counted from the template's week).
   const weekdays = new Set<Weekday>(rule.weekdays && rule.weekdays.length ? rule.weekdays : [localWeekday(startDay)]);
-  const startWd = localWeekday(startDay);
   let day = startDay;
   let dayOffset = 0;
   for (let guard = 0; guard < 5000 && out.length < MAX_OCCURRENCES; guard++) {
     day = addLocalDays(day, 1);
     dayOffset += 1;
     if (until && day > until) break;
-    // Week index relative to the template's week (week starts on the template's weekday).
-    const weekIdx = Math.floor((dayOffset + startWd - startWd) / 7);
+    // Week index relative to the template's week (weeks start on the template's weekday).
+    const weekIdx = Math.floor(dayOffset / 7);
     if (weekIdx % interval !== 0) continue;
     if (!weekdays.has(localWeekday(day))) continue;
     push(day);
