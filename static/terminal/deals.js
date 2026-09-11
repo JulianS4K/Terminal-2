@@ -127,10 +127,10 @@
   }
 
   function winClass(p) { return p >= 0.85 ? 'good' : (p >= 0.70 ? 'warn' : 'neutral'); }
-  // score_v1 (market-only, label-calibrated): ≥0.50 won 94% of the graded set, <0.15 won 0%.
+  // score_v1 (market-only, label-calibrated, 7+ days out): ≥0.50 won 90% of the graded set, <0.15 won 2%.
   function scoreClass(p) { return p >= 0.5 ? 'good' : (p >= 0.3 ? 'warn' : 'neutral'); }
   function gateChip(d) {
-    if (!d.gate || d.gate === 'OK') return d.timing === 'LAST-DAY' ? '<span class="deals-new-chip" title="flagged within a day of the event — 9/9 won">LAST-DAY</span>' : '';
+    if (!d.gate || d.gate === 'OK') return d.timing ? `<span class="muted small" title="days to event when flagged (feed carries 7+ days only)">${esc(d.timing)}</span>` : '';
     const t = d.gate.startsWith('VERIFY') ? 'priced far below its zone/anchor — check the seat before buying' : d.gate;
     return `<span class="badge regime-warn" title="${esc(t)}">${esc(d.gate.replace(/^VERIFY\s*/, 'VERIFY '))}</span>`;
   }
@@ -191,7 +191,7 @@
         <td class="num">${$r(d.est_net_resale)}</td>
         <td class="num deals-below">${d.net_profit_pct != null ? '+' + d.net_profit_pct + '%' : '—'}</td>
         <td class="num"><span class="badge regime-${wc}">${winPct}</span></td>
-        <td class="num"><span class="badge regime-${d.score_v1 != null ? scoreClass(+d.score_v1) : 'neutral'}" title="market-only winner score (days out, weekend, 7d/14d trend, moneyness, regime, lot, discount)">${d.score_v1 != null ? Math.round(d.score_v1 * 100) + '%' : '—'}</span> ${gateChip(d)}</td>
+        <td class="num"><span class="badge regime-${d.score_v1 != null ? scoreClass(+d.score_v1) : 'neutral'}" title="market-only winner score for 7+ days out (resale velocity, weekend, 7d/14d trend, cost vs amalgam, moneyness, regime, days out, cost, lot)">${d.score_v1 != null ? Math.round(d.score_v1 * 100) + '%' : '—'}</span> ${gateChip(d)}</td>
         <td><span class="badge regime-${cc}">${esc(d.confidence || '')}</span></td>
         <td class="deals-open">${gtBtn}</td>
       </tr>`;
