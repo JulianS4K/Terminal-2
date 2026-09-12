@@ -15,6 +15,8 @@ import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 import { listSavedEvents } from '../lib/saves';
 import { splitGroups, activeCount, groupStamp } from '../lib/ticketGroups';
+import { saveOfflinePasses, loadOfflinePasses } from '../lib/offlinePass';
+import OfflinePassChip from '../components/OfflinePassChip';
 import SaveEventButton from '../components/SaveEventButton';
 import { useT } from '../context/LanguageContext';
 
@@ -31,6 +33,12 @@ export default function MyTickets() {
   const [outboundTransfers, setOutboundTransfers] = useState<Transfer[]>([]);
   const [savedEvents, setSavedEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  // Epoch-ms of the on-device snapshot when the network read failed and the
+  // list below came from lib/offlinePass instead; null while online.
+  const [offlineAt, setOfflineAt] = useState<number | null>(null);
+  // True when we are offline AND this device has nothing saved — the one case
+  // where there is genuinely nothing to show.
+  const [offlineEmpty, setOfflineEmpty] = useState(false);
   // ACTIVE = something here can still get you in; ARCHIVE = event over or every
   // pass used/voided (lib/ticketGroups). The tabs used to be decorative.
   const [tab, setTab] = useState<'active' | 'archive'>('active');
@@ -75,6 +83,31 @@ export default function MyTickets() {
     if (!user) return undefined;
     let cancelled = false;
 
+    // Shared by the online read and the offline fallback so both paths group
+    // and order identically.
+    const applyTickets = (rows: (Ticket & { event?: Event })[]) => {
+      setTickets(rows);
+
+      const grouped = rows.reduce((acc, tk) => {
+        if (!acc[tk.eventId]) acc[tk.eventId] = [];
+        acc[tk.eventId].push(tk);
+        return acc;
+      }, {} as { [eventId: string]: (Ticket & { event?: Event })[] });
+
+      // Sort each event's tickets so the scannable ones surface first.
+      // Order: active+unlocked → in-transfer → used → voided, so the
+      // cluster's "main" ticket (eventTickets[0]) is always usable at the
+      // door even in a 4-pack with one claimed/used ticket mixed in.
+      const sortRank = (tk: Ticket & { event?: Event }) => {
+        if (tk.status === 'voided') return 3;
+        if (tk.status === 'used') return 2;
+        if (tk.pendingTransferId) return 1;
+        return 0;
+      };
+      Object.values(grouped).forEach((arr) => arr.sort((a, b) => sortRank(a) - sortRank(b)));
+      setGroupedTickets(grouped);
+    };
+
     const load = async () => {
       try {
         // Tickets (with event joined) + both pending-transfer directions.
@@ -88,34 +121,31 @@ export default function MyTickets() {
         ]);
         if (cancelled) return;
 
-        setTickets(ticketsWithEvents);
+        applyTickets(ticketsWithEvents);
         setSavedEvents(saved);
+        setOfflineAt(null);
+        setOfflineEmpty(false);
 
-        const grouped = ticketsWithEvents.reduce((acc, t) => {
-          if (!acc[t.eventId]) acc[t.eventId] = [];
-          acc[t.eventId].push(t);
-          return acc;
-        }, {} as { [eventId: string]: (Ticket & { event?: Event })[] });
-
-        // Sort each event's tickets so the scannable ones surface first.
-        // Order: active+unlocked → in-transfer → used → voided, so the
-        // cluster's "main" ticket (eventTickets[0]) is always usable at the
-        // door even in a 4-pack with one claimed/used ticket mixed in.
-        const sortRank = (t: Ticket & { event?: Event }) => {
-          if (t.status === 'voided') return 3;
-          if (t.status === 'used') return 2;
-          if (t.pendingTransferId) return 1;
-          return 0;
-        };
-        Object.values(grouped).forEach((arr) => arr.sort((a, b) => sortRank(a) - sortRank(b)));
-        setGroupedTickets(grouped);
+        // Save the wallet for a dead-signal door (lib/offlinePass). These are
+        // the viewer's own tickets, each carrying the secret the offline QR
+        // signs with.
+        if (user.uid) saveOfflinePasses(user.uid, ticketsWithEvents);
 
         setPendingTransfers(inbound);
         setOutboundTransfers(outbound);
       } catch (err) {
         if (!cancelled) {
           console.error('Failed to load tickets:', err);
-          toast({ kind: 'error', message: t('tickets.loadFailed') });
+          // Offline fallback before the error toast: a holder standing outside
+          // a venue with no bars should see their passes, not a red banner.
+          const hit = user.uid ? loadOfflinePasses(user.uid) : null;
+          if (hit && hit.passes.length > 0) {
+            applyTickets(hit.passes);
+            setOfflineAt(hit.savedAt);
+          } else {
+            setOfflineEmpty(true);
+            toast({ kind: 'error', message: t('tickets.loadFailed') });
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -142,6 +172,19 @@ export default function MyTickets() {
   return (
     <div className="wall min-h-screen text-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 relative z-10">
+        {/* Offline notice. `offlineAt` = we served the device's saved copy;
+            `offlineEmpty` = we are offline with nothing saved to serve. */}
+        {offlineAt ? (
+          <div className="mb-8 flex flex-col sm:flex-row sm:items-center gap-3">
+            <OfflinePassChip savedAt={offlineAt} t={t} tone="dark" />
+            <p className="type text-[11px] text-white/50 leading-relaxed">{t('offline.ticketsBanner')}</p>
+          </div>
+        ) : offlineEmpty ? (
+          <div className="mb-8 border border-amber-300/30 px-4 py-3">
+            <p className="type text-[11px] text-amber-200/80 leading-relaxed">{t('offline.noCache')}</p>
+          </div>
+        ) : null}
+
         {/* HEADER */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-14 gap-6">
           <div className="relative">

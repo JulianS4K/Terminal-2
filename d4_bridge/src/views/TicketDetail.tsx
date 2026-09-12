@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { getTicket, listMyTicketsForEvent, setTicketAttendee, releaseTicket } from '../lib/tickets';
+import { cacheOnePass, loadOfflinePass, loadOfflinePasses } from '../lib/offlinePass';
+import OfflinePassChip from '../components/OfflinePassChip';
 import { canHolderRelease } from '../lib/release';
 import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -35,6 +37,9 @@ export default function TicketDetail() {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  // Epoch-ms of the cached copy when this render came from the device rather
+  // than the network (lib/offlinePass); null while online.
+  const [offlineAt, setOfflineAt] = useState<number | null>(null);
   // The editor is per-pass: paging the carousel while it is open must not
   // stamp the draft onto the next ticket (audit finding, PR #975).
   const currentTicketId = tickets[currentIndex]?.id;
@@ -67,6 +72,15 @@ export default function TicketDetail() {
           };
           const sorted = [...allTickets].sort((a, b) => sortRank(a) - sortRank(b));
           setTickets(sorted);
+          setOfflineAt(null);
+          // Save this event's passes for a dead-signal door. listMyTicketsForEvent
+          // returns the viewer's own tickets only, and each carries the barcode
+          // secret the offline QR needs.
+          if (user?.uid) {
+            for (const tk of sorted) {
+              cacheOnePass(user.uid, { ...tk, event: ticketData.event });
+            }
+          }
 
           // Default the carousel to the URL-matched ticket if it's
           // scannable; otherwise jump to the first scannable ticket
@@ -90,6 +104,19 @@ export default function TicketDetail() {
         }
       } catch (err) {
         console.error(err);
+        // Offline / read failure: fall back to the passes saved on this
+        // device so the door still works. The rotating QR keeps rotating —
+        // it is signed locally from the cached per-ticket secret.
+        const uid = user?.uid;
+        const hit = uid && id ? loadOfflinePass(uid, id) : null;
+        if (hit) {
+          const cached = loadOfflinePasses(uid as string)?.passes ?? [];
+          const sameEvent = cached.filter((p) => p.eventId === hit.pass.eventId);
+          setEvent(hit.pass.event ?? null);
+          setTickets(sameEvent.length > 0 ? sameEvent : [hit.pass]);
+          setCurrentIndex(Math.max(0, sameEvent.findIndex((p) => p.id === id)));
+          setOfflineAt(hit.savedAt);
+        }
       } finally {
         setLoading(false);
       }
@@ -211,6 +238,12 @@ export default function TicketDetail() {
           <ArrowLeft className="w-4 h-4 text-brand-primary" />
           back to tickets
         </button>
+
+        {offlineAt ? (
+          <div className="mb-6 flex">
+            <OfflinePassChip savedAt={offlineAt} t={t} tone="dark" />
+          </div>
+        ) : null}
 
         <div className="relative">
           <AnimatePresence mode="wait">

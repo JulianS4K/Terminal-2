@@ -127,6 +127,16 @@ export const en = {
   'alerts.partial': 'NOTHING TO SHOW',
   'alerts.markAllFailed': 'Could not mark alerts as read — they will come back next time.',
 
+  // Offline pass — shown when a pass is served from the on-device cache
+  // (lib/offlinePass) because the network read failed.
+  'offline.chip': 'Offline copy',
+  'offline.justNow': 'synced just now',
+  'offline.minutesAgo': 'synced {n} min ago',
+  'offline.hoursAgo': 'synced {n} h ago',
+  'offline.daysAgo': 'synced {n} d ago',
+  'offline.ticketsBanner': "You're offline — showing the passes saved on this device. Entry is still verified at the door.",
+  'offline.noCache': "You're offline and this device has no saved copy of your passes. Reconnect once to save them.",
+
   'claim.loading': 'LOADING YOUR TICKET…',
   'claim.expired': 'TRANSFER EXPIRED',
   'claim.title': 'CLAIM YOUR TICKET',
@@ -270,6 +280,14 @@ export const es: Record<DictKey, string> = {
   'claim.sender': 'REMITENTE SEGURO',
 
   'common.cancel': 'Cancelar',
+  // Pase sin conexión.
+  'offline.chip': 'Copia sin conexión',
+  'offline.justNow': 'sincronizado ahora mismo',
+  'offline.minutesAgo': 'sincronizado hace {n} min',
+  'offline.hoursAgo': 'sincronizado hace {n} h',
+  'offline.daysAgo': 'sincronizado hace {n} d',
+  'offline.ticketsBanner': 'Estás sin conexión: mostramos los pases guardados en este dispositivo. La entrada se verifica igualmente en la puerta.',
+  'offline.noCache': 'Estás sin conexión y este dispositivo no tiene una copia guardada de tus pases. Conéctate una vez para guardarlos.',
 };
 
 export const DICTS: Record<Lang, Record<DictKey, string>> = { en, es };
