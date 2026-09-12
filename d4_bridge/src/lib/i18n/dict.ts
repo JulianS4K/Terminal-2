@@ -129,6 +129,8 @@ export const en = {
 
   // Offline pass — shown when a pass is served from the on-device cache
   // (lib/offlinePass) because the network read failed.
+  'event.directions': 'Get directions',
+
   'offline.chip': 'Offline copy',
   'offline.justNow': 'synced just now',
   'offline.minutesAgo': 'synced {n} min ago',
@@ -281,6 +283,7 @@ export const es: Record<DictKey, string> = {
 
   'common.cancel': 'Cancelar',
   // Pase sin conexión.
+  'event.directions': 'Cómo llegar',
   'offline.chip': 'Copia sin conexión',
   'offline.justNow': 'sincronizado ahora mismo',
   'offline.minutesAgo': 'sincronizado hace {n} min',

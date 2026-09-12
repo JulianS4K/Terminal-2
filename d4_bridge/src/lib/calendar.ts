@@ -8,6 +8,7 @@
 
 import type { Event } from '../types';
 import { publicUrl } from './utils';
+import { venueAddress } from './directions';
 
 // When an event has no explicit end time, assume this length so the calendar
 // block isn't zero-width (most ticketed events run a few hours).
@@ -38,16 +39,9 @@ export function eventCalendarFields(event: Event): CalendarFields | null {
   const rawEnd = toDate(event.timing?.endTime);
   const end = rawEnd && rawEnd.getTime() > start.getTime() ? rawEnd : new Date(start.getTime() + DEFAULT_DURATION_MS);
 
-  const location = [
-    event.location,
-    event.address?.street,
-    event.address?.city,
-    event.address?.region,
-    event.address?.postal,
-  ]
-    .map((s) => (s ?? '').trim())
-    .filter(Boolean)
-    .join(', ');
+  // Shared with the directions deep link so an .ics and a maps link never
+  // disagree about where the event is (lib/directions).
+  const location = venueAddress(event);
 
   const url = publicUrl(`event/${event.id}`);
   const description = [event.description?.trim(), url].filter(Boolean).join('\n\n');

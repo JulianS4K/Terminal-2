@@ -7,6 +7,7 @@ import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
 import ArtistLinks from '../components/ArtistLinks';
 import AddToCalendar from '../components/AddToCalendar';
+import DirectionsLink from '../components/DirectionsLink';
 import { linksForArtist } from '../lib/artistLinks';
 import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
@@ -615,6 +616,7 @@ export default function EventDetails() {
                 <div>
                    <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">location</p>
                    <p className="disp text-xl tracking-tight">{event.location}</p>
+                   <DirectionsLink event={event} t={t} className="mt-2" />
                 </div>
               </div>
               {/* Performers block — only renders when the organizer

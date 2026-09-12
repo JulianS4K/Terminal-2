@@ -18,6 +18,8 @@ import { splitGroups, activeCount, groupStamp } from '../lib/ticketGroups';
 import { saveOfflinePasses, loadOfflinePasses } from '../lib/offlinePass';
 import OfflinePassChip from '../components/OfflinePassChip';
 import SaveEventButton from '../components/SaveEventButton';
+import AddToCalendar from '../components/AddToCalendar';
+import DirectionsLink from '../components/DirectionsLink';
 import { useT } from '../context/LanguageContext';
 
 export default function MyTickets() {
@@ -348,6 +350,17 @@ export default function MyTickets() {
                         RECEIPTS
                       </button>
                     </div>
+
+                    {/* Day-of conveniences on the card itself, so a holder
+                        does not have to open the pass to add the date or
+                        start navigating. Both render nothing when the event
+                        lacks the data they need. */}
+                    {event ? (
+                      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+                        <AddToCalendar event={event} />
+                        <DirectionsLink event={event} t={t} />
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="px-6 pb-5 flex items-center justify-between type text-[9px] text-white/15 uppercase tracking-widest">

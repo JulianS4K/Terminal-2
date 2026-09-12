@@ -13,6 +13,7 @@ import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
 import { signBarcode, currentBucket } from '../lib/barcode';
 import { motion, AnimatePresence } from 'motion/react';
 import AddToCalendar from '../components/AddToCalendar';
+import DirectionsLink from '../components/DirectionsLink';
 import { shareEventToStory } from '../lib/poster';
 import { useToast } from '../context/ToastContext';
 import ShareModal from '../components/ShareModal';
@@ -460,6 +461,7 @@ export default function TicketDetail() {
                     </div>
                     <div className="flex gap-4">
                        <AddToCalendar event={event} variant="button" className="flex-1" />
+                       <DirectionsLink event={event} t={t} variant="button" className="flex-1" />
                     </div>
                     {/* OPEN PASS — fullscreen browser pass with rotating
                         QR + screen wake-lock. Use case: holder hands their
