@@ -1,6 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { getTicket, listMyTicketsForEvent, setTicketAttendee } from '../lib/tickets';
+import { getTicket, listMyTicketsForEvent, setTicketAttendee, releaseTicket } from '../lib/tickets';
+import { cacheOnePass, loadOfflinePass, loadOfflinePasses } from '../lib/offlinePass';
+import OfflinePassChip from '../components/OfflinePassChip';
+import { canHolderRelease } from '../lib/release';
 import { Ticket, Event } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
@@ -10,6 +13,7 @@ import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
 import { signBarcode, currentBucket } from '../lib/barcode';
 import { motion, AnimatePresence } from 'motion/react';
 import AddToCalendar from '../components/AddToCalendar';
+import DirectionsLink from '../components/DirectionsLink';
 import { shareEventToStory } from '../lib/poster';
 import { useToast } from '../context/ToastContext';
 import ShareModal from '../components/ShareModal';
@@ -33,6 +37,10 @@ export default function TicketDetail() {
   // Attendee-name editor (mig 20260911060000): who this pass is FOR.
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
+  const [releasing, setReleasing] = useState(false);
+  // Epoch-ms of the cached copy when this render came from the device rather
+  // than the network (lib/offlinePass); null while online.
+  const [offlineAt, setOfflineAt] = useState<number | null>(null);
   // The editor is per-pass: paging the carousel while it is open must not
   // stamp the draft onto the next ticket (audit finding, PR #975).
   const currentTicketId = tickets[currentIndex]?.id;
@@ -65,6 +73,15 @@ export default function TicketDetail() {
           };
           const sorted = [...allTickets].sort((a, b) => sortRank(a) - sortRank(b));
           setTickets(sorted);
+          setOfflineAt(null);
+          // Save this event's passes for a dead-signal door. listMyTicketsForEvent
+          // returns the viewer's own tickets only, and each carries the barcode
+          // secret the offline QR needs.
+          if (user?.uid) {
+            for (const tk of sorted) {
+              cacheOnePass(user.uid, { ...tk, event: ticketData.event });
+            }
+          }
 
           // Default the carousel to the URL-matched ticket if it's
           // scannable; otherwise jump to the first scannable ticket
@@ -88,6 +105,19 @@ export default function TicketDetail() {
         }
       } catch (err) {
         console.error(err);
+        // Offline / read failure: fall back to the passes saved on this
+        // device so the door still works. The rotating QR keeps rotating —
+        // it is signed locally from the cached per-ticket secret.
+        const uid = user?.uid;
+        const hit = uid && id ? loadOfflinePass(uid, id) : null;
+        if (hit) {
+          const cached = loadOfflinePasses(uid as string)?.passes ?? [];
+          const sameEvent = cached.filter((p) => p.eventId === hit.pass.eventId);
+          setEvent(hit.pass.event ?? null);
+          setTickets(sameEvent.length > 0 ? sameEvent : [hit.pass]);
+          setCurrentIndex(Math.max(0, sameEvent.findIndex((p) => p.id === id)));
+          setOfflineAt(hit.savedAt);
+        }
       } finally {
         setLoading(false);
       }
@@ -210,6 +240,12 @@ export default function TicketDetail() {
           back to tickets
         </button>
 
+        {offlineAt ? (
+          <div className="mb-6 flex">
+            <OfflinePassChip savedAt={offlineAt} t={t} tone="dark" />
+          </div>
+        ) : null}
+
         <div className="relative">
           <AnimatePresence mode="wait">
             <motion.div
@@ -282,11 +318,11 @@ export default function TicketDetail() {
                        // recorded. Money movement happens via Stripe
                        // dashboard — we just kill scannability here.
                        <div className="absolute inset-0 flex flex-col items-center justify-center z-30">
-                          <div className="bg-rose-600 text-white px-8 py-3 font-black text-2xl uppercase italic tracking-tighter -rotate-12 shadow-2xl skew-x-12">
-                             REFUNDED
+                          <div className={`${currentTicket.releasedAt ? 'bg-slate-700' : 'bg-rose-600'} text-white px-8 py-3 font-black text-2xl uppercase italic tracking-tighter -rotate-12 shadow-2xl skew-x-12`}>
+                             {currentTicket.releasedAt ? t('ticket.releasedStamp') : t('ticket.refundedStamp')}
                           </div>
                           <p className="text-black font-black text-[10px] uppercase tracking-widest mt-4 bg-white px-3 py-1 text-center max-w-[80%]">
-                             {currentTicket.voidedReason || 'Refund issued by organizer'}
+                             {currentTicket.releasedAt ? t('ticket.releasedNotice') : currentTicket.voidedReason || t('ticket.refundNotice')}
                           </p>
                        </div>
                     ) : (currentTicket as any).pendingTransferId ? (
@@ -425,6 +461,7 @@ export default function TicketDetail() {
                     </div>
                     <div className="flex gap-4">
                        <AddToCalendar event={event} variant="button" className="flex-1" />
+                       <DirectionsLink event={event} t={t} variant="button" className="flex-1" />
                     </div>
                     {/* OPEN PASS — fullscreen browser pass with rotating
                         QR + screen wake-lock. Use case: holder hands their
@@ -481,6 +518,50 @@ export default function TicketDetail() {
                         </button>
                       )}
                     </div>
+
+                    {/* Self-serve RSVP release (free tickets; organizer policy +
+                        cutoff mirrored client-side, enforced by the RPC). Gives
+                        the seat back so the waitlist can take it. */}
+                    {(() => {
+                      const elig = canHolderRelease(currentTicket, event);
+                      if (!elig.ok) return null;
+                      return (
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            disabled={releasing}
+                            onClick={async () => {
+                              if (!window.confirm(t('ticket.releaseConfirm'))) return;
+                              setReleasing(true);
+                              try {
+                                await releaseTicket(currentTicket.id);
+                                const now = new Date();
+                                setTickets((prev) =>
+                                  prev.map((tk) =>
+                                    tk.id === currentTicket.id
+                                      ? { ...tk, status: 'voided' as const, releasedAt: { toDate: () => now } as any }
+                                      : tk,
+                                  ),
+                                );
+                                toast({ kind: 'success', message: t('ticket.released') });
+                              } catch (err: any) {
+                                toast({ kind: 'error', message: err?.message || t('ticket.releaseFailed') });
+                              } finally {
+                                setReleasing(false);
+                              }
+                            }}
+                            className="type w-full flex items-center justify-center gap-2 bg-transparent border border-white/10 text-white/40 py-3 text-[11px] uppercase tracking-widest hover:border-rose-500/60 hover:text-rose-300 transition-colors disabled:opacity-40"
+                          >
+                            {releasing ? '…' : t('ticket.release')}
+                          </button>
+                          <p className="type text-[9px] text-white/25 mt-2 text-center">
+                            {elig.closesAt
+                              ? t('ticket.releaseHintCutoff', { when: formatInTz(elig.closesAt, event.timezone, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) })
+                              : t('ticket.releaseHint')}
+                          </p>
+                        </div>
+                      );
+                    })()}
                  </div>
               </div>
 

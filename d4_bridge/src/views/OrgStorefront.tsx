@@ -17,12 +17,13 @@
 // custom-domain handling (Sprint 2.5), embed-snippet generator
 // (Sprint 6), distribution-rail badges (Sprint 4).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Organization, Event } from '../types';
 import { getPublicOrgBySlug, followOrg, unfollowOrg, isFollowingOrg } from '../lib/orgs';
 import { listPublicEventsForOrg } from '../lib/events';
+import { collapseSeries } from '../lib/seriesGroups';
 import { ThemeProvider, useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { formatInTz } from '../lib/datetime';
@@ -57,6 +58,8 @@ function StorefrontInner({ org }: ResolvedOrg) {
   const { theme } = useTheme();
   const { user, signIn } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
+  // One card per series (next date + N-dates badge); standalone events pass through.
+  const { list: shown, dates: seriesDates } = useMemo(() => collapseSeries(events), [events]);
   const [loading, setLoading] = useState(true);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followers, setFollowers] = useState(org.followersCount ?? 0);
@@ -239,8 +242,9 @@ function StorefrontInner({ org }: ResolvedOrg) {
           </div>
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            {events.map((ev, i) => {
+            {shown.map((ev, i) => {
               const genre = (ev.category || ev.genres?.[0] || 'LIVE').toUpperCase();
+              const nDates = seriesDates.get(ev.id);
               const img = ev.image || DEMO_CARD_IMAGES[i % DEMO_CARD_IMAGES.length];
               return (
                 <Link
@@ -260,6 +264,9 @@ function StorefrontInner({ org }: ResolvedOrg) {
                     >
                       {genre}
                     </span>
+                    {nDates ? (
+                      <span className="disp absolute top-2 right-2 bg-white text-black px-2 text-sm tracking-wide">{nDates} DATES</span>
+                    ) : null}
                     <div className="absolute bottom-3 left-3 right-3">
                       <p
                         className="type text-[10px] uppercase tracking-widest mb-0.5"

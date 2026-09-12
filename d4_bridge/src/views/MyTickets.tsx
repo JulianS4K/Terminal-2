@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Ticket, Event, Transfer } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -14,7 +14,12 @@ import { formatInTz } from '../lib/datetime';
 import { motion } from 'motion/react';
 import { useToast } from '../context/ToastContext';
 import { listSavedEvents } from '../lib/saves';
+import { splitGroups, activeCount, groupStamp } from '../lib/ticketGroups';
+import { saveOfflinePasses, loadOfflinePasses } from '../lib/offlinePass';
+import OfflinePassChip from '../components/OfflinePassChip';
 import SaveEventButton from '../components/SaveEventButton';
+import AddToCalendar from '../components/AddToCalendar';
+import DirectionsLink from '../components/DirectionsLink';
 import { useT } from '../context/LanguageContext';
 
 export default function MyTickets() {
@@ -30,6 +35,17 @@ export default function MyTickets() {
   const [outboundTransfers, setOutboundTransfers] = useState<Transfer[]>([]);
   const [savedEvents, setSavedEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  // Epoch-ms of the on-device snapshot when the network read failed and the
+  // list below came from lib/offlinePass instead; null while online.
+  const [offlineAt, setOfflineAt] = useState<number | null>(null);
+  // True when we are offline AND this device has nothing saved — the one case
+  // where there is genuinely nothing to show.
+  const [offlineEmpty, setOfflineEmpty] = useState(false);
+  // ACTIVE = something here can still get you in; ARCHIVE = event over or every
+  // pass used/voided (lib/ticketGroups). The tabs used to be decorative.
+  const [tab, setTab] = useState<'active' | 'archive'>('active');
+  const { active: activeGroups, archive: archiveGroups } = useMemo(() => splitGroups(groupedTickets), [groupedTickets]);
+  const visibleGroups = tab === 'active' ? activeGroups : archiveGroups;
 
   const handleCancelTransfer = async (transferId: string) => {
     // Confirmation lives outside the loading state so a user that backs out
@@ -69,6 +85,31 @@ export default function MyTickets() {
     if (!user) return undefined;
     let cancelled = false;
 
+    // Shared by the online read and the offline fallback so both paths group
+    // and order identically.
+    const applyTickets = (rows: (Ticket & { event?: Event })[]) => {
+      setTickets(rows);
+
+      const grouped = rows.reduce((acc, tk) => {
+        if (!acc[tk.eventId]) acc[tk.eventId] = [];
+        acc[tk.eventId].push(tk);
+        return acc;
+      }, {} as { [eventId: string]: (Ticket & { event?: Event })[] });
+
+      // Sort each event's tickets so the scannable ones surface first.
+      // Order: active+unlocked → in-transfer → used → voided, so the
+      // cluster's "main" ticket (eventTickets[0]) is always usable at the
+      // door even in a 4-pack with one claimed/used ticket mixed in.
+      const sortRank = (tk: Ticket & { event?: Event }) => {
+        if (tk.status === 'voided') return 3;
+        if (tk.status === 'used') return 2;
+        if (tk.pendingTransferId) return 1;
+        return 0;
+      };
+      Object.values(grouped).forEach((arr) => arr.sort((a, b) => sortRank(a) - sortRank(b)));
+      setGroupedTickets(grouped);
+    };
+
     const load = async () => {
       try {
         // Tickets (with event joined) + both pending-transfer directions.
@@ -82,34 +123,31 @@ export default function MyTickets() {
         ]);
         if (cancelled) return;
 
-        setTickets(ticketsWithEvents);
+        applyTickets(ticketsWithEvents);
         setSavedEvents(saved);
+        setOfflineAt(null);
+        setOfflineEmpty(false);
 
-        const grouped = ticketsWithEvents.reduce((acc, t) => {
-          if (!acc[t.eventId]) acc[t.eventId] = [];
-          acc[t.eventId].push(t);
-          return acc;
-        }, {} as { [eventId: string]: (Ticket & { event?: Event })[] });
-
-        // Sort each event's tickets so the scannable ones surface first.
-        // Order: active+unlocked → in-transfer → used → voided, so the
-        // cluster's "main" ticket (eventTickets[0]) is always usable at the
-        // door even in a 4-pack with one claimed/used ticket mixed in.
-        const sortRank = (t: Ticket & { event?: Event }) => {
-          if (t.status === 'voided') return 3;
-          if (t.status === 'used') return 2;
-          if (t.pendingTransferId) return 1;
-          return 0;
-        };
-        Object.values(grouped).forEach((arr) => arr.sort((a, b) => sortRank(a) - sortRank(b)));
-        setGroupedTickets(grouped);
+        // Save the wallet for a dead-signal door (lib/offlinePass). These are
+        // the viewer's own tickets, each carrying the secret the offline QR
+        // signs with.
+        if (user.uid) saveOfflinePasses(user.uid, ticketsWithEvents);
 
         setPendingTransfers(inbound);
         setOutboundTransfers(outbound);
       } catch (err) {
         if (!cancelled) {
           console.error('Failed to load tickets:', err);
-          toast({ kind: 'error', message: t('tickets.loadFailed') });
+          // Offline fallback before the error toast: a holder standing outside
+          // a venue with no bars should see their passes, not a red banner.
+          const hit = user.uid ? loadOfflinePasses(user.uid) : null;
+          if (hit && hit.passes.length > 0) {
+            applyTickets(hit.passes);
+            setOfflineAt(hit.savedAt);
+          } else {
+            setOfflineEmpty(true);
+            toast({ kind: 'error', message: t('tickets.loadFailed') });
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -136,18 +174,45 @@ export default function MyTickets() {
   return (
     <div className="wall min-h-screen text-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 relative z-10">
+        {/* Offline notice. `offlineAt` = we served the device's saved copy;
+            `offlineEmpty` = we are offline with nothing saved to serve. */}
+        {offlineAt ? (
+          <div className="mb-8 flex flex-col sm:flex-row sm:items-center gap-3">
+            <OfflinePassChip savedAt={offlineAt} t={t} tone="dark" />
+            <p className="type text-[11px] text-white/50 leading-relaxed">{t('offline.ticketsBanner')}</p>
+          </div>
+        ) : offlineEmpty ? (
+          <div className="mb-8 border border-amber-300/30 px-4 py-3">
+            <p className="type text-[11px] text-amber-200/80 leading-relaxed">{t('offline.noCache')}</p>
+          </div>
+        ) : null}
+
         {/* HEADER */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-14 gap-6">
           <div className="relative">
             <p className="type text-brand-primary text-[12px] uppercase tracking-widest mb-2">{t('tickets.kicker')}</p>
             <h1 className="disp text-6xl md:text-7xl tracking-tight leading-none" style={{ transform: 'skewX(-4deg)' }}>MY <span className="neon">TICKETS</span></h1>
-            {Object.keys(groupedTickets).length > 0 && (
-              <span className="marker absolute -right-6 -top-3 text-brand-secondary text-lg rotate-[6deg] hidden md:block">{Object.keys(groupedTickets).length} live ✦</span>
+            {activeGroups.length > 0 && (
+              <span className="marker absolute -right-6 -top-3 text-brand-secondary text-lg rotate-[6deg] hidden md:block">{activeGroups.length} live ✦</span>
             )}
           </div>
-          <div className="flex border border-white/10 bg-white/5">
-            <button className="disp px-8 py-2.5 text-lg tracking-wide bg-brand-primary text-black">{t('tickets.active')}</button>
-            <button className="disp px-8 py-2.5 text-lg tracking-wide text-white/40 hover:text-white transition-colors">{t('tickets.archive')}</button>
+          <div className="flex border border-white/10 bg-white/5" role="tablist">
+            {(['active', 'archive'] as const).map((k) => {
+              const on = tab === k;
+              const n = k === 'active' ? activeGroups.length : archiveGroups.length;
+              return (
+                <button
+                  key={k}
+                  role="tab"
+                  aria-selected={on}
+                  onClick={() => setTab(k)}
+                  className={`disp px-8 py-2.5 text-lg tracking-wide transition-colors ${on ? 'bg-brand-primary text-black' : 'text-white/40 hover:text-white'}`}
+                >
+                  {t(k === 'active' ? 'tickets.active' : 'tickets.archive')}
+                  {n > 0 && <span className={`type text-[10px] ml-2 ${on ? 'text-black/60' : 'text-white/30'}`}>{n}</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -217,17 +282,19 @@ export default function MyTickets() {
           </div>
         )}
 
-        {tickets.length === 0 ? (
+        {visibleGroups.length === 0 ? (
           <div className="text-center py-40 border border-dashed border-white/20">
             <TicketIcon className="w-24 h-24 text-white/5 mx-auto mb-10" />
-            <p className="type text-white/30 mb-12 uppercase tracking-widest text-[12px]">{t('tickets.empty')}</p>
+            <p className="type text-white/30 mb-12 uppercase tracking-widest text-[12px]">
+              {tickets.length === 0 ? t('tickets.empty') : tab === 'active' ? t('tickets.emptyActive') : t('tickets.emptyArchive')}
+            </p>
             <Link to="/" className="disp inline-flex items-center bg-brand-primary text-black px-8 py-3 text-lg tracking-wide hover:bg-white transition-colors">
               FIND EVENTS
             </Link>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-white/10 border border-white/10">
-            {Object.entries(groupedTickets).map(([eventId, tickets]) => {
+            {visibleGroups.map(([eventId, tickets]) => {
               const eventTickets = tickets as (Ticket & { event?: Event })[];
               const mainTicket = eventTickets[0];
               const event = mainTicket.event;
@@ -257,7 +324,15 @@ export default function MyTickets() {
                       </div>
                       <div className="text-right">
                         <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">{t('tickets.passes')}</p>
-                        <span className="stamp neon text-base">{eventTickets.length} ACTIVE</span>
+                        {(() => {
+                          const stamp = groupStamp(eventTickets);
+                          const n = activeCount(eventTickets);
+                          return (
+                            <span className={`stamp text-base ${stamp === 'active' ? 'neon' : 'text-white/40'}`}>
+                              {stamp === 'active' ? `${n} ${t('tickets.stampActive')}` : t(`tickets.stamp.${stamp}` as any)}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -275,6 +350,17 @@ export default function MyTickets() {
                         RECEIPTS
                       </button>
                     </div>
+
+                    {/* Day-of conveniences on the card itself, so a holder
+                        does not have to open the pass to add the date or
+                        start navigating. Both render nothing when the event
+                        lacks the data they need. */}
+                    {event ? (
+                      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+                        <AddToCalendar event={event} />
+                        <DirectionsLink event={event} t={t} />
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="px-6 pb-5 flex items-center justify-between type text-[9px] text-white/15 uppercase tracking-widest">

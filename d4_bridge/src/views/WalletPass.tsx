@@ -32,6 +32,9 @@ import { Event, Ticket } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { signBarcode, currentBucket } from '../lib/barcode';
 import { formatInTz, isWithinHoursBefore } from '../lib/datetime';
+import { cacheOnePass, loadOfflinePass } from '../lib/offlinePass';
+import OfflinePassChip from '../components/OfflinePassChip';
+import { useT } from '../context/LanguageContext';
 
 export default function WalletPass() {
   const { ticketId } = useParams();
@@ -41,6 +44,15 @@ export default function WalletPass() {
   const [event, setEvent] = useState<Event | null>(null);
   const [barcode, setBarcode] = useState('');
   const [timeLeft, setTimeLeft] = useState(30);
+  // Non-null when this render came from the on-device cache instead of the
+  // network: the epoch-ms the cached copy was fetched. Drives the OFFLINE chip.
+  const [offlineAt, setOfflineAt] = useState<number | null>(null);
+  const t = useT();
+
+  // Read once here (not below with the barcode inputs) because the loader
+  // effect lists it as a dependency, and a dep is evaluated during render —
+  // a `const` declared further down would still be in its temporal dead zone.
+  const uidForCache = user?.uid;
 
   // Ticket + event load, polled every 15s so an organizer-side void / scan /
   // transfer-claim propagates to the screen the holder is showing the door
@@ -53,12 +65,26 @@ export default function WalletPass() {
     let cancelled = false;
     const load = async () => {
       try {
-        const t = await getTicket(ticketId);
+        const fresh = await getTicket(ticketId);
         if (cancelled) return;
-        setTicket(t);
-        setEvent(t?.event ?? null);
+        setTicket(fresh);
+        setEvent(fresh?.event ?? null);
+        setOfflineAt(null);
+        // Keep an on-device copy so the next visit works at a dead-signal
+        // door. Only the holder's own pass is cached (lib/offlinePass).
+        if (fresh && uidForCache && fresh.ownerId === uidForCache) {
+          cacheOnePass(uidForCache, fresh);
+        }
       } catch {
-        /* transient read error — keep the last good render */
+        // Network/read failure. Fall back to the cached pass rather than
+        // spinning forever — the whole point of the cache. The poll keeps
+        // running, so the moment signal returns this flips back to live.
+        if (cancelled || !uidForCache) return;
+        const hit = loadOfflinePass(uidForCache, ticketId);
+        if (!hit) return;
+        setTicket((prev) => prev ?? hit.pass);
+        setEvent((prev) => prev ?? hit.pass.event ?? null);
+        setOfflineAt(hit.savedAt);
       }
     };
     void load();
@@ -67,7 +93,7 @@ export default function WalletPass() {
       cancelled = true;
       clearInterval(poll);
     };
-  }, [ticketId]);
+  }, [ticketId, uidForCache]);
 
   // Rotating barcode refresh — same model as TicketDetail. Re-derives
   // the signed payload at every bucket boundary using the per-ticket
@@ -233,9 +259,13 @@ export default function WalletPass() {
         >
           <ArrowLeft size={14} aria-hidden="true" /> back
         </button>
-        <div className="type text-[10px] uppercase tracking-widest text-white/30 flex items-center gap-2">
-          <Sun size={12} aria-hidden="true" /> max brightness for best scan
-        </div>
+        {offlineAt ? (
+          <OfflinePassChip savedAt={offlineAt} t={t} tone="dark" />
+        ) : (
+          <div className="type text-[10px] uppercase tracking-widest text-white/30 flex items-center gap-2">
+            <Sun size={12} aria-hidden="true" /> max brightness for best scan
+          </div>
+        )}
       </div>
 
       {/* Main pass surface — centered QR with event + tier metadata. */}

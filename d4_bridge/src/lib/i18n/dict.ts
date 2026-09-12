@@ -18,6 +18,8 @@ export const en = {
   'nav.signIn': 'Sign In',
   'nav.signOut': 'Sign Out',
   'nav.profile': 'Profile',
+  'nav.alerts': 'Alerts',
+  'nav.alertsUnread': 'Alerts — {n} unread',
 
   'event.buy': 'Buy Tickets',
   'event.soldOut': 'Sold Out',
@@ -64,6 +66,13 @@ export const en = {
   'tickets.transferCancelled': 'Transfer cancelled.',
   'tickets.transferCancelFailed': 'Could not cancel the transfer.',
   'tickets.loadFailed': 'Could not load your tickets.',
+  'tickets.emptyActive': '// nothing upcoming — your past passes are in the archive',
+  'tickets.emptyArchive': '// no past or used passes yet',
+  'tickets.stampActive': 'ACTIVE',
+  'tickets.stamp.used': 'USED',
+  'tickets.stamp.voided': 'VOIDED',
+  'tickets.stamp.past': 'PAST',
+  'tickets.stamp.transfer': 'IN TRANSFER',
 
   'ticket.loading': '// loading ticket...',
   'ticket.denied': '// access denied: no tickets found',
@@ -85,6 +94,20 @@ export const en = {
   'ticket.nameSaveFailed': 'Could not save the name.',
   'ticket.level': 'level',
   'ticket.securityTitle': 'SECURITY PROTECTION',
+  'ticket.release': 'release my seat',
+  'ticket.releaseConfirm': "Give this seat back? Your ticket is cancelled and the spot goes to the next person on the waitlist. This can't be undone.",
+  'ticket.released': 'Seat released — thanks for freeing it up.',
+  'ticket.releaseFailed': 'Could not release this seat.',
+  'ticket.releaseHint': "Can't make it? Release your seat so someone on the waitlist can go.",
+  'ticket.releaseHintCutoff': "Can't make it? Release your seat before {when} so someone on the waitlist can go.",
+  'ticket.releasedStamp': 'RELEASED',
+  'ticket.refundedStamp': 'REFUNDED',
+  'ticket.releasedNotice': 'You gave this seat back',
+  'ticket.refundNotice': 'Refund issued by organizer',
+  'series.moreDates': 'more dates',
+  'series.pick': 'pick this date →',
+  'series.andMore': '+ {n} more',
+  'series.loadFailed': 'Could not load the other dates right now.',
 
   'alerts.title': 'Alerts',
   'alerts.signInFor': 'SIGN IN FOR',
@@ -102,6 +125,19 @@ export const en = {
   'alerts.emptyAll': "You're all caught up. Nothing new here.",
   'alerts.degraded': 'Some alerts could not be loaded ({sources}). Refresh to try again.',
   'alerts.partial': 'NOTHING TO SHOW',
+  'alerts.markAllFailed': 'Could not mark alerts as read — they will come back next time.',
+
+  // Offline pass — shown when a pass is served from the on-device cache
+  // (lib/offlinePass) because the network read failed.
+  'event.directions': 'Get directions',
+
+  'offline.chip': 'Offline copy',
+  'offline.justNow': 'synced just now',
+  'offline.minutesAgo': 'synced {n} min ago',
+  'offline.hoursAgo': 'synced {n} h ago',
+  'offline.daysAgo': 'synced {n} d ago',
+  'offline.ticketsBanner': "You're offline — showing the passes saved on this device. Entry is still verified at the door.",
+  'offline.noCache': "You're offline and this device has no saved copy of your passes. Reconnect once to save them.",
 
   'claim.loading': 'LOADING YOUR TICKET…',
   'claim.expired': 'TRANSFER EXPIRED',
@@ -125,6 +161,8 @@ export const es: Record<DictKey, string> = {
   'nav.signIn': 'Iniciar Sesión',
   'nav.signOut': 'Cerrar Sesión',
   'nav.profile': 'Perfil',
+  'nav.alerts': 'Alertas',
+  'nav.alertsUnread': 'Alertas — {n} sin leer',
 
   'event.buy': 'Comprar Entradas',
   'event.soldOut': 'Agotado',
@@ -171,6 +209,13 @@ export const es: Record<DictKey, string> = {
   'tickets.transferCancelled': 'Transferencia cancelada.',
   'tickets.transferCancelFailed': 'No se pudo cancelar la transferencia.',
   'tickets.loadFailed': 'No se pudieron cargar tus entradas.',
+  'tickets.emptyActive': '// nada próximo — tus pases pasados están en el archivo',
+  'tickets.emptyArchive': '// aún no hay pases pasados ni usados',
+  'tickets.stampActive': 'ACTIVAS',
+  'tickets.stamp.used': 'USADAS',
+  'tickets.stamp.voided': 'ANULADAS',
+  'tickets.stamp.past': 'PASADO',
+  'tickets.stamp.transfer': 'EN TRANSFERENCIA',
 
   'ticket.loading': '// cargando entrada...',
   'ticket.denied': '// acceso denegado: no se encontraron entradas',
@@ -192,6 +237,20 @@ export const es: Record<DictKey, string> = {
   'ticket.nameSaveFailed': 'No se pudo guardar el nombre.',
   'ticket.level': 'nivel',
   'ticket.securityTitle': 'PROTECCIÓN DE SEGURIDAD',
+  'ticket.release': 'liberar mi lugar',
+  'ticket.releaseConfirm': 'Devolver este lugar? Tu entrada se cancela y el lugar pasa a la siguiente persona de la lista de espera. No se puede deshacer.',
+  'ticket.released': 'Lugar liberado — gracias por dejarlo libre.',
+  'ticket.releaseFailed': 'No se pudo liberar este lugar.',
+  'ticket.releaseHint': 'No puedes ir? Libera tu lugar para que alguien de la lista de espera pueda asistir.',
+  'ticket.releaseHintCutoff': 'No puedes ir? Libera tu lugar antes de {when} para que alguien de la lista de espera pueda asistir.',
+  'ticket.releasedStamp': 'LIBERADA',
+  'ticket.refundedStamp': 'REEMBOLSADA',
+  'ticket.releasedNotice': 'Devolviste este lugar',
+  'ticket.refundNotice': 'Reembolso emitido por el organizador',
+  'series.moreDates': 'más fechas',
+  'series.pick': 'elegir esta fecha →',
+  'series.andMore': '+ {n} más',
+  'series.loadFailed': 'No se pudieron cargar las otras fechas ahora mismo.',
 
   'alerts.title': 'Alertas',
   'alerts.signInFor': 'INICIA SESIÓN PARA VER',
@@ -209,6 +268,7 @@ export const es: Record<DictKey, string> = {
   'alerts.emptyAll': 'Estás al día. Nada nuevo por aquí.',
   'alerts.degraded': 'Algunas alertas no se pudieron cargar ({sources}). Actualiza para reintentar.',
   'alerts.partial': 'NADA QUE MOSTRAR',
+  'alerts.markAllFailed': 'No se pudieron marcar las alertas como leídas — volverán la próxima vez.',
 
   'claim.loading': 'CARGANDO TU ENTRADA…',
   'claim.expired': 'TRANSFERENCIA EXPIRADA',
@@ -222,6 +282,15 @@ export const es: Record<DictKey, string> = {
   'claim.sender': 'REMITENTE SEGURO',
 
   'common.cancel': 'Cancelar',
+  // Pase sin conexión.
+  'event.directions': 'Cómo llegar',
+  'offline.chip': 'Copia sin conexión',
+  'offline.justNow': 'sincronizado ahora mismo',
+  'offline.minutesAgo': 'sincronizado hace {n} min',
+  'offline.hoursAgo': 'sincronizado hace {n} h',
+  'offline.daysAgo': 'sincronizado hace {n} d',
+  'offline.ticketsBanner': 'Estás sin conexión: mostramos los pases guardados en este dispositivo. La entrada se verifica igualmente en la puerta.',
+  'offline.noCache': 'Estás sin conexión y este dispositivo no tiene una copia guardada de tus pases. Conéctate una vez para guardarlos.',
 };
 
 export const DICTS: Record<Lang, Record<DictKey, string>> = { en, es };

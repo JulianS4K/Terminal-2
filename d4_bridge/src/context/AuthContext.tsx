@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { clearOfflinePasses } from '../lib/offlinePass';
 import { AppUser, toAppUser, isAdminUser, setCurrentAppUser } from '../lib/auth';
 import AuthModal from '../components/AuthModal';
 
@@ -87,6 +88,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = () => setIsAuthModalOpen(true); // maintain compatibility
 
   const logout = async () => {
+    // Deliberately only here, NOT on a SIGNED_OUT auth event: a token refresh
+    // that fails while the holder is offline can emit SIGNED_OUT, and wiping
+    // the cache at that exact moment would delete the passes right when the
+    // door needs them. An explicit sign-out is a real intent; a dropped
+    // session is not. A cache belonging to another user is refused and wiped
+    // on read anyway (loadOfflinePasses checks the user id).
+    //
+    // Wipe the on-device pass cache BEFORE dropping the session. It holds
+    // per-ticket barcode secrets (lib/offlinePass) — those belong to the
+    // person who was signed in, and a shared phone must not keep them.
+    clearOfflinePasses();
     await supabase.auth.signOut();
   };
 

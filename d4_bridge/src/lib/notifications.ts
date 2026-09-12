@@ -167,13 +167,18 @@ export async function listReadNotificationIds(): Promise<Set<string>> {
  * input. Errors are swallowed (console.warn only) so a missing table / RPC
  * never breaks the optimistic UI.
  */
-export async function markNotificationsRead(ids: string[]): Promise<void> {
-  if (ids.length === 0) return;
+export async function markNotificationsRead(ids: string[]): Promise<boolean> {
+  if (ids.length === 0) return true;
   try {
     const { error } = await supabase.rpc('exos_mark_notifications_read', { p_ids: ids });
-    if (error) console.warn('markNotificationsRead failed', error);
+    if (error) {
+      console.warn('markNotificationsRead failed', error);
+      return false;
+    }
+    return true;
   } catch (err) {
     console.warn('markNotificationsRead failed', err);
+    return false;
   }
 }
 

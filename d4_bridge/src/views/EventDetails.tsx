@@ -7,6 +7,7 @@ import { startCheckout } from '../lib/checkout';
 import SocialLinks from '../components/SocialLinks';
 import ArtistLinks from '../components/ArtistLinks';
 import AddToCalendar from '../components/AddToCalendar';
+import DirectionsLink from '../components/DirectionsLink';
 import { linksForArtist } from '../lib/artistLinks';
 import { shareEventToStory } from '../lib/poster';
 import { useAuth } from '../context/AuthContext';
@@ -23,6 +24,7 @@ import ShareModal from '../components/ShareModal';
 import EventCountdown from '../components/EventCountdown';
 import WaitlistCTA from '../components/WaitlistCTA';
 import SaveEventButton from '../components/SaveEventButton';
+import SeriesDates from '../components/SeriesDates';
 import { effectiveTierPrice, nextPriceStep } from '../lib/pricing';
 import AddonSelector, { type AddonSelection } from '../components/AddonSelector';
 import { claimFreeAddons } from '../lib/addons';
@@ -551,6 +553,9 @@ export default function EventDetails() {
               </div>
             </div>
 
+            {/* Other dates in this series (recurring / timed-entry) — pick another. */}
+            <SeriesDates event={event} />
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-white/10 border border-white/10 mb-14">
               <div className="flex items-center gap-5 p-7 bg-[#111]">
                 <div className="w-12 h-12 bg-white/5 flex items-center justify-center shrink-0">
@@ -611,6 +616,7 @@ export default function EventDetails() {
                 <div>
                    <p className="type text-[10px] text-white/30 uppercase tracking-widest mb-1">location</p>
                    <p className="disp text-xl tracking-tight">{event.location}</p>
+                   <DirectionsLink event={event} t={t} className="mt-2" />
                 </div>
               </div>
               {/* Performers block — only renders when the organizer
