@@ -28,7 +28,11 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { requireCronSecret } from "../_shared/cron-auth.ts";
 
-const ESPN_HOST = "site.api.espn.com";
+// site.api.espn.com has answered every Supabase-egress request with an Akamai "Access Denied"
+// 403 since 2026-08-19 (IP-level; a browser User-Agent does not help). site.web.api.espn.com
+// serves the identical /apis/site/v2 + /apis/v2 paths and is not blocked (verified live
+// 2026-09-01 and 2026-09-11 via pg_net). Host swap re-applied 2026-09-11.
+const ESPN_HOST = "site.web.api.espn.com";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function get(path: string, query?: Record<string, string>) {
