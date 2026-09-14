@@ -5,6 +5,7 @@
 -- Touches:  W: n2s_landed_total() (new), n2s_cover_candidates() (replaced)
 --           R: order_fee_schedule (source='tevo': buyer_fee_pct, fixed_fee_per_order)
 -- Pre-reqs: 20260914223000 (n2s_event_live — this body carries that predicate),
+-- Already applied to prod · via MCP 2026-09-14 22:38 UTC (PR #988); re-apply is a no-op
 --           20260509370000 (order_fee_schedule)
 --
 -- ── The bug ─────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@
 --              v_n2s_orders (WHERE clause)
 --           R: events.occurs_at_local, venue_assets.nws_time_zone
 -- Pre-reqs: 20260911020000 (n2s_gt_map_by_name), 20260910650000 (n2s_cover_candidates)
+-- Already applied to prod · via MCP 2026-09-14 22:36 UTC (PR #988); re-apply is a no-op
 --
 -- ── The bug ─────────────────────────────────────────────────────────────────
 -- n2s_items.event_dt is the CRM's venue-LOCAL start time. Nine call sites
