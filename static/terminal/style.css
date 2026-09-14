@@ -2881,3 +2881,10 @@ tr.n2s-row-gap > td { opacity: .82; }
    is worse than a scrollbar. Same treatment the deals feed already uses. */
 #n2sTable { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 #n2s-covers-panel .subs-field.narrow select { min-width: 8.5em; }
+
+/* DEALS · results strip (mig 20260911162100) */
+.deals-results-head { margin: 4px 0 8px; line-height: 1.5; }
+.deals-cal-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; }
+.deals-cal { min-width: 220px; flex: 1 1 220px; }
+.deals-cal .deals-tbl.small th, .deals-cal .deals-tbl.small td { padding: 2px 6px; }
+.deals-tbl.small { font-size: 0.85em; }

@@ -9,6 +9,8 @@ for `PropertiesService.getScriptProperties()`.
 Endpoints used:
   GET /rest/sales                  the sell-side book, newest first
   GET /rest/sales/:order_id        full per-sale detail
+  GET /rest/purchases              our BUY-side book (what we bought on
+                                   GoTickets), by order-time window
 
 CORRECTION (2026-09-09): this module previously stated "There is no list
 endpoint in the surfaced API" and exposed only the per-id lookup, so
@@ -151,6 +153,26 @@ class GoTicketsClient:
         """
         params = {"limit": limit} if limit is not None else None
         body = self._get("/rest/sales", params)
+        return body if isinstance(body, list) else []
+
+    # ---------- Purchases (our buy side) ----------
+
+    def get_purchases(self, order_time_from: str, order_time_to: str) -> list[dict[str, Any]]:
+        """GET /rest/purchases — OUR buy-side book: what we bought on GoTickets.
+
+        Both bounds are REQUIRED by the endpoint (ISO-8601 date-times, e.g.
+        ``2026-09-01T00:00:00Z``). Each row carries the order (id, createTime,
+        orderTotal, orderStatus, quantity, section/originalSection, row,
+        lowSeat/highSeat, cancelReason, fulfilled...) plus the GoTickets event
+        (id, name, venue*, eventTimeUtc, performers).
+
+        Read-only: a purchase RECORD is fetched here; nothing is bought. The
+        payload also carries recipient PII, transfer account credentials and
+        file attachments — the DB ingest (mig 20260911160500) strips those
+        before storing; callers of this method must not persist them either.
+        """
+        params = {"orderTimeFrom": order_time_from, "orderTimeTo": order_time_to}
+        body = self._get("/rest/purchases", params)
         return body if isinstance(body, list) else []
 
     # ---------- Events (events-controller, sc.gotickets.com/rest/events*) ----------

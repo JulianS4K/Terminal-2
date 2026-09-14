@@ -1,4 +1,9 @@
-// Supabase Edge Function: collect-listings (v10)
+// Supabase Edge Function: collect-listings (v11)
+//
+// v11 (2026-09-11): capture TEvo `public_notes` + `view_type` per ticket group into
+//      listings_snapshots so the deal scanner can exclude obstructed / limited / partial /
+//      side / rear views, standing room and wheelchair rows on the EVO side the way it
+//      already does from GoTickets `notes`. Both columns nullable; nothing else changes.
 //
 // v10: reconcile deployed-v10 (is_chat_tracked sweep, EvoClient.getEvent) with
 //      repo-HEAD (TS-computed section_metrics, owned_p25/p75/p90, fail-closed
@@ -224,6 +229,8 @@ interface ListingRow {
   brokerage_id: number | null;
   brokerage_name: string | null;
   is_owned: boolean;
+  public_notes: string | null;
+  view_type: string | null;
 }
 
 function buildListingRows(
@@ -258,6 +265,8 @@ function buildListingRows(
       brokerage_id: brokerageId,
       brokerage_name: brokerageName,
       is_owned: brokerageId === s4kBrokerageId,
+      public_notes: g.public_notes != null && String(g.public_notes).trim() !== "" ? String(g.public_notes).slice(0, 500) : null,
+      view_type: g.view_type != null && String(g.view_type).trim() !== "" ? String(g.view_type).slice(0, 80) : null,
     };
   });
 }

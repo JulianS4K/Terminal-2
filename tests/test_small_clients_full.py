@@ -522,6 +522,31 @@ def test_gotickets_get_sales_non_list_returns_empty(monkeypatch):
     assert gotickets.GoTicketsClient("id", "secret").get_sales() == []
 
 
+def test_gotickets_get_purchases_sends_both_bounds(monkeypatch):
+    # /rest/purchases REQUIRES both order-time bounds (400 otherwise) and, as
+    # measured live 2026-09-11, rejects a window > 30 days; the client passes
+    # the bounds through verbatim and lets the caller own the chunking.
+    cap = []
+    _patch_get(monkeypatch, gotickets,
+               _FakeResp(200, json_payload=[{"id": 7, "orderTotal": 240.0, "quantity": 2,
+                                             "event": {"id": 99, "name": "x"}}]),
+               captured=cap)
+    out = gotickets.GoTicketsClient("id", "secret").get_purchases(
+        "2026-08-12T00:00:00Z", "2026-09-11T00:00:00Z")
+    assert out[0]["id"] == 7
+    url, kwargs = cap[0]
+    assert url.endswith("/rest/purchases")
+    assert kwargs["params"] == {"orderTimeFrom": "2026-08-12T00:00:00Z",
+                                "orderTimeTo": "2026-09-11T00:00:00Z"}
+
+
+def test_gotickets_get_purchases_non_list_returns_empty(monkeypatch):
+    # a 400 body ({"message": "Bad request", ...}) or any non-list shape must
+    # come back as [] so a poller loop never iterates a dict
+    _patch_get(monkeypatch, gotickets, _FakeResp(200, json_payload={"message": "Bad request"}))
+    assert gotickets.GoTicketsClient("id", "secret").get_purchases("a", "b") == []
+
+
 def test_gotickets_get_events_list_and_params(monkeypatch):
     captured = []
     events = [{"id": 1}, {"id": 2}]
