@@ -1,3 +1,4 @@
+-- Migration 20260915250000 · level:data-collection · lane:A1 · writes:evo_gt_pipeline_run_log,cron_policy,cron.job,evo_gt_venue_link,evo_gt_event_pair,gotickets_event · reads:v_evo_us_ca_event,v_gt_us_ca_event,tevo_event_pull_state · pre:20260915240000
 -- ⚠ NOT YET APPLIED TO PROD. Written while the Supabase connector was unauthorised, so none of
 -- this has been executed or verified. Apply and verify before trusting it; the "VERIFIED ON APPLY"
 -- block at the bottom is deliberately empty until that happens.

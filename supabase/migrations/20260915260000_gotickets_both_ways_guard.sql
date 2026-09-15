@@ -1,3 +1,4 @@
+-- Migration 20260915260000 · level:data-collection · lane:A1 · writes:gotickets_event · reads:gotickets_event,events · pre:20260914221000
 -- ⚠ NOT YET APPLIED. Supabase was down for maintenance when this was written, so it has not been
 -- executed or verified. Before applying, md5-compare the CURRENT prod body of
 -- event_mapper_surface_sql against the copy reproduced here: this file was rebuilt from the
