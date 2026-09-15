@@ -5,12 +5,12 @@
 -- Touches:  sg_event_backfill_process() (CREATE OR REPLACE — now writes sg_datetime_utc too) ·
 --           event_date_reconcile_queue(int) (new) · event_date_reconcile_tick() (new) ·
 --           cron job event_date_reconcile_30min (new)
--- Pre-reqs: 20260914220000
+-- Pre-reqs: 20260914220030
 --
 -- Operator 2026-09-14: "if tevo is marked rescheduled poll both gotickets and seatgeek for new
 -- dates, and vice versa."
 --
--- ── WHY 20260914220000 WAS ONLY HALF THE FIX ───────────────────────────────
+-- ── WHY 20260914220030 WAS ONLY HALF THE FIX ───────────────────────────────
 -- That migration made the deals surface PREFER TEvo's date when a source disagrees by more than
 -- a day. It fixed what we read; it did nothing about the stale row itself, which keeps poisoning
 -- every other consumer of sg_events_canonical.

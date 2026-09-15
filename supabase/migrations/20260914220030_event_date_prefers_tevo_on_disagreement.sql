@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 20260914220000 — a rescheduled game was graded against its OLD date
+-- Migration 20260914220030 — a rescheduled game was graded against its OLD date
 --
 -- Lane:     D0 (deals surface)
 -- Touches:  deal_event_datetime(timestamptz,timestamptz,text) (new) ·
@@ -64,7 +64,7 @@ AS $fn$
   END
 $fn$;
 COMMENT ON FUNCTION public.deal_event_datetime(timestamptz,timestamptz,text) IS
-  'THE event datetime for the deals surface. Prefers the SeatGeek canonical UTC timestamp (occurs_at_local is text), EXCEPT when it disagrees with TEvo by more than a day — TEvo is reschedule-aware, so the other source is stale and TEvo wins. Sub-day gaps are timezone noise. STABLE, not IMMUTABLE: text->timestamptz is a stable cast. D0 mig 20260914220000.';
+  'THE event datetime for the deals surface. Prefers the SeatGeek canonical UTC timestamp (occurs_at_local is text), EXCEPT when it disagrees with TEvo by more than a day — TEvo is reschedule-aware, so the other source is stale and TEvo wins. Sub-day gaps are timezone noise. STABLE, not IMMUTABLE: text->timestamptz is a stable cast. D0 mig 20260914220030.';
 
 -- ── 2. Scanner stores the same date it selected on ───────────────────────────
 DO $do$
