@@ -79,6 +79,29 @@
 --
 -- Cross-validation, same run: 3,904 accepted pairs independently REPRODUCE mappings that other
 -- matchers had already made, against 44 disagreements.
+--
+-- ============================================================================================
+-- MATERIALISING THE TWO SIDES IS NOT AN OPTIMISATION, IT IS WHAT MAKES THIS RUN AT ALL
+-- ============================================================================================
+-- v_evo_us_ca_event and v_gt_us_ca_event recompute venue_norm(), the region test and two parking
+-- regexes for every row they touch, and the candidate join touches them repeatedly. Against the
+-- 20k-row mirror that was invisible. Against the full catalogue -- 107,341 EVO events and 108,751
+-- GoTickets events, once the backfill finished -- the function ran past every timeout it was
+-- given and was killed. Each side is now materialised once into a temp table with the index the
+-- join actually uses, which is what "pull the full map for mapping" means in practice, and the
+-- guards are evaluated only on pairs that survive the window rather than on all of them.
+--
+-- FULL-CATALOGUE RESULT: 75,744 EVO events at linked venues against 59,689 GoTickets events,
+-- 57,709 candidate pairs inside the window, 22,783 accepted across 22,783 DISTINCT EVO events and
+-- 22,783 DISTINCT GoTickets events -- the one-to-one holds exactly. 22,433 pairs were rejected as
+-- different_local_day. Of the 998 accepted pairs at 12h or more, every one is same-local-day.
+-- 18,732 were written; the rest were already mapped, 3,979 of them to the same TEvo event this
+-- pipeline chose independently.
+--
+-- The no-double-claim guard held: of the 134 TEvo events in the table claimed by more than one
+-- GoTickets row, NONE carry evo_gt_v2_venue1to1. They are pre-existing, and they are concentrated
+-- in instant_performer (94) and matcher_v3_got (47) -- the same two matchers this pipeline
+-- disagrees with above.
 
 CREATE TABLE IF NOT EXISTS public.evo_gt_event_pair (
   tevo_event_id bigint  NOT NULL,
@@ -111,6 +134,7 @@ COMMENT ON COLUMN public.evo_gt_event_pair.runner_up_delta IS
 COMMENT ON COLUMN public.evo_gt_event_pair.same_local_day IS
   'The gate that makes a +/-24h window safe. The window is the CANDIDATE filter the operator asked for; it is not the acceptance test, because 24h of raw UTC slack is precisely one night of a multi-night run. Measured on the first dry run: of the 14 accepted pairs furthest out in the window, 12 were the adjacent night of the same production -- Grinch at the Ed Mirvish matched Nov 12 to Nov 13, Blue Man Group matched Oct 8 to Oct 9, and Suicideboys took a 24h-away partner while a 0h-away one sat in the same candidate set. Comparing LOCAL DATES rejects all twelve. It also keeps the one real pair in that band: TEvo writes an unknown start time as 00:00 and GoTickets writes it as 23:59, so Penn State at Michigan reads as 23.98h apart while both sides plainly mean the same Saturday (mig 20260915230000).';
 
+
 CREATE OR REPLACE FUNCTION public.evo_gt_pipeline_match(
   p_apply        boolean DEFAULT false,
   p_window_hours numeric DEFAULT 24,
@@ -132,32 +156,62 @@ BEGIN
   END IF;
   PERFORM set_config('statement_timeout', '900000', true);
 
+  -- STEP 1, materialised. The views recompute venue_norm(), the region test and two parking
+  -- regexes for every row they touch, and the candidate join touches them repeatedly. At 20k rows
+  -- that was invisible; at 107k EVO against 108k GoTickets it is the whole runtime. Materialising
+  -- each side once, with the indexes the join actually uses, is what "pull the full map for
+  -- mapping" means in practice.
+  DROP TABLE IF EXISTS _evo;
+  CREATE TEMP TABLE _evo ON COMMIT DROP AS
+  SELECT e.tevo_event_id, e.event_name, e.tevo_venue_id, e.local_ts::date AS evo_local_date,
+         e.utc_ts, e.iana_tz, e.primary_performer_name,
+         public.tevo_venue_search_norm(e.event_name) AS name_n,
+         public.tevo_venue_search_norm(e.primary_performer_name) AS perf_n,
+         l.gt_venue_key
+    FROM public.v_evo_us_ca_event e
+    JOIN public.evo_gt_venue_link l ON l.tevo_venue_id = e.tevo_venue_id
+   WHERE e.utc_ts IS NOT NULL;
+  CREATE INDEX ON _evo (gt_venue_key, utc_ts);
+  ANALYZE _evo;
+
+  DROP TABLE IF EXISTS _gt;
+  CREATE TEMP TABLE _gt ON COMMIT DROP AS
+  SELECT g.gt_event_id, g.event_name, g.gt_venue_key, g.utc_ts, g.performer,
+         public.tevo_venue_search_norm(g.event_name) AS name_n,
+         public.tevo_venue_search_norm(g.performer)  AS perf_n
+    FROM public.v_gt_us_ca_event g
+   WHERE EXISTS (SELECT 1 FROM public.evo_gt_venue_link l WHERE l.gt_venue_key = g.gt_venue_key);
+  CREATE INDEX ON _gt (gt_venue_key, utc_ts);
+  ANALYZE _gt;
+
+  -- STEP 3: the +/-24h window selects candidates.
   DROP TABLE IF EXISTS _p;
   CREATE TEMP TABLE _p ON COMMIT DROP AS
-  SELECT e.tevo_event_id, g.gt_event_id, l.tevo_venue_id, l.gt_venue_key,
+  SELECT e.tevo_event_id, g.gt_event_id, e.tevo_venue_id, e.gt_venue_key,
          round((abs(extract(epoch FROM (g.utc_ts - e.utc_ts))) / 3600.0)::numeric, 3) AS delta_hours,
-         e.local_ts::date                              AS evo_local_date,
-         (g.utc_ts AT TIME ZONE e.iana_tz)::date       AS gt_local_date,
-         (e.local_ts::date = (g.utc_ts AT TIME ZONE e.iana_tz)::date) AS same_local_day,
-         similarity(public.tevo_venue_search_norm(e.event_name),
-                    public.tevo_venue_search_norm(g.event_name))::numeric AS name_sim,
-         CASE WHEN nullif(btrim(coalesce(e.primary_performer_name,'')),'') IS NOT NULL
-               AND nullif(btrim(coalesce(g.performer,'')),'') IS NOT NULL
-              THEN similarity(public.tevo_venue_search_norm(e.primary_performer_name),
-                              public.tevo_venue_search_norm(g.performer))::numeric END AS performer_sim,
-         public.evo_gt_ordinals_agree(e.event_name, g.event_name)  AS ordinals_ok,
-         public.evo_gt_subtitle_agrees(e.event_name, g.event_name) AS subtitle_ok
-    FROM public.evo_gt_venue_link l
-    JOIN public.v_evo_us_ca_event e
-      ON e.tevo_venue_id = l.tevo_venue_id AND e.utc_ts IS NOT NULL
-    JOIN public.v_gt_us_ca_event g
-      ON g.gt_venue_key = l.gt_venue_key
+         e.evo_local_date,
+         (g.utc_ts AT TIME ZONE e.iana_tz)::date AS gt_local_date,
+         (e.evo_local_date = (g.utc_ts AT TIME ZONE e.iana_tz)::date) AS same_local_day,
+         similarity(e.name_n, g.name_n)::numeric AS name_sim,
+         CASE WHEN nullif(btrim(coalesce(e.perf_n,'')),'') IS NOT NULL
+               AND nullif(btrim(coalesce(g.perf_n,'')),'') IS NOT NULL
+              THEN similarity(e.perf_n, g.perf_n)::numeric END AS performer_sim,
+         e.event_name AS evo_name, g.event_name AS gt_name
+    FROM _evo e
+    JOIN _gt g
+      ON g.gt_venue_key = e.gt_venue_key
      AND g.utc_ts >= e.utc_ts - make_interval(secs => (p_window_hours * 3600)::double precision)
      AND g.utc_ts <= e.utc_ts + make_interval(secs => (p_window_hours * 3600)::double precision);
 
   ALTER TABLE _p ADD COLUMN score numeric;
   UPDATE _p SET score = greatest(name_sim, coalesce(performer_sim, 0));
   DELETE FROM _p WHERE score < p_rival_floor;
+
+  -- STEP 4: the guards are evaluated only on what survived, because they are regex work and the
+  -- window throws most candidates away.
+  ALTER TABLE _p ADD COLUMN ordinals_ok boolean, ADD COLUMN subtitle_ok boolean;
+  UPDATE _p SET ordinals_ok = public.evo_gt_ordinals_agree(evo_name, gt_name),
+                subtitle_ok = public.evo_gt_subtitle_agrees(evo_name, gt_name);
 
   DROP TABLE IF EXISTS _r;
   CREATE TEMP TABLE _r ON COMMIT DROP AS
@@ -174,9 +228,14 @@ BEGIN
          w_gt  AS (PARTITION BY gt_event_id
                    ORDER BY same_local_day DESC, score DESC, delta_hours ASC, tevo_event_id);
 
-  DROP TABLE IF EXISTS _v;
-  CREATE TEMP TABLE _v ON COMMIT DROP AS
-  SELECT r.*,
+  DELETE FROM public.evo_gt_event_pair;
+  INSERT INTO public.evo_gt_event_pair
+    (tevo_event_id, gt_event_id, tevo_venue_id, gt_venue_key, delta_hours, name_sim,
+     performer_sim, score, ordinals_ok, subtitle_ok, rn_evo, rn_gt, rivals_evo, rivals_gt,
+     runner_up_score, runner_up_delta, verdict, evo_local_date, gt_local_date, same_local_day)
+  SELECT r.tevo_event_id, r.gt_event_id, r.tevo_venue_id, r.gt_venue_key, r.delta_hours, r.name_sim,
+         r.performer_sim, r.score, r.ordinals_ok, r.subtitle_ok, r.rn_evo, r.rn_gt,
+         r.rivals_evo, r.rivals_gt, r.runner_up_score, r.runner_up_delta,
          CASE
            WHEN NOT coalesce(r.same_local_day, false) THEN 'different_local_day'
            WHEN NOT r.ordinals_ok                     THEN 'guard_ordinals'
@@ -188,18 +247,9 @@ BEGIN
             AND (r.runner_up_delta - r.delta_hours) < p_time_decisive_hours
                                                       THEN 'ambiguous_sibling'
            ELSE 'accepted'
-         END AS verdict
+         END,
+         r.evo_local_date, r.gt_local_date, r.same_local_day
     FROM _r r;
-
-  DELETE FROM public.evo_gt_event_pair;
-  INSERT INTO public.evo_gt_event_pair
-    (tevo_event_id, gt_event_id, tevo_venue_id, gt_venue_key, delta_hours, name_sim,
-     performer_sim, score, ordinals_ok, subtitle_ok, rn_evo, rn_gt, rivals_evo, rivals_gt,
-     runner_up_score, runner_up_delta, verdict, evo_local_date, gt_local_date, same_local_day)
-  SELECT tevo_event_id, gt_event_id, tevo_venue_id, gt_venue_key, delta_hours, name_sim,
-         performer_sim, score, ordinals_ok, subtitle_ok, rn_evo, rn_gt, rivals_evo, rivals_gt,
-         runner_up_score, runner_up_delta, verdict, evo_local_date, gt_local_date, same_local_day
-    FROM _v;
 
   IF p_apply THEN
     WITH w AS (
@@ -223,20 +273,15 @@ BEGIN
   SELECT jsonb_build_object(
            'applied', p_apply,
            'window_hours', p_window_hours,
+           'evo_events_in', (SELECT count(*) FROM _evo),
+           'gt_events_in', (SELECT count(*) FROM _gt),
            'venue_links_used', (SELECT count(*) FROM public.evo_gt_venue_link),
-           'pairs_in_window', (SELECT count(*) FROM public.evo_gt_event_pair),
+           'pairs_kept', (SELECT count(*) FROM public.evo_gt_event_pair),
            'by_verdict', (SELECT jsonb_object_agg(verdict, n) FROM (
                SELECT verdict, count(*) n FROM public.evo_gt_event_pair GROUP BY 1) z),
            'accepted_max_delta_hours',
              (SELECT max(delta_hours) FROM public.evo_gt_event_pair WHERE verdict='accepted'),
            'written', v_written,
-           'evo_events_at_linked_venues',
-             (SELECT count(*) FROM public.v_evo_us_ca_event e
-               JOIN public.evo_gt_venue_link l ON l.tevo_venue_id = e.tevo_venue_id),
-           'evo_events_at_linked_venues_no_tz',
-             (SELECT count(*) FROM public.v_evo_us_ca_event e
-               JOIN public.evo_gt_venue_link l ON l.tevo_venue_id = e.tevo_venue_id
-              WHERE e.utc_ts IS NULL),
            'thresholds', jsonb_build_object(
                'min_score', p_min_score, 'rival_floor', p_rival_floor,
                'margin', p_margin, 'time_decisive_hours', p_time_decisive_hours))
