@@ -47,18 +47,37 @@
 -- Today's baseline, for the first comparison: accepted 26,612 · different_local_day 22,793 ·
 -- not_mutual_best 6,237 · ambiguous_sibling 1,613 · below_threshold 605 · guard_subtitle 500 ·
 -- guard_ordinals 230 · venue links 3,460.
+--
+-- Failures are NOT in the run log and cannot be. The whole tick is one transaction, so an
+-- exception rolls the log insert back along with everything else -- a column for the error text
+-- would never hold one. cron.job_run_details is where a failed tick is recorded.
+--
+-- ============================================================================================
+-- THE COLLAPSE GUARD -- what changes when nobody is watching
+-- ============================================================================================
+-- evo_gt_venue_link_build DELETEs the entire venue map and rebuilds it. Every time I ran it today
+-- I read the returned count before doing anything else, so a collapse could not have gone
+-- unnoticed. On a schedule there is no such reader.
+--
+-- Anything that transiently empties an input -- a view returning nothing, a half-applied
+-- migration, an ingest that truncated the mirror -- would wipe the map and, through it, every
+-- mapping the matcher could have made that day. It would do so silently, and then again tomorrow.
+--
+-- So the tick counts the links before and after, and RAISES if the map lost more than a fifth of
+-- itself. Because the whole tick is one transaction, raising rolls the DELETE back: the previous
+-- map survives and the failure is loud. A growing map never trips it, and the guard is skipped
+-- entirely below 100 links so a first run on an empty table is not blocked.
 
 CREATE TABLE IF NOT EXISTS public.evo_gt_pipeline_run_log (
   id            bigserial PRIMARY KEY,
   ran_at        timestamptz NOT NULL DEFAULT now(),
   duration_ms   int,
   venue_result  jsonb,
-  match_result  jsonb,
-  error_text    text
+  match_result  jsonb
 );
 
 COMMENT ON TABLE public.evo_gt_pipeline_run_log IS
-  'One row per automated EVO->GoTickets pipeline tick, storing both stages'' full JSONB results so the rejection buckets become a time series. A daily mapper whose only record is "did not error" cannot be improved -- you need to see which bucket is growing (mig 20260915250000).';
+  'One row per SUCCESSFUL automated EVO->GoTickets pipeline tick, storing both stages'' full JSONB results so the rejection buckets become a time series. A daily mapper whose only record is "did not error" cannot be improved -- you need to see which bucket is growing. Failures are NOT here and cannot be: the whole tick is one transaction, so an exception rolls this insert back with everything else. Read cron.job_run_details for those (mig 20260915250000).';
 
 CREATE INDEX IF NOT EXISTS evo_gt_pipeline_run_log_ran_at_idx
   ON public.evo_gt_pipeline_run_log (ran_at DESC);
@@ -72,6 +91,7 @@ AS $fn$
 DECLARE
   v_t0 timestamptz := clock_timestamp();
   v_venue jsonb; v_match jsonb;
+  v_links_before int; v_links_after int;
 BEGIN
   IF current_user NOT IN ('service_role','postgres','supabase_admin') THEN
     RAISE EXCEPTION 'evo_gt_pipeline_tick: caller % not authorized', current_user
@@ -80,7 +100,24 @@ BEGIN
   PERFORM set_config('statement_timeout', '900000', true);
 
   -- Venue map first, always. A new venue is invisible to the matcher until the link exists.
+  SELECT count(*) INTO v_links_before FROM public.evo_gt_venue_link;
   v_venue := public.evo_gt_venue_link_build(true);
+  SELECT count(*) INTO v_links_after FROM public.evo_gt_venue_link;
+
+  -- COLLAPSE GUARD. evo_gt_venue_link_build DELETEs the whole table and rebuilds it. Run by hand
+  -- that is safe, because a human reads the returned count before moving on. Run unattended it is
+  -- not: anything that transiently empties an input -- a view returning nothing, a half-applied
+  -- migration, an ingest that truncated the mirror -- would wipe the venue map, and with it every
+  -- mapping the matcher could have made that day, silently and on a schedule.
+  --
+  -- Raising here rolls the DELETE back, because the whole tick is one transaction. A shrinking
+  -- map is a real signal worth failing loudly on; a growing one never trips this.
+  IF v_links_before > 100 AND v_links_after < (v_links_before * 0.8)::int THEN
+    RAISE EXCEPTION
+      'evo_gt_pipeline_tick: venue map collapsed % -> % (< 80%%), refusing to publish; nothing written',
+      v_links_before, v_links_after;
+  END IF;
+
   v_match := public.evo_gt_pipeline_match(true);
 
   INSERT INTO public.evo_gt_pipeline_run_log (duration_ms, venue_result, match_result)
