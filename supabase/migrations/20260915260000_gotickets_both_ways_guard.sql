@@ -202,7 +202,28 @@ GRANT EXECUTE ON FUNCTION public.evo_gt_report_double_claims(int) TO service_rol
 COMMENT ON FUNCTION public.evo_gt_report_double_claims(int) IS
   'Read-only report of TEvo events claimed by more than one GoTickets row, with the matcher and timestamp behind each claim. 212 of them as of 2026-09-15, none written by evo_gt_v2_venue1to1. Deliberately does not resolve them: picking a winner is a judgement about another matcher''s output (mig 20260915260000).';
 
--- VERIFIED ON APPLY TO PROD: (pending -- still not applied to prod)
+-- APPLIED AND VERIFIED ON PROD, 2026-09-16
+--   md5 GATE PASSED FIRST: prod's live event_mapper_surface_sql was byte-identical to the repo's
+--     mig 20260914221000 across all 12 chunk hashes. ZERO drift, so the file applied as written.
+--   Prod's live template confirmed to carry NO guard before the change, and has_any_not_exists was
+--     false across ALL SIX surfaces -- gotickets_event is simply the one that was measured.
+--   GUARD PROVEN ON PROD, in a transaction rolled back afterwards: two unmapped GoTickets rows
+--     raced for one unheld TEvo event through the shared template. First claim wrote 1 row, second
+--     wrote 0, one claimant left.
+--   FIDELITY: the first apply trimmed in-body comments and left prod at 9,038 chars against the
+--     repo's 12,569 -- drift created by the very act of fixing drift. Re-applied verbatim; all 13
+--     chunk hashes now match the repo file exactly.
+--
+-- ⚠ CORRECTION to the claim repeated above and in the PR. "Of the duplicates, not one carries
+--   evo_gt_v2_venue1to1" was true when measured on 2026-09-15 and is NOT true now: 11 duplicate
+--   groups contain a v2 row. Of those, v2 wrote FIRST in 9 (the victim, exactly as diagnosed) but
+--   wrote LATER in 2 -- so evo_gt_pipeline_match's own guard is not airtight either. Small, but
+--   the stronger claim should not be repeated.
+--
+--   THE BLEED IS NOT YET PROVEN STOPPED. Count went 212 -> 216 -> 235 while this sat unapplied.
+--   The +19 came from the 08:50Z matcher cron, 16 minutes BEFORE the guard went live at 09:06:51Z;
+--   the pipeline tick at 09:09Z added none. The real proof is the NEXT :50 cron run: re-count and
+--   confirm it has stopped rising.
 --
 -- ==============================================================================================
 -- EXECUTED ON A LOCAL POSTGRES 16.13, 2026-09-16 -- FIRST EXECUTION OF THIS FILE ANYWHERE

@@ -118,7 +118,7 @@ COMMENT ON TABLE public.event_demand_policy IS
 
 INSERT INTO public.event_demand_policy
   (tier, label, sort_order, population_cap, share_pct, polls_per_day, fill_mode, notes) VALUES
-  ('T0_HOURLY', 'Trading or bought - hourly', 0, 1000, NULL, 24,   'activity', 'Hourly.     1,000 x 24    = 24,000/day. Operator rule 2026-09-16: anything with sales against it, or anything we have purchased, is pinged hourly. Claimed BEFORE the middle; qualifiers beyond the cap fall into the middle, which is where they now land on a graded slope instead of a cliff.'),
+  ('T0_HOURLY', 'Trading or bought - hourly', 0, 2000, NULL, 24,   'activity', 'Hourly. Cap 2,000: the first PROD dry run found only 1,204 qualifiers, so EVERY qualifying event gets the slot with ~66% growth headroom. Operator rule 2026-09-16: anything with sales against it, or anything we have purchased, is pinged hourly. Claimed BEFORE the middle; qualifiers beyond the cap fall into the middle, which is where they now land on a graded slope instead of a cliff.'),
   ('M1_FAST',   'Middle - top 3%',            1, NULL,    3,  4,   'score',    'Every 6h.     900 x 4     =  3,600/day'),
   ('M2_BRISK',  'Middle - next 7%',           2, NULL,    7,  2,   'score',    'Every 12h.  2,100 x 2     =  4,200/day'),
   ('M3_STEADY', 'Middle - next 15%',          3, NULL,   15,  1,   'score',    'Daily.      4,500 x 1     =  4,500/day'),
@@ -548,10 +548,13 @@ BEGIN
   -- ── 4.5 Retained existing signal: do we hold stock. This is what the two live ladders grade on
   --        today, and dropping it here would silently overrule the 2026-05-14 operator directive.
   CREATE TEMP TABLE _owned ON COMMIT DROP AS
-  SELECT m.tevo_event_id, max(coalesce(m.owned_tickets_count, 0)) AS owned_count
+  -- latest_event_metrics is a MATERIALIZED VIEW keyed on event_id (which IS events.id / the TEvo
+  -- id). It has no tevo_event_id column -- the synthetic fixture invented one, so this only
+  -- surfaced on first contact with prod.
+  SELECT m.event_id AS tevo_event_id, max(coalesce(m.owned_tickets_count, 0)) AS owned_count
     FROM public.latest_event_metrics m
-   WHERE m.tevo_event_id IS NOT NULL AND coalesce(m.owned_tickets_count, 0) > 0
-   GROUP BY m.tevo_event_id;
+   WHERE m.event_id IS NOT NULL AND coalesce(m.owned_tickets_count, 0) > 0
+   GROUP BY m.event_id;
   CREATE UNIQUE INDEX ON _owned (tevo_event_id);
 
   -- ── 4.6 Assemble and score.
@@ -840,9 +843,7 @@ BEGIN
                      ELSE 'every qualifying event got the hourly slot' END),
       'middle_events', v_middle, 'middle_share_pct', v_share_sum,
       'by_source', v_budgets,
-      'middle_events', v_middle, 'middle_share_pct', v_share_sum,
-    'by_source', v_budgets,
-    'planned_polls_per_day', round(v_cost, 0), 'daily_budget', p_daily_budget,
+      'planned_polls_per_day', round(v_cost, 0), 'daily_budget', p_daily_budget,
       'budget_used_pct', round(100 * v_cost / NULLIF(p_daily_budget, 0), 1),
       'weights', v_w, 'tiers', v_tiers,
       'elapsed_ms', round(EXTRACT(epoch FROM (clock_timestamp() - v_started)) * 1000));
@@ -948,103 +949,50 @@ COMMENT ON VIEW public.v_event_demand_tier IS
   'Poller-facing contract for demand tiers: tier, polls_per_day and the derived interval_minutes per forward tevo_event_id. Nothing reads this yet -- wiring collector_band()/sg_priority_policy to it is a separate, separately reviewed migration (see the header of A1 mig 20260916120000).';
 
 -- ==============================================================================================
--- VERIFIED ON A LOCAL POSTGRES 16.13, 2026-09-16 -- NOT ON PROD
+-- APPLIED AND VERIFIED ON PROD, 2026-09-16
 -- ==============================================================================================
--- Supabase was unreachable, so this was executed against a local cluster carrying the real column
--- shapes of events, seatgeek_sales_snapshots, gotickets_purchases, gotickets_event,
--- gotickets_deal_outcome and latest_event_metrics, loaded with a synthetic catalogue sized to the
--- measured one: 107,341 forward events; a tape on 30,000 (10,000 actively trading, 20,000 with a
--- single sale 20 days old, so the qualification window actually discriminates); our purchases on
--- 600 events with NO tape; owned stock on 400 more with no tape; 20,000 graded deals confined to
--- a minority of venues; and a GoTickets mapping on 26,612 events, matching the pipeline's accepted
--- count, so the two source plans cover genuinely different populations.
+--   APPLIED                       tables, event_demand_refresh(), v_event_demand_tier
+--   FIRST DRY RUN                 13.0s over 107,991 forward events
+--   PUBLISHED                     107,991 rows written; overflow 0
+--   TEVO PLAN                     41,309 polls/day = 72.7% of the 56,800 budget -- FITS
+--   GT PLAN                       13,153 polls/day over 27,875 events -- UNMEASURED, reported only
 --
--- This proves the code runs, the guards fire and the arithmetic closes. It proves NOTHING about
--- prod's distributions, about how many events qualify for hourly, or about GoTickets' ceiling.
+--   THE FIXTURE WAS BADLY UNREPRESENTATIVE, and only prod could show it:
+--                                 SYNTHETIC      PROD
+--     qualified for hourly           30,546     1,204
+--     events scored (any evidence)   31,000     4,765
+--     budget used                      90.1%     72.7%
+--   The hourly rule looked unaffordable (12.9x budget) and is in fact ALMOST FREE: 1,204 events
+--   qualify, not 30,546. The shipped cap of 1,000 left 204 overflowing, so it was raised to 2,000
+--   and every qualifier now holds an hourly slot with room to grow. The synthetic catalogue had
+--   put a tape on 30,000 events; prod has one on roughly 1,155.
 --
---   MIGRATION APPLIES CLEAN                       yes
---   REFRESH, 107,341 events                       2.6s, dry run and apply alike
---   TEVO PLAN                                     51,174 polls/day = 90.1% of its 56,800 budget
---   GT PLAN                                       34,634 polls/day over 26,612 events,
---                                                 UNMEASURED -- reported, not enforced
---   DETERMINISM                                   two consecutive applies: 0 rows differ
+--   FINAL TIERS ON PROD:
+--     T0_HOURLY    1,204 @ 60min      M1_FAST      106 @ 360min
+--     M2_BRISK       249 @ 720min     M3_STEADY    534 @ 1440min
+--     M4_SLOW        890 @ 2880min    M5_TRICKLE 1,780 @ 7200min
+--     T_PROBE      3,000 @ 1440min    T6_FLOOR 100,228 @ 20168min
 --
---   THE SLOPE, with no cliff anywhere in it:
---     T0_HOURLY   1,000 @ 60min      (activity: has sales, or we bought it)
---     M1_FAST       894 @ 360min     top 3% of the middle
---     M2_BRISK    2,086 @ 720min     next 7%
---     M3_STEADY   4,470 @ 1440min    next 15%
---     M4_SLOW     7,450 @ 2880min    next 25%
---     M5_TRICKLE 14,900 @ 7200min    bottom 50% -- still 5x the floor
---     T_PROBE     3,000 @ 1440min    never observed; soonest first
---     T6_FLOOR   73,541 @ 20168min   no evidence at all
+-- ⚠ THE CHECKLIST WARNING FIRED, and it is the real finding here. Every one of the 3,561 middle
+--   events is UNOBSERVED -- not one carries a SeatGeek tape. The tape reaches ~1,155 of 107,991
+--   forward events, so outside T0 the score runs on our own book (exposure, loss prior, owned)
+--   with NO market signal at all. That is honest rather than wrong -- those events have our money
+--   on them and nothing else known -- but demand ranking is currently self-referential, and the
+--   circularity the T_PROBE tier exists to break is far wider than the fixture implied. At
+--   3,000/day against 103,226 unobserved events, probe takes ~34 days to touch each once. With
+--   27% of the budget spare, enlarging T_PROBE is the obvious next tuning move. Left alone here:
+--   the operator asked for hourly and for a deploy, not for a probe retune.
 --
---   THE CLIFF THIS REMOVED, measured before and after on the same fixture:
---     before   T5_FLOOR held 19,600 SCORED events alongside 73,341 unscored -- events with a
---              tape, our own purchases and graded losses, polled at exactly the rate of events
---              nothing had ever been observed about
---     after    the floor holds 0 scored events. Every event we have evidence about sits somewhere
---              on the M1..M5 slope.
+-- DEFECT 7, FOUND ON FIRST PROD CONTACT: the _owned block joined latest_event_metrics on
+--   m.tevo_event_id. That column does not exist -- the matview is keyed on event_id. The fixture
+--   invented the column, so ten guard tests, two determinism runs and a full local apply all
+--   passed over it. No synthetic schema can substitute for the real one.
 --
---   THE HOURLY RULE, MEASURED:
---     qualified (sales in 30d OR a purchase in 90d)   30,546
---     admitted at the 1,000 cap                        1,000
---     overflow -- qualified but not hourly            29,546  (these now land on the slope, not
---                                                              on the floor -- that is the change)
---     honouring it in full                           733,104 polls/day = 12.9x the TEvo budget
+-- ALSO FIXED HERE: the dry-run RETURN carried DUPLICATE jsonb keys (middle_events,
+--   middle_share_pct, by_source each twice) from an edit that applied twice to overlapping text.
+--   jsonb_build_object takes last-key-wins, so it never errored and every local test passed.
+--   Found by reading the file before pasting it to prod.
 --
---   GOTICKETS IS NOT A PROPORTIONAL SHARE OF THE COST, which is the surprise worth keeping:
---     GT-pollable events        26,612  =  25% of the catalogue
---     GT plan cost              34,634  =  68% of the TEvo plan's cost
---   Mapping correlates with activity, and activity is what buys cadence -- 754 of the 1,000 hourly
---   events are GT-pollable. So the mapped quarter of the catalogue is most of the expensive part,
---   and a GT ceiling far below TEvo's would bind on THIS plan long before TEvo's did.
---
---   GUARDS -- each RAISEs and writes nothing:
---     TEvo budget overrun       cap 1,120 costs 56,951 against 56,800    -> refused
---     GT budget overrun         GT budget set to 20,000 vs 34,634        -> refused
---     shares over 100           M5 share 50 -> 60, sum 110               -> refused
---     no floor tier             every score tier given a share           -> refused
---     floor not last            floor moved off the highest sort_order   -> refused
---     uncapped activity tier    T0_HOURLY population_cap set NULL        -> refused
---     bad activity window       p_activity_window_days => 14             -> refused
---     population collapse       horizon cut to 30d, 107,341 -> 8,969     -> refused
---     all weights disabled      every component enabled=false            -> refused
---     non-privileged caller     role authenticated                       -> permission denied
---
--- FOUND BY RUNNING IT, NOT BY READING IT -- all real defects in earlier drafts:
---   1. The first ladder cost 59,030 polls/day against its own 56,800 budget. The header's
---      arithmetic predated the T_PROBE tier and never had its 5,000/day added back in.
---   2. The loss component scored "no graded deal at this event, its venue or its performer" as
---      0.0 -- filing a venue we have never traded next to one where we reliably do not lose money.
---   3. A fixture that could not tell the two qualification levers apart: every tape event in it
---      had 8 recent sales, so window=7 and min_sales=3 both reported an unchanged population and
---      looked inert. They were not; the fixture was.
---   4. The fixed-count middle stranded 19,600 SCORED events on the weekly floor -- only visible
---      by grouping the applied table by tier and counting how many had a demand_score. Reading
---      the ladder, 400/1,000/3,000/6,000 looks like a reasonable spread; it covers a third of the
---      middle and the rest falls off the end.
---   5. A GT source row that read identically to TEvo, because the first fixture mapped every
---      event to GoTickets. The per-source split was untestable until the mapping was cut to a
---      realistic 26,612 -- and only then did the 25%-of-events / 68%-of-cost skew appear.
---   6. NOT RE-ENTRANT WITHIN A TRANSACTION. ON COMMIT DROP frees the temp tables at COMMIT, not at
---      RETURN, so a SECOND call inside the SAME transaction died on 'relation "_ev" already
---      exists'. Every earlier test had made one call per autocommit statement and passed, so this
---      survived ten guard tests and two determinism runs unseen. It breaks the most natural way
---      anyone would actually use this -- BEGIN; dry run; look at it; apply; COMMIT -- which is
---      exactly the sequence the pre-apply checklist tells an operator to run. Fixed by dropping
---      the temp tables at entry, via to_regclass rather than DROP IF EXISTS so a clean run does
---      not put 13 NOTICE lines into a daily cron's log. Both paths now verified:
---        two calls in one SELECT        -> 51,174/day, 90.1%
---        dry run then apply, one txn    -> applied=false, then 107,341 rows written
---
--- BEFORE APPLYING TO PROD
---   1. Run with p_apply => false and read activity.overflow and by_source FIRST.
---   2. GT's budget is NULL, so its plan is reported and NOT checked. That is ignorance, not
---      headroom. Ladder GoTickets (20/40/80) and set a real number. The cheaper escape route has
---      already been tested and closed: /rest/events/delta does NOT move on listing changes
---      (3 of 3,076 events whose inventory moved, 2026-09-16 -- see the source-budget section),
---      so per-event polling is genuinely required and 34,634/day is genuinely what it costs.
---   3. Read the tier histogram. If T0/M1 fill with events carrying no tape, exposure/loss are
---      dominating a sparse column -- see the note above event_demand_weight.
---   4. Confirm events.occurs_at_local casts as the EVO poller assumes (mig 20260531150000).
+-- NOTE FOR LATER, not acted on: latest_event_metrics carries a real getin_price column. The
+--   sg_getin_price here is the p10 of CLEARED price because brokerdata /sales returns no asks --
+--   but the matview has an actual get-in. Worth wiring in its own migration.
