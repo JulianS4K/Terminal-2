@@ -90,7 +90,12 @@ CREATE TABLE IF NOT EXISTS public.event_demand_policy (
   label           text    NOT NULL,
   sort_order      int     NOT NULL,          -- 1 = hottest; assignment walks this order
   population_cap  int,                       -- events allowed to hold this tier; NULL = remainder
-  polls_per_day   numeric NOT NULL,          -- fractional is fine: 0.143 = once a week
+  polls_per_day   numeric NOT NULL,          -- fractional is fine: 0.2 = once every five days
+  -- Score tiers size themselves as a SHARE OF THE MIDDLE rather than a fixed count. The middle
+  -- is every scored event the activity tier did not take, and the shares are required to cover
+  -- all of it -- see "why the middle is a share" below. population_cap is for the two tiers whose
+  -- size is not a share: the activity tier and the probe tier.
+  share_pct       numeric CHECK (share_pct IS NULL OR (share_pct > 0 AND share_pct <= 100)),
   -- How the tier's population is chosen:
   --   'score'    by demand_score rank, filling population_cap in sort_order
   --   'activity' by QUALIFICATION -- the event has sales or purchases against it. Operator rule
@@ -109,65 +114,105 @@ CREATE TABLE IF NOT EXISTS public.event_demand_policy (
 REVOKE ALL ON TABLE public.event_demand_policy FROM anon;
 
 COMMENT ON TABLE public.event_demand_policy IS
-  'Demand-tier cadence. fill_mode=activity is claimed FIRST (any event with sales or purchases, best demand_score first, up to population_cap); fill_mode=score then walks sort_order ascending over everything left, filling each population_cap from the demand_score ranking, and the one score tier with NULL population_cap absorbs the remainder as the coverage floor; fill_mode=probe is filled by events with NO observation, so cold-start events are never ranked against events we have actually watched. Operator retunes here; event_demand_refresh() re-costs the plan against p_daily_budget and refuses to publish one that does not fit.';
+  'Demand-tier cadence. Score tiers size themselves as share_pct of THE MIDDLE (every scored event the activity tier did not take); the shares cover all of it, so evidence-bearing events get a graded slope instead of overflowing onto the floor. fill_mode=activity is claimed FIRST (any event with sales or purchases, best demand_score first, up to population_cap); fill_mode=score then walks sort_order ascending over everything left, filling each population_cap from the demand_score ranking, and the one score tier with NULL population_cap absorbs the remainder as the coverage floor; fill_mode=probe is filled by events with NO observation, so cold-start events are never ranked against events we have actually watched. Operator retunes here; event_demand_refresh() re-costs the plan against p_daily_budget and refuses to publish one that does not fit.';
 
 INSERT INTO public.event_demand_policy
-  (tier, label, sort_order, population_cap, polls_per_day, fill_mode, notes) VALUES
-  ('T0_HOURLY',   'Trading or bought - hourly', 0, 1000, 24,   'activity', 'Hourly.    1,000 x 24    = 24,000/day. Operator rule 2026-09-16: anything with sales against it, or anything we have purchased, is pinged hourly. Claimed BEFORE the score ladder; qualifiers beyond the cap fall through to it. See the hourly arithmetic below -- this one tier is 42% of the entire budget.'),
-  ('T1_CRITICAL', 'Top demand',                 1,  400, 12,   'score',    'Every 2h.    400 x 12    =  4,800/day'),
-  ('T2_HIGH',     'High demand',                2, 1000,  4,   'score',    'Every 6h.  1,000 x 4     =  4,000/day'),
-  ('T3_MEDIUM',   'Medium demand',              3, 3000,  1,   'score',    'Daily.     3,000 x 1     =  3,000/day'),
-  ('T_PROBE',     'Unobserved - exploring',     4, 3000,  1,   'probe',    'Daily.     3,000 x 1     =  3,000/day. Never polled, so unscorable; soonest event date first. This slice is what stops the tape being self-fulfilling.'),
-  ('T4_LOW',      'Low demand',                 5, 6000,  0.333,'score',   'Every 3d.  6,000 x 0.333 =  1,998/day'),
-  ('T5_FLOOR',    'Floor - never dark',         6, NULL,  0.143,'score',   'Weekly.   93,941 x 0.143 = 13,434/day at the measured 107,341-event catalogue. Absorbs the remainder, so no forward event goes unpolled and every one refreshes its own score often enough to climb back.')
+  (tier, label, sort_order, population_cap, share_pct, polls_per_day, fill_mode, notes) VALUES
+  ('T0_HOURLY', 'Trading or bought - hourly', 0, 1000, NULL, 24,   'activity', 'Hourly.     1,000 x 24    = 24,000/day. Operator rule 2026-09-16: anything with sales against it, or anything we have purchased, is pinged hourly. Claimed BEFORE the middle; qualifiers beyond the cap fall into the middle, which is where they now land on a graded slope instead of a cliff.'),
+  ('M1_FAST',   'Middle - top 3%',            1, NULL,    3,  4,   'score',    'Every 6h.     900 x 4     =  3,600/day'),
+  ('M2_BRISK',  'Middle - next 7%',           2, NULL,    7,  2,   'score',    'Every 12h.  2,100 x 2     =  4,200/day'),
+  ('M3_STEADY', 'Middle - next 15%',          3, NULL,   15,  1,   'score',    'Daily.      4,500 x 1     =  4,500/day'),
+  ('M4_SLOW',   'Middle - next 25%',          4, NULL,   25,  0.5, 'score',    'Every 2d.   7,500 x 0.5   =  3,750/day'),
+  ('M5_TRICKLE','Middle - bottom 50%',        5, NULL,   50,  0.2, 'score',    'Every 5d.  15,000 x 0.2   =  3,000/day. The worst-served event we have EVIDENCE about. It is still five times better than the floor, which is the point.'),
+  ('T_PROBE',   'Unobserved - exploring',     6, 3000, NULL,  1,   'probe',    'Daily.      3,000 x 1     =  3,000/day. Never polled, so unscorable; soonest event date first. This slice is what stops the tape being self-fulfilling.'),
+  ('T6_FLOOR',  'Floor - never dark',         7, NULL, NULL,  0.0714,'score',  'Fortnightly. 73,341 x 0.0714 = 5,237/day. Absorbs the remainder. Now holds ONLY events with no evidence at all -- see below.')
 ON CONFLICT (tier) DO NOTHING;
--- Total at the measured catalogue: 54,232 polls/day = 95.5% of the 56,800 budget.
+-- Total at the measured catalogue: 51,287 polls/day = 90.3% of the 56,800 TEvo budget.
 --
 -- ==============================================================================================
--- WHAT HOURLY COSTS, AND WHY THE REST OF THE LADDER SHRANK TO PAY FOR IT
+-- WHY THE MIDDLE IS A SHARE OF ITSELF, AND NOT A LIST OF FIXED COUNTS
 -- ==============================================================================================
--- 24 polls/day is 168x the weekly floor. One event promoted to hourly costs exactly what 168
--- floor events cost. That is the whole story of this ladder:
+-- The first ladder sized every tier as an absolute number, and under the hourly rule that produced
+-- a cliff nobody asked for. MEASURED on the test catalogue, before this change:
 --
---   hourly for 1,000 events            24,000/day   42% of the entire budget
---   weekly floor for the other ~94,000 13,434/day   24%
---   everything else, all five tiers    16,798/day   30%
+--   T5_FLOOR   19,600 SCORED events  +  73,341 unscored
 --
--- So the hourly rule is affordable up to ROUGHLY 1,000 events and no further. The ceiling is not
--- a matter of taste: 56,800 / 24 = 2,366 events is hourly and NOTHING ELSE AT ALL -- no floor, no
--- probe, no mid-tier. At a 1,000-event cap the ladder already spends 42% of the day on 0.9% of
--- the catalogue.
+-- 19,600 events we hold real evidence about -- a tape, our own purchases, graded losses -- were
+-- sitting on the weekly floor, polled at exactly the same rate as the 73,341 we know nothing about
+-- whatsoever. The fixed counts above them (400 / 1,000 / 3,000 / 6,000) covered 10,400 of the
+-- 30,000-event middle and the remaining two thirds fell off the end.
 --
--- HOW MANY EVENTS ACTUALLY QUALIFY IS UNKNOWN AND IS THE WHOLE QUESTION. Nothing here has been
--- run against prod. If 5,000 forward events carry a sale in the last 30 days, hourly for all of
--- them costs 120,000/day -- more than twice the entire budget -- and the cap silently demotes
--- 4,000 of them to the score ladder. So event_demand_refresh() reports activity_qualified,
--- activity_admitted and activity_overflow on EVERY run, dry or not. Read the overflow before
--- believing the rule is in force.
+-- That is the wrong shape. Evidence should buy a graded cadence, not a pass/fail at rank 10,400.
+-- So the middle now sizes itself from its OWN population: the shares sum to 100 and cover every
+-- scored event the activity tier did not take. The floor stops being where the middle overflows
+-- to, and goes back to meaning what its name says -- the events we have never seen anything about.
 --
--- The three levers, in the order worth pulling:
---   1. NARROW THE WINDOW.    p_activity_window_days => 7 qualifies on the last week rather than
---                            the last month. Usually the biggest population cut for the least
---                            loss -- an event that last traded 29 days ago is not trading.
---   2. RAISE THE BAR.        p_activity_min_sales => 3 drops events with a single stale sale.
---   3. WEAKEN THE FLOOR.     Dropping T5_FLOOR to fortnightly (0.0714) frees ~6,700/day, which
---                            buys ~280 more hourly slots. It also doubles how long a demoted
---                            event waits before it can prove it deserves promotion.
--- Raising p_daily_budget is NOT on that list. 56,800 is 0.73 req/s -- the only rate this project
--- has ever sustained without a 429 -- times 24h, less a 10% retry reserve. Raising the number
--- without first proving a higher rate just moves the failure from this function to the poller.
+-- The resulting slope, with no cliff anywhere in it:
 --
--- ⚠ AND IT IS PER SOURCE. 56,800 describes TEvo. brokerdata.seatgeek.com is a different API with
--- a different limit -- sg_priority_poll_tick already polls its HOT tier every 60s, so SG plainly
--- tolerates far more than TEvo does. GoTickets has never been laddered at all. An event polled on
--- both sides of a mapped pair costs TWO requests per poll, so hourly on a mapped pair is 48/day,
--- not 24. This ladder is costed against the tightest of the three; a per-source cadence is the
--- consuming poller's business, not this table's.
+--   hourly (60m) -> 6h -> 12h -> daily -> 2d -> 5d  |  probe daily  |  floor fortnightly
+--
+-- WHAT PAID FOR IT. The middle needs ~19,300/day and the budget had ~16,800 spare, so something
+-- had to give. It was the floor, weekly -> fortnightly, which frees 5,251/day. That is the least
+-- informative spend in the whole ladder: those events have no evidence by definition, and
+-- T_PROBE is already sampling 3,000 of them a day on purpose. Waiting 14 days instead of 7 to
+-- re-touch an event nothing has ever been observed about costs less than stranding 19,600 events
+-- we have measured. The floor still guarantees nothing goes dark, which was its actual job.
+--
+-- A SHARE LADDER IS NOT SELF-LIMITING THE WAY FIXED COUNTS WERE. Its cost moves with the size of
+-- the middle, so as the qualifying/scored population grows the plan gets more expensive on its
+-- own. That is exactly what the budget guard is for, and it is why the shares are validated to
+-- sum to <= 100 before anything is costed: shares that sum to 140 would silently assign some
+-- events twice.
 -- ==============================================================================================
 --
 -- ON CONFLICT DO NOTHING is deliberate: this table is operator-editable, and a re-apply of this
 -- migration must never silently revert a retune. Changing the shipped defaults later means an
 -- explicit UPDATE, not an edit to this INSERT.
+
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+-- 1b. Per-source budgets. WE WILL ALSO POLL GOTICKETS, so "the budget" is no longer one number.
+--
+--     A GoTickets request does not spend TEvo's allowance -- they are different APIs with
+--     different limits -- so the plan is NOT simply twice as expensive. It is two plans, each
+--     costed against its own ceiling, over different populations: TEvo covers the whole forward
+--     catalogue, GoTickets only the events that carry a GT mapping.
+--
+--     What is actually known about each ceiling, and it is not much:
+--       TEVO  56,800/day.  0.73 req/s is the only rate this project has sustained without a 429
+--                          (40 requests per ~55s round, zero 429s across the 1,044-page US+CA
+--                          backfill); 1.45 req/s produced 39x HTTP 429. No Retry-After and no
+--                          X-RateLimit-* header is returned, so this is inferred from behaviour.
+--       GT    UNMEASURED.  Never laddered. Two data points, both from mig 20260804230000: the
+--                          full /rest/events dump is "heavily rate-limited (429 after a few
+--                          pulls, verified 2026-08-04)", while /rest/events/delta is "NOT
+--                          rate-limited". So GT throttles bulk hard, and a NULL here means the
+--                          plan CANNOT be checked against it -- not that it is free.
+--       SG    UNMEASURED.  brokerdata is plainly looser: sg_priority_poll_tick already polls its
+--                          HOT tier every 60s. Not costed here; SG has its own poller.
+--
+--     ⚠ The delta endpoint is the reason not to assume GT must mirror this ladder at all. If a
+--     GoTickets event's updateTime moves when its LISTINGS move, and not only when its metadata
+--     does, then hourly freshness across the whole GT catalogue costs 24 calls a day rather than
+--     one per event per hour, and GT's per-event budget stops being the binding constraint on
+--     anything. That is unverified. Verify it before sizing GT_DAILY_BUDGET off this table.
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.event_demand_source_budget (
+  source        text PRIMARY KEY,           -- 'TEVO' | 'GT' | 'SG'
+  daily_budget  int,                        -- NULL = UNMEASURED; the plan cannot be checked
+  enforced      boolean NOT NULL DEFAULT true,
+  notes         text,
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT event_demand_source_budget_ck CHECK (daily_budget IS NULL OR daily_budget > 0)
+);
+REVOKE ALL ON TABLE public.event_demand_source_budget FROM anon;
+
+INSERT INTO public.event_demand_source_budget (source, daily_budget, enforced, notes) VALUES
+  ('TEVO', 56800, true,  '0.73 req/s proven x 24h, less a 10% retry reserve. Population: every forward event. 1.45 req/s is known to fail.'),
+  ('GT',   NULL,  false, 'UNMEASURED -- never rate-laddered. Population: forward events carrying a GT mapping. A NULL budget means the plan is reported against this source but NOT enforced; it does not mean the source is free. Ladder GT (20/40/80) before setting a number here, and check the /rest/events/delta question first -- it may make per-event GT polling moot.')
+ON CONFLICT (source) DO NOTHING;
+
+COMMENT ON TABLE public.event_demand_source_budget IS
+  'Per-source daily request ceilings. A GoTickets request does not spend TEvo''s allowance, so the plan is costed once per source over that source''s own pollable population rather than as a single doubled number. daily_budget NULL means UNMEASURED: event_demand_refresh() reports the cost against that source but cannot enforce it, and says so. A1 mig 20260916120000.';
 
 -- ─────────────────────────────────────────────────────────────────────────────────────────────
 -- 2. Weights: how the five components combine. Separate table so a retune is an UPDATE, not a
@@ -240,6 +285,10 @@ CREATE TABLE IF NOT EXISTS public.event_demand_signal (
 
   -- retained existing signal
   owned_count          int     NOT NULL DEFAULT 0,
+  -- Which sources can actually poll this event. TEvo covers the whole forward catalogue; GoTickets
+  -- only what carries a mapping, which is why the two plans cost different amounts over different
+  -- populations rather than one plan costing double.
+  pollable_gt          boolean NOT NULL DEFAULT false,
 
   -- scoring (each 0..1, rank-normalised within the batch)
   value_r              numeric,
@@ -309,6 +358,12 @@ DECLARE
   v_admitted   int := 0;
   v_overflow   int := 0;
   v_act_cap    int;
+  v_middle     int := 0;
+  v_share_sum  numeric;
+  v_cost_gt    numeric := 0;
+  v_gt_pop     int := 0;
+  v_budgets    jsonb;
+  v_src        RECORD;
   v_total      int := 0;
   v_cost       numeric := 0;
   v_rows_before int := 0;
@@ -324,16 +379,31 @@ BEGIN
   -- ── 4.0 Validate the ladder BEFORE doing any work. Exactly one non-probe tier may carry a NULL
   --        population_cap (the floor), and it must be the last one, or the cumulative boundaries
   --        below are nonsense and events fall through the ladder into no tier at all.
-  SELECT count(*) FILTER (WHERE population_cap IS NULL),
+  -- Exactly one score tier carries no share: the floor, which takes the remainder and must sort
+  -- last, or the cumulative share boundaries below are nonsense and events fall through the
+  -- ladder into no tier at all.
+  SELECT count(*) FILTER (WHERE share_pct IS NULL),
          max(sort_order),
-         max(sort_order) FILTER (WHERE population_cap IS NULL)
+         max(sort_order) FILTER (WHERE share_pct IS NULL)
     INTO v_null_caps, v_last_order, v_null_order
     FROM public.event_demand_policy WHERE enabled AND fill_mode = 'score';
 
   IF v_null_caps <> 1 OR v_null_order IS DISTINCT FROM v_last_order THEN
     RAISE EXCEPTION
-      'event_demand_refresh: ladder invalid -- need exactly one enabled score tier with NULL population_cap, as the highest sort_order among score tiers (found % null caps, null at %, last at %)',
+      'event_demand_refresh: ladder invalid -- need exactly one enabled score tier with NULL share_pct (the floor), as the highest sort_order among score tiers (found % without a share, last one at %, highest sort_order %)',
       v_null_caps, v_null_order, v_last_order;
+  END IF;
+
+  -- Shares over 100 would assign the same event to two tiers; under 100 silently dumps the
+  -- uncovered remainder of the MIDDLE onto the floor, which is the cliff this ladder exists to
+  -- remove. Under is allowed but it is a choice, so it is stated back in the result.
+  SELECT coalesce(sum(share_pct), 0) INTO v_share_sum
+    FROM public.event_demand_policy WHERE enabled AND fill_mode = 'score';
+
+  IF v_share_sum > 100 THEN
+    RAISE EXCEPTION
+      'event_demand_refresh: score-tier shares sum to % percent, which would assign some events to two tiers. They must sum to at most 100.',
+      v_share_sum;
   END IF;
 
   -- An UNCAPPED activity tier is the one shape that can silently blow the budget wide open: its
@@ -375,6 +445,14 @@ BEGIN
   CREATE UNIQUE INDEX ON _ev (tevo_event_id);
   CREATE INDEX ON _ev (venue_id);
   CREATE INDEX ON _ev (primary_performer_id);
+
+  -- Which forward events GoTickets can poll at all. Aggregate-then-join: one pass over the
+  -- mapping, not a correlated EXISTS per event.
+  CREATE TEMP TABLE _gtmap ON COMMIT DROP AS
+  SELECT DISTINCT g.tevo_event_id
+    FROM public.gotickets_event g
+   WHERE g.tevo_event_id IS NOT NULL;
+  CREATE UNIQUE INDEX ON _gtmap (tevo_event_id);
 
   -- ── 4.2 FEED 1 -- the public tape. sg_observed_days is the span of OUR coverage, and it is the
   --        velocity denominator so that thin coverage cannot masquerade as thin demand.
@@ -484,14 +562,16 @@ BEGIN
          (sg.tevo_event_id IS NOT NULL
           OR gt.tevo_event_id IS NOT NULL
           OR coalesce(ow.owned_count, 0) > 0
-          OR coalesce(le.graded_n, 0) > 0) AS has_direct_evidence
+          OR coalesce(le.graded_n, 0) > 0) AS has_direct_evidence,
+         (gm.tevo_event_id IS NOT NULL) AS pollable_gt
     FROM _ev ev
     LEFT JOIN _sg  sg ON sg.tevo_event_id = ev.tevo_event_id
     LEFT JOIN _gt  gt ON gt.tevo_event_id = ev.tevo_event_id
     LEFT JOIN _owned ow ON ow.tevo_event_id = ev.tevo_event_id
     LEFT JOIN _loss_raw   le ON le.tevo_event_id        = ev.tevo_event_id
     LEFT JOIN _loss_venue lv ON lv.venue_id             = ev.venue_id
-    LEFT JOIN _loss_perf  lp ON lp.pid                  = ev.primary_performer_id;
+    LEFT JOIN _loss_perf  lp ON lp.pid                  = ev.primary_performer_id
+    LEFT JOIN _gtmap      gm ON gm.tevo_event_id        = ev.tevo_event_id;
   CREATE UNIQUE INDEX ON _base (tevo_event_id);
 
   -- Rank-normalise. The tape components rank only WITHIN the observed population, so an
@@ -577,9 +657,15 @@ BEGIN
   v_admitted := LEAST(v_qualified, coalesce(v_act_cap, 0));
   v_overflow := v_qualified - v_admitted;
 
-  --    Populations below are fixed COUNTS walked in sort_order, so the plan's cost is decided by
-  --    the ladder and not by whatever shape the score happens to take today. Ties break on
-  --    tevo_event_id so two runs over unchanged data assign identically.
+  --    THE MIDDLE is every scored event the activity tier did not take, and each score tier takes
+  --    share_pct OF THAT, so the slope is sized by the middle's own population rather than by
+  --    fixed counts that go stale the moment the catalogue moves. Ties break on tevo_event_id so
+  --    two runs over unchanged data assign identically.
+  SELECT count(*) INTO v_middle
+    FROM _final f
+   WHERE f.demand_score IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM _qualified q
+                      WHERE q.tevo_event_id = f.tevo_event_id AND q.rn <= coalesce(v_act_cap, 0));
   CREATE TEMP TABLE _assign ON COMMIT DROP AS
   WITH act_tier AS (
     SELECT tier, polls_per_day, population_cap
@@ -600,12 +686,16 @@ BEGIN
      WHERE f.demand_score IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM admitted ad WHERE ad.tevo_event_id = f.tevo_event_id)
   ),
+  -- Cumulative boundaries in ROWS, derived from the shares against the middle's real size.
+  -- floor(share x middle / 100) per tier; the floor tier (share_pct NULL) takes whatever is left,
+  -- which under a full 100% ladder is only the rounding remainder.
   ladder AS (
     SELECT tier, polls_per_day, sort_order,
-           coalesce(sum(population_cap) OVER (ORDER BY sort_order
-                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS lo,
-           CASE WHEN population_cap IS NULL THEN NULL
-                ELSE sum(population_cap) OVER (ORDER BY sort_order) END    AS hi
+           coalesce(sum(floor(share_pct * v_middle / 100.0)) OVER (ORDER BY sort_order
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0)::bigint AS lo,
+           CASE WHEN share_pct IS NULL THEN NULL
+                ELSE sum(floor(share_pct * v_middle / 100.0)) OVER (ORDER BY sort_order)::bigint
+           END AS hi
       FROM public.event_demand_policy WHERE enabled AND fill_mode = 'score'
   ),
   probe AS (
@@ -638,7 +728,7 @@ BEGIN
     FROM _final f
     CROSS JOIN LATERAL (
       SELECT tier, polls_per_day FROM public.event_demand_policy
-       WHERE enabled AND fill_mode = 'score' AND population_cap IS NULL
+       WHERE enabled AND fill_mode = 'score' AND share_pct IS NULL
        ORDER BY sort_order LIMIT 1) pol
    WHERE NOT EXISTS (SELECT 1 FROM _assign a WHERE a.tevo_event_id = f.tevo_event_id);
 
@@ -652,10 +742,51 @@ BEGIN
 
   SELECT coalesce(sum(polls_per_day), 0) INTO v_cost FROM _assign;
 
+  -- GoTickets is polled too, over its OWN population: only events carrying a GT mapping. Its cost
+  -- is a second plan against a second ceiling, not a doubling of this one -- a GT request does not
+  -- spend TEvo's allowance.
+  SELECT coalesce(sum(a.polls_per_day), 0), count(*)
+    INTO v_cost_gt, v_gt_pop
+    FROM _assign a JOIN _final f ON f.tevo_event_id = a.tevo_event_id
+   WHERE f.pollable_gt;
+
   SELECT jsonb_object_agg(tier, jsonb_build_object('events', n, 'polls_per_day', ppd))
     INTO v_tiers
     FROM (SELECT tier, count(*) AS n, round(sum(polls_per_day), 1) AS ppd
             FROM _assign GROUP BY tier) t;
+
+  -- Cost every configured source and say plainly which ones could be CHECKED. An unmeasured
+  -- ceiling is reported, never silently treated as satisfied: a NULL budget is ignorance, not
+  -- headroom, and this is the line where that distinction either holds or quietly stops holding.
+  SELECT jsonb_object_agg(x.source, x.row) INTO v_budgets FROM (
+    SELECT b2.source,
+           jsonb_build_object(
+             'events',       CASE WHEN b2.source = 'GT' THEN v_gt_pop ELSE v_total END,
+             'polls_per_day',round(CASE WHEN b2.source = 'GT' THEN v_cost_gt ELSE v_cost END, 0),
+             'daily_budget', b2.daily_budget,
+             'enforced',     b2.enforced AND b2.daily_budget IS NOT NULL,
+             'status',       CASE
+               WHEN b2.daily_budget IS NULL THEN 'UNMEASURED -- cost reported, NOT checked'
+               WHEN (CASE WHEN b2.source = 'GT' THEN v_cost_gt ELSE v_cost END) > b2.daily_budget
+                    THEN 'OVER BUDGET'
+               ELSE 'fits' END) AS row
+      FROM public.event_demand_source_budget b2
+     WHERE b2.source IN ('TEVO', 'GT')) x;
+
+  -- Any source with a known, enforced ceiling can veto the whole plan, not just TEvo.
+  FOR v_src IN
+    SELECT source, daily_budget,
+           CASE WHEN source = 'GT' THEN v_cost_gt ELSE v_cost END AS src_cost
+      FROM public.event_demand_source_budget
+     WHERE enforced AND daily_budget IS NOT NULL AND source IN ('TEVO', 'GT')
+  LOOP
+    IF v_src.src_cost > v_src.daily_budget THEN
+      RAISE EXCEPTION
+        'event_demand_refresh: % plan costs % polls/day against its own budget of % -- over by %. Nothing written. Budgets: %',
+        v_src.source, round(v_src.src_cost, 0), v_src.daily_budget,
+        round(v_src.src_cost, 0) - v_src.daily_budget, v_budgets;
+    END IF;
+  END LOOP;
 
   IF v_cost > p_daily_budget THEN
     RAISE EXCEPTION
@@ -679,7 +810,11 @@ BEGIN
         'note', CASE WHEN v_overflow > 0
                      THEN v_overflow || ' events have sales or purchases but did NOT get the hourly slot -- they fell through to the score ladder. Widen the cap only if the budget allows, or narrow qualification.'
                      ELSE 'every qualifying event got the hourly slot' END),
-      'planned_polls_per_day', round(v_cost, 0), 'daily_budget', p_daily_budget,
+      'middle_events', v_middle, 'middle_share_pct', v_share_sum,
+      'by_source', v_budgets,
+      'middle_events', v_middle, 'middle_share_pct', v_share_sum,
+    'by_source', v_budgets,
+    'planned_polls_per_day', round(v_cost, 0), 'daily_budget', p_daily_budget,
       'budget_used_pct', round(100 * v_cost / NULLIF(p_daily_budget, 0), 1),
       'weights', v_w, 'tiers', v_tiers,
       'elapsed_ms', round(EXTRACT(epoch FROM (clock_timestamp() - v_started)) * 1000));
@@ -700,7 +835,7 @@ BEGIN
     sg_sales_7d, sg_sales_30d, sg_qty_30d, sg_med_price, sg_getin_price,
     sg_first_seen_at, sg_last_sale_at, sg_observed_days,
     gt_purchases_90d, gt_spend_90d, gt_cancels_90d,
-    loss_n, loss_amount, graded_n, loss_rate, loss_basis, owned_count,
+    loss_n, loss_amount, graded_n, loss_rate, loss_basis, owned_count, pollable_gt,
     value_r, velocity_r, exposure_r, loss_r, owned_r, demand_score, tier, tier_rank, computed_at)
   SELECT f.tevo_event_id, f.event_name, f.venue_id, f.primary_performer_id, f.occurs_at, f.hours_to_event,
          coalesce(f.sales_7d, 0), coalesce(f.sales_30d, 0), coalesce(f.qty_30d, 0),
@@ -708,7 +843,7 @@ BEGIN
          f.purchases_90d, f.spend_90d, f.cancels_90d,
          f.loss_n, f.loss_amount, f.graded_n,
          CASE WHEN f.graded_n > 0 THEN round(f.loss_n::numeric / f.graded_n, 4) END,
-         f.loss_basis, f.owned_count,
+         f.loss_basis, f.owned_count, f.pollable_gt,
          f.value_r, f.velocity_r, f.exposure_r, f.loss_r, f.owned_r, f.demand_score,
          a.tier, a.tier_rank, v_now
     FROM _final f JOIN _assign a ON a.tevo_event_id = f.tevo_event_id
@@ -724,7 +859,7 @@ BEGIN
     gt_cancels_90d = EXCLUDED.gt_cancels_90d,
     loss_n = EXCLUDED.loss_n, loss_amount = EXCLUDED.loss_amount, graded_n = EXCLUDED.graded_n,
     loss_rate = EXCLUDED.loss_rate, loss_basis = EXCLUDED.loss_basis,
-    owned_count = EXCLUDED.owned_count,
+    owned_count = EXCLUDED.owned_count, pollable_gt = EXCLUDED.pollable_gt,
     value_r = EXCLUDED.value_r, velocity_r = EXCLUDED.velocity_r, exposure_r = EXCLUDED.exposure_r,
     loss_r = EXCLUDED.loss_r, owned_r = EXCLUDED.owned_r, demand_score = EXCLUDED.demand_score,
     tier = EXCLUDED.tier, tier_rank = EXCLUDED.tier_rank, computed_at = EXCLUDED.computed_at;
@@ -743,6 +878,8 @@ BEGIN
       'qualified', v_qualified, 'admitted', v_admitted, 'overflow', v_overflow,
       'window_days', p_activity_window_days,
       'min_sales', p_activity_min_sales, 'min_purchases', p_activity_min_buys),
+    'middle_events', v_middle, 'middle_share_pct', v_share_sum,
+    'by_source', v_budgets,
     'planned_polls_per_day', round(v_cost, 0), 'daily_budget', p_daily_budget,
     'budget_used_pct', round(100 * v_cost / NULLIF(p_daily_budget, 0), 1),
     'weights', v_w, 'tiers', v_tiers,
@@ -788,73 +925,89 @@ COMMENT ON VIEW public.v_event_demand_tier IS
 -- Supabase was unreachable, so this was executed against a local cluster carrying the real column
 -- shapes of events, seatgeek_sales_snapshots, gotickets_purchases, gotickets_event,
 -- gotickets_deal_outcome and latest_event_metrics, loaded with a synthetic catalogue sized to the
--- measured one: 107,341 forward events, a tape on 30,000 (10,000 of them actively trading, 20,000
--- with a single sale 20 days old, so the qualification window is actually discriminating), our
--- purchases on 600 events that have NO tape, owned stock on 400 more with no tape, and 20,000
--- graded deals confined to a minority of venues so every leg of the loss cascade is exercised.
+-- measured one: 107,341 forward events; a tape on 30,000 (10,000 actively trading, 20,000 with a
+-- single sale 20 days old, so the qualification window actually discriminates); our purchases on
+-- 600 events with NO tape; owned stock on 400 more with no tape; 20,000 graded deals confined to
+-- a minority of venues; and a GoTickets mapping on 26,612 events, matching the pipeline's accepted
+-- count, so the two source plans cover genuinely different populations.
 --
 -- This proves the code runs, the guards fire and the arithmetic closes. It proves NOTHING about
--- what prod's real distributions will do to the tier mix, and in particular NOTHING about how many
--- events actually qualify for hourly. Run p_apply => false first and read activity.overflow.
+-- prod's distributions, about how many events qualify for hourly, or about GoTickets' ceiling.
 --
 --   MIGRATION APPLIES CLEAN                       yes
 --   REFRESH, 107,341 events                       2.6s, dry run and apply alike
---   PLAN COST                                     54,089 polls/day = 95.2% of the 56,800 budget
---   TIERS                T0_HOURLY 1,000 @60min · T1 400 @120min · T2 1,000 @360min
---                        T3 3,000 @1440min · T_PROBE 3,000 @1440min · T4 6,000 @4324min
---                        T5_FLOOR 92,941 @10070min
---   DETERMINISM                                   two consecutive applies: 0 rows differ in
---                                                 tier, tier_rank or demand_score
---   EVIDENCE WITHOUT A TAPE                       1,000 events (600 purchases + 400 owned, no
---                                                 tape) all SCORED, none dumped in T_PROBE, and
---                                                 all carry velocity_r IS NULL rather than 0
---   LOSS CASCADE                                  all four legs populated; loss_r IS NULL for
---                                                 every event with no graded history anywhere
+--   TEVO PLAN                                     51,174 polls/day = 90.1% of its 56,800 budget
+--   GT PLAN                                       34,634 polls/day over 26,612 events,
+--                                                 UNMEASURED -- reported, not enforced
+--   DETERMINISM                                   two consecutive applies: 0 rows differ
 --
---   THE HOURLY RULE, MEASURED ON THE FIXTURE:
+--   THE SLOPE, with no cliff anywhere in it:
+--     T0_HOURLY   1,000 @ 60min      (activity: has sales, or we bought it)
+--     M1_FAST       894 @ 360min     top 3% of the middle
+--     M2_BRISK    2,086 @ 720min     next 7%
+--     M3_STEADY   4,470 @ 1440min    next 15%
+--     M4_SLOW     7,450 @ 2880min    next 25%
+--     M5_TRICKLE 14,900 @ 7200min    bottom 50% -- still 5x the floor
+--     T_PROBE     3,000 @ 1440min    never observed; soonest first
+--     T6_FLOOR   73,541 @ 20168min   no evidence at all
+--
+--   THE CLIFF THIS REMOVED, measured before and after on the same fixture:
+--     before   T5_FLOOR held 19,600 SCORED events alongside 73,341 unscored -- events with a
+--              tape, our own purchases and graded losses, polled at exactly the rate of events
+--              nothing had ever been observed about
+--     after    the floor holds 0 scored events. Every event we have evidence about sits somewhere
+--              on the M1..M5 slope.
+--
+--   THE HOURLY RULE, MEASURED:
 --     qualified (sales in 30d OR a purchase in 90d)   30,546
---     admitted at the shipped 1,000 cap                1,000
---     OVERFLOW -- qualified but NOT hourly            29,546
---     what honouring it in full would cost           733,104 polls/day = 12.9x the whole budget
---     affordable hourly ceiling on this ladder       ~1,100 (1,100 fits at 56,474; 1,120 RAISEs)
+--     admitted at the 1,000 cap                        1,000
+--     overflow -- qualified but not hourly            29,546  (these now land on the slope, not
+--                                                              on the floor -- that is the change)
+--     honouring it in full                           733,104 polls/day = 12.9x the TEvo budget
 --
---   THE THREE LEVERS, EACH EXERCISED:
---     p_activity_window_days => 7      qualified 30,546 -> 10,546
---     p_activity_min_sales   => 3      qualified 30,546 -> 10,546
---     T5_FLOOR to fortnightly          plan 54,089 -> 47,434/day, which funded a 1,380 cap
+--   GOTICKETS IS NOT A PROPORTIONAL SHARE OF THE COST, which is the surprise worth keeping:
+--     GT-pollable events        26,612  =  25% of the catalogue
+--     GT plan cost              34,634  =  68% of the TEvo plan's cost
+--   Mapping correlates with activity, and activity is what buys cadence -- 754 of the 1,000 hourly
+--   events are GT-pollable. So the mapped quarter of the catalogue is most of the expensive part,
+--   and a GT ceiling far below TEvo's would bind on THIS plan long before TEvo's did.
 --
 --   GUARDS -- each RAISEs and writes nothing:
---     budget overrun          cap 1,120 costs 56,951 against 56,800     -> refused
---     uncapped activity tier  T0_HOURLY population_cap set NULL         -> refused
---     bad activity window     p_activity_window_days => 14              -> refused
---     population collapse     horizon cut to 30d, 107,341 -> 8,969      -> refused
---     ladder, 2 null caps     T4_LOW cap set NULL alongside T5_FLOOR    -> refused
---     all weights disabled    every component enabled=false             -> refused
---     non-privileged caller   role authenticated                        -> permission denied
+--     TEvo budget overrun       cap 1,120 costs 56,951 against 56,800    -> refused
+--     GT budget overrun         GT budget set to 20,000 vs 34,634        -> refused
+--     shares over 100           M5 share 50 -> 60, sum 110               -> refused
+--     no floor tier             every score tier given a share           -> refused
+--     floor not last            floor moved off the highest sort_order   -> refused
+--     uncapped activity tier    T0_HOURLY population_cap set NULL        -> refused
+--     bad activity window       p_activity_window_days => 14             -> refused
+--     population collapse       horizon cut to 30d, 107,341 -> 8,969     -> refused
+--     all weights disabled      every component enabled=false            -> refused
+--     non-privileged caller     role authenticated                       -> permission denied
 --
 -- FOUND BY RUNNING IT, NOT BY READING IT -- all real defects in earlier drafts:
 --   1. The first ladder cost 59,030 polls/day against its own 56,800 budget. The header's
---      arithmetic predated the T_PROBE tier and never had its 5,000/day added back in. The budget
---      guard is the only reason this is a footnote instead of a rate-limit incident.
+--      arithmetic predated the T_PROBE tier and never had its 5,000/day added back in.
 --   2. The loss component scored "no graded deal at this event, its venue or its performer" as
---      0.0 -- filing a venue we have never traded next to a venue where we reliably do not lose
---      money. The header states UNKNOWN IS NOT ZERO and that draft applied it to the tape and not
---      to the ledger. loss_per_deal is now NULL in that case and drops out of the weighted sum.
---   3. The first fixture could not tell the two qualification levers apart -- every tape event in
---      it had 8 recent sales, so window=7 and min_sales=3 both reported an unchanged population
---      and looked inert. They were not; the fixture was. An untested lever is exactly the one an
---      operator reaches for when the budget guard fires, so the fixture was reshaped until both
---      levers moved the number.
+--      0.0 -- filing a venue we have never traded next to one where we reliably do not lose money.
+--   3. A fixture that could not tell the two qualification levers apart: every tape event in it
+--      had 8 recent sales, so window=7 and min_sales=3 both reported an unchanged population and
+--      looked inert. They were not; the fixture was.
+--   4. The fixed-count middle stranded 19,600 SCORED events on the weekly floor -- only visible
+--      by grouping the applied table by tier and counting how many had a demand_score. Reading
+--      the ladder, 400/1,000/3,000/6,000 looks like a reasonable spread; it covers a third of the
+--      middle and the rest falls off the end.
+--   5. A GT source row that read identically to TEvo, because the first fixture mapped every
+--      event to GoTickets. The per-source split was untestable until the mapping was cut to a
+--      realistic 26,612 -- and only then did the 25%-of-events / 68%-of-cost skew appear.
 --
 -- BEFORE APPLYING TO PROD
---   1. Run with p_apply => false and read activity.qualified / activity.overflow FIRST. If the
---      overflow is large, the hourly rule is not in force for most of what qualifies, and the
---      honest options are the three levers above -- not a bigger p_daily_budget.
---   2. Read the tier histogram. If T1 fills with events carrying no tape, exposure/loss are
---      dominating a sparse column -- see the note above event_demand_weight -- and the weights
---      want a look before anything consumes the tiers.
---   3. Confirm events.occurs_at_local casts as the EVO poller assumes (mig 20260531150000).
---   4. p_daily_budget describes TEvo at a rate proven by observation, not by any header the API
---      sends. brokerdata.seatgeek.com is a separate, far looser limit (sg_priority_poll_tick
---      already polls its HOT tier every 60s). GoTickets has never been laddered at all. Nothing
---      should read an SG or GT cadence out of this number.
+--   1. Run with p_apply => false and read activity.overflow and by_source FIRST.
+--   2. GT's budget is NULL, so its plan is reported and NOT checked. That is ignorance, not
+--      headroom. Ladder GoTickets (20/40/80) before trusting any GT cadence -- and check the
+--      /rest/events/delta question first (mig 20260804230000 documents that endpoint as NOT
+--      rate-limited while the full dump 429s after a few pulls): if a GT event's updateTime moves
+--      when its LISTINGS move, hourly GT freshness costs 24 calls a day rather than 34,634, and
+--      this whole GT plan is the wrong mechanism.
+--   3. Read the tier histogram. If T0/M1 fill with events carrying no tape, exposure/loss are
+--      dominating a sparse column -- see the note above event_demand_weight.
+--   4. Confirm events.occurs_at_local casts as the EVO poller assumes (mig 20260531150000).
