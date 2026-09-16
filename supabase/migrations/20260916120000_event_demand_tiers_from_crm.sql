@@ -377,6 +377,7 @@ DECLARE
   v_gt_pop     int := 0;
   v_budgets    jsonb;
   v_src        RECORD;
+  v_tmp        text;
   v_total      int := 0;
   v_cost       numeric := 0;
   v_rows_before int := 0;
@@ -388,6 +389,20 @@ BEGIN
     RAISE EXCEPTION 'forbidden: %', current_user USING ERRCODE = '42501';
   END IF;
   PERFORM set_config('statement_timeout', '170000', true);
+
+  -- ON COMMIT DROP frees these at COMMIT, not at RETURN, so a SECOND call inside the SAME
+  -- transaction collides with the first call's tables and dies on 'relation "_ev" already exists'.
+  -- That breaks the most natural way anyone will use this: BEGIN; dry run; look; apply; COMMIT.
+  -- Dropping first makes the function re-entrant within a transaction. (Found by calling it twice
+  -- in one SELECT -- every earlier test had used one call per autocommit statement and passed.)
+  -- to_regclass rather than DROP IF EXISTS: the latter emits a NOTICE per missing table, which
+  -- would put 13 lines of noise into the log on every clean run of a daily cron.
+  FOREACH v_tmp IN ARRAY ARRAY['_ev','_gtmap','_sg','_gt','_loss_raw','_loss_venue','_loss_perf',
+                               '_owned','_base','_scored','_final','_qualified','_assign'] LOOP
+    IF to_regclass('pg_temp.' || v_tmp) IS NOT NULL THEN
+      EXECUTE format('DROP TABLE %I', v_tmp);
+    END IF;
+  END LOOP;
 
   -- ── 4.0 Validate the ladder BEFORE doing any work. Exactly one non-probe tier may carry a NULL
   --        population_cap (the floor), and it must be the last one, or the cumulative boundaries
@@ -1012,6 +1027,16 @@ COMMENT ON VIEW public.v_event_demand_tier IS
 --   5. A GT source row that read identically to TEvo, because the first fixture mapped every
 --      event to GoTickets. The per-source split was untestable until the mapping was cut to a
 --      realistic 26,612 -- and only then did the 25%-of-events / 68%-of-cost skew appear.
+--   6. NOT RE-ENTRANT WITHIN A TRANSACTION. ON COMMIT DROP frees the temp tables at COMMIT, not at
+--      RETURN, so a SECOND call inside the SAME transaction died on 'relation "_ev" already
+--      exists'. Every earlier test had made one call per autocommit statement and passed, so this
+--      survived ten guard tests and two determinism runs unseen. It breaks the most natural way
+--      anyone would actually use this -- BEGIN; dry run; look at it; apply; COMMIT -- which is
+--      exactly the sequence the pre-apply checklist tells an operator to run. Fixed by dropping
+--      the temp tables at entry, via to_regclass rather than DROP IF EXISTS so a clean run does
+--      not put 13 NOTICE lines into a daily cron's log. Both paths now verified:
+--        two calls in one SELECT        -> 51,174/day, 90.1%
+--        dry run then apply, one txn    -> applied=false, then 107,341 rows written
 --
 -- BEFORE APPLYING TO PROD
 --   1. Run with p_apply => false and read activity.overflow and by_source FIRST.
