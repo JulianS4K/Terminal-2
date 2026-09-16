@@ -763,6 +763,7 @@
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
       loadGoticketsSeries(eventId).catch(e => console.error('[gotickets]', e));
+      loadGoticketsBridge(eventId).catch(e => console.error('[gotickets-bridge]', e));
       // Prediction markets (Kalshi/Polymarket) — fire-and-forget; hides itself
       // when the event has no matched markets or the pipeline isn't applied yet.
       loadPredictionMarkets(eventId).catch(e => console.error('[prediction-markets]', e));
@@ -3613,6 +3614,39 @@
   // freshness chip, and repaints the price + inventory charts — the same shape as
   // loadTdFreshness. Graceful no-op until the RPC is applied to prod (42883 /
   // "does not exist") or when there's no auth: the GOT light/chip stay dim.
+  // GoTickets MAPPING chip (mig 20260917010000). The GOT series above shows
+  // GoTickets *prices* for this event; this says WHICH GoTickets event it is,
+  // how that resolved (single claimant / hub / double-claimed / none) and what
+  // we hold on it. Double-claimed is shown as such -- a wrong deep link is worse
+  // than none. Fire-and-forget; appends to #eventMode after renderEventMode ran.
+  async function loadGoticketsBridge(eventId) {
+    const el = document.getElementById('eventMode');
+    if (!el) return;
+    const res = await rpcOrNull('get_event_gotickets_bridge', { p_event_id: eventId });
+    if (res.error || !res.data) return;
+    const b = res.data;
+    const esc = escapeHtml;
+    const sales = (b.our_sales && +b.our_sales.count) || 0;
+    const buys  = (b.our_purchases && +b.our_purchases.count) || 0;
+    const crm   = b.crm_orders || {};
+    let chip = '';
+    if (b.gt_event_id != null) {
+      const held = [sales ? `${sales} sale${sales === 1 ? '' : 's'}` : null,
+                    buys  ? `${buys} buy${buys === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
+      const tip = `GoTickets event ${b.gt_event_id} · resolved via ${b.resolved_via}` +
+                  (crm.count ? ` · CRM orders ${crm.with_gt}/${crm.count} carry it` : '') +
+                  (b.listings_latest_at ? ` · listings as of ${new Date(b.listings_latest_at).toLocaleString()}` : ' · no GoTickets listing snapshots');
+      chip = `<span class="mode-chip" title="${esc(tip)}">` +
+             `<a class="gt-open-btn" href="${esc(b.gt_url)}" target="_blank" rel="noopener noreferrer">GoTickets&nbsp;↗</a>` +
+             ` #${esc(String(b.gt_event_id))}${held ? ' · ' + esc(held) : ''}</span>`;
+    } else if (b.resolved_via === 'double_claim' || b.resolved_via === 'aq_conflict') {
+      chip = `<span class="mode-chip warn" title="${esc(String(b.claimants || ''))} GoTickets rows claim this TEvo event; no single link is safe to show until an operator picks one.">GoTickets: ${esc(String(b.claimants || 'several'))} claimants · unresolved</span>`;
+    } else {
+      chip = '<span class="mode-chip dim" title="No GoTickets event is mapped to this TEvo event (not in the mirror, not in the hub).">No GoTickets mapping</span>';
+    }
+    el.insertAdjacentHTML('beforeend', (el.innerHTML ? ' ' : '') + chip);
+  }
+
   async function loadGoticketsSeries(eventId) {
     const res = await rpcOrNull('get_gotickets_event_series', { p_tevo_event_id: eventId, p_hours: 720 });
     if (res.error) {
