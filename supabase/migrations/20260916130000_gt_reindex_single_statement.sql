@@ -1,19 +1,19 @@
 -- ============================================================================
 -- Migration 20260916130000 — the REINDEX jobs must be ONE statement, so the
 --                            900s role ceiling is a hard bound, not a setting
--- Migration 20260916130000 · level:data-collection · lane:A1 · writes:cron.job · reads:pg_index,pg_class · pre:20260914220000
+-- Migration 20260916130000 · level:data-collection · lane:A1 · writes:cron.job · reads:pg_index,pg_class · pre:20260914220050
 --
 -- Lane:     A1 (data plane)
 -- Touches:  cron.job (W) — maintenance jobs only; no table, data or schema change
--- Pre-reqs: 20260914220000 (the migration this fixes)
+-- Pre-reqs: 20260914220050 (the migration this fixes)
 --
 -- ── THE BUG ────────────────────────────────────────────────────────────────
--- gt_reindex_event_time_weekly, first run after 20260914220000, 2026-09-16
+-- gt_reindex_event_time_weekly, first run after 20260914220050, 2026-09-16
 -- 07:30:00 UTC, failed in 0.035 seconds:
 --
 --     ERROR:  REINDEX CONCURRENTLY cannot run inside a transaction block
 --
--- 20260914220000 fixed the 900s timeout by prefixing the command with
+-- 20260914220050 fixed the 900s timeout by prefixing the command with
 -- `SET statement_timeout='4h'; SET lock_timeout='60s';`. pg_cron sends a job's
 -- command string as a single simple-query message, and a multi-statement simple
 -- query is executed inside ONE implicit transaction. Adding the SETs therefore

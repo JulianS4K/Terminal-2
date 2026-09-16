@@ -97,11 +97,12 @@
 -- `::timestamptz` pattern and is the leg that runs immediately after this one.
 -- It is NOT rewritten here. Its predicate is a +/-24h range against a text
 -- column whose local offsets vary, so making it sargable means adding a
--- widened whole-day pre-filter and reasoning about timezone edges — and it
--- has never actually been observed running, because v1 has been timing out
--- before it is reached. It gets fixed against measurements once v1 is
--- unstuck, not blind. Its loop is bounded here in the meantime, so it cannot
--- reproduce the ratchet while it waits.
+-- widened whole-day pre-filter and reasoning about timezone edges. That is
+-- done against measurements rather than blind, in 20260916150000 — which
+-- also corrects a claim first made in this header, that v3 had never been
+-- observed running. It had: the 11:09 failure on 2026-09-16 carries v3's
+-- query in its CONTEXT, not v1's. Both legs run and both time out. v3's loop
+-- is bounded here regardless, so it cannot reproduce the ratchet.
 --
 -- Twelve other functions share the `occurs_at_local::date` seq-scan pattern
 -- (broker_recent_intel, find_similar_events, refresh_concierge_events, ...).

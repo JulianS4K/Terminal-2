@@ -1,6 +1,6 @@
 -- ============================================================================
--- Migration 20260914220000 — give the REINDEX jobs a statement_timeout that fits the work
--- Migration 20260914220000 · level:data-collection · lane:A1 · writes:cron.job · reads:pg_roles · pre:20260911236500
+-- Migration 20260914220050 — give the REINDEX jobs a statement_timeout that fits the work
+-- Migration 20260914220050 · level:data-collection · lane:A1 · writes:cron.job · reads:pg_roles · pre:20260911236500
 --
 -- Lane:     A1 (data plane)
 -- Touches:  cron.job (W) — three maintenance jobs re-scheduled; no data change
