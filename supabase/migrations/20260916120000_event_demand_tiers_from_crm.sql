@@ -190,11 +190,24 @@ ON CONFLICT (tier) DO NOTHING;
 --       SG    UNMEASURED.  brokerdata is plainly looser: sg_priority_poll_tick already polls its
 --                          HOT tier every 60s. Not costed here; SG has its own poller.
 --
---     ⚠ The delta endpoint is the reason not to assume GT must mirror this ladder at all. If a
---     GoTickets event's updateTime moves when its LISTINGS move, and not only when its metadata
---     does, then hourly freshness across the whole GT catalogue costs 24 calls a day rather than
---     one per event per hour, and GT's per-event budget stops being the binding constraint on
---     anything. That is unverified. Verify it before sizing GT_DAILY_BUDGET off this table.
+--     THE DELTA ENDPOINT DOES NOT RESCUE THIS -- MEASURED 2026-09-16, AND THE ANSWER IS NO.
+--     The hope was that /rest/events/delta ("NOT rate-limited", mig 20260804230000) might fire when
+--     a GoTickets event's LISTINGS move, not only when its metadata does. If it did, hourly
+--     freshness over the whole GT catalogue would cost 24 calls a day instead of one per event per
+--     hour, and none of the per-event GT arithmetic below would matter. Measured over a 3-hour
+--     window on prod:
+--
+--       events with listing activity                     3,661
+--       of those, inventory actually moved               3,076   (display_price or quantity changed)
+--       of those, catalogue row touched by the delta         3   = 0.1%
+--
+--     Three out of 3,076 is noise. Corroborating: the most recent drained delta pull upserted ZERO
+--     events, and only 9 catalogue rows changed in 3 hours, while 1,601,293 listing snapshots
+--     landed across 4,560 events in the same window. The delta is a METADATA feed -- it moves on
+--     name, time, status and venue changes, not on inventory.
+--
+--     So per-event GT polling is required after all, the GT plan below is the real cost, and this
+--     tiering is what makes it affordable rather than an alternative to something cheaper.
 -- ─────────────────────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.event_demand_source_budget (
   source        text PRIMARY KEY,           -- 'TEVO' | 'GT' | 'SG'
@@ -1003,11 +1016,10 @@ COMMENT ON VIEW public.v_event_demand_tier IS
 -- BEFORE APPLYING TO PROD
 --   1. Run with p_apply => false and read activity.overflow and by_source FIRST.
 --   2. GT's budget is NULL, so its plan is reported and NOT checked. That is ignorance, not
---      headroom. Ladder GoTickets (20/40/80) before trusting any GT cadence -- and check the
---      /rest/events/delta question first (mig 20260804230000 documents that endpoint as NOT
---      rate-limited while the full dump 429s after a few pulls): if a GT event's updateTime moves
---      when its LISTINGS move, hourly GT freshness costs 24 calls a day rather than 34,634, and
---      this whole GT plan is the wrong mechanism.
+--      headroom. Ladder GoTickets (20/40/80) and set a real number. The cheaper escape route has
+--      already been tested and closed: /rest/events/delta does NOT move on listing changes
+--      (3 of 3,076 events whose inventory moved, 2026-09-16 -- see the source-budget section),
+--      so per-event polling is genuinely required and 34,634/day is genuinely what it costs.
 --   3. Read the tier histogram. If T0/M1 fill with events carrying no tape, exposure/loss are
 --      dominating a sparse column -- see the note above event_demand_weight.
 --   4. Confirm events.occurs_at_local casts as the EVO poller assumes (mig 20260531150000).
