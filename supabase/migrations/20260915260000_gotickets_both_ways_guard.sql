@@ -202,4 +202,45 @@ GRANT EXECUTE ON FUNCTION public.evo_gt_report_double_claims(int) TO service_rol
 COMMENT ON FUNCTION public.evo_gt_report_double_claims(int) IS
   'Read-only report of TEvo events claimed by more than one GoTickets row, with the matcher and timestamp behind each claim. 212 of them as of 2026-09-15, none written by evo_gt_v2_venue1to1. Deliberately does not resolve them: picking a winner is a judgement about another matcher''s output (mig 20260915260000).';
 
--- VERIFIED ON APPLY: (pending -- not yet applied)
+-- VERIFIED ON APPLY TO PROD: (pending -- still not applied to prod)
+--
+-- ==============================================================================================
+-- EXECUTED ON A LOCAL POSTGRES 16.13, 2026-09-16 -- FIRST EXECUTION OF THIS FILE ANYWHERE
+-- ==============================================================================================
+-- Supabase has been unreachable since this was written, so it was run against a local cluster
+-- carrying the real column shapes of gotickets_event, events, gotickets_purchases,
+-- seatgeek_purchases, sg_events_canonical, tickpick_orders, vivid_orders and
+-- cross_source_venue_map, over a 107,341-event synthetic catalogue with 26,612 GT mappings.
+--
+-- ⚠ THIS IS NOT THE PROD CHECK. The prod precondition below is UNCHANGED and still mandatory: the
+-- live event_mapper_surface_sql body must be md5-compared against the copy reproduced here before
+-- applying, or out-of-band drift is silently reverted. Running locally cannot detect prod drift --
+-- it only proves the file itself is sound.
+--
+--   APPLIES CLEAN                          yes (2 functions, REVOKE, GRANT, COMMENT)
+--   GUARD PRESENT IN TEMPLATE              update_sql for gotickets_event contains NOT EXISTS
+--
+--   THE GUARD ACTUALLY BLOCKS A SECOND CLAIMANT -- two unmapped GoTickets rows raced for one
+--   unheld TEvo event by EXECUTEing the shared template, exactly as a scheduled matcher does:
+--     claimants of tevo 99999 at start      0
+--     first claim  (gt 500001, matcher_a)   1 row written
+--     second claim (gt 500002, matcher_b)   0 rows written
+--     claimants after both attempts         1  (winner gt_event_id 500001)
+--   Before this change the second write would also have landed, because the template's
+--   "AND tevo_event_id IS NULL" only stops a row OVERWRITING its own mapping -- it says nothing
+--   about a different row claiming an event someone else already holds.
+--
+--   evo_gt_report_double_claims(5) -- read-only -- against two deliberately manufactured
+--   duplicates (written directly, bypassing the template) plus one pre-existing:
+--     returned the TEvo event with claimants = 3 and a detail array naming every claimant's
+--     gt_event_id, gt_name, mapped_via and mapped_at, which is what lets an operator decide which
+--     claim wins. It resolves nothing by itself, by design.
+--
+--   NOT TESTED HERE, and not testable here: the real-world proof that the bleed has STOPPED.
+--   That is a prod measurement -- re-count double-claimed TEvo events an hour after applying and
+--   confirm it has stopped rising from 212. Nothing local can substitute for it.
+--
+-- A NOTE ON CI. supabase-rls.yml's migrations-from-zero job is continue-on-error (informational),
+-- and on the 2026-09-16 run its database never started ("connection to 127.0.0.1:54322 refused",
+-- 18 errors, exit code 1) while the check still reported success. A green tick on that job is not
+-- evidence that any migration applies. This block is.
