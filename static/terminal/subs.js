@@ -285,7 +285,16 @@
     }
   }
 
-  function renderN2s(d) {
+   // The obligation's OWN GoTickets event (n2s_items.gt_event_id, mig 20260916230000),
+  // distinct from the cover's buy_url: this is where the SOLD ticket lives, which
+  // is what you check before covering. Fill-only upstream; absent means unmapped.
+  function gtLink(r) {
+    if (r.gt_event_id == null) return '';
+    return ` <a class="gt-open-btn" href="https://gotickets.com/tickets/${esc(String(r.gt_event_id))}"` +
+           ` target="_blank" rel="noopener noreferrer" title="GoTickets event ${esc(String(r.gt_event_id))} (${esc(r.gt_mapped_via || 'mapped')})">GT&nbsp;↗</a>`;
+  }
+
+ function renderN2s(d) {
     const wrap = document.getElementById('n2sTable');
     const rows = (d && d.rows) || [];
     // Which of these are arrivals? On the FIRST load nothing is new — every
@@ -395,7 +404,7 @@
       return `<tr data-n2s="${esc(String(r.n2s_id))}" data-fp="${esc(coverFp(r))}"${rowCls ? ` class="${rowCls}"` : ''}>
         <td>${esc(r.s4k_source || '')}${chip}${timer}${claimed}</td>
         <td class="n2s-ord">${ordCell(r)}</td>
-        <td>${esc(r.event_name || '')}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
+        <td>${esc(r.event_name || '')}${gtLink(r)}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
         <td>${seat}</td>
         <td class="num">${money(r.sold_ea)}</td>
         <td class="n2s-sub">${cov}${bumped}</td>
