@@ -111,6 +111,8 @@ Pages call `TerminalAuth.client.rpc('fn_name', {args})` or `.from('table').selec
 
 Plus 6 parallel enrichment loaders in `init()` (`event.js:78-86`): `loadCrossSourceMetrics`, `loadWeatherLocalized`, `loadSgZonesSplits`, `loadTdSplits`, `loadCrossPlatformSales`, `loadChartExtended`.
 
+**GoTickets mapping chip** (`loadGoticketsBridge`, mig 20260917010000): fire-and-forget rpc `get_event_gotickets_bridge({p_event_id})` → appends a chip to `#eventMode`: `GoTickets ↗ #<gt_event_id> · N sales · N buys` (deep link), or `GoTickets: N claimants · unresolved` (double-claimed — no link on purpose), or `No GoTickets mapping`. Resolution: single `gotickets_event` claimant, else single distinct `aq_event_map` id. Distinct from the GOT price/listing series, which shows GoTickets *prices*; this shows *which* GoTickets event. **Subs** rows carry the obligation's own `gt_event_id` (`v_n2s_orders`, same migration) as a `GT ↗` link beside the event name.
+
 **Discovery gap-type values** (`discovery.js:8-9`, priority map `:140-144`):
 `value_gap_large` · `fill_rate_spike` · `sg_no_evo` · `td_sh_no_evo` · `td_gt_no_evo` · `td_vd_no_evo` · `td_gt_premium` · `td_vd_premium` · `td_sh_no_gt` · `evo_no_sg`
 
