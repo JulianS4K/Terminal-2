@@ -257,3 +257,13 @@ COMMENT ON FUNCTION public.tickets_dev_run(int) IS
 -- here (tickets_dev_run, after the hub backfill) and compounds as the drain grows. The 1,847 at
 -- venues TEvo cannot resolve are not this function's to reach -- they are the TEvo-absent class,
 -- and for them the cluster's marketplace identity is the payload.
+--
+-- CORRECTION, MEASURED AFTER THE FIRST RUN: the header says "the hub and the linkers follow on
+-- the next tick". That is true only where a hub row exists, because hub_backfill UPDATEs
+-- aq_event_map and never INSERTs. Of the 25 written, exactly 1 TEvo event has an aq_event_map
+-- row at all, 1 is on a CRM order, 0 are events we have transacted on. So for 24 of 25 the hub
+-- step is a no-op -- the mapping still reaches the CRM/N2S linkers (spine route, reads
+-- gotickets_event directly) and the event page's GoTickets chip (same), but nothing enriches
+-- the hub. That is what nearest-first residue at small venues looks like, and it is what the
+-- 86%-unresolvable-venue number said to expect. Left as written; the route is correct and
+-- cheap, and its value grows with the drain rather than sitting in these 25.
