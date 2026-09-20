@@ -1,22 +1,25 @@
--- The EVO listings poller never got the scope gate the GoTickets one has.
+-- Brings the DORMANT tree copy of the EVO poller in line with the live one's scope gate.
 --
--- Migs 20260917003300 / 20260917003814 (another session) introduced the policy and the view:
+-- READ THIS BEFORE CITING THIS MIGRATION. It does NOT gate the running EVO poller and it did NOT
+-- end the EVO deals starvation. Corrected 2026-09-20 after the merge of main; the original header
+-- here claimed both, and the claim was wrong.
 --
---     listings_poll_scope_enabled()      -- a flip-to-widen toggle, currently ON
---     v_listings_poll_scope_events       -- events we hold a position in:
---                                        -- CRM / N2S / SeatGeek orders / GoTickets purchases
+-- What actually runs: cron `evo_listings_poll_2min` (jobid 321) calls public.listings_poll_tick(120).
+-- public.evo_listings_poll_tick(int) — created by mig 20260601120000, patched here — is called by
+-- NO cron and no other function. Mig 20260917030000 (another session) records the same drift and
+-- captured the live listings_poll_tick body into the tree with the gate line added.
 --
--- gt_listings_poll_tick reads both. evo_listings_poll_tick does not — it still rotates over every
--- future non-ignored event, which is why the EVO deals leg starved: 3,916 events could produce a
--- deal but only 30 were freshly polled in any 30-minute window, and an addressable event was
--- revisited on average every 38.3 HOURS. The retire tick marks a deal 'stale' long before that,
--- so the feed drained from 1,228 EVO rows on 09-11 to 37 by 09-16 and could not refill.
+-- Who fixed the starvation: mig 20260917003300 / 003814 (another session), applied 2026-09-17
+-- 00:33Z, which introduced listings_poll_scope_enabled() + v_listings_poll_scope_events and gated
+-- the LIVE listings_poll_tick. EVO feed rows per hour went 13 (23:00Z) -> 26 (00:00Z) -> 117
+-- (01:00Z). THIS migration applied at 09:03Z, ~8.5 hours after the recovery, when the rate was
+-- back to 3/hour. The measurements the original header quoted (3,916 addressable events, 30 polled
+-- per 30 minutes, 38.3h average revisit, 1,228 EVO rows on 09-11 down to 37 by 09-16) were real,
+-- but they describe the condition the OTHER session's migration cured.
 --
--- This adds the SAME predicate to the EVO side rather than inventing a second scope list. One
--- policy, one view, two pollers: widening later is still a single flip of the policy row.
---
--- Scope in the poll window is 2,744 events against the ~39k EVO was sweeping — a ~14x cut, which
--- turns a 38-hour revisit into minutes.
+-- Why this is kept rather than reverted: it is already applied to prod, and it stops the dormant
+-- function being a trap if anyone ever repoints cron 321 back at it. One policy, one view — never
+-- add a second scope list. That is its whole value; it changes no live behaviour.
 DO $do$
 DECLARE
   v_src text; v_args text; v_cfg text[]; v_set text := ''; v_kv text; v_a text;
