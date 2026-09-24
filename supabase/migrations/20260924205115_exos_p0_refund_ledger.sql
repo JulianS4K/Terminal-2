@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260924205115 — Exos (Bridge / D4): P0 — refunds can't leave
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos P0 + all-in; Terminal-2 #1003).
 --                            valid tickets behind
 --
 -- Lane:     d4 (exos / bridge ticketing infra)

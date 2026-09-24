@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260924205508 — Exos (Bridge / D4): P0 — a voucher use buys one
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos P0 + all-in; Terminal-2 #1003).
 --                            ticket, and waitlist offers reserve their seats
 --
 -- Lane:     d4 (exos / bridge ticketing infra)
