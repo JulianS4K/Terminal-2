@@ -33,7 +33,9 @@
 // can't strand a refund/dispute.
 //
 // Required secrets (operator, at deploy): STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-// SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (platform-injected).
+// SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (platform-injected). Optional:
+// STRIPE_CONNECT_WEBHOOK_SECRET — the signing secret of the second endpoint that
+// listens to connected accounts (needed for organizers' account.updated).
 //
 // Deploy note: this endpoint must NOT require a JWT (Stripe can't send one) —
 // deploy with --no-verify-jwt; the Stripe signature is the gate.
@@ -159,16 +161,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!webhookSecret || !stripeKey) {
     return new Response("server misconfigured: STRIPE_* unset", { status: 500 });
   }
+  // Connected-account events (account.updated for organizers' Express accounts)
+  // arrive on a separate "connected accounts" endpoint with its own signing
+  // secret; both endpoints point here.
+  const secrets = [webhookSecret, Deno.env.get("STRIPE_CONNECT_WEBHOOK_SECRET")]
+    .filter((x): x is string => !!x);
 
   const sig = req.headers.get("stripe-signature");
   if (!sig) return new Response("missing stripe-signature", { status: 400 });
 
   const body = await req.text();
-  let event: Stripe.Event;
-  try {
-    event = await stripe.webhooks.constructEventAsync(body, sig, webhookSecret, undefined, cryptoProvider);
-  } catch (e) {
-    console.error("stripe-webhook: signature verification failed", e);
+  let event: Stripe.Event | null = null;
+  for (const secret of secrets) {
+    try {
+      event = await stripe.webhooks.constructEventAsync(body, sig, secret, undefined, cryptoProvider);
+      break;
+    } catch {
+      // try the next endpoint's secret
+    }
+  }
+  if (!event) {
+    console.error("stripe-webhook: signature verification failed for every configured secret");
     return new Response("invalid signature", { status: 400 });
   }
 
