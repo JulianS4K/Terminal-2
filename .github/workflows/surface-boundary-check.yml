@@ -49,7 +49,7 @@ jobs:
           declare -A SURFACE=(
             ["D0 terminal + dashboard"]='^(static/terminal/|d2_dashboard/)'
             ["D1 store"]='^(static/store/|static/home/)'
-            ["D4 bridge"]='^(d4_bridge/|static/bridge/)'
+            ["D4 bridge"]='^(static/bridge/)'
             ["D3 broadway"]='^(broadway_client\.py|broadway_extension/)'
           )
 

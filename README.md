@@ -109,7 +109,6 @@ Full deploy chain (Render services, IDs, testing-unified shell) → `PROJECT_BIB
 │                           bandsintown (artist tour-dates); share core/readonly_guard ·
 │                           http_retry · vault
 ├── d2_dashboard/           D2 orders dashboard + APIRouter (mounted on server.py)
-├── d4_bridge/              D4 — Exos/Bridge SPA source + Express server (Vite → static/bridge/)
 ├── trip_planner/           shared tour-itinerary optimizer (D0 + D1 trip-plan routes; see its README)
 ├── broadway_extension/     browser extension — Broadway.com availability capture (see its README)
 ├── static/
