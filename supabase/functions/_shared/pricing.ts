@@ -20,3 +20,12 @@ export function effectiveTierPrice(basePrice: number, schedule: unknown, now: Da
   }
   return price;
 }
+
+// All-in unit price in cents: the price plus its EXCLUSIVE tax, per unit, so
+// the charge is exactly (displayed all-in price x quantity). exclusiveTaxPercent
+// is 0 when the price already includes tax. Mirrors EXP src/lib/pricing.ts allInPrice.
+export function allInCents(unitCents: number, exclusiveTaxPercent: number): number {
+  const rate = Number(exclusiveTaxPercent) || 0;
+  if (rate <= 0) return unitCents;
+  return unitCents + Math.round((unitCents * rate) / 100);
+}

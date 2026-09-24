@@ -270,4 +270,35 @@ BEGIN
   RAISE NOTICE 'OK  Q1-Q4 free claim / comp batch / issue-to-email / box-office mint respect quotas + holds';
 END $$;
 
+-- ============================================================================
+-- T — all-in pricing: the public views expose the exclusive tax rate
+--     (mig 20260924211840)
+-- ============================================================================
+INSERT INTO public.exos_tax_rules(id,event_id,name,rate_percent,price_includes_tax) VALUES
+  ('f0000000-0000-0000-0000-0000000000b1','f0000000-0000-0000-0000-0000000000e2','NYC 8.875%',8.875,false),
+  ('f0000000-0000-0000-0000-0000000000b2','f0000000-0000-0000-0000-0000000000e2','VAT incl.',20,true);
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold,visibility,tax_rate_id) VALUES
+  ('f0000000-0000-0000-0000-0000000000d8','f0000000-0000-0000-0000-0000000000e2','Taxed',10.05,10,0,'public','f0000000-0000-0000-0000-0000000000b1'),
+  ('f0000000-0000-0000-0000-0000000000d9','f0000000-0000-0000-0000-0000000000e2','Tax incl',10,10,0,'public','f0000000-0000-0000-0000-0000000000b2');
+INSERT INTO public.exos_event_addons(id,event_id,name,price,capacity,sold,visibility,tax_rate_id) VALUES
+  ('f0000000-0000-0000-0000-0000000000f1','f0000000-0000-0000-0000-0000000000e2','Taxed tee',20,10,0,'public','f0000000-0000-0000-0000-0000000000b1');
+-- (Values checked as the owner: this harness doesn't load the anon column
+-- grants on exos_events. anon's path is checked on prod after apply.)
+DO $$
+DECLARE r1 numeric; r2 numeric; r3 numeric; r4 numeric;
+BEGIN
+  SELECT exclusive_tax_percent INTO r1 FROM public.exos_public_tiers WHERE id='f0000000-0000-0000-0000-0000000000d8';
+  SELECT exclusive_tax_percent INTO r2 FROM public.exos_public_tiers WHERE id='f0000000-0000-0000-0000-0000000000d9';
+  SELECT exclusive_tax_percent INTO r3 FROM public.exos_public_tiers WHERE id='f0000000-0000-0000-0000-0000000000d5';
+  SELECT exclusive_tax_percent INTO r4 FROM public.exos_public_addons WHERE id='f0000000-0000-0000-0000-0000000000f1';
+  ASSERT r1 = 8.875, format('T: anon must see the exclusive rate on a public tier, got %s', r1);
+  ASSERT r2 = 0, 'T: a tax-inclusive tier adds nothing';
+  ASSERT r3 = 0, 'T: a tier with no tax rule adds nothing';
+  ASSERT r4 = 8.875, 'T: add-ons expose their exclusive rate too';
+  ASSERT has_function_privilege('anon','public.exos_tier_exclusive_tax_percent(uuid)','EXECUTE')
+     AND has_function_privilege('anon','public.exos_addon_exclusive_tax_percent(uuid)','EXECUTE'),
+         'T: anon must be able to evaluate the tax helpers behind the views';
+  RAISE NOTICE 'OK  T all-in: exclusive tax visible to buyers (tier + add-on), 0 when included/none';
+END $$;
+
 SELECT '*** EXOS P0 TESTS PASSED ***';

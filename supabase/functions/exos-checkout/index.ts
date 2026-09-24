@@ -14,7 +14,7 @@
 
 import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { effectiveTierPrice } from "../_shared/pricing.ts";
+import { allInCents, effectiveTierPrice } from "../_shared/pricing.ts";
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
@@ -139,18 +139,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // snapshot stored on the session (fulfillment reads it to record the purchase).
   type AddonRow = { addon_id: string; quantity: number; unit_price_cents: number; name: string };
   const addonsForSession: AddonRow[] = [];
+  const addonLines: { name: string; quantity: number; unit_all_in: number; unit_tax: number }[] = [];
   let addonTotal = 0;
-  // Tax accumulators: recordedTax = the tax portion of the order (recorded on the
-  // session, whether inclusive or exclusive); exclusiveTax = the part ADDED on top
-  // of the price (a separate Stripe "Tax" line + added to the charge).
+  // recordedTax = the tax portion of the order (inclusive or exclusive), stored
+  // on the session for invoices/reporting. Exclusive tax is already inside the
+  // all-in unit amounts below, never added as a separate charge.
   let recordedTax = 0;
-  let exclusiveTax = 0;
-  const addTax = (amount: number, rule: { rate_percent?: number; price_includes_tax?: boolean } | null | undefined) => {
+  // All-in pricing: exclusive tax is computed PER UNIT and folded into each
+  // line's unit_amount, so the buyer pays exactly the all-in price the
+  // storefront showed (allInCents, shared with the SPA). Returns the all-in unit
+  // amount; inclusive tax is only recorded (it's already in the price).
+  const allInUnit = (unitCents: number, qty: number, rule: { rate_percent?: number; price_includes_tax?: boolean } | null | undefined): number => {
     const rate = Number(rule?.rate_percent ?? 0);
-    if (!rate) return;
-    const t = taxCents(amount, rate, rule?.price_includes_tax === true);
-    recordedTax += t;
-    if (rule?.price_includes_tax !== true) exclusiveTax += t;
+    if (!rate) return unitCents;
+    if (rule?.price_includes_tax === true) {
+      recordedTax += taxCents(unitCents * qty, rate, true);
+      return unitCents;
+    }
+    const withTax = allInCents(unitCents, rate);
+    const tax = (withTax - unitCents) * qty;
+    recordedTax += tax;
+    return withTax;
   };
   if (addonReq.length > 0) {
     // Aggregate duplicate addon_ids FIRST so max_per_order + capacity apply to
@@ -191,17 +200,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
           return json({ error: `add-on "${a.name}" is sold out` }, 409);
         }
         const unitCents = Math.round(Number(a.price) * 100);
+        const allIn = allInUnit(unitCents, qty, (a as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
         addonsForSession.push({ addon_id: a.id, quantity: qty, unit_price_cents: unitCents, name: a.name });
-        addonTotal += unitCents * qty;
-        addTax(unitCents * qty, (a as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
+        addonLines.push({ name: a.name, quantity: qty, unit_all_in: allIn, unit_tax: allIn - unitCents });
+        addonTotal += allIn * qty;
       }
     }
   }
 
   // Tier tax (after the voucher price override is applied to unitAmount).
-  addTax(unitAmount * quantity, (tier as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
+  const ticketAllIn = allInUnit(unitAmount, quantity, (tier as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
 
-  const amountCents = unitAmount * quantity + addonTotal + exclusiveTax;
+  // addonTotal is already all-in; the exclusive tax sits inside both unit amounts.
+  const amountCents = ticketAllIn * quantity + addonTotal;
   const feeBps = Number(Deno.env.get("EXOS_PLATFORM_FEE_BPS") ?? "500");
   const applicationFee = Math.round((amountCents * feeBps) / 10000);
 
@@ -209,26 +220,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // a free tier + paid add-ons charges just the add-ons. Ticket quantity is still
   // recorded on the session for minting regardless of the tier's price.
   const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
-  if (unitAmount > 0) {
+  // All-in: one line per product at its all-in unit price; the tax inside it is
+  // disclosed in the line description instead of appearing as an extra line.
+  const taxNote = (unitTax: number) =>
+    unitTax > 0 ? { description: `Includes ${(unitTax / 100).toFixed(2)} ${currency.toUpperCase()} tax per item` } : {};
+  if (ticketAllIn > 0) {
     lineItems.push({
       quantity,
-      price_data: { currency, unit_amount: unitAmount, product_data: { name: `${ev.name} — ${tier.name}` } },
+      price_data: {
+        currency, unit_amount: ticketAllIn,
+        product_data: { name: `${ev.name} — ${tier.name}`, ...taxNote(ticketAllIn - unitAmount) },
+      },
     });
   }
-  for (const a of addonsForSession) {
-    if (a.unit_price_cents > 0) {
+  for (const a of addonLines) {
+    if (a.unit_all_in > 0) {
       lineItems.push({
         quantity: a.quantity,
-        price_data: { currency, unit_amount: a.unit_price_cents, product_data: { name: `${ev.name} — ${a.name}` } },
+        price_data: {
+          currency, unit_amount: a.unit_all_in,
+          product_data: { name: `${ev.name} — ${a.name}`, ...taxNote(a.unit_tax) },
+        },
       });
     }
-  }
-  // Exclusive tax → one explicit Tax line so the buyer sees it on Stripe's page.
-  if (exclusiveTax > 0) {
-    lineItems.push({
-      quantity: 1,
-      price_data: { currency, unit_amount: exclusiveTax, product_data: { name: "Tax" } },
-    });
   }
   if (lineItems.length === 0) {
     return json({ error: "nothing to charge — use the free claim path" }, 400);
