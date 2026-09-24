@@ -50,6 +50,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     .select("session_id")
     .eq("status", "pending")
     .lt("created_at", cutoff)
+    .order("created_at", { ascending: false })
     .limit(BATCH);
 
   for (const row of pending ?? []) {
@@ -61,16 +62,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const { error } = await sb.rpc("exos_fulfill_checkout", { p_session_id: row.session_id });
         if (error) { out.errors++; continue; }
         const pi = typeof cs.payment_intent === "string" ? cs.payment_intent : cs.payment_intent?.id;
-        if (pi) await sb.from("exos_checkout_sessions").update({ payment_intent: pi }).eq("session_id", row.session_id);
+        if (pi) {
+          const { error: piErr } = await sb.from("exos_checkout_sessions")
+            .update({ payment_intent: pi }).eq("session_id", row.session_id);
+          if (piErr) { console.error(`reconcile: payment_intent persist failed for ${row.session_id}`, piErr); out.errors++; }
+        }
         out.fulfilled++;
       } else if (cs.status === "expired") {
-        await sb.from("exos_checkout_sessions")
+        const { error: exErr } = await sb.from("exos_checkout_sessions")
           .update({ status: "expired", failure_reason: "checkout session expired unpaid" })
           .eq("session_id", row.session_id).eq("status", "pending");
+        if (exErr) { console.error(`reconcile: expire failed for ${row.session_id}`, exErr); out.errors++; continue; }
         out.expired++;
       }
       // else: still legitimately awaiting payment — leave it.
-    } catch (_e) {
+    } catch (e) {
+      console.error(`reconcile: pending sweep failed for ${row.session_id}`, e);
       out.errors++;
     }
   }
@@ -80,6 +87,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     .from("exos_checkout_sessions")
     .select("session_id, failure_reason")
     .eq("status", "failed")
+    // Newest first: never-charged failures stay 'failed' and would otherwise
+    // crowd a fresh charged-but-unfulfilled session out of the batch.
+    .order("created_at", { ascending: false })
     .limit(BATCH);
 
   for (const row of failed ?? []) {
@@ -88,22 +98,36 @@ Deno.serve(async (req: Request): Promise<Response> => {
       const pi = typeof cs.payment_intent === "string" ? cs.payment_intent : cs.payment_intent?.id;
       if (cs.payment_status === "paid" && pi) {
         // Idempotency key makes an accidental double-sweep a no-op at Stripe.
-        await stripe.refunds.create(
+        const refund = await stripe.refunds.create(
           // Destination charge: reverse the transfer + fee so the platform
           // balance doesn't fund the refund.
           { payment_intent: pi, reason: "requested_by_customer", reverse_transfer: true, refund_application_fee: true },
           { idempotencyKey: `exos_refund_${row.session_id}` },
         );
-        await sb.from("exos_checkout_sessions")
+        // Ledger row by Stripe refund id (idempotent); it also moves the
+        // session to 'refunded' once refunds cover the amount paid.
+        const { error: rfErr } = await sb.rpc("exos_record_refund", {
+          p_session_id: row.session_id,
+          p_refund_id: refund.id,
+          p_amount_cents: refund.amount ?? 0,
+          p_status: ["pending", "succeeded", "failed", "canceled"].includes(refund.status ?? "") ? refund.status : "pending",
+          p_payment_intent: pi,
+          p_reason: "auto-refund by reconcile: unfulfillable after payment",
+          p_currency: refund.currency ?? "usd",
+        });
+        if (rfErr) { console.error(`reconcile: record_refund failed for ${row.session_id}`, rfErr); out.errors++; continue; }
+        const { error: stErr } = await sb.from("exos_checkout_sessions")
           .update({
             status: "refunded",
             failure_reason: `${row.failure_reason ? row.failure_reason + " " : ""}(auto-refunded by reconcile)`,
           })
           .eq("session_id", row.session_id).eq("status", "failed");
+        if (stErr) { console.error(`reconcile: status update failed for ${row.session_id}`, stErr); out.errors++; continue; }
         out.refunded++;
       }
       // else: failed and never charged (abandoned) — nothing to refund.
-    } catch (_e) {
+    } catch (e) {
+      console.error(`reconcile: refund sweep failed for ${row.session_id}`, e);
       out.errors++;
     }
   }
