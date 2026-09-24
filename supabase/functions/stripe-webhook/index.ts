@@ -95,18 +95,17 @@ async function fulfillSettledSession(
 
   // Ledger: record the settled payment as a first-class row (idempotent upsert
   // on the PI). This is what sessionIdForPaymentIntent() reads later.
-  try {
-    await sb.rpc("exos_record_payment", {
-      p_session_id: session.id,
-      p_payment_intent: pi,
-      p_amount_cents: session.amount_total ?? 0,
-      p_status: "succeeded",
-      p_currency: session.currency ?? "usd",
-      p_provider_event_id: session.id,
-    });
-  } catch (e) {
-    console.error("stripe-webhook: record_payment failed (non-fatal)", e);
-  }
+  // Throw on failure (-> 500, Stripe retries): refunds find their session
+  // through this row, so losing it strands every later refund.
+  const { error: payErr } = await sb.rpc("exos_record_payment", {
+    p_session_id: session.id,
+    p_payment_intent: pi,
+    p_amount_cents: session.amount_total ?? 0,
+    p_status: "succeeded",
+    p_currency: session.currency ?? "usd",
+    p_provider_event_id: session.id,
+  });
+  if (payErr) throw new Error(`record_payment failed for ${session.id}: ${payErr.message}`);
 
   // Auto-refund a settled-but-unfulfillable order. exos_fulfill_checkout marks
   // the session 'failed' (not raise) when it can't mint after payment; without
@@ -136,20 +135,18 @@ async function fulfillSettledSession(
       const refundStatus = ["pending", "succeeded", "failed", "canceled"].includes(refund.status ?? "")
         ? refund.status
         : "pending";
-      try {
-        await sb.rpc("exos_record_refund", {
-          p_session_id: session.id,
-          p_refund_id: refund.id,
-          p_amount_cents: refund.amount ?? sess.amount_cents ?? 0,
-          p_status: refundStatus,
-          p_payment_intent: pi,
-          p_reason: "auto-refund: unfulfillable after payment",
-          p_currency: refund.currency ?? session.currency ?? "usd",
-          p_provider_event_id: session.id,
-        });
-      } catch (e) {
-        console.error(`stripe-webhook: record_refund (auto) failed for ${session.id}`, e);
-      }
+      // The Stripe refund is idempotency-keyed, so a 500 + retry is safe.
+      const { error: rfErr } = await sb.rpc("exos_record_refund", {
+        p_session_id: session.id,
+        p_refund_id: refund.id,
+        p_amount_cents: refund.amount ?? sess.amount_cents ?? 0,
+        p_status: refundStatus,
+        p_payment_intent: pi,
+        p_reason: "auto-refund: unfulfillable after payment",
+        p_currency: refund.currency ?? session.currency ?? "usd",
+        p_provider_event_id: session.id,
+      });
+      if (rfErr) throw new Error(`record_refund (auto) failed for ${session.id}: ${rfErr.message}`);
       console.error(`stripe-webhook: auto-refunded unfulfillable session ${session.id} (refund ${refund.id})`);
     }
   }
@@ -256,12 +253,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const chargeAmount = charge.amount ?? 0;
         const fullyRefunded = chargeAmount > 0 && (charge.amount_refunded ?? 0) >= chargeAmount;
 
-        // Void FIRST on a full refund, THEN record. exos_refund_checkout no-ops
-        // once the session is 'refunded', and exos_record_refund reconciles the
-        // status to 'refunded' as soon as refunds sum to the amount paid — so
-        // recording first would flip the status and make the void a silent no-op
-        // (tickets never voided). Voiding first sets 'refunded' itself; the
-        // subsequent record keeps it there.
+        // Void on a full refund, then record. exos_refund_checkout voids whatever
+        // is still active regardless of session status (mig 20260924205115), so
+        // the order no longer matters for correctness; voiding first just keeps
+        // the session's failure_reason as the refund reason.
         if (fullyRefunded) {
           const { error } = await sb.rpc("exos_refund_checkout", {
             p_session_id: sessionId,
@@ -274,39 +269,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
           }
         }
 
-        // Record the refund row(s) in the ledger (idempotent on refund_id). For a
-        // partial refund this is the ONLY action: it flags is_partial and sets the
-        // session to 'partially_refunded' without touching tickets.
+        // Record every refund on the PaymentIntent by its own id (idempotent on
+        // refund_id). Since API 2022-11-15 the Charge no longer embeds
+        // `refunds`, so list them; never record a cumulative amount under a NULL
+        // id (it double-counted and could mark a session refunded without a void).
+        // A failure returns 500 so Stripe retries instead of losing the refund.
+        const allowed = new Set(["pending", "succeeded", "failed", "canceled"]);
+        let refunds: Stripe.Refund[];
         try {
-          const allowed = new Set(["pending", "succeeded", "failed", "canceled"]);
-          const refunds = charge.refunds?.data ?? [];
-          if (refunds.length > 0) {
-            for (const rf of refunds) {
-              await sb.rpc("exos_record_refund", {
-                p_session_id: sessionId,
-                p_refund_id: rf.id,
-                p_amount_cents: rf.amount ?? 0,
-                p_status: allowed.has(rf.status ?? "") ? rf.status : "pending",
-                p_payment_intent: pi,
-                p_reason: rf.reason ?? "stripe refund",
-                p_currency: rf.currency ?? charge.currency ?? "usd",
-                p_provider_event_id: event.id,
-              });
-            }
-          } else {
-            await sb.rpc("exos_record_refund", {
-              p_session_id: sessionId,
-              p_refund_id: null,
-              p_amount_cents: charge.amount_refunded ?? 0,
-              p_status: "succeeded",
-              p_payment_intent: pi,
-              p_reason: "stripe refund",
-              p_currency: charge.currency ?? "usd",
-              p_provider_event_id: event.id,
-            });
-          }
+          refunds = [];
+          for await (const rf of stripe.refunds.list({ payment_intent: pi, limit: 100 })) refunds.push(rf);
         } catch (e) {
-          console.error("stripe-webhook: record_refund failed (non-fatal)", e);
+          console.error(`stripe-webhook: listing refunds for PI ${pi} failed`, e);
+          return new Response("refund lookup error", { status: 500 });
+        }
+        for (const rf of refunds) {
+          const { error } = await sb.rpc("exos_record_refund", {
+            p_session_id: sessionId,
+            p_refund_id: rf.id,
+            p_amount_cents: rf.amount ?? 0,
+            p_status: allowed.has(rf.status ?? "") ? rf.status : "pending",
+            p_payment_intent: pi,
+            p_reason: rf.reason ?? "stripe refund",
+            p_currency: rf.currency ?? charge.currency ?? "usd",
+            p_provider_event_id: event.id,
+          });
+          if (error) {
+            console.error(`stripe-webhook: record_refund ${rf.id} failed for ${sessionId}`, error);
+            return new Response("refund record error", { status: 500 });
+          }
         }
         break;
       }

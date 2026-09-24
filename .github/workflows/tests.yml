@@ -200,3 +200,6 @@ jobs:
 
       - name: Exos audit-hardening suite (quota scope/transfer race/waitlist)
         run: bash tests/exos/run_audit_hardening.sh exos_audit_hardening_test
+
+      - name: Exos money-path suite (refund ledger + void contracts)
+        run: bash tests/exos/run_money_path.sh exos_money_test
