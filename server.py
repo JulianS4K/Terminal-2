@@ -783,11 +783,26 @@ from routers.pages import build_pages_router  # noqa: E402
 # monkeypatch app._BRIDGE_DIR; the pages router resolves it at request time.
 _BRIDGE_DIR = os.path.join(STATIC_DIR, "bridge")
 
+def _exos_link_preview(page: str, query: str) -> str | None:
+    """Per-event / per-org link-preview tags for Exos /bridge pages (D4,
+    core/exos_seo.py). Reads only the public views. None when there's no
+    Supabase client or nothing to preview."""
+    from core.exos_seo import build_preview, preview_target
+    target = preview_target(page, query)
+    if target is None or sb is None:
+        return None
+    base = (os.environ.get("EXOS_PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if not base:
+        return None
+    return build_preview(sb, target, base)
+
+
 app.include_router(build_pages_router(
     STATIC_DIR,
     get_storefront_as_landing=lambda: STOREFRONT_AS_LANDING,
     get_storefront_version=lambda: _STOREFRONT_VERSION,
     get_bridge_dir=lambda: _BRIDGE_DIR,
+    get_exos_preview=lambda page, query: _exos_link_preview(page, query),
 ))
 
 
