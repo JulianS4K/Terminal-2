@@ -1,4 +1,6 @@
 -- Migration 20260924190000 · level:secondary-sales · lane:D7 · writes:n2s_items · reads:events · pre:20260910180000
+--
+-- Already applied to prod · via MCP 2026-09-24 under operator direction.
 -- ============================================================================
 -- Migration 20260924190000 — N2S mapper: the local START TIME breaks a tie
 --                            between same-venue, same-day, name-consistent events
