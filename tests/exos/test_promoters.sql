@@ -79,3 +79,21 @@ BEGIN
   END;
 END $$;
 SELECT set_config('app.uid','',false);
+
+-- R5. The public link-in-bio card: name for active promoters only.
+DO $$
+DECLARE pid uuid; card jsonb;
+BEGIN
+  card := public.exos_public_promoter('f1-org', 'mo-b');
+  ASSERT card->'promoter'->>'name' = 'Mo B' AND card->'org'->>'slug' = 'f1-org', 'R5: active promoter card';
+  ASSERT public.exos_public_promoter('f1-org', 'nobody') IS NULL, 'R5: unknown code';
+  ASSERT public.exos_public_promoter('other-org', 'mo-b') IS NULL, 'R5: code is scoped to its org';
+  ASSERT NOT (card ? 'kit_token') AND NOT (card->'promoter' ? 'email'), 'R5: no private fields';
+  PERFORM set_config('app.uid','f1000000-0000-0000-0000-00000000000b',false);
+  SELECT id INTO pid FROM public.exos_promoters WHERE code='mo-b';
+  PERFORM public.exos_set_promoter_status(pid, 'paused');
+  ASSERT public.exos_public_promoter('f1-org', 'mo-b') IS NULL, 'R5: paused promoter hidden';
+  PERFORM public.exos_set_promoter_status(pid, 'active');
+  PERFORM set_config('app.uid','',false);
+  RAISE NOTICE 'OK  R5 public promoter card';
+END $$;

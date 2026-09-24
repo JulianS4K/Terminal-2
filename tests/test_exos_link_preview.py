@@ -29,6 +29,8 @@ TIER = "22222222-2222-4222-8222-222222222222"
     (f"event/{EV.upper()}/", "", ("event", EV)),
     ("e/fall-party", "", ("event_slug", "fall-party")),
     ("o/brooklyn-nights", "", ("org", "brooklyn-nights")),
+    ("l/brooklyn-nights/dj-kay", "", ("org", "brooklyn-nights")),
+    ("l/brooklyn-nights/bad code", "", None),
     (f"promoter/{EV}/dj-kay", "", ("promoter", EV)),
     ("checkout", f"event={EV}&products={TIER}:2", ("checkout_event", EV)),
     ("checkout", f"products={TIER}%3A2%2C{EV}%3A1", ("checkout_tier", TIER)),

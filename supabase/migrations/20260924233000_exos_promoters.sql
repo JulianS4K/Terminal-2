@@ -5,6 +5,7 @@
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  W: TABLE exos_promoters (new), FUNCTION exos_upsert_promoter,
 --              exos_set_promoter_status, exos_promoter_kit, exos_org_promoter_stats (new)
+--              exos_public_promoter (new, link-in-bio card)
 --           R: exos_orgs, exos_events, exos_tickets, exos_org_memberships
 -- Pre-reqs: 20260924223000 (paid tickets carry promoter_id)
 --
@@ -159,3 +160,21 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.exos_org_promoter_stats(uuid, uuid) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.exos_org_promoter_stats(uuid, uuid) TO authenticated, service_role;
+
+-- Public card for a promoter's link-in-bio page (/l/:orgSlug/:code): just the
+-- display name, and only while active. Codes already travel in public links,
+-- so this reveals nothing beyond the name the promoter chose to go by.
+CREATE OR REPLACE FUNCTION public.exos_public_promoter(p_org_slug text, p_code text)
+RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'promoter', jsonb_build_object('name', p.name, 'code', p.code),
+    'org', jsonb_build_object('id', o.id, 'name', o.name, 'slug', o.slug))
+  FROM public.exos_promoters p
+  JOIN public.exos_orgs o ON o.id = p.org_id
+  WHERE o.slug = p_org_slug AND p.code = p_code AND p.status = 'active';
+$$;
+REVOKE ALL ON FUNCTION public.exos_public_promoter(text, text) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.exos_public_promoter(text, text) TO anon, authenticated, service_role;

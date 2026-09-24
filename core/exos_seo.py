@@ -30,6 +30,8 @@ _EVENT_RE = re.compile(rf"^event/({_UUID})/?$")
 _EVENT_SLUG_RE = re.compile(rf"^e/({_SLUG})/?$")
 _ORG_RE = re.compile(rf"^o/({_SLUG})/?$")
 _PROMOTER_RE = re.compile(rf"^promoter/({_UUID})/[A-Za-z0-9_-]{{1,64}}/?$")
+# Promoter link-in-bio (/l/:orgSlug/:code) previews as the organizer.
+_BIO_RE = re.compile(rf"^l/({_SLUG})/[A-Za-z0-9_-]{{1,64}}/?$")
 _UUID_RE = re.compile(rf"^{_UUID}$")
 
 
@@ -43,7 +45,7 @@ def preview_target(page: str, query: str = "") -> tuple[str, str] | None:
         return ("event", m.group(1).lower())
     if m := _EVENT_SLUG_RE.match(page):
         return ("event_slug", m.group(1))
-    if m := _ORG_RE.match(page):
+    if m := _ORG_RE.match(page) or _BIO_RE.match(page):
         return ("org", m.group(1))
     if m := _PROMOTER_RE.match(page):
         return ("promoter", m.group(1).lower())
