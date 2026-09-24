@@ -13,6 +13,7 @@ psql -h "$H" -p "$P" -U "$U" -q -c "DROP DATABASE IF EXISTS $DB;" -c "CREATE DAT
 PSQL="psql -h $H -p $P -U $U -d $DB -v ON_ERROR_STOP=1 -q"
 $PSQL -f "$DIR/prereq.sql"
 for m in \
+  20260523230000_exos_issue_to_email 20260605132500_exos_claim_free_tickets \
   20260616180000_exos_waitlist 20260616190000_exos_addons 20260616200000_exos_public_api_webhooks \
   20260616210000_exos_vouchers 20260616220000_exos_waitlist_autoassign 20260616230000_exos_tax \
   20260616240000_exos_invoicing 20260616250000_exos_voucher_bypass_fulfill \
@@ -26,7 +27,7 @@ for m in \
   20260911130000_exos_event_analytics 20260911131000_exos_rsvp_release \
   20260911132000_exos_comp_batch 20260911133000_exos_event_series \
   20260924205115_exos_p0_refund_ledger 20260924205508_exos_p0_voucher_per_ticket \
-  20260924205916_exos_p0_hold_caps; do
+  20260924205916_exos_p0_hold_caps 20260924210103_exos_p0_quota_aware_mints; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"

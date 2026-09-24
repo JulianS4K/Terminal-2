@@ -193,4 +193,81 @@ BEGIN
   RAISE NOTICE 'OK  H5 purchase-limit probe revoked';
 END $$;
 
+-- ============================================================================
+-- Q — every mint path respects shared quotas, live holds and offers
+--     (mig 20260924210103)
+-- ============================================================================
+INSERT INTO public.exos_events(id,org_id,name,slug,status,total_tickets,tickets_sold) VALUES
+  ('f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-000000000001','P0 Free Show','p0-free','published',0,0);
+-- d5 + d6 share a 3-seat quota; d7 is a 2-seat free tier for the hold case.
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold,visibility) VALUES
+  ('f0000000-0000-0000-0000-0000000000d5','f0000000-0000-0000-0000-0000000000e2','Free A',0,10,0,'public'),
+  ('f0000000-0000-0000-0000-0000000000d6','f0000000-0000-0000-0000-0000000000e2','Free B',0,10,0,'public'),
+  ('f0000000-0000-0000-0000-0000000000d7','f0000000-0000-0000-0000-0000000000e2','Free C',0,2,0,'public');
+INSERT INTO public.exos_quotas(id,event_id,org_id,name,size) VALUES
+  ('f0000000-0000-0000-0000-0000000000c1','f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-000000000001','Room',3);
+INSERT INTO public.exos_quota_tiers(quota_id,tier_id) VALUES
+  ('f0000000-0000-0000-0000-0000000000c1','f0000000-0000-0000-0000-0000000000d5'),
+  ('f0000000-0000-0000-0000-0000000000c1','f0000000-0000-0000-0000-0000000000d6');
+
+DO $$
+DECLARE ids uuid[]; raised boolean; r record; n_sold int;
+BEGIN
+  -- Q1. Free claims across two tiers can't exceed the shared 3-seat quota.
+  PERFORM set_config('app.uid','f0000000-0000-0000-0000-00000000000b', true);
+  PERFORM set_config('app.jwt','{"email":"p0buyer@x.com"}', true);
+  ids := public.exos_claim_free_tickets('f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-0000000000d5',2);
+  ASSERT array_length(ids,1) = 2, 'Q1: 2 of the 3 shared seats';
+  PERFORM set_config('app.uid','f0000000-0000-0000-0000-00000000000c', true);
+  PERFORM set_config('app.jwt','{"email":"p0wait1@x.com"}', true);
+  raised := false;
+  BEGIN
+    PERFORM public.exos_claim_free_tickets('f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-0000000000d6',2);
+  EXCEPTION WHEN check_violation THEN raised := true;
+  END;
+  ASSERT raised, 'Q1: a 2-seat free claim on the other tier must hit the shared quota';
+  ids := public.exos_claim_free_tickets('f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-0000000000d6',1);
+  ASSERT array_length(ids,1) = 1, 'Q1: the last shared seat can still be claimed';
+
+  -- Q2. A free claim can't take seats reserved by someone else's live hold.
+  PERFORM set_config('app.uid','f0000000-0000-0000-0000-00000000000b', true);
+  PERFORM set_config('app.jwt','{"email":"p0buyer@x.com"}', true);
+  PERFORM public.exos_create_hold('f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-0000000000d7',2);
+  PERFORM set_config('app.uid','f0000000-0000-0000-0000-00000000000d', true);
+  PERFORM set_config('app.jwt','{"email":"p0wait2@x.com"}', true);
+  raised := false;
+  BEGIN
+    PERFORM public.exos_claim_free_tickets('f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-0000000000d7',1);
+  EXCEPTION WHEN check_violation THEN raised := true;
+  END;
+  ASSERT raised, 'Q2: seats held in someone''s cart must not be claimable';
+
+  -- Q3. The comp batch reports sold-out per recipient instead of overselling.
+  PERFORM set_config('app.uid','f0000000-0000-0000-0000-00000000000a', true);
+  PERFORM set_config('app.jwt','{"email":"p0owner@x.com"}', true);
+  SELECT * INTO r FROM public.exos_issue_comp_batch('f0000000-0000-0000-0000-0000000000e2',
+         'f0000000-0000-0000-0000-0000000000d5', ARRAY['comp1@x.com'], 1);
+  ASSERT r.outcome = 'sold-out', format('Q3: comp on an exhausted quota must be sold-out, got %s', r.outcome);
+
+  -- Q4. Staff issue-to-email and the box-office mint refuse too.
+  raised := false;
+  BEGIN
+    PERFORM public.exos_issue_ticket_to_email('f0000000-0000-0000-0000-0000000000e2',
+            'f0000000-0000-0000-0000-0000000000d6', 'p0buyer@x.com', 1);
+  EXCEPTION WHEN others THEN raised := SQLERRM LIKE '%sold out%';
+  END;
+  ASSERT raised, 'Q4: issue-to-email must respect the shared quota';
+  raised := false;
+  BEGIN
+    PERFORM public.exos_mint_tickets('f0000000-0000-0000-0000-0000000000e2','f0000000-0000-0000-0000-0000000000d7',1);
+  EXCEPTION WHEN others THEN raised := SQLERRM LIKE '%sold out%';
+  END;
+  ASSERT raised, 'Q4: the box-office mint must not take held seats';
+
+  SELECT count(*) INTO n_sold FROM public.exos_tickets
+   WHERE tier_id IN ('f0000000-0000-0000-0000-0000000000d5','f0000000-0000-0000-0000-0000000000d6') AND status <> 'voided';
+  ASSERT n_sold = 3, format('Q: the shared quota ends at exactly 3 tickets, got %s', n_sold);
+  RAISE NOTICE 'OK  Q1-Q4 free claim / comp batch / issue-to-email / box-office mint respect quotas + holds';
+END $$;
+
 SELECT '*** EXOS P0 TESTS PASSED ***';
