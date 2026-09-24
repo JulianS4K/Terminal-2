@@ -6,12 +6,13 @@
 // chargesEnabled/payoutsEnabled once onboarding completes.
 //
 // Required secrets: STRIPE_SECRET_KEY, SUPABASE_URL, SUPABASE_ANON_KEY,
-// SUPABASE_SERVICE_ROLE_KEY.
+// SUPABASE_SERVICE_ROLE_KEY, EXOS_REDIRECT_ORIGINS (see _shared/redirects.ts).
 //
 // TODO(operator): Connect account type ('standard' here) + country/capabilities.
 
 import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isAllowedRedirect, parseRedirectOrigins } from "../_shared/redirects.ts";
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
@@ -33,6 +34,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { org_id, return_url, refresh_url } = p;
   if (!org_id || !return_url || !refresh_url) {
     return json({ error: "missing org_id / return_url / refresh_url" }, 400);
+  }
+  const allowed = parseRedirectOrigins(Deno.env.get("EXOS_REDIRECT_ORIGINS"));
+  if (allowed.length === 0) return json({ error: "server misconfigured: EXOS_REDIRECT_ORIGINS unset" }, 500);
+  if (!isAllowedRedirect(return_url, allowed) || !isAllowedRedirect(refresh_url, allowed)) {
+    return json({ error: "redirect URL not allowed" }, 400);
   }
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);

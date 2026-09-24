@@ -6,7 +6,8 @@
 // the Stripe session id; the stripe-webhook fulfills it on completion.
 //
 // Required secrets: STRIPE_SECRET_KEY, SUPABASE_URL, SUPABASE_ANON_KEY,
-// SUPABASE_SERVICE_ROLE_KEY. Optional: EXOS_PLATFORM_FEE_BPS (default 500 = 5%).
+// SUPABASE_SERVICE_ROLE_KEY, EXOS_REDIRECT_ORIGINS (origins success/cancel URLs
+// may point at; see _shared/redirects.ts). Optional: EXOS_PLATFORM_FEE_BPS (default 500 = 5%).
 //
 // TODO(operator) before go-live: confirm the application-fee model/%, the
 // charge model (destination vs direct), and that 'standard' Connect accounts
@@ -15,6 +16,7 @@
 import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { allInCents, effectiveTierPrice } from "../_shared/pricing.ts";
+import { isAllowedRedirect, parseRedirectOrigins } from "../_shared/redirects.ts";
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
@@ -45,6 +47,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const voucherCode = (p.voucher_code ?? "").trim();
   if (!event_id || !tier_id || !success_url || !cancel_url) {
     return json({ error: "missing event_id / tier_id / success_url / cancel_url" }, 400);
+  }
+  const allowed = parseRedirectOrigins(Deno.env.get("EXOS_REDIRECT_ORIGINS"));
+  if (allowed.length === 0) return json({ error: "server misconfigured: EXOS_REDIRECT_ORIGINS unset" }, 500);
+  if (!isAllowedRedirect(success_url, allowed) || !isAllowedRedirect(cancel_url, allowed)) {
+    return json({ error: "redirect URL not allowed" }, 400);
   }
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
     return json({ error: "quantity must be 1-10" }, 400);

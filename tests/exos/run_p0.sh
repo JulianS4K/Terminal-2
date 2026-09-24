@@ -28,8 +28,10 @@ for m in \
   20260911132000_exos_comp_batch 20260911133000_exos_event_series \
   20260924205115_exos_p0_refund_ledger 20260924205508_exos_p0_voucher_per_ticket \
   20260924205916_exos_p0_hold_caps 20260924210103_exos_p0_quota_aware_mints \
-  20260703122000_exos_tier_price_schedule 20260924211840_exos_all_in_price_tax; do
+  20260703122000_exos_tier_price_schedule 20260924211840_exos_all_in_price_tax \
+  20260924215000_exos_fulfill_all_or_nothing; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_p0.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_fulfill_all_or_nothing.sql"
