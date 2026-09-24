@@ -39,7 +39,6 @@
 "area:bridge":
   - changed-files:
       - any-glob-to-any-file:
-          - "d4_bridge/**/*"
           - "static/bridge/**/*"
           - "supabase/functions/exos-*/**/*"
           - "supabase/migrations/*exos*.sql"

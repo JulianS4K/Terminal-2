@@ -170,13 +170,13 @@ def build_pages_router(
 
 
     # --- D4 / Exos (Bridge) ----------------------------------------------------
-    # Serve the d4_bridge Vite SPA from this Railway app — same origin as the hub,
+    # Serve the Exos Vite SPA (source: JulianS4K/EXP) from this Railway app — same origin as the hub,
     # Terminal, Store, and Undelivered (PR #318 — Railway is now the primary host).
     # Landing redirect, index handler, path-catch-all for assets + SPA deep links.
     # App is built with Vite base '/bridge/' (vite.config.ts) and
     # <BrowserRouter basename="/bridge">, so asset refs + client routes resolve
     # under this prefix. Build artifact: static/bridge/ (rebuild via
-    # `npm --prefix d4_bridge run build` then copy dist → static/bridge/).
+    # `npm run build` in JulianS4K/EXP, then copy its dist/ → static/bridge/).
     # Same-origin means the Supabase session in localStorage is shared with the
     # hub — a user signed in on the home page is automatically signed into Bridge.
     # Returns 404 cleanly until the build artifact is present.
@@ -196,7 +196,7 @@ def build_pages_router(
         present yet, so the route is safe to ship ahead of the first dist copy."""
         index_path = os.path.join(get_bridge_dir(), "index.html")
         if not os.path.isfile(index_path):
-            raise HTTPException(404, "bridge build not present — run `npm --prefix d4_bridge run build` then copy dist → static/bridge/")
+            raise HTTPException(404, "bridge build not present — run `npm run build` in JulianS4K/EXP then copy dist/ → static/bridge/")
         return FileResponse(index_path)
 
 

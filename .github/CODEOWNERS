@@ -52,11 +52,10 @@
 
 # ── D4 / The Bridge (Exos primary-ticketing) ─────────────────────────────
 # Grouped for clear lane categorization (ownership is unchanged — the `*`
-# rule above already assigns @JulianS4K). The Bridge's footprint is the
-# d4_bridge React app + its build output, the exos-* edge functions, and the
-# *exos* migrations. NOT the A1/D0 "*bridge*" items (sg_to_tevo_search_bridge,
+# rule above already assigns @JulianS4K). The Bridge's SPA source lives in
+# JulianS4K/EXP (moved 2026-09-24); what remains here is its build output,
+# the exos-* edge functions, and the *exos* migrations (the DB is still shared). NOT the A1/D0 "*bridge*" items (sg_to_tevo_search_bridge,
 # espn_bridge, etc.). Auto-labelled `area:bridge` via .github/labeler.yml.
-/d4_bridge/                                 @JulianS4K
 /static/bridge/                             @JulianS4K
 /supabase/functions/exos-api/               @JulianS4K
 /supabase/functions/exos-checkout/          @JulianS4K
@@ -64,7 +63,8 @@
 /supabase/functions/exos-distribute/        @JulianS4K
 /supabase/functions/exos-mail-drain/        @JulianS4K
 /supabase/functions/exos-webhook-drain/     @JulianS4K
-/docs/d4_bridge_charter.md                  @JulianS4K
+/docs/d4_exos_rls_b1_review.md              @JulianS4K
+/docs/exos_event_preflight.md               @JulianS4K
 
 # D7 — N2S ("Need to Sub") obligation-covering pipeline. Carved out of D0's
 # terminal/broker surface 2026-09-10. The subs page, the n2s_* schema, and the
