@@ -172,3 +172,92 @@ def test_preview_errors_fall_back_to_the_shell(bridge, monkeypatch):
     monkeypatch.setattr(app_module, "_exos_link_preview", boom)
     r = bridge.get(f"/bridge/event/{EV}", headers={"user-agent": "Twitterbot/1.0"})
     assert r.status_code == 200 and "<title>Exos</title>" in r.text
+
+
+# ---- edge cases (100% product-code coverage gate) --------------------------
+
+def test_schedule_ignores_malformed_steps_and_future_steps():
+    now = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    schedule = [
+        "not-a-step",
+        {"price": -1, "startsAt": "2026-01-01T00:00:00Z"},
+        {"price": 5, "startsAt": 123},
+        {"price": 6, "startsAt": "garbage"},
+        {"price": 7, "startsAt": "2026-02-01T00:00:00"},        # naive → UTC, already started
+        {"price": 9, "startsAt": "2027-01-01T00:00:00Z"},       # not yet
+    ]
+    assert exos_seo._effective_price(10, schedule, now) == 7
+    assert exos_seo._effective_price(10, None, now) == 10
+
+
+def test_from_price_skips_unparseable_prices():
+    assert exos_seo.from_price_cents([{"price": "abc"}, {"price": 12}]) == 1200
+
+
+def test_money_labels():
+    assert exos_seo._money(0, "USD") == "Free"
+    assert exos_seo._money(2500, "USD") == "$25"
+    assert exos_seo._money(2550, "EUR") == "€25.50"
+    assert exos_seo._money(1000, "MXN") == "10 MXN"
+
+
+def test_date_label_edges():
+    assert exos_seo._date_label(None, None) is None
+    assert exos_seo._date_label("not a date", None) is None
+    assert exos_seo._date_label("2026-10-03T02:00:00Z", None) is not None
+
+
+def test_event_summary_needs_a_name():
+    assert exos_seo.event_summary({}, []) is None
+    assert exos_seo.event_summary(None, []) is None
+
+
+def test_bare_event_tags_and_free_events():
+    s = exos_seo.event_summary({"id": EV, "name": "Open Mic", "description": "Bring a song."}, [])
+    tags = exos_seo.event_tags(s, "https://x.example/e", "https://x.example/i.png")
+    # No date, venue, price or org: falls back to the description, JSON-LD stays minimal.
+    assert 'content="Bring a song."' in tags
+    assert '"startDate"' not in tags and '"location"' not in tags and '"offers"' not in tags and '"organizer"' not in tags
+    free = exos_seo.event_summary({"id": EV, "name": "Free Show", "venue_name": "Park"}, [{"price": 0}])
+    assert "Park · Free" in exos_seo.event_tags(free, "https://x.example/e", "https://x.example/i.png")
+    no_addr = exos_seo.event_summary({"id": EV, "name": "Show", "venue_name": "Room"}, [])
+    assert '"address"' not in exos_seo.event_tags(no_addr, "https://x.example/e", "https://x.example/i.png")
+
+
+def test_org_tags_need_a_name_and_fall_back_to_defaults():
+    assert exos_seo.org_tags({}, "https://x.example/o", "https://x.example/i.png") is None
+    tags = exos_seo.org_tags({"name": "Nights", "theme": "bad", "marketing": None}, "https://x.example/o", "https://x.example/i.png")
+    assert "Upcoming events from Nights." in tags and 'og:image" content="https://x.example/i.png"' in tags
+
+
+def test_build_preview_misses_return_none():
+    base = "https://x.example"
+    empty = _FakeSB({})
+    assert exos_seo.build_preview(empty, ("org", "nope"), base) is None
+    assert exos_seo.build_preview(empty, ("checkout_tier", TIER), base) is None
+    nameless = _FakeSB({"exos_public_events": [{"id": EV, "name": ""}]})
+    assert exos_seo.build_preview(nameless, ("event", EV), base) is None
+    orphan = _FakeSB({"exos_public_events": [{"id": EV, "name": "Solo"}]})
+    assert "Solo" in exos_seo.build_preview(orphan, ("event", EV), base)
+
+
+def test_server_resolver_guards(monkeypatch):
+    monkeypatch.setattr(app_module, "sb", None)
+    assert app_module._exos_link_preview("my-tickets", "") is None
+    assert app_module._exos_link_preview(f"event/{EV}", "") is None
+    monkeypatch.setattr(app_module, "sb", _sb())
+    monkeypatch.delenv("EXOS_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    assert app_module._exos_link_preview(f"event/{EV}", "") is None
+    monkeypatch.setenv("EXOS_PUBLIC_BASE_URL", "https://x.example/")
+    assert "Fall Party" in app_module._exos_link_preview(f"event/{EV}", "")
+
+
+def test_router_without_preview_hook_serves_the_shell(tmp_path):
+    from fastapi import FastAPI
+    from routers.pages import build_pages_router
+    (tmp_path / "index.html").write_text(SHELL, encoding="utf-8")
+    app = FastAPI()
+    app.include_router(build_pages_router(str(tmp_path), get_bridge_dir=lambda: str(tmp_path)))
+    r = TestClient(app).get(f"/bridge/event/{EV}", headers={"user-agent": "facebookexternalhit/1.1"})
+    assert r.status_code == 200 and "<title>Exos</title>" in r.text
