@@ -41,6 +41,7 @@
       - any-glob-to-any-file:
           - "static/bridge/**/*"
           - "supabase/functions/exos-*/**/*"
+          - "supabase/functions/stripe-webhook/**/*"
           - "supabase/migrations/*exos*.sql"
           - "docs/d4_*"
 

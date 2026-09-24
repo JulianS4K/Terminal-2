@@ -121,6 +121,10 @@ async function fulfillSettledSession(
           {
             payment_intent: pi,
             reason: "requested_by_customer",
+            // Destination charge: pull the funds back from the connected account
+            // and return our fee, otherwise the platform balance pays the refund.
+            reverse_transfer: true,
+            refund_application_fee: true,
             metadata: { exos_session_id: session.id, exos_auto: "fulfillment_failed" },
           },
           { idempotencyKey: `exos_autorefund_${session.id}` },

@@ -63,6 +63,8 @@
 /supabase/functions/exos-distribute/        @JulianS4K
 /supabase/functions/exos-mail-drain/        @JulianS4K
 /supabase/functions/exos-webhook-drain/     @JulianS4K
+/supabase/functions/exos-reconcile-checkouts/ @JulianS4K
+/supabase/functions/stripe-webhook/          @JulianS4K
 /docs/d4_exos_rls_b1_review.md              @JulianS4K
 /docs/exos_event_preflight.md               @JulianS4K
 
