@@ -5,7 +5,8 @@
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  W: POLICY exos_quotas_wr, POLICY exos_quota_tiers_wr (replaced);
 --              FUNCTION exos_create_transfer, exos_claim_transfer (replaced);
---              POLICY exos_waitlist_upd (dropped), UPDATE grant on exos_waitlist (revoked)
+--              POLICY exos_waitlist_upd (dropped), UPDATE grant on exos_waitlist (revoked),
+--              column SELECT grant on exos_tickets (attendee_name, released_at)
 --           R: exos_events, exos_ticket_tiers, exos_quotas, exos_tickets, exos_transfers
 -- Pre-reqs: 20260702123030 (quotas), 20260520130000 (transfers), 20260616180000 (waitlist).
 --           Supersedes the body of 20260702121000_exos_transfer_secret_leak_fix
@@ -35,6 +36,12 @@
 --    position, status, quantity, voucher_id). Every legitimate write goes
 --    through SECURITY DEFINER RPCs (exos_leave_waitlist, exos_waitlist_offer_next,
 --    auto-assign trigger); the client never UPDATEs the table directly.
+--
+-- 4. CORRECTNESS — exos_tickets uses column-level SELECT grants (barcode_secret
+--    excluded, mig 20260702123000). attendee_name (20260911060000) and
+--    released_at (20260911131000) were added later and never granted, so every
+--    client ticket read that names them fails with permission denied. RLS still
+--    decides which rows are visible.
 --
 -- Idempotent: DROP POLICY IF EXISTS + CREATE, CREATE OR REPLACE FUNCTION, REVOKE.
 -- D4 authors; applying to prod is operator-gated.
@@ -199,3 +206,6 @@ GRANT  EXECUTE ON FUNCTION public.exos_claim_transfer(uuid) TO authenticated;
 -- 3. Waitlist rows are written only through SECURITY DEFINER RPCs -------------
 DROP POLICY IF EXISTS exos_waitlist_upd ON public.exos_waitlist;
 REVOKE UPDATE ON public.exos_waitlist FROM authenticated;
+
+-- 4. Grant the two ticket columns added after the column-level grant ----------
+GRANT SELECT (attendee_name, released_at) ON public.exos_tickets TO authenticated;

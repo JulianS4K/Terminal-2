@@ -123,4 +123,16 @@ BEGIN
 END $$;
 COMMIT;
 
+-- ── 4. the two late ticket columns are readable (RLS still scopes rows) ────
+DO $$
+BEGIN
+  ASSERT has_column_privilege('authenticated','public.exos_tickets','attendee_name','SELECT'),
+         'authenticated must be able to SELECT exos_tickets.attendee_name';
+  ASSERT has_column_privilege('authenticated','public.exos_tickets','released_at','SELECT'),
+         'authenticated must be able to SELECT exos_tickets.released_at';
+  ASSERT NOT has_column_privilege('authenticated','public.exos_tickets','barcode_secret','SELECT'),
+         'barcode_secret must stay ungranted';
+  RAISE NOTICE 'late ticket column grants ok';
+END $$;
+
 SELECT '*** EXOS AUDIT-HARDENING TEST PASSED ***';

@@ -20,9 +20,12 @@ for m in \
   20260605132000_exos_check_in_event_scope \
   20260702120000_exos_checkin_harden_doors_gate \
   20260702121000_exos_transfer_secret_leak_fix \
+  20260702123000_exos_barcode_secret_least_privilege \
   20260702123000_exos_cart_holds \
   20260702123030_exos_quotas \
   20260616180000_exos_waitlist \
+  20260911060000_exos_ticket_attendee_name \
+  20260911131000_exos_rsvp_release \
   20260924200848_exos_audit_hardening_quota_transfer_waitlist; do
   $PSQL -f "$MIG/$m.sql"
 done
