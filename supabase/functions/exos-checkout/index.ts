@@ -79,6 +79,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (v.restrict_tier_id && v.restrict_tier_id !== tier_id) {
       return json({ error: "voucher is not valid for this ticket type" }, 409);
     }
+    // One voucher use buys one ticket (mig 20260924205508); refuse here rather
+    // than charging and auto-refunding when fulfillment can't consume enough.
+    const { data: vUses } = await sb.from("exos_vouchers")
+      .select("max_uses, used_count").eq("id", v.voucher_id).maybeSingle();
+    const remainingUses = vUses ? vUses.max_uses - vUses.used_count : 0;
+    if (quantity > remainingUses) {
+      return json({ error: `voucher covers ${Math.max(remainingUses, 0)} more ticket(s)` }, 409);
+    }
     voucherId = v.voucher_id;
     voucherUnlocksTier = v.restrict_tier_id === tier_id;
     bypassCapacity = v.can_bypass === true;
