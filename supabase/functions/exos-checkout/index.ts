@@ -14,6 +14,7 @@
 
 import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { effectiveTierPrice } from "../_shared/pricing.ts";
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
@@ -54,7 +55,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const { data: tier, error: tierErr } = await sb
     .from("exos_ticket_tiers")
-    .select("id, name, price, capacity, sold, event_id, visibility, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax), exos_events!inner(id, org_id, name, status, currency)")
+    .select("id, name, price, price_schedule, capacity, sold, event_id, visibility, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax), exos_events!inner(id, org_id, name, status, currency)")
     .eq("id", tier_id).eq("event_id", event_id).maybeSingle();
   if (tierErr || !tier) return json({ error: "tier not found" }, 404);
 
@@ -124,8 +125,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const currency = (ev.currency ?? "usd").toLowerCase();
-  // A voucher price override pins the per-ticket price (comp / special rate).
-  const unitAmount = Math.round(Number(overridePrice ?? tier.price) * 100);
+  // A voucher price override pins the per-ticket price (comp / special rate);
+  // otherwise charge the tier's scheduled price as of now, the same price the
+  // storefront shows (early-bird → regular → last-minute).
+  const scheduled = effectiveTierPrice(
+    Number(tier.price),
+    (tier as unknown as { price_schedule?: unknown }).price_schedule,
+  );
+  const unitAmount = Math.round(Number(overridePrice ?? scheduled) * 100);
 
   // Validate + price add-ons server-side (never trust the client's prices). Each
   // must belong to this event, be public, and have stock. Build the priced
