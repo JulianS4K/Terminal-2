@@ -982,3 +982,13 @@ def test_retail_csp_unchanged_outside_bridge(client):
     csp = client.get("/version.json").headers["Content-Security-Policy"]
     assert "frame-ancestors 'none'" in csp
     assert "fonts.googleapis.com" not in csp and "connect.facebook.net" not in csp
+
+
+def test_bridge_csp_maps_only_on_map_pages(client):
+    event_csp = client.get("/bridge/event/abc", follow_redirects=False).headers["Content-Security-Policy"]
+    map_csp = client.get("/bridge/map", follow_redirects=False).headers["Content-Security-Policy"]
+    for csp in (event_csp, map_csp):
+        assert "https://*.googleapis.com" in csp and "worker-src 'self' blob:" in csp
+    for path in ("/bridge/checkin/abc", "/bridge/my-tickets", "/bridge/o/brand"):
+        csp = client.get(path, follow_redirects=False).headers["Content-Security-Policy"]
+        assert "*.googleapis.com" not in csp, path
