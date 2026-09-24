@@ -1,4 +1,6 @@
 -- Migration 20260924210000 · level:data-collection · lane:D7 · writes:seatgeek_orders,sg_seller_process · reads:net._http_response · pre:20260911080000
+--
+-- Already applied to prod · via MCP 2026-09-24 under operator direction.
 -- ============================================================================
 -- Migration 20260924210000 — seatgeek_orders.created_at_sg: read the field
 --                            SellerDirect actually sends ("created"), backfill
