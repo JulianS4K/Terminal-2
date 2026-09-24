@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260924200848 — Exos (Bridge / D4): audit 2026-09-24 hardening
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos audit; Terminal-2 #1001).
 --                            (quota mapping, transfer race, waitlist self-edit)
 --
 -- Lane:     d4 (exos / bridge ticketing infra)

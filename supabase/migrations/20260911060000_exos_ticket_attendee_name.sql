@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911060000 — Exos (Bridge / D4): attendee name on tickets
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos audit; Terminal-2 #1001).
 --
 -- Lane:     d4 (exos / bridge ticketing — customer-facing session)
 -- Touches:  exos_tickets (W: +attendee_name, CHECK, trigger exos_tickets_attendee_reset),
