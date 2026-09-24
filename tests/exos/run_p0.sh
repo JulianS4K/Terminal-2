@@ -25,7 +25,8 @@ for m in \
   20260911060000_exos_ticket_attendee_name 20260911070000_exos_event_reminders_hardening \
   20260911130000_exos_event_analytics 20260911131000_exos_rsvp_release \
   20260911132000_exos_comp_batch 20260911133000_exos_event_series \
-  20260924205115_exos_p0_refund_ledger 20260924205508_exos_p0_voucher_per_ticket; do
+  20260924205115_exos_p0_refund_ledger 20260924205508_exos_p0_voucher_per_ticket \
+  20260924205916_exos_p0_hold_caps; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"

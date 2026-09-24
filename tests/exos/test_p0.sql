@@ -129,4 +129,68 @@ BEGIN
   RAISE NOTICE 'OK  V5 no offers while the tier is still oversold';
 END $$;
 
+-- ============================================================================
+-- H — cart holds: one live hold per buyer per event, purchase limits, confirmed
+--     email, 30-minute TTL cap (mig 20260924205916)
+-- ============================================================================
+INSERT INTO auth.users(id,email,email_confirmed_at) VALUES
+  ('f0000000-0000-0000-0000-00000000000e','p0unconfirmed@x.com',NULL);
+INSERT INTO public.exos_ticket_tiers(id,event_id,name,price,capacity,sold) VALUES
+  ('f0000000-0000-0000-0000-0000000000d4','f0000000-0000-0000-0000-0000000000e1','Holdable',50,20,0);
+
+DO $$
+DECLARE h1 uuid; h2 uuid; live int; raised boolean; exp timestamptz;
+BEGIN
+  PERFORM set_config('app.uid','f0000000-0000-0000-0000-00000000000b', true);
+  PERFORM set_config('app.jwt','{"email":"p0buyer@x.com"}', true);
+
+  -- H1. A second hold replaces the first instead of stacking.
+  h1 := public.exos_create_hold('f0000000-0000-0000-0000-0000000000e1','f0000000-0000-0000-0000-0000000000d4',2);
+  h2 := public.exos_create_hold('f0000000-0000-0000-0000-0000000000e1','f0000000-0000-0000-0000-0000000000d4',3);
+  SELECT count(*) INTO live FROM public.exos_cart_holds
+   WHERE buyer_uid='f0000000-0000-0000-0000-00000000000b' AND event_id='f0000000-0000-0000-0000-0000000000e1' AND status='active';
+  ASSERT live = 1, format('H1: one live hold per buyer per event, found %s', live);
+  ASSERT (SELECT status FROM public.exos_cart_holds WHERE id=h1) = 'released', 'H1: the earlier hold is released';
+  ASSERT public.exos_tier_available('f0000000-0000-0000-0000-0000000000d4') = 17, 'H1: only the live hold counts (20-3)';
+
+  -- H4. TTL is capped at 30 minutes.
+  h2 := public.exos_create_hold('f0000000-0000-0000-0000-0000000000e1','f0000000-0000-0000-0000-0000000000d4',1,3600);
+  SELECT expires_at INTO exp FROM public.exos_cart_holds WHERE id=h2;
+  ASSERT exp <= now() + interval '30 minutes 5 seconds', 'H4: hold TTL must be capped at 30 minutes';
+
+  -- H3. maxPerAccount counts tickets already held.
+  UPDATE public.exos_events SET purchase_limits = '{"maxPerAccount": 4}'::jsonb
+   WHERE id='f0000000-0000-0000-0000-0000000000e1';
+  INSERT INTO public.exos_tickets(event_id,org_id,tier_id,buyer_id,owner_id,status,barcode_secret)
+    SELECT 'f0000000-0000-0000-0000-0000000000e1','f0000000-0000-0000-0000-000000000001','f0000000-0000-0000-0000-0000000000d4',
+           'f0000000-0000-0000-0000-00000000000b','f0000000-0000-0000-0000-00000000000b','active',gen_random_uuid()::text
+      FROM generate_series(1,3);
+  raised := false;
+  BEGIN
+    PERFORM public.exos_create_hold('f0000000-0000-0000-0000-0000000000e1','f0000000-0000-0000-0000-0000000000d4',2);
+  EXCEPTION WHEN check_violation THEN raised := true;
+  END;
+  ASSERT raised, 'H3: holding 2 with 3 already owned must exceed maxPerAccount 4';
+  UPDATE public.exos_events SET purchase_limits = NULL WHERE id='f0000000-0000-0000-0000-0000000000e1';
+
+  -- H2. An unconfirmed account can't hold seats.
+  PERFORM set_config('app.uid','f0000000-0000-0000-0000-00000000000e', true);
+  PERFORM set_config('app.jwt','{"email":"p0unconfirmed@x.com"}', true);
+  raised := false;
+  BEGIN
+    PERFORM public.exos_create_hold('f0000000-0000-0000-0000-0000000000e1','f0000000-0000-0000-0000-0000000000d4',1);
+  EXCEPTION WHEN insufficient_privilege THEN raised := true;
+  END;
+  ASSERT raised, 'H2: an unconfirmed email must not reserve seats';
+  RAISE NOTICE 'OK  H1-H4 holds: one per buyer/event, limits, confirmed email, 30-min TTL';
+END $$;
+
+-- H5. authenticated can no longer probe another buyer's ticket count.
+DO $$
+BEGIN
+  ASSERT NOT has_function_privilege('authenticated','public.exos_assert_purchase_limit(uuid,uuid,int)','EXECUTE'),
+         'H5: exos_assert_purchase_limit must not be callable by authenticated';
+  RAISE NOTICE 'OK  H5 purchase-limit probe revoked';
+END $$;
+
 SELECT '*** EXOS P0 TESTS PASSED ***';
