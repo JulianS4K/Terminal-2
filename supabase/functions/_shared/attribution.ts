@@ -17,9 +17,12 @@ export interface Attribution {
   utm_content?: string;
   fbclid?: string;
   cart_origin?: "facebook" | "instagram" | "meta_shops";
+  /** A fan's referral code (?ref=, mig 20260924234500). */
+  ref?: string;
 }
 
 const PROMOTER_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const REF_RE = /^[a-z0-9]{10}$/;
 const CART_ORIGINS = new Set(["facebook", "instagram", "meta_shops"]);
 const TAG_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_content"] as const;
 
@@ -52,7 +55,13 @@ export function readAttribution(get: (key: string) => unknown): Attribution {
   if (fbclid) out.fbclid = fbclid;
   const origin = get("cart_origin");
   if (typeof origin === "string" && CART_ORIGINS.has(origin)) out.cart_origin = origin as Attribution["cart_origin"];
+  const ref = get("ref");
+  if (typeof ref === "string" && REF_RE.test(ref)) out.ref = ref;
   return out;
+}
+
+export function sanitizeRef(v: unknown): string | undefined {
+  return typeof v === "string" && REF_RE.test(v) ? v : undefined;
 }
 
 export function isEmptyAttribution(a: Attribution): boolean {
