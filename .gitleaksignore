@@ -74,8 +74,6 @@ static/bridge/assets/index-CE2Uoz8P.js:jwt:96
 static/bridge/assets/index-DSCN77-b.js:jwt:96
 
 # --- Low-entropy false positives (not credentials) ---
-# localStorage key NAME for the marketing-consent flag, not a secret value.
-d4_bridge/src/lib/consent.ts:generic-api-key:13
 # Alert rule identifier string `tevo_inventory_low_48h`, not a credential.
 supabase/migrations/20260510060000_dashboard_signal_health_fixes.sql:generic-api-key:89
 # Code comment ("// Auth: … Manual-invocation"), no secret value.
