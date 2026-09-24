@@ -8,6 +8,7 @@
 // Required secrets: STRIPE_SECRET_KEY, SUPABASE_URL, SUPABASE_ANON_KEY,
 // SUPABASE_SERVICE_ROLE_KEY, EXOS_REDIRECT_ORIGINS (origins success/cancel URLs
 // may point at; see _shared/redirects.ts). Optional: EXOS_PLATFORM_FEE_BPS (default 500 = 5%).
+// Needs mig 20260924223000 (promoter_id / attribution columns) applied first.
 //
 // TODO(operator) before go-live: confirm the application-fee model/%, the
 // charge model (destination vs direct), and that 'standard' Connect accounts
@@ -17,6 +18,7 @@ import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { allInCents, effectiveTierPrice } from "../_shared/pricing.ts";
 import { isAllowedRedirect, parseRedirectOrigins } from "../_shared/redirects.ts";
+import { isEmptyAttribution, readAttribution } from "../_shared/attribution.ts";
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
@@ -39,12 +41,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     success_url?: string; cancel_url?: string;
     addons?: { addon_id?: string; quantity?: number }[];
     voucher_code?: string;
+    // Promoter code + UTM / fbclid / cart_origin from the landing URL.
+    attribution?: Record<string, unknown>;
   };
   try { p = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const { event_id, tier_id, success_url, cancel_url } = p;
   const quantity = p.quantity ?? 1;
   const addonReq = Array.isArray(p.addons) ? p.addons : [];
   const voucherCode = (p.voucher_code ?? "").trim();
+  const attrIn = p.attribution && typeof p.attribution === "object" ? p.attribution : {};
+  const attribution = readAttribution((k) => (attrIn as Record<string, unknown>)[k]);
+  const { promoter: promoterId, ...campaignTags } = attribution;
   if (!event_id || !tier_id || !success_url || !cancel_url) {
     return json({ error: "missing event_id / tier_id / success_url / cancel_url" }, 400);
   }
@@ -288,7 +295,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // their seats went back to the pool and trigger a refund.
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
       customer_email: user.email ?? undefined,
-      metadata: { exos_event_id: event_id, exos_tier_id: tier_id, exos_buyer_uid: user.id },
+      metadata: { exos_event_id: event_id, exos_tier_id: tier_id, exos_buyer_uid: user.id, exos_promoter: promoterId ?? "" },
     });
   } catch (e) {
     console.error("exos-checkout: stripe session create failed", e);
@@ -304,6 +311,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     addons: addonsForSession.length > 0 ? addonsForSession : null,
     voucher_id: voucherId,
     tax_cents: recordedTax > 0 ? recordedTax : null,
+    promoter_id: promoterId ?? null,
+    attribution: isEmptyAttribution(campaignTags) ? null : campaignTags,
   });
   if (insErr) {
     console.error("exos-checkout: ledger insert failed", insErr);
