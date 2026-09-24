@@ -949,3 +949,36 @@ def test_watchdog_status_route_returns_last_tick(client):
     body = r.json()
     assert body["wedged"] is False
     assert body["killed"] == 0
+
+
+# ---- Exos /bridge CSP (D4-OPS-36) ----------------------------------------
+
+def test_bridge_csp_public_page_allows_fonts_stripe_pixels_maps(client):
+    r = client.get("/bridge/event/abc", follow_redirects=False)
+    csp = r.headers["Content-Security-Policy"]
+    assert "https://fonts.googleapis.com" in csp and "font-src 'self' https://fonts.gstatic.com" in csp
+    assert "https://js.stripe.com" in csp
+    assert "https://connect.facebook.net" in csp and "https://www.googletagmanager.com" in csp
+    assert "frame-src https://js.stripe.com https://hooks.stripe.com https://www.google.com" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert r.headers["X-Frame-Options"] == "DENY"
+
+
+def test_bridge_csp_scanner_has_no_pixel_hosts(client):
+    for path in ("/bridge/checkin/abc", "/bridge/my-tickets", "/bridge/dashboard"):
+        csp = client.get(path, follow_redirects=False).headers["Content-Security-Policy"]
+        assert "connect.facebook.net" not in csp, path
+        assert "analytics.tiktok.com" not in csp, path
+        assert "frame-ancestors 'none'" in csp, path
+
+
+def test_bridge_embed_is_frameable(client):
+    r = client.get("/bridge/embed/event/abc", follow_redirects=False)
+    assert "frame-ancestors *" in r.headers["Content-Security-Policy"]
+    assert "X-Frame-Options" not in r.headers
+
+
+def test_retail_csp_unchanged_outside_bridge(client):
+    csp = client.get("/version.json").headers["Content-Security-Policy"]
+    assert "frame-ancestors 'none'" in csp
+    assert "fonts.googleapis.com" not in csp and "connect.facebook.net" not in csp
