@@ -1,7 +1,7 @@
 name: tests
 
 # CI gate — runs on every PR + push to main.
-# Jobs: pytest (backend) · typescript (D4 bridge type-check + build) · mypy (Python types)
+# Jobs: pytest (backend) · mypy (Python types)
 #       · frontend-smoke (Playwright) · exos-sql (Exos SQL migrations + lifecycle)
 #
 # A1 must NOT merge to main until all jobs are green.
@@ -9,6 +9,8 @@ name: tests
 #
 # Added 2026-05-15 (pytest). TypeScript + mypy added 2026-05-26.
 # exos-sql added 2026-07-02 (D4 ticket lifecycle can't regress silently).
+# typescript (D4 bridge) removed 2026-09-24 — the SPA source moved to JulianS4K/EXP,
+# whose own CI runs typecheck + vitest + build.
 
 on:
   pull_request:
@@ -123,41 +125,6 @@ jobs:
             --pretty \
             || true
           echo "mypy complete (warn-only)"
-
-  typescript:
-    name: TypeScript (D4 bridge)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: d4_bridge
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: d4_bridge/package-lock.json
-
-      - name: Install deps
-        run: npm ci
-
-      - name: Type check (tsc --noEmit)
-        run: npm run lint
-
-      - name: Unit tests (vitest)
-        # Pure-logic lib coverage (pricing, artistLinks, calendar, …). Runs in
-        # the same job so it shares the npm ci install; node env, no browser.
-        run: npm test
-
-      - name: Build (Vite)
-        # Validates no missing imports / dead references. Uses placeholder
-        # Supabase keys — the build succeeds without a live connection.
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
-        run: npm run build
 
   frontend-smoke:
     name: Frontend smoke (Playwright)

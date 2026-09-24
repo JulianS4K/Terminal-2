@@ -83,7 +83,7 @@ A green PR on `main` protects nothing until two separate steps happen.
 
 ## 4. On-sale watch
 
-- [ ] **Single replica during on-sale.** `d4_bridge/server.ts` uses an in-memory
+- [ ] **Single replica during on-sale.** `server.ts` (JulianS4K/EXP) uses an in-memory
       per-process rate limiter; scaling out silently removes the limit until a
       Redis-backed limiter lands.
 - [ ] **Oversell via bypass vouchers.** `bypass_capacity` vouchers (waitlist
