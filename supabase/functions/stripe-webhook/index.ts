@@ -18,8 +18,14 @@
 //                       partially_refunded) but does NOT void the whole order —
 //                       which tickets to cancel is an operator decision, not
 //                       derivable from a Stripe amount.
-//   charge.dispute.created -> void the order's tickets (a charged-back buyer must
-//                             not keep valid entry) + record.
+//   charge.dispute.created / .updated -> exos_record_dispute() only: the
+//                       dispute's state lands on the session (dispute_*) and the
+//                       payment row's meta. A dispute is NOT a refund — tickets
+//                       stay valid and the session keeps its status while it's
+//                       open (most disputes are won or withdrawn).
+//   charge.dispute.closed -> record; if the dispute was LOST the money is gone,
+//                       so treat it like a full refund (exos_refund_checkout
+//                       voids the tickets). Won / warning_closed: record only.
 //   account.updated  -> exos_record_org_stripe() (Connect onboarding status).
 //
 // Idempotency: fulfillment (session status gate), refund recording (unique
@@ -42,6 +48,7 @@
 
 import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { autoRefundIdempotencyKey, autoRefundParams, ledgerRefundStatus } from "../_shared/auto-refund.ts";
 
 const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") ?? "";
 const stripe = new Stripe(stripeKey, {
@@ -118,25 +125,17 @@ async function fulfillSettledSession(
     if (sess?.status === "failed") {
       let refund: Stripe.Refund;
       try {
+        // Same key + params as the reconcile sweep (_shared/auto-refund.ts), so
+        // the two can never both refund one session.
         refund = await stripe.refunds.create(
-          {
-            payment_intent: pi,
-            reason: "requested_by_customer",
-            // Destination charge: pull the funds back from the connected account
-            // and return our fee, otherwise the platform balance pays the refund.
-            reverse_transfer: true,
-            refund_application_fee: true,
-            metadata: { exos_session_id: session.id, exos_auto: "fulfillment_failed" },
-          },
-          { idempotencyKey: `exos_autorefund_${session.id}` },
+          autoRefundParams(pi, session.id),
+          { idempotencyKey: autoRefundIdempotencyKey(session.id) },
         );
       } catch (e) {
         // Couldn't reach Stripe — 500 so we retry rather than drop the refund.
         throw new Error(`auto-refund create failed for ${session.id}: ${(e as Error).message}`);
       }
-      const refundStatus = ["pending", "succeeded", "failed", "canceled"].includes(refund.status ?? "")
-        ? refund.status
-        : "pending";
+      const refundStatus = ledgerRefundStatus(refund.status);
       // The Stripe refund is idempotency-keyed, so a 500 + retry is safe.
       const { error: rfErr } = await sb.rpc("exos_record_refund", {
         p_session_id: session.id,
@@ -335,10 +334,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
         break;
       }
 
-      // Chargeback opened: the money is being clawed back, so the tickets must not
-      // stay valid for entry. Void the order (idempotent). Mapping via the PI,
-      // same as refunds.
-      case "charge.dispute.created": {
+      // Disputes (chargebacks). Opening or updating one is recorded, not acted
+      // on: voiding on open used to mark the order 'refunded' and nothing put
+      // the tickets back when the organizer won. Only a LOST dispute is treated
+      // like a refund. Every step is idempotent (the record keeps a closed state
+      // final; the void only touches still-active tickets), so retries are safe.
+      case "charge.dispute.created":
+      case "charge.dispute.updated":
+      case "charge.dispute.closed": {
         const dispute = event.data.object as Stripe.Dispute;
         const pi = typeof dispute.payment_intent === "string"
           ? dispute.payment_intent
@@ -349,13 +352,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
           console.error(`stripe-webhook: dispute — no session for PI ${pi}`);
           break;
         }
-        const { error } = await sb.rpc("exos_refund_checkout", {
+        const { data: stored, error: dErr } = await sb.rpc("exos_record_dispute", {
           p_session_id: sessionId,
-          p_reason: `chargeback dispute (${dispute.reason ?? "unknown"})`,
+          p_dispute_id: dispute.id,
+          p_status: dispute.status,
+          p_reason: dispute.reason ?? null,
+          p_amount_cents: dispute.amount ?? null,
+          p_provider_event_id: event.id,
         });
-        if (error) {
-          console.error(`stripe-webhook: dispute void failed for ${sessionId}`, error);
+        if (dErr) {
+          console.error(`stripe-webhook: record_dispute failed for ${sessionId}`, dErr);
           return new Response("dispute handling error", { status: 500 });
+        }
+        // Keyed on the STORED state, so a replay or an out-of-order .updated
+        // carrying "lost" still voids (exos_refund_checkout is idempotent).
+        if (stored === "lost") {
+          const { error } = await sb.rpc("exos_refund_checkout", {
+            p_session_id: sessionId,
+            p_reason: `chargeback lost (${dispute.reason ?? "unknown"})`,
+          });
+          if (error) {
+            console.error(`stripe-webhook: lost-dispute void failed for ${sessionId}`, error);
+            return new Response("dispute handling error", { status: 500 });
+          }
         }
         break;
       }
