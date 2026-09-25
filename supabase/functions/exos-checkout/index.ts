@@ -269,8 +269,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // else swept by the exos_expire_holds cron.
   let holdId: string | null = null;
   if (!bypassCapacity) {
+    // A hidden tier's hold re-checks the voucher (mig 20260925003000). Only
+    // sent when needed, so public tiers work before that migration is applied.
     const { data: hid, error: holdErr } = await sbUser.rpc("exos_create_hold", {
       p_event_id: event_id, p_tier_id: tier_id, p_quantity: quantity,
+      ...(voucherUnlocksTier ? { p_voucher_code: voucherCode } : {}),
     });
     if (holdErr) {
       return json({ error: holdErr.message || "not enough tickets available" }, 409);
