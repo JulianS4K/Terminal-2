@@ -33,6 +33,9 @@
 -- Grants: every new function is service_role only; the rate table has RLS on
 -- and no client grants. Re-run safe. D4 authors; applying to prod is
 -- operator-gated.
+--
+-- APPLIED to prod 2026-09-25 (operator-approved). Every function it creates or
+-- patches was verified by md5 against a copy of prod's schema with it applied.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------

@@ -81,16 +81,21 @@ BEGIN
     ('f7000000-0000-0000-0000-0000000000f1',e1,'P1RES',NULL,5,0,false,'p1hold@x.com',NULL),
     ('f7000000-0000-0000-0000-0000000000f2',e1,'P1EXP',NULL,5,0,false,NULL,now() - interval '1 minute'),
     ('f7000000-0000-0000-0000-0000000000f3',e1,'P1TIER','f7000000-0000-0000-0000-0000000000d2',5,0,false,NULL,NULL),
-    ('f7000000-0000-0000-0000-0000000000f4',e1,'P1OK',NULL,5,0,false,'p1hold@x.com',now() + interval '1 day');
+    ('f7000000-0000-0000-0000-0000000000f4',e1,'P1OK',NULL,5,0,false,'p1hold@x.com',now() + interval '1 day'),
+    ('f7000000-0000-0000-0000-0000000000f5',e1,'P1GRACE',NULL,5,0,false,NULL,now() - interval '1 minute');
   INSERT INTO public.exos_checkout_sessions(session_id,event_id,tier_id,org_id,buyer_uid,buyer_email,quantity,amount_cents,status,voucher_id) VALUES
     ('p1-cs1',e1,'f7000000-0000-0000-0000-0000000000d1',org,'f7000000-0000-0000-0000-0000000000a4','other@x.com',1,2500,'pending','f7000000-0000-0000-0000-0000000000f1'),
     ('p1-cs2',e1,'f7000000-0000-0000-0000-0000000000d1',org,'f7000000-0000-0000-0000-0000000000a4','p1hold@x.com',1,2500,'pending','f7000000-0000-0000-0000-0000000000f2'),
     ('p1-cs3',e1,'f7000000-0000-0000-0000-0000000000d1',org,'f7000000-0000-0000-0000-0000000000a4','p1hold@x.com',1,2500,'pending','f7000000-0000-0000-0000-0000000000f3'),
     ('p1-cs4',e1,'f7000000-0000-0000-0000-0000000000d1',org,'f7000000-0000-0000-0000-0000000000a4','p1hold@x.com',1,2500,'pending','f7000000-0000-0000-0000-0000000000f4');
+  -- Checkout started 10 minutes ago, while the voucher was still valid: honoured.
+  INSERT INTO public.exos_checkout_sessions(session_id,event_id,tier_id,org_id,buyer_uid,buyer_email,quantity,amount_cents,status,voucher_id,created_at) VALUES
+    ('p1-cs5',e1,'f7000000-0000-0000-0000-0000000000d1',org,'f7000000-0000-0000-0000-0000000000a4','p1hold@x.com',1,2500,'pending','f7000000-0000-0000-0000-0000000000f5',now() - interval '10 minutes');
   ASSERT public.exos_fulfill_checkout('p1-cs1') = '{}'::uuid[], 'P2: reserved for another email';
   ASSERT public.exos_fulfill_checkout('p1-cs2') = '{}'::uuid[], 'P2: expired';
   ASSERT public.exos_fulfill_checkout('p1-cs3') = '{}'::uuid[], 'P2: other tier';
   ASSERT array_length(public.exos_fulfill_checkout('p1-cs4'), 1) = 1, 'P2: valid voucher fulfills';
+  ASSERT array_length(public.exos_fulfill_checkout('p1-cs5'), 1) = 1, 'P2: voucher that expired mid-payment is honoured';
   ASSERT (SELECT count(*) FROM public.exos_checkout_sessions WHERE session_id IN ('p1-cs1','p1-cs2','p1-cs3')
            AND status = 'failed' AND failure_reason LIKE 'voucher%') = 3, 'P2: failed with the voucher reason';
   ASSERT (SELECT sum(used_count) FROM public.exos_vouchers WHERE id IN ('f7000000-0000-0000-0000-0000000000f1',

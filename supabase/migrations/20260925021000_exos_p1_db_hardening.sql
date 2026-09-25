@@ -29,9 +29,12 @@
 --     barcode (T- prefix or ':' segments) must pass the HMAC check whatever the
 --     source, and the logged verification is derived server-side ('verified'
 --     only when the HMAC checked out, else 'manual'), never the client's word.
---  3. Fulfillment re-validates the session's voucher (still exists, not
---     expired, reserved email and tier still match) before consuming it; a
---     miss takes the all-or-nothing XF001 path (order failed, refund mail).
+--  3. Fulfillment re-validates the session's voucher (still exists, reserved
+--     email and tier still match, and it was not expired when checkout
+--     started) before consuming it; a miss takes the all-or-nothing XF001
+--     path (order failed, refund mail). Operator decision 2026-09-25: a
+--     voucher that expires while the buyer is paying is honoured (the
+--     30-minute Stripe session bounds the grace).
 --  4. Comps: exos_issue_ticket_to_email no longer tells the caller whether an
 --     email has an account (no account → claim-by-email transfer, like the
 --     batch), and the batch reports 'issued' for both. The comp budget is now
@@ -50,6 +53,9 @@
 --
 -- Every patch asserts one match and is skipped once applied (re-run safe).
 -- D4 authors; applying to prod is operator-gated.
+--
+-- APPLIED to prod 2026-09-25 (operator-approved). Every function it creates or
+-- patches was verified by md5 against a copy of prod's schema with it applied.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION pg_temp.exos_patch(p_sig text, p_marker text, p_old text, p_new text)
@@ -171,7 +177,7 @@ SELECT pg_temp.exos_patch('public.exos_fulfill_checkout(text)',
       IF NOT EXISTS (
            SELECT 1 FROM public.exos_vouchers v
             WHERE v.id = s.voucher_id AND v.event_id = s.event_id
-              AND (v.valid_until IS NULL OR v.valid_until >= now())
+              AND (v.valid_until IS NULL OR v.valid_until >= coalesce(s.created_at, now()))
               AND (v.reserved_email IS NULL
                    OR lower(btrim(v.reserved_email)) = lower(btrim(coalesce(s.buyer_email, ''))))
               AND (v.tier_id IS NULL OR v.tier_id = s.tier_id)) THEN
