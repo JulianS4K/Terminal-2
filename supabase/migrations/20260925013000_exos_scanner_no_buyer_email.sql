@@ -21,6 +21,10 @@
 -- src/lib/tickets.ts reading emails through the view is deployed.
 --
 -- Re-run safe. D4 authors; applying to prod is operator-gated.
+--
+-- APPLIED to prod 2026-09-25 (operator-approved, after confirming /bridge serves
+-- index-D558mQYL.js). Verified: authenticated has no SELECT on buyer_email;
+-- the view is authenticated-only, and the org owner sees all 33 emails via it.
 -- ============================================================================
 
 CREATE OR REPLACE VIEW public.exos_ticket_buyer_emails
