@@ -13,6 +13,15 @@
     <meta name="theme-color" content="#0A0A0A" />
     <meta name="color-scheme" content="dark light" />
     <meta name="application-name" content="Exos" />
+    <!--
+      SSR_META block: for link-unfurl bots (which don't run JS), Terminal-2
+      replaces everything between these markers with the event's / org's own
+      title, description, Open Graph, Twitter and JSON-LD tags
+      (Terminal-2 core/exos_seo.py). Keep the markers, and keep every tag that
+      a per-page preview should override inside them.
+    -->
+    <!-- SSR_META_START -->
+    <title>Exos | Live the Moment</title>
     <meta name="description" content="Bridge — independent venue ticketing with multi-channel distribution." />
 
     <!--
@@ -41,6 +50,7 @@
     <meta name="twitter:title" content="Exos | Live the Moment" />
     <meta name="twitter:description" content="Bridge — independent venue ticketing with multi-channel distribution." />
     <meta name="twitter:image" content="/bridge/icon-512.png" />
+    <!-- SSR_META_END -->
 
     <!--
       iOS PWA support. Safari ignores most of the manifest, so we
@@ -68,8 +78,6 @@
     <link rel="manifest" href="/bridge/manifest.json" />
     <link rel="icon" href="/bridge/icon.svg" type="image/svg+xml" />
     <link rel="mask-icon" href="/bridge/icon.svg" color="#FFE714" />
-
-    <title>Exos | Live the Moment</title>
 
     <!--
       First-paint splash. React clears #root's contents on mount, so this
@@ -108,16 +116,21 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/bridge/assets/index-5Cz-NrNG.js"></script>
+    <script type="module" crossorigin src="/bridge/assets/index-D558mQYL.js"></script>
     <link rel="modulepreload" crossorigin href="/bridge/assets/rolldown-runtime-Cyuzqnbw.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/qr-6Jh8xKZF.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/jsx-runtime-C8pkgk4b.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/auth-Lqbh8TOt.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/arrow-left-Cl2IqHl6.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/chunk-QUQL4437-YecmaLjy.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/supabase-CO8K3EKW.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/motion-gVt-Xe65.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/jsx-runtime-BH1R-mb2.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/proxy-BFS60DcH.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/createLucideIcon-yZIjZNTn.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/arrow-left-E1SflbTJ.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/loader-circle-DnBJNrE6.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/auth-Ju5b3lnT.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/timestamp-BGXidqJ_.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/utils-Cj4XTVoG.js">
-    <link rel="stylesheet" crossorigin href="/bridge/assets/index-CIjg22eR.css">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/utils-D9tWZk4e.js">
+    <link rel="stylesheet" crossorigin href="/bridge/assets/index-C1p8JPy4.css">
   </head>
   <body>
     <div id="root">
