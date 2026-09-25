@@ -12,9 +12,9 @@ INSERT INTO public.exos_org_memberships(org_id,user_id,role)
   WHERE NOT EXISTS (SELECT 1 FROM public.exos_org_memberships
                      WHERE org_id='f1000000-0000-0000-0000-000000000001' AND user_id='f1000000-0000-0000-0000-00000000000b');
 -- Another promoter's sale on the same event, to prove kits don't mix.
-INSERT INTO public.exos_tickets(event_id,org_id,tier_id,buyer_id,owner_id,status,price_paid,order_ref,promoter_id)
+INSERT INTO public.exos_tickets(event_id,org_id,tier_id,buyer_id,owner_id,status,price_paid,order_ref,promoter_id,barcode_secret)
   VALUES ('f1000000-0000-0000-0000-0000000000e1','f1000000-0000-0000-0000-000000000001','f1000000-0000-0000-0000-0000000000d9',
-          'f1000000-0000-0000-0000-00000000000b','f1000000-0000-0000-0000-00000000000b','active',35,'f1-other','mo-b');
+          'f1000000-0000-0000-0000-00000000000b','f1000000-0000-0000-0000-00000000000b','active',35,'f1-other','mo-b','test-secret');
 
 -- R1. Only owners / managers create promoters.
 SELECT set_config('app.uid','f1000000-0000-0000-0000-0000000000cc',false);

@@ -190,6 +190,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
+  // Events from the connected-accounts endpoint (event.account set) are only
+  // trusted for account.updated. Our checkout sessions are platform objects,
+  // so a connected account's own checkout/charge events aren't ours: handling
+  // them would 500 on an unknown session and make Stripe retry (and
+  // eventually disable) the endpoint that carries account.updated.
+  if (event.account && event.type !== "account.updated") {
+    return new Response(JSON.stringify({ received: true, ignored: "connected-account event" }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   try {
     switch (event.type) {
       // Card checkout AND delayed/async methods (ACH/SEPA/etc.) that settle later
@@ -235,6 +246,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const acct = event.data.object as Stripe.Account;
         const orgId = acct.metadata?.exos_org_id;
         if (orgId) {
+          // Only update the account already on file for that org (onboarding
+          // stores it when it creates the account). Metadata alone must never
+          // re-point an org's payouts to a different account.
+          const { data: secrets } = await sb.from("exos_org_secrets").select("payments").eq("org_id", orgId).maybeSingle();
+          const onFile = (secrets?.payments as { connectedAccountId?: string } | null)?.connectedAccountId;
+          if (onFile !== acct.id) {
+            console.error(`stripe-webhook: account.updated for ${acct.id} doesn't match org ${orgId}'s account on file; ignored`);
+            break;
+          }
           const { error } = await sb.rpc("exos_record_org_stripe", {
             p_org_id: orgId,
             p_account_id: acct.id,

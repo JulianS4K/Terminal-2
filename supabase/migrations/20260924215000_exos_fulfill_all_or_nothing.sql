@@ -24,9 +24,18 @@
 -- voucher lifts ticket caps only, not add-on stock.
 --
 -- Same signature, grants and return contract (ticket ids; '{}' on failure).
+-- Re-run safe: skipped once the live body is this one (it contains XF001),
+-- so a replay can't strip what 20260924223000 / 234500 later patch in.
 -- D4 authors; applying to prod is operator-gated.
 -- ============================================================================
 
+DO $outer$
+BEGIN
+  IF position('XF001' in pg_get_functiondef('public.exos_fulfill_checkout(text)'::regprocedure)) > 0 THEN
+    RAISE NOTICE 'exos_fulfill_checkout: all-or-nothing body already applied, skipping';
+    RETURN;
+  END IF;
+  EXECUTE $fn$
 CREATE OR REPLACE FUNCTION public.exos_fulfill_checkout(p_session_id text)
 RETURNS uuid[]
 LANGUAGE plpgsql SECURITY DEFINER
@@ -184,6 +193,8 @@ BEGIN
   END IF;
 
   RETURN v_ids;
-END $$;
+END $$
+$fn$;
+END $outer$;
 REVOKE ALL ON FUNCTION public.exos_fulfill_checkout(text) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.exos_fulfill_checkout(text) TO service_role;

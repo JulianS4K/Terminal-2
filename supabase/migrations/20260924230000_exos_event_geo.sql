@@ -57,9 +57,14 @@ CREATE OR REPLACE VIEW public.exos_public_event_geo AS
 REVOKE ALL ON public.exos_public_event_geo FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.exos_public_event_geo TO anon, authenticated, service_role;
 
--- Record a geocode result (service role). A failed lookup keeps an existing
--- place_id but drops coordinates, so a map never shows a stale pin for an
--- address that no longer resolves.
+-- Record a geocode result (service role).
+--   * A transient error (Google 5xx, quota, timeout) on the SAME address only
+--     records the error: the pin and its geocoded_at stay, so the next daily
+--     refresh retries and the view's 30-day filter still bounds the cache.
+--     (Dropping the pin here would blank the map for ~25 days until the row
+--     came due again.)
+--   * A new address that fails, or any zero-results answer, clears the
+--     coordinates so the map never shows a pin for the old place.
 CREATE OR REPLACE FUNCTION public.exos_upsert_event_geo(
   p_event_id uuid,
   p_query text,
@@ -76,6 +81,12 @@ AS $$
 BEGIN
   IF current_user NOT IN ('service_role', 'postgres', 'supabase_admin') THEN
     RAISE EXCEPTION 'exos_upsert_event_geo: service role only' USING ERRCODE = '42501';
+  END IF;
+  IF p_status = 'error' THEN
+    UPDATE public.exos_event_geo
+       SET error = left(p_error, 500), updated_at = now()
+     WHERE event_id = p_event_id AND query = left(p_query, 500);
+    IF FOUND THEN RETURN; END IF;
   END IF;
   INSERT INTO public.exos_event_geo AS g
     (event_id, query, status, place_id, lat, lng, formatted_address, error, geocoded_at, updated_at)

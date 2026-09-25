@@ -55,7 +55,8 @@ DECLARE
   v_val_new text := 'p_session_id, ''stripe'', s.promoter_id' || chr(10);
   v_hits int;
 BEGIN
-  IF position(v_val_new in v_def) > 0 THEN
+  -- Stable marker (234500 later changes the line end, so match the column).
+  IF position('s.promoter_id' in v_def) > 0 THEN
     RETURN;   -- already patched
   END IF;
   IF position('SQLSTATE ''XF001''' in v_def) = 0 THEN

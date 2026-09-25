@@ -15,7 +15,7 @@
 // are the right type.
 
 import Stripe from "https://esm.sh/stripe@16?target=deno";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { allInCents, effectiveTierPrice } from "../_shared/pricing.ts";
 import { isAllowedRedirect, parseRedirectOrigins } from "../_shared/redirects.ts";
 import { isEmptyAttribution, readAttribution } from "../_shared/attribution.ts";
@@ -303,7 +303,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json({ error: "could not create checkout session" }, 502);
   }
 
-  const { error: insErr } = await sb.from("exos_checkout_sessions").insert({
+  const ledgerRow: Record<string, unknown> = {
     session_id: session.id,
     event_id, tier_id, org_id: ev.org_id,
     buyer_uid: user.id, buyer_email: (user.email ?? "").toLowerCase(),
@@ -313,7 +313,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     tax_cents: recordedTax > 0 ? recordedTax : null,
     promoter_id: promoterId ?? null,
     attribution: isEmptyAttribution(campaignTags) ? null : campaignTags,
-  });
+  };
+  let { error: insErr } = await sb.from("exos_checkout_sessions").insert(ledgerRow);
+  // Deployed before mig 20260924223000 (no promoter_id / attribution columns):
+  // record the sale without attribution rather than failing every checkout.
+  if (insErr && (insErr.code === "42703" || insErr.code === "PGRST204")) {
+    console.error("exos-checkout: attribution columns missing (apply 20260924223000); recording without them");
+    delete ledgerRow.promoter_id;
+    delete ledgerRow.attribution;
+    ({ error: insErr } = await sb.from("exos_checkout_sessions").insert(ledgerRow));
+  }
   if (insErr) {
     console.error("exos-checkout: ledger insert failed", insErr);
     await releaseHold(sb, holdId);
@@ -335,7 +344,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
 // Best-effort release of a reservation when checkout can't complete (Stripe
 // error, ledger insert failure). Never throws — a stuck hold self-expires via
 // the exos_expire_holds cron regardless.
-async function releaseHold(sb: ReturnType<typeof createClient>, holdId: string | null): Promise<void> {
+// deno-lint-ignore no-explicit-any
+async function releaseHold(sb: SupabaseClient<any, any, any>, holdId: string | null): Promise<void> {
   if (!holdId) return;
   try {
     await sb.from("exos_cart_holds")

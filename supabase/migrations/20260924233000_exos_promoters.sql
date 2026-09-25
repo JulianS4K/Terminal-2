@@ -48,12 +48,25 @@ CREATE INDEX IF NOT EXISTS exos_tickets_promoter_idx ON public.exos_tickets (pro
 ALTER TABLE public.exos_promoters ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.exos_promoters FROM PUBLIC, anon, authenticated;
 GRANT ALL ON public.exos_promoters TO service_role;
--- Org staff read their promoters (kit tokens included: they send the links).
+-- Prod's default privileges also hand new tables to the read-only analytics
+-- roles; kit tokens are bearer secrets, so take that back where they exist.
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['coworker_readonly','analyst_ro'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON public.%s FROM %I', 'exos_promoters', r);
+    END IF;
+  END LOOP;
+END $$;
+-- Org staff who may see promoter sales read their promoters (kit tokens
+-- included: they send the links, and a token opens that promoter's sales, so
+-- the roles match exos_org_promoter_stats).
 GRANT SELECT ON public.exos_promoters TO authenticated;
 DROP POLICY IF EXISTS exos_promoters_staff_read ON public.exos_promoters;
 CREATE POLICY exos_promoters_staff_read ON public.exos_promoters
   FOR SELECT TO authenticated
-  USING (public.exos_has_org_role(org_id, ARRAY['owner', 'manager', 'finance', 'content']));
+  USING (public.exos_has_org_role(org_id, ARRAY['owner', 'manager', 'finance']));
 
 -- Create or update a promoter (owner / manager). Returns the row id.
 CREATE OR REPLACE FUNCTION public.exos_upsert_promoter(

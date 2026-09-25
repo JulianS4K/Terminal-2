@@ -47,18 +47,18 @@ END $$;
 DO $$
 DECLARE ref text := current_setting('test.ref_a'); n int;
 BEGIN
-  INSERT INTO public.exos_tickets(event_id,org_id,tier_id,buyer_id,owner_id,status,price_paid,order_ref)
+  INSERT INTO public.exos_tickets(event_id,org_id,tier_id,buyer_id,owner_id,status,price_paid,order_ref,barcode_secret)
   VALUES ('f1000000-0000-0000-0000-0000000000e1','f1000000-0000-0000-0000-000000000001','f1000000-0000-0000-0000-0000000000d9',
-          'f1000000-0000-0000-0000-0000000000cc','f1000000-0000-0000-0000-0000000000cc','active',0,'f1-free');
+          'f1000000-0000-0000-0000-0000000000cc','f1000000-0000-0000-0000-0000000000cc','active',0,'f1-free','test-secret');
   PERFORM set_config('app.uid','f1000000-0000-0000-0000-0000000000cc',false);
   n := public.exos_attach_referral('f1-free', ref);
   ASSERT n = 1, 'F3: free claim credited, got ' || n;
   ASSERT public.exos_attach_referral('f1-free', ref) = 0, 'F3: only once';
   ASSERT public.exos_attach_referral('f1-r1', 'zzzzzzzzzz') = 0, 'F3: unknown code does nothing';
   -- A's code is for e1; it can't credit a ticket to another event.
-  INSERT INTO public.exos_tickets(event_id,org_id,buyer_id,owner_id,status,price_paid,order_ref)
+  INSERT INTO public.exos_tickets(event_id,org_id,buyer_id,owner_id,status,price_paid,order_ref,barcode_secret)
   VALUES ('f1000000-0000-0000-0000-0000000000e2','f1000000-0000-0000-0000-000000000001',
-          'f1000000-0000-0000-0000-0000000000cc','f1000000-0000-0000-0000-0000000000cc','active',0,'f1-free-e2');
+          'f1000000-0000-0000-0000-0000000000cc','f1000000-0000-0000-0000-0000000000cc','active',0,'f1-free-e2','test-secret');
   ASSERT public.exos_attach_referral('f1-free-e2', ref) = 0, 'F3: code is scoped to its event';
   PERFORM set_config('app.uid','f1000000-0000-0000-0000-00000000000b',false);
   ASSERT public.exos_attach_referral('f1-r2', ref) = 0, 'F3: own code never attaches';

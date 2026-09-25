@@ -43,16 +43,27 @@ BEGIN
            WHERE event_id='f1000000-0000-0000-0000-0000000000e2'), 'G3: coords gone, place_id kept';
 END $$;
 
--- G4. A failed re-lookup of the same address keeps the Place ID, drops the pin.
+-- G4. A transient error on the same address keeps the pin (only the error is
+--     recorded); a failing NEW address clears it.
 SET ROLE service_role;
 SELECT public.exos_upsert_event_geo('f1000000-0000-0000-0000-0000000000e1','Elsewhere, 599 Johnson Ave, Brooklyn','error',
   NULL, 1, 1, NULL, 'OVER_QUERY_LIMIT');
 RESET ROLE;
 DO $$
 BEGIN
-  ASSERT (SELECT lat IS NULL AND place_id = 'ChIJelsewhere' AND status = 'error' FROM public.exos_event_geo
-           WHERE event_id='f1000000-0000-0000-0000-0000000000e1'), 'G4: failed lookup keeps place_id, drops coords';
-  RAISE NOTICE 'OK  G4 failed lookup cannot leave a stale pin';
+  ASSERT (SELECT lat = 40.7063 AND status = 'ok' AND error = 'OVER_QUERY_LIMIT' FROM public.exos_event_geo
+           WHERE event_id='f1000000-0000-0000-0000-0000000000e1'), 'G4: transient error keeps the pin';
+  ASSERT EXISTS (SELECT 1 FROM public.exos_public_event_geo WHERE event_id='f1000000-0000-0000-0000-0000000000e1'), 'G4: still on the map';
+END $$;
+SET ROLE service_role;
+SELECT public.exos_upsert_event_geo('f1000000-0000-0000-0000-0000000000e1','New Venue, Queens','error',
+  NULL, NULL, NULL, NULL, 'REQUEST_DENIED');
+RESET ROLE;
+DO $$
+BEGIN
+  ASSERT (SELECT lat IS NULL AND place_id IS NULL AND status = 'error' FROM public.exos_event_geo
+           WHERE event_id='f1000000-0000-0000-0000-0000000000e1'), 'G4: failed new address drops the old pin';
+  RAISE NOTICE 'OK  G4 transient errors keep pins; a new failing address clears them';
 END $$;
 
 -- G5. Buyers can read the view, not the table, and can't write anything.

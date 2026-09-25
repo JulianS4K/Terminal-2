@@ -35,10 +35,24 @@ CREATE TABLE IF NOT EXISTS public.exos_fan_referrals (
 ALTER TABLE public.exos_fan_referrals ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.exos_fan_referrals FROM PUBLIC, anon, authenticated;
 GRANT ALL ON public.exos_fan_referrals TO service_role;
+-- Prod's default privileges also hand new tables to the read-only analytics
+-- roles; referral codes are per-fan identifiers, so take that back where they exist.
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['coworker_readonly','analyst_ro'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON public.%s FROM %I', 'exos_fan_referrals', r);
+    END IF;
+  END LOOP;
+END $$;
 
 ALTER TABLE public.exos_tickets ADD COLUMN IF NOT EXISTS referral_code text
   CHECK (referral_code IS NULL OR referral_code ~ '^[a-z0-9]{10}$');
 CREATE INDEX IF NOT EXISTS exos_tickets_referral_idx ON public.exos_tickets (referral_code) WHERE referral_code IS NOT NULL;
+-- exos_tickets uses column-level SELECT grants: a new column is unreadable to
+-- clients until granted (same fix as attendee_name in 20260924200848).
+GRANT SELECT (referral_code) ON public.exos_tickets TO authenticated;
 
 -- The caller's code for an event, created on first ask. Needs a ticket.
 CREATE OR REPLACE FUNCTION public.exos_my_referral_code(p_event_id uuid)

@@ -9,8 +9,8 @@
 //                         event's venue; the result is stored (exos_event_geo).
 //                         Skips the API call when the address hasn't changed
 //                         and the stored pin is under 25 days old.
-//   POST { address }   → any org staff member previews an address before
-//                         saving an event. Nothing is stored.
+// (An address-preview mode was removed in review: anyone can create an org
+// and become its owner, so it was an unmetered proxy on our key.)
 //
 // Required secrets: GOOGLE_MAPS_SERVER_KEY (restricted to the Geocoding API),
 // SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY. verify_jwt: true.
@@ -33,22 +33,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { data: { user } } = await sbUser.auth.getUser();
   if (!user) return json({ error: "unauthorized" }, 401);
 
-  let p: { event_id?: unknown; address?: unknown };
+  let p: { event_id?: unknown };
   try { p = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-  // Address preview: staff of at least one org, nothing stored.
-  if (typeof p.address === "string") {
-    const address = p.address.trim().slice(0, 300);
-    if (!address) return json({ error: "address required" }, 400);
-    const { count } = await sb.from("exos_org_memberships").select("org_id", { count: "exact", head: true })
-      .eq("user_id", user.id).in("role", EDIT_ROLES);
-    if (!count) return json({ error: "forbidden" }, 403);
-    return reply(await geocode({ address }, key));
-  }
-
   if (typeof p.event_id !== "string" || !/^[0-9a-f-]{36}$/i.test(p.event_id)) {
-    return json({ error: "event_id or address required" }, 400);
+    return json({ error: "event_id required" }, 400);
   }
   const { data: ev } = await sb.from("exos_events")
     .select("id, org_id, venue_name, venue_location, venue_address")
