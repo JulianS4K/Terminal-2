@@ -263,3 +263,56 @@ def test_router_without_preview_hook_serves_the_shell(tmp_path):
     app.include_router(build_pages_router(str(tmp_path), get_bridge_dir=lambda: str(tmp_path)))
     r = TestClient(app).get(f"/bridge/event/{EV}", headers={"user-agent": "facebookexternalhit/1.1"})
     assert r.status_code == 200 and "<title>Exos</title>" in r.text
+
+
+# ---- /bridge/sitemap.xml ---------------------------------------------------
+
+def test_build_sitemap_lists_upcoming_events_and_orgs():
+    now = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    sb = _FakeSB({
+        "exos_public_events": [
+            {"id": "e-future", "starts_at": "2026-10-03T02:00:00Z", "ends_at": None},
+            {"id": "e-running", "starts_at": "2026-09-20T02:00:00Z", "ends_at": "2026-10-02T00:00:00Z"},
+            {"id": "e-yesterday", "starts_at": "2026-09-30T12:00:00Z", "ends_at": None},
+            {"id": "e-past", "starts_at": "2026-09-01T02:00:00Z", "ends_at": "2026-09-01T06:00:00Z"},
+            {"id": "e-undated", "starts_at": None},
+            {"id": "e-bad-date", "starts_at": "not a date"},
+        ],
+        "exos_public_orgs": [{"slug": "bk-nights"}, {"slug": None}, {"slug": "a&b"}],
+    })
+    xml = exos_seo.build_sitemap(sb, "https://x.example", now)
+    assert xml.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    for keep in ("e-future", "e-running", "e-yesterday", "e-undated", "e-bad-date"):
+        assert f"https://x.example/bridge/event/{keep}</loc>" in xml
+    assert "e-past" not in xml
+    assert "https://x.example/bridge/o/bk-nights</loc>" in xml
+    assert "/bridge/o/a&amp;b</loc>" in xml and xml.count("/bridge/o/") == 2
+    assert exos_seo.build_sitemap(_FakeSB({}), "https://x.example").endswith("</urlset>\n")
+
+
+def test_bridge_sitemap_route(bridge, monkeypatch):
+    monkeypatch.setattr(app_module, "_exos_sitemap", lambda: "<urlset></urlset>")
+    r = bridge.get("/bridge/sitemap.xml")
+    assert r.status_code == 200 and r.text == "<urlset></urlset>"
+    assert r.headers["content-type"].startswith("application/xml")
+    monkeypatch.setattr(app_module, "_exos_sitemap", lambda: None)
+    assert bridge.get("/bridge/sitemap.xml").status_code == 404
+
+
+def test_server_sitemap_guards(monkeypatch):
+    monkeypatch.setattr(app_module, "sb", None)
+    assert app_module._exos_sitemap() is None
+    monkeypatch.setattr(app_module, "sb", _sb())
+    monkeypatch.delenv("EXOS_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    assert app_module._exos_sitemap() is None
+    monkeypatch.setenv("EXOS_PUBLIC_BASE_URL", "https://x.example/")
+    assert f"https://x.example/bridge/event/{EV}</loc>" in app_module._exos_sitemap()
+
+
+def test_router_without_sitemap_hook_404s(tmp_path):
+    from fastapi import FastAPI
+    from routers.pages import build_pages_router
+    app = FastAPI()
+    app.include_router(build_pages_router(str(tmp_path), get_bridge_dir=lambda: str(tmp_path)))
+    assert TestClient(app).get("/bridge/sitemap.xml").status_code == 404

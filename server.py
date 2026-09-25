@@ -797,12 +797,23 @@ def _exos_link_preview(page: str, query: str) -> str | None:
     return build_preview(sb, target, base)
 
 
+def _exos_sitemap() -> str | None:
+    """sitemap.xml for the Exos storefront (D4, core/exos_seo.build_sitemap).
+    None without a Supabase client or a public base URL."""
+    from core.exos_seo import build_sitemap
+    base = (os.environ.get("EXOS_PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if sb is None or not base:
+        return None
+    return build_sitemap(sb, base)
+
+
 app.include_router(build_pages_router(
     STATIC_DIR,
     get_storefront_as_landing=lambda: STOREFRONT_AS_LANDING,
     get_storefront_version=lambda: _STOREFRONT_VERSION,
     get_bridge_dir=lambda: _BRIDGE_DIR,
     get_exos_preview=lambda page, query: _exos_link_preview(page, query),
+    get_exos_sitemap=lambda: _exos_sitemap(),
 ))
 
 

@@ -11,7 +11,7 @@ import os
 from typing import Callable
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 
 def build_pages_router(
@@ -21,6 +21,7 @@ def build_pages_router(
     get_storefront_version: Callable[[], str] = lambda: "dev",
     get_bridge_dir: Callable[[], str],
     get_exos_preview: Callable[[str, str], str | None] | None = None,
+    get_exos_sitemap: Callable[[], str | None] | None = None,
 ) -> APIRouter:
     # get_bridge_dir resolves the test-patched server symbol (app._BRIDGE_DIR)
     # at request time — not captured at mount time — so the route tests'
@@ -199,6 +200,16 @@ def build_pages_router(
         if not os.path.isfile(index_path):
             raise HTTPException(404, "bridge build not present — run `npm run build` in JulianS4K/EXP then copy dist/ → static/bridge/")
         return FileResponse(index_path)
+
+
+    @router.get("/bridge/sitemap.xml", include_in_schema=False)
+    def bridge_sitemap():
+        """Published Exos events + organizer pages for search engines
+        (core/exos_seo.build_sitemap). 404 when there's no data source."""
+        xml = get_exos_sitemap() if get_exos_sitemap is not None else None
+        if not xml:
+            raise HTTPException(404, "not found")
+        return Response(content=xml, media_type="application/xml; charset=utf-8")
 
 
     @router.get("/bridge/{page:path}")

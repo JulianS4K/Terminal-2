@@ -31,6 +31,7 @@ def build_site_essentials_router(storefront_base_url: str) -> APIRouter:
         "Disallow: /store/test\n"
         "Disallow: /store/test/\n"
         f"Sitemap: {storefront_base_url}/sitemap.xml\n"
+        f"Sitemap: {storefront_base_url}/bridge/sitemap.xml\n"
     )
 
     @router.get("/robots.txt", include_in_schema=False)

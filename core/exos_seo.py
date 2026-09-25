@@ -279,3 +279,37 @@ def build_preview(sb, target: tuple[str, str], base_url: str) -> str | None:
     # at the event page, and promoter kits stay out of the index.
     canonical = f"{base_url}/bridge/event/{ev['id']}"
     return event_tags(s, canonical, default_image, noindex=(target[0] == "promoter"))
+
+
+def build_sitemap(sb, base_url: str, now: datetime | None = None) -> str:
+    """sitemap.xml for the Exos storefront: every published event that hasn't
+    ended (or started more than a day ago, when it has no end) plus every
+    organizer page. Reads only the public views, like build_preview."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now.timestamp() - 86400
+
+    def rows(table: str, cols: str) -> list[dict]:
+        res = sb.table(table).select(cols).limit(5000).execute()
+        return list(getattr(res, "data", None) or [])
+
+    def ts(v) -> float | None:
+        if not v:
+            return None
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+
+    urls: list[str] = []
+    for ev in rows("exos_public_events", "id,starts_at,ends_at"):
+        when = ts(ev.get("ends_at")) or ts(ev.get("starts_at"))
+        if when is not None and when < cutoff:
+            continue
+        urls.append(f"{base_url}/bridge/event/{ev['id']}")
+    for org in rows("exos_public_orgs", "slug"):
+        if org.get("slug"):
+            urls.append(f"{base_url}/bridge/o/{org['slug']}")
+    body = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    body += "".join(f"  <url><loc>{html.escape(u)}</loc></url>\n" for u in urls)
+    return body + "</urlset>\n"
+
