@@ -155,7 +155,6 @@ def test_robots_txt_denies_api(client):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/plain")
     assert "/api/" in r.text  # /api/ is disallowed for crawlers
-    assert "/bridge/sitemap.xml" in r.text  # Exos events + organizer pages
 
 
 def test_sitemap_lists_store_entry_points(client):

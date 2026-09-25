@@ -520,74 +520,15 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "form-action 'self'"
     )
 
-    # Exos SPA (/bridge/*, D4; source in JulianS4K/EXP). The retail CSP above
-    # broke three shipped Exos features: Google Fonts (style/font hosts), the
-    # organizer's consent-gated marketing pixels (Meta / GA4 / TikTok script +
-    # beacon hosts), and the venue embed (frame-ancestors 'none'). It also
-    # needs Stripe.js, the Maps Embed iframe, and Supabase realtime (wss).
-    # Pixel hosts are only allowed on public listing pages; the door scanner
-    # and account pages get the same policy minus the pixel vendors (EXP
-    # src/lib/pixels.ts isPixelRoute mirrors this split).
-    _BRIDGE_PIXEL_SCRIPT = (
-        " https://connect.facebook.net https://www.googletagmanager.com"
-        " https://analytics.tiktok.com"
-    )
-    _BRIDGE_PIXEL_CONNECT = (
-        " https://www.facebook.com https://*.google-analytics.com"
-        " https://*.analytics.google.com https://www.googletagmanager.com"
-        " https://analytics.tiktok.com"
-    )
-    _BRIDGE_PIXEL_PREFIXES = (
-        "/bridge/event/", "/bridge/e/", "/bridge/o/", "/bridge/organizer/", "/bridge/embed/event/",
-    )
-    # Google Maps JavaScript API (interactive venue map + /bridge/map), per
-    # Google's allowlist CSP guidance, only on the pages that render a map.
-    # Geocoding never runs in the browser (exos-geocode edge fn).
-    _BRIDGE_MAPS_SCRIPT = " https://*.googleapis.com https://*.gstatic.com https://*.google.com https://*.ggpht.com https://*.googleusercontent.com blob:"
-    _BRIDGE_MAPS_CONNECT = " https://*.googleapis.com https://*.google.com https://*.gstatic.com data: blob:"
-    _BRIDGE_MAPS_PREFIXES = ("/bridge/event/", "/bridge/map")
-
-    @classmethod
-    def _bridge_csp(cls, path: str) -> str:
-        pixels = path in ("/bridge", "/bridge/") or path.startswith(cls._BRIDGE_PIXEL_PREFIXES)
-        maps = path.startswith(cls._BRIDGE_MAPS_PREFIXES)
-        embed = path.startswith("/bridge/embed/")
-        return (
-            "default-src 'self'; "
-            "script-src 'self' https://js.stripe.com"
-            + (cls._BRIDGE_PIXEL_SCRIPT if pixels else "")
-            + (cls._BRIDGE_MAPS_SCRIPT if maps else "") + "; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' data: blob: https:; "
-            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com"
-            + (cls._BRIDGE_PIXEL_CONNECT if pixels else "")
-            + (cls._BRIDGE_MAPS_CONNECT if maps else "") + "; "
-            "frame-src https://js.stripe.com https://hooks.stripe.com https://www.google.com; "
-            + ("worker-src 'self' blob:; " if maps else "worker-src 'self'; ")
-            + "manifest-src 'self'; "
-            # The embed is meant to be framed by any venue's site; nothing else is.
-            + ("frame-ancestors *; " if embed else "frame-ancestors 'none'; ")
-            + "base-uri 'self'; "
-            "form-action 'self'"
-        )
-
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        path = request.url.path
         csp = self._CSP
-        if RECAPTCHA_ENABLED and path.startswith("/store"):
+        if RECAPTCHA_ENABLED and request.url.path.startswith("/store"):
             csp = self._CSP_RECAPTCHA
-        is_bridge = path == "/bridge" or path.startswith("/bridge/")
-        if is_bridge:
-            csp = self._bridge_csp(path)
         response.headers.setdefault("Content-Security-Policy", csp)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        # X-Frame-Options can't express "any origin"; the embed relies on the
-        # CSP frame-ancestors above instead.
-        if not (is_bridge and path.startswith("/bridge/embed/")):
-            response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Frame-Options", "DENY")
         # Permissions-Policy: deny powerful features by default. The Bridge
         # surface (/bridge/*) hosts the organizer door scanner, which needs
         # getUserMedia — without camera=(self) here the browser blocks the
@@ -783,37 +724,11 @@ from routers.pages import build_pages_router  # noqa: E402
 # monkeypatch app._BRIDGE_DIR; the pages router resolves it at request time.
 _BRIDGE_DIR = os.path.join(STATIC_DIR, "bridge")
 
-def _exos_link_preview(page: str, query: str) -> str | None:
-    """Per-event / per-org link-preview tags for Exos /bridge pages (D4,
-    core/exos_seo.py). Reads only the public views. None when there's no
-    Supabase client or nothing to preview."""
-    from core.exos_seo import build_preview, preview_target
-    target = preview_target(page, query)
-    if target is None or sb is None:
-        return None
-    base = (os.environ.get("EXOS_PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
-    if not base:
-        return None
-    return build_preview(sb, target, base)
-
-
-def _exos_sitemap() -> str | None:
-    """sitemap.xml for the Exos storefront (D4, core/exos_seo.build_sitemap).
-    None without a Supabase client or a public base URL."""
-    from core.exos_seo import build_sitemap
-    base = (os.environ.get("EXOS_PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
-    if sb is None or not base:
-        return None
-    return build_sitemap(sb, base)
-
-
 app.include_router(build_pages_router(
     STATIC_DIR,
     get_storefront_as_landing=lambda: STOREFRONT_AS_LANDING,
     get_storefront_version=lambda: _STOREFRONT_VERSION,
     get_bridge_dir=lambda: _BRIDGE_DIR,
-    get_exos_preview=lambda page, query: _exos_link_preview(page, query),
-    get_exos_sitemap=lambda: _exos_sitemap(),
 ))
 
 
