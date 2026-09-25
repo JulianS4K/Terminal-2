@@ -11,7 +11,7 @@ import os
 from typing import Callable
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 
 def build_pages_router(
@@ -20,6 +20,8 @@ def build_pages_router(
     get_storefront_as_landing: Callable[[], bool] = lambda: False,
     get_storefront_version: Callable[[], str] = lambda: "dev",
     get_bridge_dir: Callable[[], str],
+    get_exos_preview: Callable[[str, str], str | None] | None = None,
+    get_exos_sitemap: Callable[[], str | None] | None = None,
 ) -> APIRouter:
     # get_bridge_dir resolves the test-patched server symbol (app._BRIDGE_DIR)
     # at request time — not captured at mount time — so the route tests'
@@ -200,8 +202,18 @@ def build_pages_router(
         return FileResponse(index_path)
 
 
+    @router.get("/bridge/sitemap.xml", include_in_schema=False)
+    def bridge_sitemap():
+        """Published Exos events + organizer pages for search engines
+        (core/exos_seo.build_sitemap). 404 when there's no data source."""
+        xml = get_exos_sitemap() if get_exos_sitemap is not None else None
+        if not xml:
+            raise HTTPException(404, "not found")
+        return Response(content=xml, media_type="application/xml; charset=utf-8")
+
+
     @router.get("/bridge/{page:path}")
-    def bridge_static_proxy(page: str):
+    def bridge_static_proxy(page: str, request: Request):
         """Proxy /bridge/<anything> → static/bridge/<anything>. SPA deep links
         (/bridge/event/123 etc.) fall back to index.html for client-side routing.
         Path-traversal guarded + extension-whitelisted (UI bundle pieces only)."""
@@ -224,6 +236,21 @@ def build_pages_router(
         index_path = os.path.join(get_bridge_dir(), "index.html")
         if not os.path.isfile(index_path):
             raise HTTPException(404, "bridge build not present")
+        # Link-unfurl bots don't run JS: give them the event / org preview
+        # server-side (core/exos_seo.py). Humans get the plain shell.
+        if get_exos_preview is not None:
+            from core.seo import is_link_crawler
+            if is_link_crawler(request.headers.get("user-agent")):
+                try:
+                    tags = get_exos_preview(page, request.url.query)
+                except Exception as e:  # noqa: BLE001 — a preview must never break the page
+                    print(f"[bridge] link preview failed for {page!r}: {e!r}")
+                    tags = None
+                if tags:
+                    from core.exos_seo import inject
+                    with open(index_path, encoding="utf-8") as f:
+                        shell = f.read()
+                    return HTMLResponse(inject(shell, tags))
         return FileResponse(index_path)
 
 
