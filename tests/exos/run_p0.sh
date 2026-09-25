@@ -32,7 +32,8 @@ for m in \
   20260924215000_exos_fulfill_all_or_nothing 20260924223000_exos_checkout_attribution \
   20260924230000_exos_event_geo 20260924233000_exos_promoters \
   20260924234500_exos_fan_referrals 20260925000000_exos_voucher_unlocked_tier \
-  20260925001000_exos_event_series_codes_fix 20260925003000_exos_trial_run_fixes; do
+  20260925001000_exos_event_series_codes_fix 20260925003000_exos_trial_run_fixes \
+  20260925010000_exos_trial_run_fixes_2; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"
@@ -45,11 +46,12 @@ psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_fan_refer
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_voucher_tier.sql"
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_event_series_codes.sql"
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_trial_run_fixes.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_trial_run_fixes_2.sql"
 # Replay: every pending migration again, in order, must be a no-op.
 for m in 20260924215000_exos_fulfill_all_or_nothing 20260924223000_exos_checkout_attribution \
   20260924230000_exos_event_geo 20260924233000_exos_promoters 20260924234500_exos_fan_referrals \
   20260925000000_exos_voucher_unlocked_tier 20260925001000_exos_event_series_codes_fix \
-  20260925003000_exos_trial_run_fixes; do
+  20260925003000_exos_trial_run_fixes 20260925010000_exos_trial_run_fixes_2; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_replay_idempotent.sql"
