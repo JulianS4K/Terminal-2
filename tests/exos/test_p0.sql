@@ -109,6 +109,10 @@ DECLARE v uuid; ids uuid[];
 BEGIN
   SELECT voucher_id INTO v FROM public.exos_waitlist WHERE id='f0000000-0000-0000-0000-0000000000a1';
   PERFORM pg_temp.p0_session('p0-v4', 'f0000000-0000-0000-0000-0000000000d2', 2, v);
+  -- The offer voucher is reserved to the waiter; since mig 20260925021000
+  -- fulfillment re-checks that, so the order is the waiter's (as at checkout).
+  UPDATE public.exos_checkout_sessions SET buyer_uid = 'f0000000-0000-0000-0000-00000000000c', buyer_email = 'p0wait1@x.com'
+   WHERE session_id = 'p0-v4';
   ids := public.exos_fulfill_checkout('p0-v4');
   ASSERT array_length(ids,1) = 2, 'V4: the offer buys the 2 reserved seats';
   ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='f0000000-0000-0000-0000-0000000000d2') = 5,

@@ -799,7 +799,9 @@ BEGIN
   ASSERT (SELECT channel_source='comp' AND price_paid=0 AND promoter_id='press' AND order_ref LIKE 'comp:%' FROM public.exos_tickets WHERE id = r.ticket_ids[1]), 'comp ticket shape';
   ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='ticket-issued' AND to_email='buyer@x.com' AND html LIKE '%Evt &lt;Comp&gt;%') = 1, 'ticket-issued mail, escaped';
   SELECT * INTO r FROM f_out WHERE email='new.person@x.com';
-  ASSERT r.outcome = 'invited', 'stranger invited, got '||r.outcome;
+  -- mig 20260925021000 (when applied): the outcome no longer says whether the
+  -- email has an account. run.sh stops before it; run_p0.sh applies it.
+  ASSERT r.outcome = CASE WHEN (position('p1: same outcome' in pg_get_functiondef('public.exos_issue_comp_batch(uuid,uuid,text[],integer,text)'::regprocedure)) > 0) THEN 'issued' ELSE 'invited' END, 'stranger outcome, got '||r.outcome;
   ASSERT (SELECT owner_id FROM public.exos_tickets WHERE id = r.ticket_ids[1]) = '11111111-1111-1111-1111-111111111111', 'stranger ticket parked on caller';
   SELECT pending_transfer_id INTO v_tr FROM public.exos_tickets WHERE id = r.ticket_ids[1];
   ASSERT v_tr IS NOT NULL, 'pending transfer lock set';
@@ -829,7 +831,7 @@ BEGIN
   CREATE TEMP TABLE f_out ON COMMIT DROP AS
   SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1',
     ARRAY['c1@x.com','c2@x.com'], 1, NULL);
-  ASSERT (SELECT count(*) FROM f_out WHERE outcome='invited') = 1 AND (SELECT count(*) FROM f_out WHERE outcome='sold-out') = 1, 'one invited, one sold-out';
+  ASSERT (SELECT count(*) FROM f_out WHERE outcome = CASE WHEN (position('p1: same outcome' in pg_get_functiondef('public.exos_issue_comp_batch(uuid,uuid,text[],integer,text)'::regprocedure)) > 0) THEN 'issued' ELSE 'invited' END) = 1 AND (SELECT count(*) FROM f_out WHERE outcome='sold-out') = 1, 'one issued/invited, one sold-out';
   ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 3, 'tier at cap';
   ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='ffffffff-0000-0000-0000-0000000000e1') = 3, 'house cap undone for the sold-out row';
   ASSERT (SELECT status FROM public.exos_waitlist WHERE email='vipwait@x.com') = 'waiting', 'sold-out undo did NOT auto-offer the tier waiter';
