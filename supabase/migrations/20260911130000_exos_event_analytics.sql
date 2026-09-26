@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911130000 — Exos (Bridge / D4): organizer event analytics RPC
+-- NOT applied to prod on its own: superseded by 20260911131000 (redefines exos_event_analytics in full), applied 2026-09-24.
 --
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  exos_event_analytics(uuid) (new, staff RPC — read-only),

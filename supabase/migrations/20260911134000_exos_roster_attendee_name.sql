@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911134000 — Exos (Bridge / D4): door roster shows the attendee's name
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos audit; Terminal-2 #1001).
 --
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  exos_event_checkin_roster(uuid) (REPLACED — owner_name now

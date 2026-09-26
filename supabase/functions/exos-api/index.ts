@@ -5,6 +5,8 @@
 // matching non-revoked row in exos_api_keys, which yields the org_id every query
 // is then scoped to. Read-only: no endpoint mutates anything.
 //
+// Rate limit: 120 requests per key per minute; over it → 429 with Retry-After.
+//
 // Required secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 //
 // Endpoints (all GET, all scoped to the key's org):
@@ -14,6 +16,8 @@
 //   GET /orders                      → the org's checkout sessions
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const RATE_LIMIT = 120; // requests per key per minute
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
@@ -33,6 +37,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
     .maybeSingle();
   if (!keyRow) return json({ error: "invalid or revoked API key" }, 401);
   const orgId = keyRow.org_id as string;
+
+  // Per-key rate limit: RATE_LIMIT requests per clock minute (fixed window,
+  // exos_api_rate_hit, mig 20260925020000). Over the limit → 429 + Retry-After
+  // (seconds to the next window). If the counter itself errors we let the
+  // request through — the API is read-only and an outage of the limiter
+  // shouldn't take the API down with it.
+  const { data: allowed, error: rlErr } = await sb.rpc("exos_api_rate_hit", {
+    p_key_id: keyRow.id, p_limit: RATE_LIMIT,
+  });
+  if (rlErr) {
+    console.error("exos-api: rate limiter error (allowing request)", rlErr);
+  } else if (allowed === false) {
+    const retryAfter = Math.max(1, 60 - new Date().getUTCSeconds());
+    return json({ error: "rate limit exceeded", limit_per_minute: RATE_LIMIT }, 429, {
+      "retry-after": String(retryAfter),
+    });
+  }
 
   // Best-effort last-used stamp — awaited so it actually lands before the
   // serverless invocation returns (don't fail the request if it doesn't write).
@@ -116,6 +137,6 @@ async function sha256Hex(s: string): Promise<string> {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+function json(body: unknown, status = 200, extra: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...extra } });
 }

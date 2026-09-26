@@ -20,6 +20,10 @@
 //   RESEND_API_KEY              — email provider key (Resend; swap providers by
 //                                 editing sendEmail() below)
 //   EXOS_MAIL_FROM              — verified sender, e.g. "Bridge <tickets@yourdomain>"
+//   EXOS_APP_URL                — the app's public base URL (e.g. https://host/bridge).
+//                                 Fills {{app_url}} in rows that link back into the
+//                                 app (checkout-abandoned); such rows are held back
+//                                 (retried) while it's unset. _shared/mail-render.ts.
 //
 // Cron (operator / A1 — cron.* is operator-gated):
 //   select cron.schedule('exos-mail-drain-2min', '*/2 * * * *', $cron$
@@ -32,6 +36,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { requireCronSecret } from "../_shared/cron-auth.ts";
+import { normalizeAppUrl, renderMail } from "../_shared/mail-render.ts";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
@@ -81,8 +86,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const rows = (batch ?? []) as MailRow[];
   let sent = 0;
   let failed = 0;
+  const appUrl = normalizeAppUrl(Deno.env.get("EXOS_APP_URL"));
+
+  // Unsubscribe targets (mig 20260926060000). Not returned by the claim RPC, so
+  // read them for this batch; best-effort (column may not exist yet).
+  const unsubById = new Map<string, string>();
+  if (rows.length > 0) {
+    const { data: extra, error: exErr } = await sb.from("exos_mail")
+      .select("id, list_unsubscribe").in("id", rows.map((r) => r.id)).not("list_unsubscribe", "is", null);
+    if (exErr) console.error("exos-mail-drain: list_unsubscribe read failed (non-fatal)", exErr.message);
+    for (const e of (extra ?? []) as { id: string; list_unsubscribe: string }[]) unsubById.set(e.id, e.list_unsubscribe);
+  }
 
   for (const row of rows) {
+    const rendered = renderMail(row.html, unsubById.get(row.id), appUrl);
+    if (!rendered.ok) {
+      await sb.rpc("exos_mail_mark", {
+        p_id: row.id, p_ok: false, p_error: rendered.error, p_max_attempts: maxAttempts,
+      });
+      failed++;
+      continue;
+    }
     try {
       const res = await fetch(RESEND_ENDPOINT, {
         method: "POST",
@@ -94,7 +118,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           from,
           to: [row.to_email],
           subject: row.subject,
-          html: row.html,
+          html: rendered.html,
+          ...(Object.keys(rendered.headers).length > 0 ? { headers: rendered.headers } : {}),
         }),
       });
       if (res.ok) {

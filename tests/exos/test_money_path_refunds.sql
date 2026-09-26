@@ -144,4 +144,53 @@ BEGIN
   RAISE NOTICE 'OK  E dispute void invalidates order tickets';
 END $$;
 
+-- ---------------------------------------------------------------------------
+-- F. P0 (mig 20260924205115): partial refunds recorded by id, then the rest.
+--    $20 + $15 on a $50 order must stay 'partially_refunded' with tickets live;
+--    and a session already mis-marked 'refunded' (the pre-fix double count)
+--    must still void its tickets when the full refund arrives.
+-- ---------------------------------------------------------------------------
+INSERT INTO public.exos_checkout_sessions(session_id,event_id,tier_id,org_id,buyer_uid,buyer_email,quantity,amount_cents,status,payment_intent)
+  VALUES ('cs_F','eeee0000-0000-0000-0000-000000000001','dddd0000-0000-0000-0000-000000000001',
+          'aaaa0000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','buyer@x.com',
+          2,5000,'fulfilled','pi_F');
+SELECT pg_temp.mint('cs_F', 2);
+SELECT public.exos_record_payment('cs_F','pi_F',5000,'succeeded');
+SELECT public.exos_record_refund('cs_F','re_F1',2000,'succeeded','pi_F');
+SELECT public.exos_record_refund('cs_F','re_F2',1500,'succeeded','pi_F');
+SELECT public.exos_record_refund('cs_F','re_F2',1500,'succeeded','pi_F');  -- webhook retry
+DO $$
+DECLARE v_status text; v_active int; v_rows int;
+BEGIN
+  SELECT status INTO v_status FROM public.exos_checkout_sessions WHERE session_id='cs_F';
+  SELECT count(*) INTO v_active FROM public.exos_tickets WHERE order_ref='cs_F' AND status='active';
+  SELECT count(*) INTO v_rows FROM public.exos_order_refunds WHERE session_id='cs_F';
+  ASSERT v_status = 'partially_refunded', format('F: $35 of $50 must be partially_refunded, got %s', v_status);
+  ASSERT v_active = 2, 'F: partial refunds must not void tickets';
+  ASSERT v_rows = 2, 'F: a retried refund id must not add a row';
+
+  -- Simulate the pre-fix state: the old NULL-id double count flipped the
+  -- session to 'refunded' while tickets stayed active.
+  UPDATE public.exos_checkout_sessions SET status='refunded' WHERE session_id='cs_F';
+  PERFORM public.exos_record_refund('cs_F','re_F3',1500,'succeeded','pi_F');
+  PERFORM public.exos_refund_checkout('cs_F','stripe refund');
+  SELECT count(*) INTO v_active FROM public.exos_tickets WHERE order_ref='cs_F' AND status='active';
+  ASSERT v_active = 0, 'F: a full refund must void the tickets even if the session was already marked refunded';
+  RAISE NOTICE 'OK  F partial-then-full refund voids (incl. a mis-marked session)';
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- G. A NULL refund id is refused (it can't be deduplicated).
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE raised boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.exos_record_refund('cs_F', NULL, 5000, 'succeeded', 'pi_F');
+  EXCEPTION WHEN raise_exception THEN raised := true;
+  END;
+  ASSERT raised, 'G: exos_record_refund must refuse a NULL refund id';
+  RAISE NOTICE 'OK  G NULL refund id refused';
+END $$;
+
 SELECT '*** money-path refund contracts: ALL ASSERTIONS PASSED ***' AS result;

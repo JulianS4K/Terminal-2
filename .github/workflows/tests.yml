@@ -197,3 +197,12 @@ jobs:
 
       - name: Exos ticket-lifecycle suite (mint/scan/transfer/void/reissue)
         run: bash tests/exos/run_lifecycle.sh exos_lifecycle_test
+
+      - name: Exos audit-hardening suite (quota scope/transfer race/waitlist)
+        run: bash tests/exos/run_audit_hardening.sh exos_audit_hardening_test
+
+      - name: Exos money-path suite (refund ledger + void contracts)
+        run: bash tests/exos/run_money_path.sh exos_money_test
+
+      - name: Exos P0 suite (full checkout chain + vouchers/holds/quota mints)
+        run: bash tests/exos/run_p0.sh exos_p0_test

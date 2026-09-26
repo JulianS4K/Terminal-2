@@ -1,75 +1,107 @@
 // exos-webhook-drain — deliver queued Exos webhooks (Hi.Events parity).
 //
-// Cron-invoked (requireCronSecret). Claims due rows from exos_webhook_deliveries
-// and POSTs each to its webhook URL, signed with the per-hook secret:
-//   X-Exos-Signature: sha256=<hex HMAC-SHA256(secret, rawBody)>
-// Receivers verify the signature to trust the payload. Failures retry with
-// exponential backoff; after MAX_ATTEMPTS the row is marked 'dead'.
+// Cron-invoked (requireCronSecret). CLAIMS due rows via exos_webhook_claim_batch
+// (mig 20260925020000: FOR UPDATE SKIP LOCKED + a lease — status 'sending',
+// attempts+1, a claim_token), so overlapping runs never POST the same delivery
+// twice; a run that dies leaves a lease that is reclaimed after LEASE_MINUTES.
+// Every result write is guarded by the row's claim_token, so a run whose lease
+// was taken over can't overwrite the newer attempt.
 //
-// SSRF guard: https-only, and we resolve the host's A records and refuse any
-// that land in a private / loopback / link-local / metadata range — so an org
-// can't point a webhook at internal infrastructure.
+// Signing (Stripe-style, replay-resistant):
+//   X-Exos-Timestamp: <unix seconds when this attempt was sent>
+//   X-Exos-Signature: sha256=<hex HMAC-SHA256(secret, `${timestamp}.${rawBody}`)>
+//   X-Exos-Delivery:  <delivery id — the same across retries; dedupe on it>
+// Receiver verification recipe:
+//   1. Read the raw request body as bytes/string (before any JSON parsing).
+//   2. expected = hex(HMAC_SHA256(key = webhook secret, msg = ts + "." + body)).
+//   3. Compare to the part after "sha256=" in constant time.
+//   4. Reject if |now - ts| > 300 seconds (replay window).
+//   5. Treat X-Exos-Delivery as an idempotency key (retries resend it).
+// Failures retry with exponential backoff; after MAX_ATTEMPTS the row is 'dead'.
+//
+// SSRF guard (_shared/ssrf.ts): https-only; A + AAAA resolved and refused if any
+// address is non-public; redirects disabled.
 //
 // Required secrets: CRON_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { requireCronSecret } from "../_shared/cron-auth.ts";
+import { urlIsBlocked } from "../_shared/ssrf.ts";
 
 const MAX_ATTEMPTS = 8;
-const BATCH = 50;
+const BATCH = 20;
 const TIMEOUT_MS = 8000;
+// The lease must outlive a whole run: BATCH x TIMEOUT_MS is ~160s, and the run
+// stops starting new sends after RUN_BUDGET_MS, handing unsent rows back.
+const LEASE_MINUTES = 15;
+const RUN_BUDGET_MS = 100_000;
+
+type Claimed = {
+  id: string; webhook_id: string; event_type: string; payload: unknown; attempts: number;
+  claim_token: string; url: string; secret: string; enabled: boolean;
+};
 
 Deno.serve(async (req: Request): Promise<Response> => {
   const authErr = requireCronSecret(req);
   if (authErr) return authErr;
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const started = Date.now();
 
-  const { data: due, error } = await sb
-    .from("exos_webhook_deliveries")
-    .select("id, webhook_id, event_type, payload, attempts, exos_webhooks!inner(url, secret, enabled)")
-    .eq("status", "pending")
-    .lte("next_attempt_at", new Date().toISOString())
-    .order("next_attempt_at", { ascending: true })
-    .limit(BATCH);
+  const { data, error } = await sb.rpc("exos_webhook_claim_batch", {
+    p_limit: BATCH, p_max_attempts: MAX_ATTEMPTS, p_lease_minutes: LEASE_MINUTES,
+  });
   if (error) {
-    console.error("exos-webhook-drain: query failed", error);
-    return json({ error: "query failed" }, 500);
+    console.error("exos-webhook-drain: claim failed", error);
+    return json({ error: "claim failed" }, 500);
   }
+  const claimed = (data ?? []) as Claimed[];
 
-  let delivered = 0, failed = 0, dead = 0, skipped = 0;
+  let delivered = 0, failed = 0, dead = 0, skipped = 0, released = 0;
 
-  for (const row of due ?? []) {
-    const hook = (row as unknown as { exos_webhooks: { url: string; secret: string; enabled: boolean } }).exos_webhooks;
+  // Result writes only land while we still hold the lease.
+  const finish = (row: Claimed, patch: Record<string, unknown>) =>
+    sb.from("exos_webhook_deliveries")
+      .update({ ...patch, claim_token: null })
+      .eq("id", row.id).eq("status", "sending").eq("claim_token", row.claim_token);
+
+  for (const row of claimed) {
+    // Out of time: hand the row back untouched (undo the claim's attempt).
+    if (Date.now() - started > RUN_BUDGET_MS) {
+      await finish(row, { status: "pending", attempts: Math.max(row.attempts - 1, 0) });
+      released++;
+      continue;
+    }
+
     // Disabled mid-flight → drop quietly.
-    if (!hook?.enabled) {
-      await sb.from("exos_webhook_deliveries").update({ status: "dead", last_error: "webhook disabled" }).eq("id", row.id);
+    if (!row.enabled) {
+      await finish(row, { status: "dead", last_error: "webhook disabled" });
       skipped++;
       continue;
     }
 
-    const ssrf = await urlIsBlocked(hook.url);
+    const ssrf = await urlIsBlocked(row.url);
     if (ssrf) {
-      await sb.from("exos_webhook_deliveries")
-        .update({ status: "dead", last_error: `blocked url: ${ssrf}` }).eq("id", row.id);
+      await finish(row, { status: "dead", last_error: `blocked url: ${ssrf}` });
       dead++;
       continue;
     }
 
     const body = JSON.stringify(row.payload);
-    const sig = await hmacHex(hook.secret, body);
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const sig = await hmacHex(row.secret, `${ts}.${body}`);
     let ok = false, code: number | null = null, errText: string | null = null;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
-      const res = await fetch(hook.url, {
+      const res = await fetch(row.url, {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "user-agent": "Exos-Webhooks/1.0",
           "x-exos-event": String(row.event_type),
           "x-exos-delivery": String(row.id),
-          "x-exos-timestamp": new Date().toISOString(),
+          "x-exos-timestamp": ts,
           "x-exos-signature": `sha256=${sig}`,
         },
         body,
@@ -79,113 +111,36 @@ Deno.serve(async (req: Request): Promise<Response> => {
       code = res.status;
       ok = res.status >= 200 && res.status < 300;
       if (!ok) errText = `http ${res.status}`;
+      await res.body?.cancel();
     } catch (e) {
       errText = e instanceof Error ? e.message : "fetch failed";
     } finally {
       clearTimeout(timer);
     }
 
-    const attempts = (row.attempts ?? 0) + 1;
+    // attempts was already incremented by the claim.
     if (ok) {
-      await sb.from("exos_webhook_deliveries").update({
-        status: "delivered", attempts, last_status_code: code,
-        last_error: null, delivered_at: new Date().toISOString(),
-      }).eq("id", row.id);
+      await finish(row, {
+        status: "delivered", last_status_code: code, last_error: null,
+        delivered_at: new Date().toISOString(),
+      });
       delivered++;
-    } else if (attempts >= MAX_ATTEMPTS) {
-      await sb.from("exos_webhook_deliveries").update({
-        status: "dead", attempts, last_status_code: code, last_error: errText,
-      }).eq("id", row.id);
+    } else if (row.attempts >= MAX_ATTEMPTS) {
+      await finish(row, { status: "dead", last_status_code: code, last_error: errText });
       dead++;
     } else {
       // Exponential backoff: ~2^attempts minutes, capped at 6h.
-      const backoffMs = Math.min(2 ** attempts * 60_000, 6 * 3600_000);
-      await sb.from("exos_webhook_deliveries").update({
-        status: "pending", attempts, last_status_code: code, last_error: errText,
+      const backoffMs = Math.min(2 ** row.attempts * 60_000, 6 * 3600_000);
+      await finish(row, {
+        status: "pending", last_status_code: code, last_error: errText,
         next_attempt_at: new Date(Date.now() + backoffMs).toISOString(),
-      }).eq("id", row.id);
+      });
       failed++;
     }
   }
 
-  return json({ processed: (due ?? []).length, delivered, failed, dead, skipped });
+  return json({ processed: claimed.length, delivered, failed, dead, skipped, released });
 });
-
-// Resolve the host and block private / loopback / link-local / metadata targets.
-// Returns a reason string if blocked, else null.
-//
-// Resolves both A and AAAA and blocks if ANY address is private. Residual risk
-// (B1, flagged in mig 20260616200000): this resolves DNS, then fetch() resolves
-// again — a DNS-rebinding host could flip to an internal IP between the two
-// lookups. Fully closing it needs IP-pinned connect (impractical
-// with Deno fetch + TLS SNI). Mitigating factors: webhook URLs are set only by
-// authenticated org owner/manager (not anonymous attackers), redirects are
-// disabled (manual), and literal private IPs + localhost/.local/.internal are
-// blocked outright. Treat as a known low residual pending an allowlist/pinning pass.
-async function urlIsBlocked(rawUrl: string): Promise<string | null> {
-  let u: URL;
-  try { u = new URL(rawUrl); } catch { return "invalid url"; }
-  if (u.protocol !== "https:") return "non-https";
-  // WHATWG URL keeps the brackets on an IPv6 literal hostname (e.g. "[::1]").
-  // Strip them so the literal check below and isPrivateIp() see a bare address —
-  // otherwise "[::1]" !== "::1" and every IPv6 literal slipped through the guard.
-  const host = u.hostname.replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) return "internal host";
-
-  // If the host is a literal IP, check it directly; else resolve BOTH A and AAAA
-  // and reject if ANY resolved address is private — a host with a public IPv4 but
-  // a private IPv6 (or vice versa) must not slip through on the family fetch picks.
-  const literals = /^[0-9.]+$/.test(host) || host.includes(":") ? [host] : await resolveAll(host);
-  if (literals.length === 0) return "dns resolution failed";
-  for (const ip of literals) {
-    if (isPrivateIp(ip)) return `private ip ${ip}`;
-  }
-  return null;
-}
-
-async function resolveAll(host: string): Promise<string[]> {
-  const out: string[] = [];
-  for (const kind of ["A", "AAAA"] as const) {
-    try {
-      out.push(...await Deno.resolveDns(host, kind));
-    } catch {
-      /* this record type may not exist — ignore and rely on the other */
-    }
-  }
-  return out;
-}
-
-function isPrivateIp(ip: string): boolean {
-  // IPv6 loopback / unique-local / link-local / IPv4-mapped.
-  if (ip.includes(":")) {
-    const l = ip.replace(/^\[|\]$/g, "").toLowerCase();
-    // IPv4-mapped IPv6 (::ffff:a.b.c.d, or the hex-compressed ::ffff:HHHH:HHHH
-    // form the URL parser normalizes to) can point at a private/metadata IPv4 —
-    // extract the embedded v4 and check it as IPv4.
-    const dotted = l.match(/:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-    if (dotted) return isPrivateIp(dotted[1]);
-    const hex = l.match(/::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-    if (hex) {
-      const hi = parseInt(hex[1], 16), lo = parseInt(hex[2], 16);
-      return isPrivateIp(`${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`);
-    }
-    // fe80::/10 link-local spans fe80–febf; fc00::/7 ULA is fc/fd.
-    return l === "::1" || l === "::" || l.startsWith("fc") || l.startsWith("fd") ||
-      /^fe[89ab]/.test(l);
-  }
-  const p = ip.split(".").map(Number);
-  if (p.length !== 4 || p.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true; // malformed → block
-  const [a, b] = p;
-  return (
-    a === 10 ||                              // 10/8
-    a === 127 ||                             // loopback
-    a === 0 ||                               // 0.0.0.0/8
-    (a === 172 && b >= 16 && b <= 31) ||     // 172.16/12
-    (a === 192 && b === 168) ||              // 192.168/16
-    (a === 169 && b === 254) ||              // link-local + 169.254.169.254 metadata
-    (a === 100 && b >= 64 && b <= 127)       // 100.64/10 CGNAT
-  );
-}
 
 async function hmacHex(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(

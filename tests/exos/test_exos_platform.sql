@@ -32,22 +32,29 @@ INSERT INTO public.exos_event_addons(id,event_id,name,price,capacity,sold,max_pe
   ('aaaaaaaa-0000-0000-0000-0000000000a2','aaaaaaaa-0000-0000-0000-0000000000e1','Free Sticker',0,5,0,NULL,'public');
 
 -- A1. Waitlist join / dedupe / leave / notify / summary -----------------------
-SELECT set_config('app.uid','',false);
+-- Joining needs a signed-in, confirmed account (mig 20260926010000); the
+-- session's own email is used, so each joiner signs in first.
+INSERT INTO auth.users(id,email,email_confirmed_at) VALUES
+  ('aaaaaaaa-0000-0000-0000-00000000aa01','a@x.com',now()),
+  ('aaaaaaaa-0000-0000-0000-00000000bb01','b@x.com',now())
+ON CONFLICT (id) DO NOTHING;
 DO $$
 DECLARE r record; n int;
 BEGIN
+  PERFORM set_config('app.uid','aaaaaaaa-0000-0000-0000-00000000aa01',false);
+  PERFORM set_config('app.jwt','{"email":"a@x.com"}',false);
   SELECT * INTO r FROM public.exos_join_waitlist('aaaaaaaa-0000-0000-0000-0000000000e1','a@x.com',NULL,'Al',2);
   ASSERT r.queue_position = 1, 'join position';
   PERFORM public.exos_join_waitlist('aaaaaaaa-0000-0000-0000-0000000000e1','a@x.com');  -- dedupe
+  PERFORM set_config('app.uid','aaaaaaaa-0000-0000-0000-00000000bb01',false);
+  PERFORM set_config('app.jwt','{"email":"b@x.com"}',false);
   PERFORM public.exos_join_waitlist('aaaaaaaa-0000-0000-0000-0000000000e1','b@x.com');
   SELECT count(*) INTO n FROM public.exos_waitlist WHERE event_id='aaaaaaaa-0000-0000-0000-0000000000e1';
   ASSERT n = 2, 'dedupe → 2 rows';
-  -- Leave now requires the caller's JWT identity (mig 20260702144607): a client
-  -- p_email alone no longer authorizes. Simulate the signed-in session whose
-  -- verified email matches the anon-created row.
-  PERFORM set_config('app.jwt','{"email":"b@x.com"}',false);
+  -- Leave requires the caller's JWT identity (mig 20260702144607); b is signed in.
   ASSERT public.exos_leave_waitlist((SELECT id FROM public.exos_waitlist WHERE email='b@x.com'),NULL), 'leave';
   PERFORM set_config('app.jwt','',false);
+  PERFORM set_config('app.uid','',false);
   RAISE NOTICE 'A1 waitlist join/dedupe/leave OK';
 END $$;
 SELECT set_config('app.uid','11111111-1111-1111-1111-111111111111',false);
@@ -384,9 +391,12 @@ BEGIN
   RAISE NOTICE 'B step 2: buy → invoice + webhooks OK';
 END $$;
 
--- 3) buyer2 joins the (now sold-out) waitlist
-SELECT set_config('app.uid','',false);
+-- 3) buyer2 (signed in, confirmed) joins the (now sold-out) waitlist
+INSERT INTO auth.users(id,email,email_confirmed_at) VALUES
+  ('bbbbbbbb-0000-0000-0000-00000000bb02','buyer2@x.com',now()) ON CONFLICT (id) DO NOTHING;
+SELECT set_config('app.uid','bbbbbbbb-0000-0000-0000-00000000bb02',false), set_config('app.jwt','{"email":"buyer2@x.com"}',false);
 DO $$ BEGIN PERFORM public.exos_join_waitlist('bbbbbbbb-0000-0000-0000-0000000000e1','buyer2@x.com',NULL,'Two',1); END $$;
+SELECT set_config('app.uid','',false), set_config('app.jwt','',false);
 
 -- 4) refund buyer1 → tickets void, tier.sold drops → AUTO-OFFER fires for buyer2;
 --    invoice flips refunded; order.refunded webhook.
@@ -799,7 +809,9 @@ BEGIN
   ASSERT (SELECT channel_source='comp' AND price_paid=0 AND promoter_id='press' AND order_ref LIKE 'comp:%' FROM public.exos_tickets WHERE id = r.ticket_ids[1]), 'comp ticket shape';
   ASSERT (SELECT count(*) FROM public.exos_mail WHERE template='ticket-issued' AND to_email='buyer@x.com' AND html LIKE '%Evt &lt;Comp&gt;%') = 1, 'ticket-issued mail, escaped';
   SELECT * INTO r FROM f_out WHERE email='new.person@x.com';
-  ASSERT r.outcome = 'invited', 'stranger invited, got '||r.outcome;
+  -- mig 20260925021000 (when applied): the outcome no longer says whether the
+  -- email has an account. run.sh stops before it; run_p0.sh applies it.
+  ASSERT r.outcome = CASE WHEN (position('p1: same outcome' in pg_get_functiondef('public.exos_issue_comp_batch(uuid,uuid,text[],integer,text)'::regprocedure)) > 0) THEN 'issued' ELSE 'invited' END, 'stranger outcome, got '||r.outcome;
   ASSERT (SELECT owner_id FROM public.exos_tickets WHERE id = r.ticket_ids[1]) = '11111111-1111-1111-1111-111111111111', 'stranger ticket parked on caller';
   SELECT pending_transfer_id INTO v_tr FROM public.exos_tickets WHERE id = r.ticket_ids[1];
   ASSERT v_tr IS NOT NULL, 'pending transfer lock set';
@@ -829,7 +841,7 @@ BEGIN
   CREATE TEMP TABLE f_out ON COMMIT DROP AS
   SELECT * FROM public.exos_issue_comp_batch('ffffffff-0000-0000-0000-0000000000e1','ffffffff-0000-0000-0000-0000000000d1',
     ARRAY['c1@x.com','c2@x.com'], 1, NULL);
-  ASSERT (SELECT count(*) FROM f_out WHERE outcome='invited') = 1 AND (SELECT count(*) FROM f_out WHERE outcome='sold-out') = 1, 'one invited, one sold-out';
+  ASSERT (SELECT count(*) FROM f_out WHERE outcome = CASE WHEN (position('p1: same outcome' in pg_get_functiondef('public.exos_issue_comp_batch(uuid,uuid,text[],integer,text)'::regprocedure)) > 0) THEN 'issued' ELSE 'invited' END) = 1 AND (SELECT count(*) FROM f_out WHERE outcome='sold-out') = 1, 'one issued/invited, one sold-out';
   ASSERT (SELECT sold FROM public.exos_ticket_tiers WHERE id='ffffffff-0000-0000-0000-0000000000d1') = 3, 'tier at cap';
   ASSERT (SELECT tickets_sold FROM public.exos_events WHERE id='ffffffff-0000-0000-0000-0000000000e1') = 3, 'house cap undone for the sold-out row';
   ASSERT (SELECT status FROM public.exos_waitlist WHERE email='vipwait@x.com') = 'waiting', 'sold-out undo did NOT auto-offer the tier waiter';

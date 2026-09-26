@@ -18,8 +18,18 @@
 //                       partially_refunded) but does NOT void the whole order —
 //                       which tickets to cancel is an operator decision, not
 //                       derivable from a Stripe amount.
-//   charge.dispute.created -> void the order's tickets (a charged-back buyer must
-//                             not keep valid entry) + record.
+//                       Refunds made from the Exos UI (exos-refund) carry
+//                       metadata.exos_refund_request_id; their request row is
+//                       finalized here too (exos_refund_finalize, idempotent),
+//                       which voids the tickets that refund covered.
+//   charge.dispute.created / .updated -> exos_record_dispute() only: the
+//                       dispute's state lands on the session (dispute_*) and the
+//                       payment row's meta. A dispute is NOT a refund — tickets
+//                       stay valid and the session keeps its status while it's
+//                       open (most disputes are won or withdrawn).
+//   charge.dispute.closed -> record; if the dispute was LOST the money is gone,
+//                       so treat it like a full refund (exos_refund_checkout
+//                       voids the tickets). Won / warning_closed: record only.
 //   account.updated  -> exos_record_org_stripe() (Connect onboarding status).
 //
 // Idempotency: fulfillment (session status gate), refund recording (unique
@@ -33,13 +43,16 @@
 // can't strand a refund/dispute.
 //
 // Required secrets (operator, at deploy): STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-// SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (platform-injected).
+// SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (platform-injected). Optional:
+// STRIPE_CONNECT_WEBHOOK_SECRET — the signing secret of the second endpoint that
+// listens to connected accounts (needed for organizers' account.updated).
 //
 // Deploy note: this endpoint must NOT require a JWT (Stripe can't send one) —
 // deploy with --no-verify-jwt; the Stripe signature is the gate.
 
 import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { autoRefundIdempotencyKey, autoRefundParams, ledgerRefundStatus } from "../_shared/auto-refund.ts";
 
 const stripeKey = Deno.env.get("STRIPE_SECRET_KEY") ?? "";
 const stripe = new Stripe(stripeKey, {
@@ -95,18 +108,27 @@ async function fulfillSettledSession(
 
   // Ledger: record the settled payment as a first-class row (idempotent upsert
   // on the PI). This is what sessionIdForPaymentIntent() reads later.
-  try {
-    await sb.rpc("exos_record_payment", {
-      p_session_id: session.id,
-      p_payment_intent: pi,
-      p_amount_cents: session.amount_total ?? 0,
-      p_status: "succeeded",
-      p_currency: session.currency ?? "usd",
-      p_provider_event_id: session.id,
-    });
-  } catch (e) {
-    console.error("stripe-webhook: record_payment failed (non-fatal)", e);
-  }
+  // Throw on failure (-> 500, Stripe retries): refunds find their session
+  // through this row, so losing it strands every later refund.
+  const { error: payErr } = await sb.rpc("exos_record_payment", {
+    p_session_id: session.id,
+    p_payment_intent: pi,
+    p_amount_cents: session.amount_total ?? 0,
+    p_status: "succeeded",
+    p_currency: session.currency ?? "usd",
+    p_provider_event_id: session.id,
+  });
+  if (payErr) throw new Error(`record_payment failed for ${session.id}: ${payErr.message}`);
+
+  // Price-disclosure record (NY ACAL 25.07 / FTC fee rule): what Stripe
+  // charged vs what checkout showed. Non-fatal: a missing record surfaces in
+  // the organizer's export rather than failing fulfillment.
+  const { error: pdErr } = await sb.rpc("exos_record_price_charged", {
+    p_session_id: session.id,
+    p_amount_cents: session.amount_total ?? 0,
+    p_currency: session.currency ?? "usd",
+  });
+  if (pdErr) console.error("stripe-webhook: price_charged record failed (non-fatal)", pdErr);
 
   // Auto-refund a settled-but-unfulfillable order. exos_fulfill_checkout marks
   // the session 'failed' (not raise) when it can't mint after payment; without
@@ -117,35 +139,29 @@ async function fulfillSettledSession(
     if (sess?.status === "failed") {
       let refund: Stripe.Refund;
       try {
+        // Same key + params as the reconcile sweep (_shared/auto-refund.ts), so
+        // the two can never both refund one session.
         refund = await stripe.refunds.create(
-          {
-            payment_intent: pi,
-            reason: "requested_by_customer",
-            metadata: { exos_session_id: session.id, exos_auto: "fulfillment_failed" },
-          },
-          { idempotencyKey: `exos_autorefund_${session.id}` },
+          autoRefundParams(pi, session.id),
+          { idempotencyKey: autoRefundIdempotencyKey(session.id) },
         );
       } catch (e) {
         // Couldn't reach Stripe — 500 so we retry rather than drop the refund.
         throw new Error(`auto-refund create failed for ${session.id}: ${(e as Error).message}`);
       }
-      const refundStatus = ["pending", "succeeded", "failed", "canceled"].includes(refund.status ?? "")
-        ? refund.status
-        : "pending";
-      try {
-        await sb.rpc("exos_record_refund", {
-          p_session_id: session.id,
-          p_refund_id: refund.id,
-          p_amount_cents: refund.amount ?? sess.amount_cents ?? 0,
-          p_status: refundStatus,
-          p_payment_intent: pi,
-          p_reason: "auto-refund: unfulfillable after payment",
-          p_currency: refund.currency ?? session.currency ?? "usd",
-          p_provider_event_id: session.id,
-        });
-      } catch (e) {
-        console.error(`stripe-webhook: record_refund (auto) failed for ${session.id}`, e);
-      }
+      const refundStatus = ledgerRefundStatus(refund.status);
+      // The Stripe refund is idempotency-keyed, so a 500 + retry is safe.
+      const { error: rfErr } = await sb.rpc("exos_record_refund", {
+        p_session_id: session.id,
+        p_refund_id: refund.id,
+        p_amount_cents: refund.amount ?? sess.amount_cents ?? 0,
+        p_status: refundStatus,
+        p_payment_intent: pi,
+        p_reason: "auto-refund: unfulfillable after payment",
+        p_currency: refund.currency ?? session.currency ?? "usd",
+        p_provider_event_id: session.id,
+      });
+      if (rfErr) throw new Error(`record_refund (auto) failed for ${session.id}: ${rfErr.message}`);
       console.error(`stripe-webhook: auto-refunded unfulfillable session ${session.id} (refund ${refund.id})`);
     }
   }
@@ -158,16 +174,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!webhookSecret || !stripeKey) {
     return new Response("server misconfigured: STRIPE_* unset", { status: 500 });
   }
+  // Connected-account events (account.updated for organizers' Express accounts)
+  // arrive on a separate "connected accounts" endpoint with its own signing
+  // secret; both endpoints point here.
+  const secrets = [webhookSecret, Deno.env.get("STRIPE_CONNECT_WEBHOOK_SECRET")]
+    .filter((x): x is string => !!x);
 
   const sig = req.headers.get("stripe-signature");
   if (!sig) return new Response("missing stripe-signature", { status: 400 });
 
   const body = await req.text();
-  let event: Stripe.Event;
-  try {
-    event = await stripe.webhooks.constructEventAsync(body, sig, webhookSecret, undefined, cryptoProvider);
-  } catch (e) {
-    console.error("stripe-webhook: signature verification failed", e);
+  let event: Stripe.Event | null = null;
+  for (const secret of secrets) {
+    try {
+      event = await stripe.webhooks.constructEventAsync(body, sig, secret, undefined, cryptoProvider);
+      break;
+    } catch {
+      // try the next endpoint's secret
+    }
+  }
+  if (!event) {
+    console.error("stripe-webhook: signature verification failed for every configured secret");
     return new Response("invalid signature", { status: 400 });
   }
 
@@ -175,6 +202,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  // Events from the connected-accounts endpoint (event.account set) are only
+  // trusted for account.updated. Our checkout sessions are platform objects,
+  // so a connected account's own checkout/charge events aren't ours: handling
+  // them would 500 on an unknown session and make Stripe retry (and
+  // eventually disable) the endpoint that carries account.updated.
+  if (event.account && event.type !== "account.updated") {
+    return new Response(JSON.stringify({ received: true, ignored: "connected-account event" }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   try {
     switch (event.type) {
@@ -221,6 +259,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const acct = event.data.object as Stripe.Account;
         const orgId = acct.metadata?.exos_org_id;
         if (orgId) {
+          // Only update the account already on file for that org (onboarding
+          // stores it when it creates the account). Metadata alone must never
+          // re-point an org's payouts to a different account.
+          const { data: secrets } = await sb.from("exos_org_secrets").select("payments").eq("org_id", orgId).maybeSingle();
+          const onFile = (secrets?.payments as { connectedAccountId?: string } | null)?.connectedAccountId;
+          if (onFile !== acct.id) {
+            console.error(`stripe-webhook: account.updated for ${acct.id} doesn't match org ${orgId}'s account on file; ignored`);
+            break;
+          }
           const { error } = await sb.rpc("exos_record_org_stripe", {
             p_org_id: orgId,
             p_account_id: acct.id,
@@ -252,12 +299,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const chargeAmount = charge.amount ?? 0;
         const fullyRefunded = chargeAmount > 0 && (charge.amount_refunded ?? 0) >= chargeAmount;
 
-        // Void FIRST on a full refund, THEN record. exos_refund_checkout no-ops
-        // once the session is 'refunded', and exos_record_refund reconciles the
-        // status to 'refunded' as soon as refunds sum to the amount paid — so
-        // recording first would flip the status and make the void a silent no-op
-        // (tickets never voided). Voiding first sets 'refunded' itself; the
-        // subsequent record keeps it there.
+        // Void on a full refund, then record. exos_refund_checkout voids whatever
+        // is still active regardless of session status (mig 20260924205115), so
+        // the order no longer matters for correctness; voiding first just keeps
+        // the session's failure_reason as the refund reason.
         if (fullyRefunded) {
           const { error } = await sb.rpc("exos_refund_checkout", {
             p_session_id: sessionId,
@@ -270,47 +315,63 @@ Deno.serve(async (req: Request): Promise<Response> => {
           }
         }
 
-        // Record the refund row(s) in the ledger (idempotent on refund_id). For a
-        // partial refund this is the ONLY action: it flags is_partial and sets the
-        // session to 'partially_refunded' without touching tickets.
+        // Record every refund on the PaymentIntent by its own id (idempotent on
+        // refund_id). Since API 2022-11-15 the Charge no longer embeds
+        // `refunds`, so list them; never record a cumulative amount under a NULL
+        // id (it double-counted and could mark a session refunded without a void).
+        // A failure returns 500 so Stripe retries instead of losing the refund.
+        const allowed = new Set(["pending", "succeeded", "failed", "canceled"]);
+        let refunds: Stripe.Refund[];
         try {
-          const allowed = new Set(["pending", "succeeded", "failed", "canceled"]);
-          const refunds = charge.refunds?.data ?? [];
-          if (refunds.length > 0) {
-            for (const rf of refunds) {
-              await sb.rpc("exos_record_refund", {
-                p_session_id: sessionId,
-                p_refund_id: rf.id,
-                p_amount_cents: rf.amount ?? 0,
-                p_status: allowed.has(rf.status ?? "") ? rf.status : "pending",
-                p_payment_intent: pi,
-                p_reason: rf.reason ?? "stripe refund",
-                p_currency: rf.currency ?? charge.currency ?? "usd",
-                p_provider_event_id: event.id,
-              });
-            }
-          } else {
-            await sb.rpc("exos_record_refund", {
-              p_session_id: sessionId,
-              p_refund_id: null,
-              p_amount_cents: charge.amount_refunded ?? 0,
-              p_status: "succeeded",
-              p_payment_intent: pi,
-              p_reason: "stripe refund",
-              p_currency: charge.currency ?? "usd",
-              p_provider_event_id: event.id,
-            });
-          }
+          refunds = [];
+          for await (const rf of stripe.refunds.list({ payment_intent: pi, limit: 100 })) refunds.push(rf);
         } catch (e) {
-          console.error("stripe-webhook: record_refund failed (non-fatal)", e);
+          console.error(`stripe-webhook: listing refunds for PI ${pi} failed`, e);
+          return new Response("refund lookup error", { status: 500 });
+        }
+        for (const rf of refunds) {
+          const { error } = await sb.rpc("exos_record_refund", {
+            p_session_id: sessionId,
+            p_refund_id: rf.id,
+            p_amount_cents: rf.amount ?? 0,
+            p_status: allowed.has(rf.status ?? "") ? rf.status : "pending",
+            p_payment_intent: pi,
+            p_reason: rf.reason ?? "stripe refund",
+            p_currency: rf.currency ?? charge.currency ?? "usd",
+            p_provider_event_id: event.id,
+          });
+          if (error) {
+            console.error(`stripe-webhook: record_refund ${rf.id} failed for ${sessionId}`, error);
+            return new Response("refund record error", { status: 500 });
+          }
+          // Organizer refund from exos-refund (mig 20260926040000): settle its
+          // request row too, in case the function died between the Stripe call
+          // and its own finalize. Idempotent; a no-op when already settled.
+          const requestId = rf.metadata?.exos_refund_request_id;
+          if (requestId) {
+            const { error: fErr } = await sb.rpc("exos_refund_finalize", {
+              p_request_id: requestId,
+              p_stripe_refund_id: rf.id,
+              p_status: ledgerRefundStatus(rf.status),
+              p_error: rf.failure_reason ?? null,
+            });
+            if (fErr && fErr.code !== "P0002") {
+              console.error(`stripe-webhook: refund request ${requestId} finalize failed`, fErr);
+              return new Response("refund request error", { status: 500 });
+            }
+          }
         }
         break;
       }
 
-      // Chargeback opened: the money is being clawed back, so the tickets must not
-      // stay valid for entry. Void the order (idempotent). Mapping via the PI,
-      // same as refunds.
-      case "charge.dispute.created": {
+      // Disputes (chargebacks). Opening or updating one is recorded, not acted
+      // on: voiding on open used to mark the order 'refunded' and nothing put
+      // the tickets back when the organizer won. Only a LOST dispute is treated
+      // like a refund. Every step is idempotent (the record keeps a closed state
+      // final; the void only touches still-active tickets), so retries are safe.
+      case "charge.dispute.created":
+      case "charge.dispute.updated":
+      case "charge.dispute.closed": {
         const dispute = event.data.object as Stripe.Dispute;
         const pi = typeof dispute.payment_intent === "string"
           ? dispute.payment_intent
@@ -321,13 +382,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
           console.error(`stripe-webhook: dispute — no session for PI ${pi}`);
           break;
         }
-        const { error } = await sb.rpc("exos_refund_checkout", {
+        const { data: stored, error: dErr } = await sb.rpc("exos_record_dispute", {
           p_session_id: sessionId,
-          p_reason: `chargeback dispute (${dispute.reason ?? "unknown"})`,
+          p_dispute_id: dispute.id,
+          p_status: dispute.status,
+          p_reason: dispute.reason ?? null,
+          p_amount_cents: dispute.amount ?? null,
+          p_provider_event_id: event.id,
         });
-        if (error) {
-          console.error(`stripe-webhook: dispute void failed for ${sessionId}`, error);
+        if (dErr) {
+          console.error(`stripe-webhook: record_dispute failed for ${sessionId}`, dErr);
           return new Response("dispute handling error", { status: 500 });
+        }
+        // Keyed on the STORED state, so a replay or an out-of-order .updated
+        // carrying "lost" still voids (exos_refund_checkout is idempotent).
+        if (stored === "lost") {
+          const { error } = await sb.rpc("exos_refund_checkout", {
+            p_session_id: sessionId,
+            p_reason: `chargeback lost (${dispute.reason ?? "unknown"})`,
+          });
+          if (error) {
+            console.error(`stripe-webhook: lost-dispute void failed for ${sessionId}`, error);
+            return new Response("dispute handling error", { status: 500 });
+          }
         }
         break;
       }
