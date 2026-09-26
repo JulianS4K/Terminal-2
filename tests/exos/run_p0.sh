@@ -35,7 +35,7 @@ for m in \
   20260925001000_exos_event_series_codes_fix 20260925003000_exos_trial_run_fixes \
   20260925010000_exos_trial_run_fixes_2 20260925012000_exos_presale_vouchers \
   20260925013000_exos_scanner_no_buyer_email 20260925020000_exos_webhook_claim \
-  20260925021000_exos_p1_db_hardening; do
+  20260925021000_exos_p1_db_hardening 20260926000000_exos_advisor_cleanup; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"
@@ -52,13 +52,15 @@ psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_trial_run
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_presale_vouchers.sql"
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_edge_p1.sql"
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_p1_db_hardening.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_advisor_cleanup.sql"
 # Replay: every pending migration again, in order, must be a no-op.
 for m in 20260924215000_exos_fulfill_all_or_nothing 20260924223000_exos_checkout_attribution \
   20260924230000_exos_event_geo 20260924233000_exos_promoters 20260924234500_exos_fan_referrals \
   20260925000000_exos_voucher_unlocked_tier 20260925001000_exos_event_series_codes_fix \
   20260925003000_exos_trial_run_fixes 20260925010000_exos_trial_run_fixes_2 \
   20260925012000_exos_presale_vouchers 20260925013000_exos_scanner_no_buyer_email \
-  20260925020000_exos_webhook_claim 20260925021000_exos_p1_db_hardening; do
+  20260925020000_exos_webhook_claim 20260925021000_exos_p1_db_hardening \
+  20260926000000_exos_advisor_cleanup; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_replay_idempotent.sql"
