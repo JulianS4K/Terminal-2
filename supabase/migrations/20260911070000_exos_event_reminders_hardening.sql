@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911070000 — Exos (Bridge / D4): reminder cron hardening (audit fixes)
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos audit; Terminal-2 #1001).
 --
 -- Lane:     d4 (exos / bridge ticketing — customer-facing session)
 -- Touches:  exos_send_event_reminders() (DROP + re-CREATE: +events_failed column),

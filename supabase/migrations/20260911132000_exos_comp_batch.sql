@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911132000 — Exos (Bridge / D4): bulk comp issuance + org comp budget
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos audit; Terminal-2 #1001).
 --
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  exos_orgs (W: +comp_budget),

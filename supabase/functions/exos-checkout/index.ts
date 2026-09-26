@@ -54,7 +54,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const { data: tier, error: tierErr } = await sb
     .from("exos_ticket_tiers")
-    .select("id, name, price, capacity, sold, event_id, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax), exos_events!inner(id, org_id, name, status, currency)")
+    .select("id, name, price, capacity, sold, event_id, visibility, tax_rate_id, exos_tax_rules(rate_percent, price_includes_tax), exos_events!inner(id, org_id, name, status, currency)")
     .eq("id", tier_id).eq("event_id", event_id).maybeSingle();
   if (tierErr || !tier) return json({ error: "tier not found" }, 404);
 
@@ -67,6 +67,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   let voucherId: string | null = null;
   let bypassCapacity = false;
   let overridePrice: number | null = null;
+  let voucherUnlocksTier = false;
   if (voucherCode) {
     const { data: vRows, error: vErr } = await sb.rpc("exos_check_voucher", {
       p_event_id: event_id, p_code: voucherCode, p_email: user.email ?? null,
@@ -79,8 +80,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json({ error: "voucher is not valid for this ticket type" }, 409);
     }
     voucherId = v.voucher_id;
+    voucherUnlocksTier = v.restrict_tier_id === tier_id;
     bypassCapacity = v.can_bypass === true;
     overridePrice = v.override_price != null ? Number(v.override_price) : null;
+  }
+
+  // A hidden tier is only sold through a voucher restricted to it (same rule
+  // as the free-claim path); otherwise its UUID alone would unlock it.
+  const visibility = (tier as unknown as { visibility?: string | null }).visibility;
+  if (visibility && visibility !== "public" && !voucherUnlocksTier) {
+    return json({ error: "ticket type not available" }, 409);
   }
 
   // Availability is enforced by a cart HOLD created just before the Stripe
@@ -239,6 +248,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       },
       success_url,
       cancel_url,
+      // Match the 30-minute seat hold (Stripe's minimum) so nobody can pay after
+      // their seats went back to the pool and trigger a refund.
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
       customer_email: user.email ?? undefined,
       metadata: { exos_event_id: event_id, exos_tier_id: tier_id, exos_buyer_uid: user.id },
     });

@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911133000 — Exos (Bridge / D4): recurring / timed-entry event series
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos audit; Terminal-2 #1001).
 --
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  exos_event_series (NEW table, RLS: org-staff read, RPC-only write),
@@ -287,15 +288,17 @@ BEGIN
       CREATE OR REPLACE VIEW public.exos_public_events AS
         SELECT id, org_id, name, slug, description, occurs_at_local, starts_at, doors_at,
                ends_at, timezone, currency, venue_name, venue_location, venue_address,
-               primary_performer_name, performer_names, artist_links, event_type, category,
+               primary_performer_name, performer_names, event_type, category,
                genres, subgenres, image_url, branding, purchase_limits, total_tickets,
-               tickets_sold, series_id, series_index
+               tickets_sold, artist_links, series_id, series_index
         FROM public.exos_events
         WHERE status = 'published'
     $v$;
     EXECUTE 'ALTER VIEW public.exos_public_events SET (security_invoker = true)';
     EXECUTE 'REVOKE ALL ON public.exos_public_events FROM anon, authenticated';
     EXECUTE 'GRANT SELECT ON public.exos_public_events TO anon, authenticated';
+    -- Column order must match prod's existing view (artist_links was appended
+    -- last by 20260703130000) — CREATE OR REPLACE VIEW can only add at the end.
     -- security_invoker: the anon column grant on the base table must include
     -- the two new columns or the view errors for anon.
     EXECUTE 'GRANT SELECT (series_id, series_index) ON public.exos_events TO anon, authenticated';

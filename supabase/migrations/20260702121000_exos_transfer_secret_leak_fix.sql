@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260702121000 — Exos (Bridge / D4): close transferred-ticket
+-- NOT applied to prod on its own: superseded by 20260924200848 (same function, same buyer_id fix plus the transfer-race checks), applied 2026-09-24.
 --                            barcode_secret leak
 --
 -- Lane:     d4 (exos / bridge ticketing infra)

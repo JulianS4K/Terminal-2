@@ -89,7 +89,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (cs.payment_status === "paid" && pi) {
         // Idempotency key makes an accidental double-sweep a no-op at Stripe.
         await stripe.refunds.create(
-          { payment_intent: pi, reason: "requested_by_customer" },
+          // Destination charge: reverse the transfer + fee so the platform
+          // balance doesn't fund the refund.
+          { payment_intent: pi, reason: "requested_by_customer", reverse_transfer: true, refund_application_fee: true },
           { idempotencyKey: `exos_refund_${row.session_id}` },
         );
         await sb.from("exos_checkout_sessions")

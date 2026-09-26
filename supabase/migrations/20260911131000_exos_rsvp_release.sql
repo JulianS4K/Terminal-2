@@ -1,5 +1,6 @@
 -- ============================================================================
 -- Migration 20260911131000 — Exos (Bridge / D4): self-serve RSVP release
+-- Already applied to prod via Supabase MCP on 2026-09-24 (operator-approved, Exos audit; Terminal-2 #1001).
 --
 -- Lane:     d4 (exos / bridge ticketing infra)
 -- Touches:  exos_tickets (W: +released_at; UPDATE status/voided_* on release),
