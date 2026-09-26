@@ -35,7 +35,8 @@ for m in \
   20260925001000_exos_event_series_codes_fix 20260925003000_exos_trial_run_fixes \
   20260925010000_exos_trial_run_fixes_2 20260925012000_exos_presale_vouchers \
   20260925013000_exos_scanner_no_buyer_email 20260925020000_exos_webhook_claim \
-  20260925021000_exos_p1_db_hardening 20260926000000_exos_advisor_cleanup; do
+  20260925021000_exos_p1_db_hardening 20260926000000_exos_advisor_cleanup \
+  20260926010000_exos_waitlist_signin_account_deletion; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"
@@ -60,7 +61,8 @@ for m in 20260924215000_exos_fulfill_all_or_nothing 20260924223000_exos_checkout
   20260925003000_exos_trial_run_fixes 20260925010000_exos_trial_run_fixes_2 \
   20260925012000_exos_presale_vouchers 20260925013000_exos_scanner_no_buyer_email \
   20260925020000_exos_webhook_claim 20260925021000_exos_p1_db_hardening \
-  20260926000000_exos_advisor_cleanup; do
+  20260926000000_exos_advisor_cleanup \
+  20260926010000_exos_waitlist_signin_account_deletion; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_replay_idempotent.sql"
