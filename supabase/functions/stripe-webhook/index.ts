@@ -18,6 +18,10 @@
 //                       partially_refunded) but does NOT void the whole order —
 //                       which tickets to cancel is an operator decision, not
 //                       derivable from a Stripe amount.
+//                       Refunds made from the Exos UI (exos-refund) carry
+//                       metadata.exos_refund_request_id; their request row is
+//                       finalized here too (exos_refund_finalize, idempotent),
+//                       which voids the tickets that refund covered.
 //   charge.dispute.created / .updated -> exos_record_dispute() only: the
 //                       dispute's state lands on the session (dispute_*) and the
 //                       payment row's meta. A dispute is NOT a refund — tickets
@@ -115,6 +119,16 @@ async function fulfillSettledSession(
     p_provider_event_id: session.id,
   });
   if (payErr) throw new Error(`record_payment failed for ${session.id}: ${payErr.message}`);
+
+  // Price-disclosure record (NY ACAL 25.07 / FTC fee rule): what Stripe
+  // charged vs what checkout showed. Non-fatal: a missing record surfaces in
+  // the organizer's export rather than failing fulfillment.
+  const { error: pdErr } = await sb.rpc("exos_record_price_charged", {
+    p_session_id: session.id,
+    p_amount_cents: session.amount_total ?? 0,
+    p_currency: session.currency ?? "usd",
+  });
+  if (pdErr) console.error("stripe-webhook: price_charged record failed (non-fatal)", pdErr);
 
   // Auto-refund a settled-but-unfulfillable order. exos_fulfill_checkout marks
   // the session 'failed' (not raise) when it can't mint after payment; without
@@ -329,6 +343,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
           if (error) {
             console.error(`stripe-webhook: record_refund ${rf.id} failed for ${sessionId}`, error);
             return new Response("refund record error", { status: 500 });
+          }
+          // Organizer refund from exos-refund (mig 20260926040000): settle its
+          // request row too, in case the function died between the Stripe call
+          // and its own finalize. Idempotent; a no-op when already settled.
+          const requestId = rf.metadata?.exos_refund_request_id;
+          if (requestId) {
+            const { error: fErr } = await sb.rpc("exos_refund_finalize", {
+              p_request_id: requestId,
+              p_stripe_refund_id: rf.id,
+              p_status: ledgerRefundStatus(rf.status),
+              p_error: rf.failure_reason ?? null,
+            });
+            if (fErr && fErr.code !== "P0002") {
+              console.error(`stripe-webhook: refund request ${requestId} finalize failed`, fErr);
+              return new Response("refund request error", { status: 500 });
+            }
           }
         }
         break;

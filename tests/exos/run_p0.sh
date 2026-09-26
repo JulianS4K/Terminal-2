@@ -36,7 +36,11 @@ for m in \
   20260925010000_exos_trial_run_fixes_2 20260925012000_exos_presale_vouchers \
   20260925013000_exos_scanner_no_buyer_email 20260925020000_exos_webhook_claim \
   20260925021000_exos_p1_db_hardening 20260926000000_exos_advisor_cleanup \
-  20260926010000_exos_waitlist_signin_account_deletion; do
+  20260926010000_exos_waitlist_signin_account_deletion \
+  20260926020000_exos_promoter_commissions 20260926030000_exos_referral_rewards \
+  20260926040000_exos_organizer_refunds 20260926050000_exos_tables_guest_lists \
+  20260926060000_exos_abandoned_checkout 20260926070000_exos_price_disclosure \
+  20260926080000_exos_refund_tables_fix; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_exos_platform.sql"
@@ -54,6 +58,13 @@ psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_presale_v
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_edge_p1.sql"
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_p1_db_hardening.sql"
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_advisor_cleanup.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_promoter_commissions.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_referral_rewards.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_organizer_refunds.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_tables_guest_lists.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_abandoned_checkout.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_price_disclosure.sql"
+psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_refund_tables.sql"
 # Replay: every pending migration again, in order, must be a no-op.
 for m in 20260924215000_exos_fulfill_all_or_nothing 20260924223000_exos_checkout_attribution \
   20260924230000_exos_event_geo 20260924233000_exos_promoters 20260924234500_exos_fan_referrals \
@@ -62,7 +73,11 @@ for m in 20260924215000_exos_fulfill_all_or_nothing 20260924223000_exos_checkout
   20260925012000_exos_presale_vouchers 20260925013000_exos_scanner_no_buyer_email \
   20260925020000_exos_webhook_claim 20260925021000_exos_p1_db_hardening \
   20260926000000_exos_advisor_cleanup \
-  20260926010000_exos_waitlist_signin_account_deletion; do
+  20260926010000_exos_waitlist_signin_account_deletion \
+  20260926020000_exos_promoter_commissions 20260926030000_exos_referral_rewards \
+  20260926040000_exos_organizer_refunds 20260926050000_exos_tables_guest_lists \
+  20260926060000_exos_abandoned_checkout 20260926070000_exos_price_disclosure \
+  20260926080000_exos_refund_tables_fix; do
   $PSQL -f "$MIG/$m.sql"
 done
 psql -h "$H" -p "$P" -U "$U" -d "$DB" -v ON_ERROR_STOP=1 -f "$DIR/test_replay_idempotent.sql"

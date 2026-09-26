@@ -153,7 +153,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // snapshot stored on the session (fulfillment reads it to record the purchase).
   type AddonRow = { addon_id: string; quantity: number; unit_price_cents: number; name: string };
   const addonsForSession: AddonRow[] = [];
-  const addonLines: { name: string; quantity: number; unit_all_in: number; unit_tax: number }[] = [];
+  const addonLines: { id: string; name: string; quantity: number; unit_face: number; unit_all_in: number; unit_tax: number; line_tax: number; tax_included: boolean }[] = [];
   let addonTotal = 0;
   // recordedTax = the tax portion of the order (inclusive or exclusive), stored
   // on the session for invoices/reporting. Exclusive tax is already inside the
@@ -214,16 +214,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
           return json({ error: `add-on "${a.name}" is sold out` }, 409);
         }
         const unitCents = Math.round(Number(a.price) * 100);
-        const allIn = allInUnit(unitCents, qty, (a as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
+        const addonRule = (a as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules;
+        const taxBefore = recordedTax;
+        const allIn = allInUnit(unitCents, qty, addonRule);
         addonsForSession.push({ addon_id: a.id, quantity: qty, unit_price_cents: unitCents, name: a.name });
-        addonLines.push({ name: a.name, quantity: qty, unit_all_in: allIn, unit_tax: allIn - unitCents });
+        addonLines.push({
+          id: a.id, name: a.name, quantity: qty, unit_face: unitCents, unit_all_in: allIn, unit_tax: allIn - unitCents,
+          line_tax: recordedTax - taxBefore, tax_included: addonRule?.price_includes_tax === true,
+        });
         addonTotal += allIn * qty;
       }
     }
   }
 
   // Tier tax (after the voucher price override is applied to unitAmount).
-  const ticketAllIn = allInUnit(unitAmount, quantity, (tier as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules);
+  const tierRule = (tier as unknown as { exos_tax_rules?: { rate_percent?: number; price_includes_tax?: boolean } }).exos_tax_rules;
+  const ticketTaxBefore = recordedTax;
+  const ticketAllIn = allInUnit(unitAmount, quantity, tierRule);
+  const ticketLineTax = recordedTax - ticketTaxBefore;
 
   // addonTotal is already all-in; the exclusive tax sits inside both unit amounts.
   const amountCents = ticketAllIn * quantity + addonTotal;
@@ -340,6 +348,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .update({ checkout_session_id: session.id }).eq("id", holdId);
     if (linkErr) console.error("exos-checkout: hold link failed (non-fatal)", linkErr);
   }
+
+  // Price-disclosure record (mig 20260926070000): what the buyer is shown on
+  // Stripe's page, per line, so the charged amount can be checked against it
+  // (NY ACAL 25.07 / FTC fee rule). Exos adds no buyer fee. Non-fatal: the
+  // sale is already recorded; a missing record is visible in the export.
+  const { error: pdErr } = await sb.rpc("exos_record_price_disclosure", {
+    p_session_id: session.id,
+    p_currency: currency,
+    p_lines: [
+      {
+        kind: "ticket", item_id: tier_id, name: tier.name, quantity,
+        face_unit_cents: unitAmount, tax_cents: ticketLineTax,
+        tax_included: tierRule?.price_includes_tax === true,
+        fee_cents: 0, unit_all_in_cents: ticketAllIn,
+      },
+      ...addonLines.map((a) => ({
+        kind: "addon", item_id: a.id, name: a.name, quantity: a.quantity,
+        face_unit_cents: a.unit_face, tax_cents: a.line_tax, tax_included: a.tax_included,
+        fee_cents: 0, unit_all_in_cents: a.unit_all_in,
+      })),
+    ],
+  });
+  if (pdErr) console.error("exos-checkout: price disclosure record failed (non-fatal)", pdErr);
 
   return json({ url: session.url, session_id: session.id });
 });
