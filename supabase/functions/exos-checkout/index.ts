@@ -5,6 +5,13 @@
 // application fee. Records a 'pending' row in exos_checkout_sessions keyed on
 // the Stripe session id; the stripe-webhook fulfills it on completion.
 //
+// Embedded mode (white-label level 3): a body with ui_mode: 'embedded' and a
+// return_url (instead of success_url/cancel_url) creates an Embedded Checkout
+// session the venue-site iframe (/embed/event/:id) mounts in place, and
+// returns { client_secret, session_id } instead of { url, session_id }. The
+// return_url must be an allowlisted origin's /embed/return page. Everything
+// else (hold, voucher, limits, attribution, price disclosure) is shared.
+//
 // Required secrets: STRIPE_SECRET_KEY, SUPABASE_URL, SUPABASE_ANON_KEY,
 // SUPABASE_SERVICE_ROLE_KEY, EXOS_REDIRECT_ORIGINS (origins success/cancel URLs
 // may point at; see _shared/redirects.ts). Optional: EXOS_PLATFORM_FEE_BPS (default 500 = 5%).
@@ -17,7 +24,7 @@
 import Stripe from "https://esm.sh/stripe@16?target=deno";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { allInCents, effectiveTierPrice } from "../_shared/pricing.ts";
-import { isAllowedRedirect, parseRedirectOrigins } from "../_shared/redirects.ts";
+import { isAllowedEmbedReturn, isAllowedRedirect, parseRedirectOrigins } from "../_shared/redirects.ts";
 import { isEmptyAttribution, readAttribution } from "../_shared/attribution.ts";
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -39,6 +46,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   let p: {
     event_id?: string; tier_id?: string; quantity?: number;
     success_url?: string; cancel_url?: string;
+    // 'embedded' → Stripe Embedded Checkout; anything else → hosted (default).
+    ui_mode?: string; return_url?: string;
     addons?: { addon_id?: string; quantity?: number }[];
     voucher_code?: string;
     // Promoter code + UTM / fbclid / cart_origin from the landing URL.
@@ -46,18 +55,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
   };
   try { p = await req.json(); } catch { return json({ error: "invalid JSON" }, 400); }
   const { event_id, tier_id, success_url, cancel_url } = p;
+  const embedded = p.ui_mode === "embedded";
+  const returnUrl = p.return_url;
   const quantity = p.quantity ?? 1;
   const addonReq = Array.isArray(p.addons) ? p.addons : [];
   const voucherCode = (p.voucher_code ?? "").trim();
   const attrIn = p.attribution && typeof p.attribution === "object" ? p.attribution : {};
   const attribution = readAttribution((k) => (attrIn as Record<string, unknown>)[k]);
   const { promoter: promoterId, ...campaignTags } = attribution;
-  if (!event_id || !tier_id || !success_url || !cancel_url) {
+  if (embedded) {
+    if (!event_id || !tier_id || !returnUrl) {
+      return json({ error: "missing event_id / tier_id / return_url" }, 400);
+    }
+  } else if (!event_id || !tier_id || !success_url || !cancel_url) {
     return json({ error: "missing event_id / tier_id / success_url / cancel_url" }, 400);
   }
   const allowed = parseRedirectOrigins(Deno.env.get("EXOS_REDIRECT_ORIGINS"));
   if (allowed.length === 0) return json({ error: "server misconfigured: EXOS_REDIRECT_ORIGINS unset" }, 500);
-  if (!isAllowedRedirect(success_url, allowed) || !isAllowedRedirect(cancel_url, allowed)) {
+  if (embedded) {
+    // Only our own /embed/return page on an allowlisted origin.
+    if (!isAllowedEmbedReturn(returnUrl, allowed)) {
+      return json({ error: "redirect URL not allowed" }, 400);
+    }
+  } else if (!isAllowedRedirect(success_url, allowed) || !isAllowedRedirect(cancel_url, allowed)) {
     return json({ error: "redirect URL not allowed" }, 400);
   }
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
@@ -300,8 +320,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
         application_fee_amount: applicationFee,
         transfer_data: { destination: payments.connectedAccountId },
       },
-      success_url,
-      cancel_url,
+      // Embedded: card payments finish in place (the iframe's onComplete);
+      // only redirect-based methods come back through return_url.
+      ...(embedded
+        ? { ui_mode: "embedded" as const, return_url: returnUrl, redirect_on_completion: "if_required" as const }
+        : { success_url, cancel_url }),
       // Match the 30-minute seat hold (Stripe's minimum) so nobody can pay after
       // their seats went back to the pool and trigger a refund.
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
@@ -372,6 +395,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   });
   if (pdErr) console.error("exos-checkout: price disclosure record failed (non-fatal)", pdErr);
 
+  if (embedded) return json({ client_secret: session.client_secret, session_id: session.id });
   return json({ url: session.url, session_id: session.id });
 });
 

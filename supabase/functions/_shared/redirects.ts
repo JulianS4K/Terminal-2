@@ -23,3 +23,15 @@ export function isAllowedRedirect(url: unknown, allowedOrigins: string[]): boole
   if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return false;
   return allowedOrigins.includes(u.origin);
 }
+
+// Embedded Checkout's return_url (exos-checkout ui_mode 'embedded'): an
+// allowlisted origin AND our own /embed/return page (optionally under one base
+// path segment, e.g. /bridge/embed/return), no fragment. Query is free — it
+// carries Stripe's {CHECKOUT_SESSION_ID} template, the event id and the host
+// origin the return page reports back to.
+export function isAllowedEmbedReturn(url: unknown, allowedOrigins: string[]): boolean {
+  if (!isAllowedRedirect(url, allowedOrigins)) return false;
+  const u = new URL(url as string);
+  if (u.hash) return false;
+  return /^(\/[A-Za-z0-9_-]+)?\/embed\/return\/?$/.test(u.pathname);
+}
