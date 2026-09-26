@@ -54,13 +54,21 @@ NATIVE_PLATFORMS = frozenset({"seatgeek"})
 
 # Operator-disabled markets: not pulled on any source sweep. /fetch rejects
 # them; /match callers should filter them from the comparison via
-# OPERATOR_DISABLED_PLATFORMS.
-#   - dice: disabled 2026-06-09.
+# OPERATOR_DISABLED_PLATFORMS. Currently EMPTY — every supported platform is
+# live. The gate stays in place (not deleted) so a market can be parked again
+# with a one-token edit.
+#   - dice: disabled 2026-06-09 → RE-ENABLED 2026-08-26 (operator directive).
+#     DB gates widened in 20260826140000_a1_td_dice_platform_enable.sql ('DI').
+#     LANDMINE — /fetch requires a FULL `https://dice.fm/event/<perm_name>` URL.
+#     A bare event ID is rejected with HTTP 400 {"error":"invalid_dice_url"},
+#     verified live 2026-08-26, despite the vendor docs listing Dice.fm (with
+#     Gametime) as accepting a bare ID. Do NOT pass an ID here.
+#     Venue/promoter pages go to /events via venue_url.
 #   - eventbrite: RE-ENABLED 2026-07-08 (operator directive) — wiring in the
 #     Eventbrite organizer feed via /events + /fetch, starting with organizer
 #     https://www.eventbrite.com/o/105655500371 (see migration
 #     20260708180000_td_eventbrite_organizer_discovery.sql).
-OPERATOR_DISABLED_PLATFORMS = frozenset({"dice"})
+OPERATOR_DISABLED_PLATFORMS: frozenset[str] = frozenset()
 
 EXCLUDED_PLATFORMS = NATIVE_PLATFORMS | OPERATOR_DISABLED_PLATFORMS
 
@@ -107,7 +115,8 @@ def _validate_platform(platform: str) -> str:
         )
     if plat in OPERATOR_DISABLED_PLATFORMS:
         raise TicketsDataError(
-            f"{plat} is operator-disabled (2026-06-09) — not pulled on any source sweep."
+            f"{plat} is operator-disabled — not pulled on any source sweep. "
+            "See OPERATOR_DISABLED_PLATFORMS for when and why it was parked."
         )
     return plat
 
@@ -168,11 +177,18 @@ class TicketsDataClient:
 
         # Per docs: retry 429 (back off), 503 (service_unavailable) and 504
         # (timeout); do NOT retry 400/401/402/404 (deterministic).
+        # 502 added 2026-08-26 from live evidence: a 30-way parallel Dice
+        # /fetch burst returned 4x HTTP 502 {"error":"service_unavailable",
+        # "message":"DICE dedicated worker unavailable"} — same transient
+        # service_unavailable class as 503, just a different status, and the
+        # per-platform worker pool is the thing that ran out. Retrying is
+        # correct AND saves money: a failed call still burns a credit, so a
+        # non-retried 502 is a credit spent for nothing.
         r = None
         delays = [1.5, 3.0]
         for attempt in range(len(delays) + 1):  # pragma: no branch  (loop never exhausts: the final attempt always breaks, since attempt < len(delays) is False there)
             r = requests.get(url, params=clean, timeout=self.timeout)
-            if r.status_code in (429, 503, 504) and attempt < len(delays):
+            if r.status_code in (429, 502, 503, 504) and attempt < len(delays):
                 retry_after = r.headers.get("Retry-After")
                 try:
                     delay = float(retry_after) if retry_after else delays[attempt]
