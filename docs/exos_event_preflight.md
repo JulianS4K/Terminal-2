@@ -24,7 +24,7 @@ A green PR on `main` protects nothing until two separate steps happen.
   SELECT name FROM supabase_migrations.schema_migrations
    WHERE name LIKE '20260702%' ORDER BY name;
   ```
-- [ ] **Edge functions deployed.** `stripe-webhook`, `exos-checkout`,
+- [ ] **Edge functions deployed** (source in `JulianS4K/EXP` since 2026-09-26; deploy from there). `stripe-webhook`, `exos-checkout`,
       `exos-webhook-drain`, and the new `exos-reconcile-checkouts` are redeployed
       (the payment-gate, add-on clamp, SSRF fix, and reconcile net live in edge
       code, not migrations).

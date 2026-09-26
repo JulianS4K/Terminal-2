@@ -115,7 +115,7 @@ Lane codes are **identifiers for regions of the ownership map** (which surface),
 | `D0` | Terminal + orders dashboard (product) | `static/terminal/*`, `/api/broker/*`, `d2_dashboard/*` |
 | `D1` | Storefront (product) | `static/store/*`, `/api/store/*` |
 | `D3` | Broadway (product) | `broadway_*` |
-| `D4` | Exos/Bridge (product) | SPA source in `JulianS4K/EXP` (moved 2026-09-24); here: `static/bridge/`, `exos-*` functions, `*exos*` migrations, `exos_*` schema |
+| `D4` | Exos/Bridge (product) | SPA source (2026-09-24) and edge functions `exos-*` + `stripe-webhook` (2026-09-26) in `JulianS4K/EXP`; here: `static/bridge/`, `*exos*` migrations, `exos_*` schema |
 | `D5` | Fantasy / sports (product) | `static/fantasy/*`, `/fantasy/*` page routes |
 | `D7` | N2S obligation-covering (product) | `static/terminal/subs.{html,js}`, `/api/broker/n2s-*`, `n2s_*` schema — ⚠ a NAMED SUBSET of D0's surface, not a separate tree (`PROJECT_BIBLE §2.3`) |
 | `D6` | *(retired 2026-09-10 → A1)* | collector + `paciolan_*` schema + crons 532/533 = data plane, not a product; folded into A1 |

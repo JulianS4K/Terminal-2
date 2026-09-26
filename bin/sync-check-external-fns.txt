@@ -1,0 +1,14 @@
+# Edge functions deployed to this Supabase project whose SOURCE lives in
+# another repo. bin/sync-check.sh does not report these as "deployed but not
+# in git". One slug per line; blank lines and #-comments are ignored.
+#
+# D4 / Exos: moved to JulianS4K/EXP (supabase/functions/) on 2026-09-26.
+# The DB is still shared, so they deploy to this same project.
+exos-api
+exos-checkout
+exos-connect-onboard
+exos-distribute
+exos-mail-drain
+exos-reconcile-checkouts
+exos-webhook-drain
+stripe-webhook
