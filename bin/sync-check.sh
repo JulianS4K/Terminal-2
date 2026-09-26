@@ -77,13 +77,17 @@ except Exception:
 fi
 
 GIT_MIGS_LIST=$(ls supabase/migrations/ 2>/dev/null | sed 's/\.sql$//' | sort)
+# Migrations whose source lives in another repo (D4/Exos → JulianS4K/EXP, whose
+# CI requires "exos" in every migration filename). They're applied to this same
+# shared project, so drop them from the prod side of the diff.
+EXTERNAL_MIG_RE=$(grep -vE '^\s*(#|$)' bin/sync-check-external-migrations.txt 2>/dev/null | paste -sd'|' - || true)
 
 # ---------- diff migrations ----------
 DRIFT=0
 DRIFT_REPORT=""
 
 if [[ -n "$PROD_MIGS_LIST" ]]; then
-  PROD_SORTED=$(echo "$PROD_MIGS_LIST" | sort)
+  PROD_SORTED=$(echo "$PROD_MIGS_LIST" | { if [[ -n "$EXTERNAL_MIG_RE" ]]; then grep -viE "$EXTERNAL_MIG_RE" || true; else cat; fi; } | sort)
   PROD_NOT_IN_GIT=$(comm -23 <(echo "$PROD_SORTED") <(echo "$GIT_MIGS_LIST"))
   GIT_NOT_IN_PROD=$(comm -13 <(echo "$PROD_SORTED") <(echo "$GIT_MIGS_LIST"))
 

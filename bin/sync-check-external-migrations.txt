@@ -1,0 +1,8 @@
+# Applied migrations whose SOURCE lives in another repo. One case-insensitive
+# extended regex per line, matched against the migration name recorded in prod
+# (supabase_migrations.schema_migrations.name). bin/sync-check.sh drops matches
+# from the "prod migrations not in git" diff. Blank lines / #-comments ignored.
+#
+# D4 / Exos: *exos* migrations moved to JulianS4K/EXP (supabase/migrations/)
+# on 2026-09-26. EXP's CI requires "exos" in every migration filename.
+exos

@@ -2,7 +2,7 @@ name: tests
 
 # CI gate — runs on every PR + push to main.
 # Jobs: pytest (backend) · mypy (Python types)
-#       · frontend-smoke (Playwright) · exos-sql (Exos SQL migrations + lifecycle)
+#       · frontend-smoke (Playwright)
 #
 # A1 must NOT merge to main until all jobs are green.
 # Render auto-deploys on push to main — green CI is the implicit deploy gate.
@@ -11,6 +11,8 @@ name: tests
 # exos-sql added 2026-07-02 (D4 ticket lifecycle can't regress silently).
 # typescript (D4 bridge) removed 2026-09-24 — the SPA source moved to JulianS4K/EXP,
 # whose own CI runs typecheck + vitest + build.
+# exos-sql removed 2026-09-26 — the *exos* migrations + tests/exos moved to
+# JulianS4K/EXP, whose CI runs the same suites (plus the barcode_secret RLS test).
 
 on:
   pull_request:
@@ -158,42 +160,3 @@ jobs:
         env:
           PYTHONPATH: "."
         run: pytest tests/frontend -q
-
-  exos-sql:
-    name: Exos SQL (migrations + lifecycle)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Applies the D4 Exos migrations against a throwaway Postgres and runs the
-    # SQL regression suites: the phase-3 platform test (tests/exos/run.sh) and
-    # the ticket LIFECYCLE test (tests/exos/run_lifecycle.sh) — mint → offline
-    # roster → HMAC door scan → transfer/claim/reissue → void — which drives the
-    # REAL migrated RPC bodies so those semantics can't regress silently.
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      PGHOST: localhost
-      PGPORT: "5433"
-      PGUSER: postgres
-      PGPASSWORD: postgres
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install psql client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
-      - name: Exos platform suite (waitlist/addons/vouchers/tax/invoicing)
-        run: bash tests/exos/run.sh exos_test
-
-      - name: Exos ticket-lifecycle suite (mint/scan/transfer/void/reissue)
-        run: bash tests/exos/run_lifecycle.sh exos_lifecycle_test

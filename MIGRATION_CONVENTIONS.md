@@ -1,6 +1,6 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v2.2.0 (2026-06-30; §14: +9 landmark rows for the TD sourcing redesign `20260630160000`–`250000`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** v2.3.0 (2026-09-26; §3: Exos (`*exos*`) migrations are authored in `JulianS4K/EXP` and share this project's version history, so prefix collisions span both repos) · v2.2.0 (2026-06-30; §14: +9 landmark rows for the TD sourcing redesign `20260630160000`–`250000`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
@@ -138,6 +138,16 @@ When two bots target the same timestamp:
 - The second bot bumps by `+30` or `+50`. Use `+30` for a tight follow-up, `+50` to leave room for an interleaved migration.
 - **Never bump by `+1`** (too tight, easy to collide on the next round).
 - **Never bump by `+100`** unless you genuinely want a whole-hour gap (rare; the hour-spaced gaps are reserved for major schema phases).
+
+### Exos migrations live in another repo (2026-09-26)
+
+`*exos*` migrations are authored in `JulianS4K/EXP` (`supabase/migrations/`)
+but apply to this same project, so they share `schema_migrations.version`
+with everything here. `migration-collision-check` only sees this repo:
+before picking a prefix, also check EXP's `supabase/migrations/` (and prod's
+history). EXP's CI requires `exos` in every migration filename, and
+`bin/sync-check.sh` excludes those from drift via
+`bin/sync-check-external-migrations.txt`. Don't add `*exos*` files here.
 
 ### Free slots in the `20260510` band (current state)
 ```
