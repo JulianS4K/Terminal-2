@@ -13,6 +13,8 @@ from typing import Callable
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
+from core import exos_proxy
+
 
 def build_pages_router(
     static_dir: str,
@@ -22,12 +24,21 @@ def build_pages_router(
     get_bridge_dir: Callable[[], str],
     get_exos_preview: Callable[[str, str], str | None] | None = None,
     get_exos_sitemap: Callable[[], str | None] | None = None,
+    get_exos_origin: Callable[[], str | None] = exos_proxy.exos_origin,
 ) -> APIRouter:
     # get_bridge_dir resolves the test-patched server symbol (app._BRIDGE_DIR)
     # at request time — not captured at mount time — so the route tests'
     # monkeypatch binds. It is required (no default) because the bridge dir is
     # only meaningful relative to the live server module.
     router = APIRouter()
+
+    def _from_exos(request: Request) -> Response | None:
+        """/bridge/* via exos-web when EXOS_ORIGIN is set (core/exos_proxy.py);
+        None → serve static/bridge/ as before."""
+        origin = get_exos_origin()
+        if not origin:
+            return None
+        return exos_proxy.proxy_bridge(request, origin)
 
     @router.get("/")
     def root_landing():
@@ -183,6 +194,11 @@ def build_pages_router(
     # hub — a user signed in on the home page is automatically signed into Bridge.
     # Returns 404 cleanly until the build artifact is present.
     # (bridge dir resolved at request time via get_bridge_dir() — patchable.)
+    #
+    # Since 2026-09-26 Exos can run on its own Render service (exos-web, from
+    # JulianS4K/EXP render.yaml). With EXOS_ORIGIN set, the routes below
+    # reverse-proxy there (core/exos_proxy.py) and static/bridge/ is only the
+    # fallback. Same URL and origin either way, so the shared login holds.
 
 
     @router.get("/bridge")
@@ -193,9 +209,11 @@ def build_pages_router(
 
 
     @router.get("/bridge/")
-    def bridge_index():
+    def bridge_index(request: Request):
         """Serve the Exos/Bridge SPA shell. 404 (not 500) when the build isn't
         present yet, so the route is safe to ship ahead of the first dist copy."""
+        if (proxied := _from_exos(request)) is not None:
+            return proxied
         index_path = os.path.join(get_bridge_dir(), "index.html")
         if not os.path.isfile(index_path):
             raise HTTPException(404, "bridge build not present — run `npm run build` in JulianS4K/EXP then copy dist/ → static/bridge/")
@@ -203,9 +221,11 @@ def build_pages_router(
 
 
     @router.get("/bridge/sitemap.xml", include_in_schema=False)
-    def bridge_sitemap():
+    def bridge_sitemap(request: Request):
         """Published Exos events + organizer pages for search engines
         (core/exos_seo.build_sitemap). 404 when there's no data source."""
+        if (proxied := _from_exos(request)) is not None:
+            return proxied
         xml = get_exos_sitemap() if get_exos_sitemap is not None else None
         if not xml:
             raise HTTPException(404, "not found")
@@ -217,6 +237,8 @@ def build_pages_router(
         """Proxy /bridge/<anything> → static/bridge/<anything>. SPA deep links
         (/bridge/event/123 etc.) fall back to index.html for client-side routing.
         Path-traversal guarded + extension-whitelisted (UI bundle pieces only)."""
+        if (proxied := _from_exos(request)) is not None:
+            return proxied
         if not page or page in ("", "/"):  # pragma: no cover - shadowed by the explicit /bridge/ index route
             index_path = os.path.join(get_bridge_dir(), "index.html")
             if not os.path.isfile(index_path):
