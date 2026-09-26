@@ -53,16 +53,11 @@
 # ── D4 / The Bridge (Exos primary-ticketing) ─────────────────────────────
 # Grouped for clear lane categorization (ownership is unchanged — the `*`
 # rule above already assigns @JulianS4K). The Bridge's SPA source lives in
-# JulianS4K/EXP (moved 2026-09-24); what remains here is its build output,
-# the exos-* edge functions, and the *exos* migrations (the DB is still shared). NOT the A1/D0 "*bridge*" items (sg_to_tevo_search_bridge,
+# JulianS4K/EXP (moved 2026-09-24), and so do its edge functions (exos-* +
+# stripe-webhook, moved 2026-09-26); what remains here is its build output
+# and the *exos* migrations (the DB is still shared). NOT the A1/D0 "*bridge*" items (sg_to_tevo_search_bridge,
 # espn_bridge, etc.). Auto-labelled `area:bridge` via .github/labeler.yml.
 /static/bridge/                             @JulianS4K
-/supabase/functions/exos-api/               @JulianS4K
-/supabase/functions/exos-checkout/          @JulianS4K
-/supabase/functions/exos-connect-onboard/   @JulianS4K
-/supabase/functions/exos-distribute/        @JulianS4K
-/supabase/functions/exos-mail-drain/        @JulianS4K
-/supabase/functions/exos-webhook-drain/     @JulianS4K
 /docs/d4_exos_rls_b1_review.md              @JulianS4K
 /docs/exos_event_preflight.md               @JulianS4K
 

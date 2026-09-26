@@ -115,7 +115,10 @@ try:
 except Exception:
     pass
 " 2>/dev/null | sort)
-    GIT_FNS=$(ls supabase/functions/ 2>/dev/null | sort)
+    # Functions whose source lives in another repo (e.g. Exos → JulianS4K/EXP)
+    # count as tracked; see bin/sync-check-external-fns.txt.
+    EXTERNAL_FNS=$(grep -vE '^\s*(#|$)' bin/sync-check-external-fns.txt 2>/dev/null || true)
+    GIT_FNS=$( { ls supabase/functions/ 2>/dev/null; echo "$EXTERNAL_FNS"; } | grep -v '^$' | sort -u)
     DEPLOYED_NOT_IN_GIT=$(comm -23 <(echo "$DEPLOYED_FNS") <(echo "$GIT_FNS"))
     if [[ -n "$DEPLOYED_NOT_IN_GIT" ]]; then
       DRIFT=1
