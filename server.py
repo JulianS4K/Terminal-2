@@ -560,10 +560,11 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: blob: https:; "
-            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com"
+            # checkout.stripe.com: Stripe Embedded Checkout (the /bridge/embed buy flow).
+            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://checkout.stripe.com"
             + (cls._BRIDGE_PIXEL_CONNECT if pixels else "")
             + (cls._BRIDGE_MAPS_CONNECT if maps else "") + "; "
-            "frame-src https://js.stripe.com https://hooks.stripe.com https://www.google.com; "
+            "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://www.google.com; "
             + ("worker-src 'self' blob:; " if maps else "worker-src 'self'; ")
             + "manifest-src 'self'; "
             # The embed is meant to be framed by any venue's site; nothing else is.

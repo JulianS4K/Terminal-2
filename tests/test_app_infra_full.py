@@ -959,7 +959,7 @@ def test_bridge_csp_public_page_allows_fonts_stripe_pixels_maps(client):
     assert "https://fonts.googleapis.com" in csp and "font-src 'self' https://fonts.gstatic.com" in csp
     assert "https://js.stripe.com" in csp
     assert "https://connect.facebook.net" in csp and "https://www.googletagmanager.com" in csp
-    assert "frame-src https://js.stripe.com https://hooks.stripe.com https://www.google.com" in csp
+    assert "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://www.google.com" in csp
     assert "frame-ancestors 'none'" in csp
     assert r.headers["X-Frame-Options"] == "DENY"
 
@@ -974,8 +974,14 @@ def test_bridge_csp_scanner_has_no_pixel_hosts(client):
 
 def test_bridge_embed_is_frameable(client):
     r = client.get("/bridge/embed/event/abc", follow_redirects=False)
-    assert "frame-ancestors *" in r.headers["Content-Security-Policy"]
+    csp = r.headers["Content-Security-Policy"]
+    assert "frame-ancestors *" in csp
     assert "X-Frame-Options" not in r.headers
+    # Stripe Embedded Checkout runs inside the embed.
+    assert "https://checkout.stripe.com" in csp.split("frame-src", 1)[1].split(";", 1)[0]
+    assert "https://checkout.stripe.com" in csp.split("connect-src", 1)[1].split(";", 1)[0]
+    r2 = client.get("/bridge/embed/return", follow_redirects=False)
+    assert "frame-ancestors *" in r2.headers["Content-Security-Policy"]
 
 
 def test_retail_csp_unchanged_outside_bridge(client):
