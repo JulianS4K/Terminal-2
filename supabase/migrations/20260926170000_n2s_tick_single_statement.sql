@@ -1,7 +1,7 @@
 -- Migration 20260926170000 · level:secondary-sales · lane:D7 · writes:cron.job · reads:none · pre:20260926144628
 --
 -- Already applied to prod · via MCP 2026-09-26 under operator direction, as a
--- 30-minute experiment, after a rolled-back dry run.
+-- 30-minute experiment, after a rolled-back dry run; kept on the result below.
 --
 -- ============================================================================
 -- Migration 20260926170000 — cron 640 (n2s_pipeline_tick) as ONE statement
@@ -28,6 +28,16 @@
 -- Baseline, 30 min before (16:30–17:00 UTC): 424 starts, 88.7% within 1 s of a
 -- tick end; 43 startup timeouts; the '20 seconds' espn-rosters-rotate ran 32
 -- times (90 expected); tick p50 49.7 s.
+--
+-- RESULT (17:01–17:31 vs 16:30–17:00 UTC) — kept:
+--   starts within 1 s of a tick end   88.7% → 16.1%
+--   job startup timeouts              43    → 27
+--   '20 seconds' job runs             33    → 73   (90 expected)
+--   cron job starts                   426   → 477
+--   tick p50 / p90                    52.3 / 88.1 s → 36.2 / 67.9 s; failed 4 → 0
+--   N2S: pg_net CRM 200s 75 → 103; direct fetch ok 17/22 → 29/30
+-- The two-statement command was the scheduler blocker. Other long
+-- 'SET …; …' jobs (A1: 629, 628, 639, 630, 638, 636, 583) flagged in bot_chat.
 -- ============================================================================
 
 SELECT cron.alter_job(
