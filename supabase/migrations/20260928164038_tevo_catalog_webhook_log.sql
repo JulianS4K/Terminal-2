@@ -1,4 +1,4 @@
--- Migration 20260928164038 · lane:A1 · writes:tevo_webhook_notifications · reads:none · pre:none
+-- Migration 20260928164038 · level:data-collection · lane:A1 · writes:tevo_webhook_notifications · reads:none · pre:none
 --
 -- NOT applied to prod — authored only. Apply is operator-gated (CLAUDE.md §1).
 --

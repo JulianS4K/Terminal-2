@@ -57,7 +57,7 @@ def test_migration_rls_lockdown(mig: str) -> None:
 
 
 def test_migration_header_declares_lane(mig: str) -> None:
-    assert mig.startswith("-- Migration 20260928164038 · lane:A1")
+    assert mig.startswith("-- Migration 20260928164038 · level:data-collection · lane:A1")
 
 
 # ---------------- edge function ----------------
