@@ -339,6 +339,7 @@
         awaiting_source_pull: ['pulling…', 'the four-source pull is in flight; give it ~2 minutes'],
         event_not_catalogued: ['event not in catalogue', 'the order is mapped to a real TEvo event we have never ingested, so no listings could be pulled for it — nothing was searched'],
         no_match: ['no match', 'listings were searched; none had the same section, an equal-or-better row and a usable quantity'],
+        window_closed: ['closed', 'past its 10-minute window: polling and cover search have stopped for this order'],
       };
       // ⚠ A SPLIT TAKE MUST LOOK LIKE ONE. sub_qty is what we buy; sub_avail is
       // the listing's lot size. When the lot is bigger we are buying PART of
@@ -364,6 +365,14 @@
         ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}${lot}`
         : (() => {
             const w = WHY[r.no_cover_reason] || ['no sub', 'no cover allocated'];
+            // A closed order is history, not work: show the last cover we
+            // found for it (may no longer be listed) rather than a red gap.
+            if (r.no_cover_reason === 'window_closed') {
+              const last = r.last_sub_source
+                ? ` · last ${sourceBadge(r.last_sub_source)} ${esc(r.last_sub_section || '')} / ${esc(r.last_sub_row || '')} ${money(r.last_sub_ea)}`
+                : ' · no cover found';
+              return `<span class="muted small" title="${esc(w[1])}">${esc(w[0])}${last}</span>`;
+            }
             const cls = r.no_cover_reason === 'awaiting_source_pull' ? 'muted' : 'neg';
             return `<span class="${cls} small" title="${esc(w[1])}">${esc(w[0])}</span>`;
           })();

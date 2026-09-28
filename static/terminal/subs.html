@@ -130,12 +130,13 @@
         </div>
         <div class="subs-field narrow">
           <label for="n2sLate">Timer</label>
-          <!-- Default hides anything past the CRM's 15-minute response timer.
-               That is nearly the whole book, so the empty state names the count
-               and this control is the way back. -->
+          <!-- Default shows the last 24 h, including orders past the CRM's
+               15-minute timer (operator, 2026-09-28): an order's 10-minute
+               work window closes before that timer, so "in time only" would
+               hide almost every row. -->
           <select id="n2sLate">
             <option value="">in time only</option>
-            <option value="true">include late</option>
+            <option value="true" selected>include late</option>
           </select>
         </div>
         <div class="subs-field narrow">

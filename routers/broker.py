@@ -1172,7 +1172,14 @@ def build_broker_router(
                      "captured_at,cover_rank,fifo_position,refreshed_at,"
                      "has_cover,no_cover_reason,open_intent_id,open_intent_by,"
                      "n2s_order_key,cover_gate,cover_label,sub_view,sub_notes,"
-                     "gt_event_id,gt_mapped_via"))
+                     "gt_event_id,gt_mapped_via,"
+                     # 20260928174500: the panel shows the last 24 h. An order
+                     # past its 10-minute window has no live cover
+                     # (no_cover_reason='window_closed'); last_* is the most
+                     # recent cover we found for it, from n2s_cover_history.
+                     "in_window,event_live,last_sub_source,last_sub_section,"
+                     "last_sub_row,last_sub_qty,last_sub_ea,last_cover_cost,"
+                     "last_cover_label,last_cover_at"))
         if source:
             q = q.eq("s4k_source", source)
         if days is not None:
