@@ -22,7 +22,7 @@
     -->
     <!-- SSR_META_START -->
     <title>Exos | Live the Moment</title>
-    <meta name="description" content="Bridge — independent venue ticketing with multi-channel distribution." />
+    <meta name="description" content="Exos — ticketing for independent venues and promoters." />
 
     <!--
       Social share / link-unfurl defaults (Open Graph + Twitter Card).
@@ -43,12 +43,12 @@
     <meta property="og:site_name" content="Exos" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Exos | Live the Moment" />
-    <meta property="og:description" content="Bridge — independent venue ticketing with multi-channel distribution." />
+    <meta property="og:description" content="Exos — ticketing for independent venues and promoters." />
     <meta property="og:image" content="/bridge/icon-512.png" />
     <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Exos | Live the Moment" />
-    <meta name="twitter:description" content="Bridge — independent venue ticketing with multi-channel distribution." />
+    <meta name="twitter:description" content="Exos — ticketing for independent venues and promoters." />
     <meta name="twitter:image" content="/bridge/icon-512.png" />
     <!-- SSR_META_END -->
 
@@ -64,15 +64,19 @@
     <link rel="apple-touch-icon" href="/bridge/icon.svg" />
 
     <!--
-      Warm up the Google Fonts connection. The actual @font-face rules
-      are pulled in by the CSS @import in src/index.css, but that import
-      isn't discovered until the stylesheet downloads and parses. These
-      hints open the TLS connections to both hosts in parallel with the
-      HTML/CSS fetch so the fonts arrive sooner. gstatic (the font-file
-      host) needs crossorigin because fonts are fetched anonymously.
+      Google Fonts. Loaded from the HTML (not a CSS @import) so the browser
+      discovers it immediately instead of after the app stylesheet parses.
+      Only the families the design tokens in src/index.css actually use:
+      Inter (sans, 400-900 minus 800), Anton (display), Special Elite (type),
+      Permanent Marker (marker), JetBrains Mono (mono). gstatic (the
+      font-file host) needs crossorigin because fonts are fetched anonymously.
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Special+Elite&family=Permanent+Marker&family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap"
+    />
 
     <!-- Manifest + favicon. icon.svg renders crisp at every size. -->
     <link rel="manifest" href="/bridge/manifest.json" />
@@ -116,21 +120,17 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/bridge/assets/index-7qOJW7-0.js"></script>
+    <script type="module" crossorigin src="/bridge/assets/index-CXQILv48.js"></script>
     <link rel="modulepreload" crossorigin href="/bridge/assets/rolldown-runtime-Cyuzqnbw.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/qr-6Jh8xKZF.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/chunk-QUQL4437-zy2j31cn.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/supabase-Dx43hW6t.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/motion-gVt-Xe65.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/jsx-runtime-BH1R-mb2.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/proxy-BFS60DcH.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/createLucideIcon-yZIjZNTn.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/arrow-left-E1SflbTJ.js">
-    <link rel="modulepreload" crossorigin href="/bridge/assets/loader-circle-DnBJNrE6.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/react-D0REIpy1.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/chunk-QUQL4437-BI-zusu8.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/supabase-U4wKatIN.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/createLucideIcon-DEe8RN8z.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/auth-Ju5b3lnT.js">
+    <link rel="modulepreload" crossorigin href="/bridge/assets/decide-BjfEVeyr.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/timestamp-BGXidqJ_.js">
     <link rel="modulepreload" crossorigin href="/bridge/assets/utils-D9tWZk4e.js">
-    <link rel="stylesheet" crossorigin href="/bridge/assets/index-45cG-TFx.css">
+    <link rel="stylesheet" crossorigin href="/bridge/assets/index-B7DsRwUn.css">
   </head>
   <body>
     <div id="root">
