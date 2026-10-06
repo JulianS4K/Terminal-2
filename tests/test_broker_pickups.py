@@ -45,12 +45,16 @@ class _Q:
 
 
 class _Sb:
-    def __init__(self, rows=None, exc=None):
-        self.rows, self.exc, self.calls = rows or [], exc, []
+    """`errs` maps an RPC name to the exception that call raises."""
+    def __init__(self, rows=None, errs=None):
+        self.rows, self.errs, self.calls = rows or [], errs or {}, []
 
     def rpc(self, name, params=None):
         self.calls.append((name, params))
-        return _Q(self.rows, self.exc)
+        return _Q(self.rows, self.errs.get(name))
+
+
+V2_MISSING = Exception("Could not find the function public.get_d0_pickups_v2 (PGRST202)")
 
 
 @pytest.fixture
@@ -71,7 +75,7 @@ def test_hot_passes_params_and_wraps_rows(client, monkeypatch):
     sb = _Sb(rows=[ROW])
     monkeypatch.setattr(app_module, "require_sb", lambda: sb)
     body = client.get("/api/broker/pickups?mode=hot&days=4&min_days_out=7&max_days_out=365&limit=8").json()
-    assert sb.calls == [("get_d0_pickups", {"p_mode": "hot", "p_window_days": 4, "p_min_days_out": 7,
+    assert sb.calls == [("get_d0_pickups_v2", {"p_mode": "hot", "p_window_days": 4, "p_min_days_out": 7,
                                             "p_max_days_out": 365, "p_limit": 8})]
     assert body["mode"] == "hot"
     assert body["count"] == 1
@@ -108,15 +112,34 @@ def test_cached_per_param_set(client, monkeypatch):
     assert len(sb.calls) == 1
 
 
-def test_missing_function_is_503(client, monkeypatch):
-    err = Exception("Could not find the function public.get_d0_pickups (PGRST202)")
-    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb(exc=err))
+def test_falls_back_to_v1_when_v2_missing(client, monkeypatch):
+    sb = _Sb(rows=[ROW], errs={"get_d0_pickups_v2": V2_MISSING})
+    monkeypatch.setattr(app_module, "require_sb", lambda: sb)
+    body = client.get("/api/broker/pickups?mode=hot&days=3&min_days_out=9").json()
+    assert [c[0] for c in sb.calls] == ["get_d0_pickups_v2", "get_d0_pickups"]
+    assert sb.calls[0][1] == sb.calls[1][1]
+    assert body["count"] == 1
+
+
+def test_neither_function_is_503(client, monkeypatch):
+    v1_missing = Exception("Could not find the function public.get_d0_pickups (PGRST202)")
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb(
+        errs={"get_d0_pickups_v2": V2_MISSING, "get_d0_pickups": v1_missing}))
     r = client.get("/api/broker/pickups?mode=hot&days=5&min_days_out=12")
     assert r.status_code == 503
     assert "20261006170000" in r.json()["detail"]
 
 
-def test_other_failure_is_502(client, monkeypatch):
-    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb(exc=Exception("statement timeout")))
+def test_v2_failure_is_502_without_fallback(client, monkeypatch):
+    sb = _Sb(errs={"get_d0_pickups_v2": Exception("statement timeout")})
+    monkeypatch.setattr(app_module, "require_sb", lambda: sb)
     r = client.get("/api/broker/pickups?mode=cold&days=6&min_days_out=13")
+    assert r.status_code == 502
+    assert [c[0] for c in sb.calls] == ["get_d0_pickups_v2"]
+
+
+def test_v1_failure_after_fallback_is_502(client, monkeypatch):
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb(
+        errs={"get_d0_pickups_v2": V2_MISSING, "get_d0_pickups": Exception("statement timeout")}))
+    r = client.get("/api/broker/pickups?mode=cold&days=7&min_days_out=14")
     assert r.status_code == 502

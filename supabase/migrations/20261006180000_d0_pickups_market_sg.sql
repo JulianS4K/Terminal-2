@@ -1,16 +1,18 @@
--- Migration 20261006180000 · level:secondary-sales · lane:D0 · writes:get_d0_pickups() · reads:v_s4kcs_orders,seatgeek_orders,evo_orders,evo_order_items,order_status_xref,events,event_listing_snapshot_daily,seatgeek_sales_snapshots · pre:20261006170000
+-- Migration 20261006180000 · level:secondary-sales · lane:D0 · writes:get_d0_pickups_v2() · reads:v_s4kcs_orders,seatgeek_orders,evo_orders,evo_order_items,order_status_xref,events,event_listing_snapshot_daily,seatgeek_sales_snapshots · pre:20261006170000
 --
 -- ============================================================================
--- Migration 20261006180000 — get_d0_pickups v2: SeatGeek MARKET sales next to
+-- Migration 20261006180000 — get_d0_pickups_v2: SeatGeek MARKET sales next to
 -- our pace, and pick-then-enrich so the hot list stops scanning the whole book
 --
 -- Lane:     D0 (terminal)
--- Touches:  get_d0_pickups (W, replaced); v_s4kcs_orders, seatgeek_orders,
+-- Touches:  get_d0_pickups_v2 (W, new); v_s4kcs_orders, seatgeek_orders,
 --           evo_orders, evo_order_items, order_status_xref, events,
 --           event_listing_snapshot_daily, seatgeek_sales_snapshots (R)
 -- Pre-reqs: 20261006170000 (v1)
 --
--- NOT YET APPLIED — apply is an Applier action under operator direction.
+-- Already applied to prod · via MCP 2026-10-06 under operator direction ("retry the
+-- apply then merge" → add-only variant); verified: hot 50 rows / 11 SG-tracked,
+-- cold 50 / 21, EXECUTE held by service_role (+ owner) only.
 --
 -- 1. MARKET (operator ask 2026-10-06: "add market seatgeek sales next to our
 --    pace"). For every returned event, SeatGeek's public sales feed over the
@@ -35,14 +37,14 @@
 --    runs) and the events CTE is NOT MATERIALIZED (each join probes
 --    events_pkey instead of regex-scanning every event).
 --
--- Same parameters and ranking as v1. RETURNS TABLE grows, which CREATE OR
--- REPLACE cannot do, so v1 is dropped first (same signature; nothing else
--- depends on it — only /api/broker/pickups calls it).
+-- Same parameters and ranking as v1. ADD-ONLY: RETURNS TABLE grows, which
+-- CREATE OR REPLACE cannot do in place, and a DROP + CREATE of v1 kept being
+-- cancelled at apply (destructive-statement confirmation). So v2 is a new
+-- function beside v1; /api/broker/pickups calls v2 and falls back to v1 when
+-- v2 is absent. v1 (mig 20261006170000) stays as-is and can be dropped later.
 -- ============================================================================
 
-DROP FUNCTION IF EXISTS public.get_d0_pickups(text, int, int, int, int);
-
-CREATE FUNCTION public.get_d0_pickups(
+CREATE OR REPLACE FUNCTION public.get_d0_pickups_v2(
   p_mode          text DEFAULT 'hot',
   p_window_days   int  DEFAULT 4,
   p_min_days_out  int  DEFAULT 7,
@@ -318,8 +320,8 @@ CROSS JOIN LATERAL (
 ORDER BY s.pick_score DESC NULLS LAST, s.orders_w DESC;
 $fn$;
 
-REVOKE ALL ON FUNCTION public.get_d0_pickups(text, int, int, int, int) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.get_d0_pickups(text, int, int, int, int) TO service_role;
+REVOKE ALL ON FUNCTION public.get_d0_pickups_v2(text, int, int, int, int) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_d0_pickups_v2(text, int, int, int, int) TO service_role;
 
-COMMENT ON FUNCTION public.get_d0_pickups(text, int, int, int, int) IS
-  'D0 pickups v2 — our daily order pace per future event + SeatGeek market sales (distinct, same window) and our SG share. mode hot: selling now, weighted up by days out + lift vs own 28d baseline; mode cold: listed open_qty not clearing at current pace. Read via /api/broker/pickups. Migs 20261006170000, 20261006180000.';
+COMMENT ON FUNCTION public.get_d0_pickups_v2(text, int, int, int, int) IS
+  'D0 pickups v2 (successor of get_d0_pickups) — our daily order pace per future event + SeatGeek market sales (distinct, same window) and our SG share. mode hot: selling now, weighted up by days out + lift vs own 28d baseline; mode cold: listed open_qty not clearing at current pace. Read via /api/broker/pickups. Migs 20261006170000, 20261006180000.';
