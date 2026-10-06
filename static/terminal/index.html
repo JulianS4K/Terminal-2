@@ -19,7 +19,7 @@
        _shared/design-tokens.css (same file home/undelivered link). Loaded before
        style.css so its var() refs resolve. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20261006mkt" />
+  <link rel="stylesheet" href="style.css?v=20261006stats" />
 </head>
 <body data-page="home">
 
@@ -81,14 +81,36 @@
 
     <section id="pickups-panel">
       <div class="panel-title row">
-        <span>🔥 PICKUPS — SELLING HOT PAST NEXT WEEK</span>
-        <span class="muted small"><span id="pickupsNote"></span> · <a href="pickups.html">full list + not selling →</a></span>
+        <span id="pickupsTitle">🔥 PICKUPS — SELLING HOT PAST NEXT WEEK</span>
+        <span class="muted small"><span id="pickupsNote"></span> · <a id="pickupsFull" href="pickups.html">full list →</a></span>
+      </div>
+      <div class="pk-controls" id="pickupsCtrls">
+        <div class="ctrl-group" aria-label="mode">
+          <button type="button" class="ctrl-btn is-active" data-hpk-mode="hot">🔥 Selling hot</button>
+          <button type="button" class="ctrl-btn" data-hpk-mode="cold">🧊 Not selling</button>
+        </div>
+        <div class="ctrl-group" aria-label="sales window">
+          <span class="ctrl-lbl">SALES</span>
+          <button type="button" class="ctrl-btn" data-hpk-days="1">1d</button>
+          <button type="button" class="ctrl-btn" data-hpk-days="2">2d</button>
+          <button type="button" class="ctrl-btn is-active" data-hpk-days="4">4d</button>
+          <button type="button" class="ctrl-btn" data-hpk-days="7">7d</button>
+          <button type="button" class="ctrl-btn" data-hpk-days="14">14d</button>
+        </div>
+        <div class="ctrl-group" aria-label="event date range">
+          <span class="ctrl-lbl">EVENT</span>
+          <button type="button" class="ctrl-btn is-active" data-hpk-out="7-365">past next week</button>
+          <button type="button" class="ctrl-btn" data-hpk-out="15-365">past 2 weeks</button>
+          <button type="button" class="ctrl-btn" data-hpk-out="0-14">inside 2 weeks</button>
+          <button type="button" class="ctrl-btn" data-hpk-out="0-30">next 30 days</button>
+          <button type="button" class="ctrl-btn" data-hpk-out="0-365">all</button>
+        </div>
       </div>
       <div id="pickupsBody"><div class="empty">loading…</div></div>
     </section>
 
     <section id="coverage-band">
-      <div class="panel-title">COVERAGE — ACTIVE FUTURE SPORTS</div>
+      <div class="panel-title row"><span>COVERAGE — UPCOMING TEAM EVENTS</span><span class="muted small" id="cvNote"></span></div>
       <div class="coverage-grid">
         <div class="cv-cell"><span class="cv-num" id="cvTotal">—</span><span class="cv-lbl">tracked</span></div>
         <div class="cv-cell"><span class="cv-num" id="cv30d">—</span><span class="cv-lbl">≤ 30d</span></div>
@@ -120,6 +142,7 @@
         <span>MOVERS · CROSS-SOURCE INDEX</span>
         <span class="muted small" id="moversCount"></span>
       </div>
+      <div id="moversStale" class="stale-note" hidden></div>
       <div id="moversSummaryStrip" class="muted small" style="margin-bottom:6px"></div>
       <div class="ctrl-row">
         <div class="ctrl-group">
@@ -153,6 +176,7 @@
         <span>S4K-OWNED EVENTS — NEXT 30 DAYS</span>
         <span class="muted small" id="ownedEventCount"></span>
       </div>
+      <div id="ownedStale" class="stale-note" hidden></div>
       <div id="ownedEventsBody"></div>
     </section>
   </main>
@@ -164,7 +188,7 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20261006pk"></script>
-  <script src="home.js?v=20261006mkt"></script>
+  <script src="home.js?v=20261006pk2"></script>
   <script src="news-ticker.js?v=20260707all500"></script>
 </body>
 </html>

@@ -2944,3 +2944,6 @@ tr.n2s-row-gap > td { opacity: .82; }
   .pk-tbl td.pk-name a { font-size: 14px; font-weight: 600; }
   .pk-tbl .pk-opt, .pk-tbl .pk-opt2 { display: block; }
 }
+
+/* Frozen-feed note (home panels): a feed whose data is older than 2 days. */
+.stale-note { margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--warn); border-radius: 4px; color: var(--warn); font-size: 11px; line-height: 1.4; }

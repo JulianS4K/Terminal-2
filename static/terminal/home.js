@@ -54,41 +54,96 @@
     // Pickups — our daily order pace on events past next week (the pricing
     // desk's morning list). Own endpoint, runs in parallel; full page at
     // pickups.html.
+    wirePickupsCtrls();
     loadPickups().catch(e => console.error('[pickups]', e));
+    // Coverage band + data-as-of labels (frozen feeds are labelled, not shown as live).
+    loadHomeStats().catch(e => console.error('[homeStats]', e));
     load();
   }
 
-  // ---------- Pickups (top 8 hot; full list on pickups.html) ----------
+  // ---------- Pickups panel: 🔥 selling hot / 🧊 not selling over a range ----------
+  // Same /api/broker/pickups feed as pickups.html. Mode × sales window × event
+  // date range; the choice is remembered per browser (localStorage, best-effort).
+  const HPK_KEY = 'terminal.home.pickups';
+  const hpk = (() => {
+    const d = { mode: 'hot', days: 4, out: '7-365' };
+    try { return Object.assign(d, JSON.parse(localStorage.getItem(HPK_KEY) || '{}')); } catch (_) { return d; }
+  })();
+  const HPK_OUT_LABEL = {
+    '7-365': 'PAST NEXT WEEK', '15-365': 'PAST 2 WEEKS', '0-14': 'INSIDE 2 WEEKS',
+    '0-30': 'NEXT 30 DAYS', '0-365': 'ALL UPCOMING',
+  };
+
+  function wirePickupsCtrls() {
+    const groups = [['hpk-mode', 'hpkMode', 'mode', v => v],
+                    ['hpk-days', 'hpkDays', 'days', v => parseInt(v, 10)],
+                    ['hpk-out', 'hpkOut', 'out', v => v]];
+    groups.forEach(([attr, dsKey, key, parse]) => {
+      const btns = document.querySelectorAll(`[data-${attr}]`);
+      btns.forEach(b => {
+        b.classList.toggle('is-active', String(parse(b.dataset[dsKey])) === String(hpk[key]));
+        b.addEventListener('click', () => {
+          hpk[key] = parse(b.dataset[dsKey]);
+          btns.forEach(o => o.classList.toggle('is-active', o === b));
+          try { localStorage.setItem(HPK_KEY, JSON.stringify(hpk)); } catch (_) { /* private mode */ }
+          loadPickups().catch(err => console.error('[pickups]', err));
+        });
+      });
+    });
+  }
+
   async function loadPickups() {
     const body = document.getElementById('pickupsBody');
     if (!body) return;
     const esc = (window.TermRender && window.TermRender.escapeHtml) || (s => String(s == null ? '' : s));
     const md = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${+m[2]}/${+m[3]}` : ''; };
     const n0 = (v) => Number.isFinite(Number(v)) ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+    const cold = hpk.mode === 'cold';
+    const [lo, hi] = String(hpk.out).split('-').map(Number);
+    setText('pickupsTitle', `${cold ? '🧊 NOT SELLING' : '🔥 PICKUPS — SELLING HOT'} ${HPK_OUT_LABEL[hpk.out] || ''}`.trim());
+    const full = document.getElementById('pickupsFull');
+    if (full) full.href = `pickups.html?mode=${encodeURIComponent(hpk.mode)}&days=${encodeURIComponent(hpk.days)}&out=${encodeURIComponent(hpk.out)}`;
+    body.innerHTML = '<div class="empty">loading…</div>';
     try {
-      const d = await T.api('/api/broker/pickups?mode=hot&days=4&min_days_out=7&max_days_out=365&limit=8');
+      const q = new URLSearchParams({ mode: cold ? 'cold' : 'hot', days: String(hpk.days),
+        min_days_out: String(lo || 0), max_days_out: String(hi || 365), limit: '10' });
+      const d = await T.api('/api/broker/pickups?' + q.toString());
       const rows = d.events || [];
       const daily0 = (rows[0] && rows[0].daily) || [];
       setText('pickupsNote', daily0.length ? `daily orders ${md(daily0[0].d)} → ${md(daily0[daily0.length - 1].d)}` : '');
-      if (!rows.length) { body.innerHTML = '<div class="empty">no pickups in the window</div>'; return; }
+      if (!rows.length) {
+        body.innerHTML = `<div class="empty">${cold ? 'no listed events falling behind in this range' : 'no pickups in this range'}</div>`;
+        return;
+      }
       // .pk-tbl + data-label → stacked cards on phones (style.css, Pickups).
       const td = (label, html, cls) => `<td${cls ? ` class="${cls}"` : ''} data-label="${label}">${html}</td>`;
-      body.innerHTML = '<table class="sales-tbl pk-tbl"><thead><tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th>' +
-        '<th>DAILY ORDERS</th><th>TREND</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">PACE</th>' +
-        '<th class="num" title="SeatGeek market sales (all sellers) in the same window; — = not covered by the SG feed">SG MKT</th></tr></thead><tbody>' +
+      const sgCell = (r) => r.mkt_tracked
+        ? `${n0(r.mkt_sales_window)}` + (r.sg_share != null ? ` <span class="muted small">ours ${Math.round(Number(r.sg_share) * 100)}%</span>` : '')
+        : '<span class="muted">—</span>';
+      const head = '<tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th><th>DAILY ORDERS</th>' +
+        (cold
+          ? '<th class="num">TIX</th><th class="num" title="our listed tickets (TEvo/SG owned)">LISTED</th>' +
+            '<th class="num" title="tickets/day sold ÷ tickets/day needed to clear by event day">PACE</th>' +
+            '<th class="num" title="listed tickets left at event day at this pace">PROJ. LEFT</th>'
+          : '<th>TREND</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">PACE</th>') +
+        '<th class="num" title="SeatGeek market sales (all sellers) in the same window; — = not covered by the SG feed">SG MKT</th></tr>';
+      body.innerHTML = `<table class="sales-tbl pk-tbl"><thead>${head}</thead><tbody>` +
         rows.map(r => {
           const trend = r.trend && r.trend !== 'flat' ? r.trend : '';
-          const pace = Number(r.open_qty) > 0 && r.pace_ratio != null ? Number(r.pace_ratio).toFixed(1) + '×' : '—';
+          const pr = Number(r.pace_ratio);
+          const pace = Number(r.open_qty) > 0 && r.pace_ratio != null ? pr.toFixed(pr < 1 ? 2 : 1) + '×' : '—';
           const tcls = trend === 'falling' ? 'neg' : trend ? 'pos' : 'muted';
           return `<tr><td class="pk-name"><a href="event.html?event=${encodeURIComponent(r.tevo_event_id)}">${esc(r.event_name)}</a></td>` +
             td('Date', esc(md(r.occurs_at_local))) + td('Out', `${n0(r.days_out)}d`, 'num') +
             td('Daily orders', esc((r.daily || []).map(x => n0(x.orders)).join(', '))) +
-            td('Trend', `<span class="${tcls}">${esc(trend || '—')}</span>`) +
-            td('Tix', n0(r.tix_window), 'num') + td('Sales', `$${n0(r.sales_window)}`, 'num') +
-            td('Pace', esc(pace), 'num') +
-            td('SG mkt', r.mkt_tracked
-              ? `${n0(r.mkt_sales_window)}` + (r.sg_share != null ? ` <span class="muted small">ours ${Math.round(Number(r.sg_share) * 100)}%</span>` : '')
-              : '<span class="muted">—</span>', 'num') + '</tr>';
+            (cold
+              ? td('Tix', n0(r.tix_window), 'num') + td('Listed', n0(r.open_qty), 'num') +
+                td('Pace', `<span class="neg">${esc(pace)}</span>`, 'num') +
+                td('Proj. left', `<span class="neg">${n0(r.projected_unsold)}</span>`, 'num')
+              : td('Trend', `<span class="${tcls}">${esc(trend || '—')}</span>`) +
+                td('Tix', n0(r.tix_window), 'num') + td('Sales', `$${n0(r.sales_window)}`, 'num') +
+                td('Pace', esc(pace), 'num')) +
+            td('SG mkt', sgCell(r), 'num') + '</tr>';
         }).join('') + '</tbody></table>';
     } catch (e) {
       body.innerHTML = `<div class="empty neg">${esc(e.message)}</div>`;
@@ -111,7 +166,7 @@
     const res = await Auth.client.rpc('event_watchlist_list');
     if (res.error) {
       // RPC not applied yet → honest empty state, no crash.
-      if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+      if (/does not exist|could not find the function/i.test(res.error.message || '') || res.error.code === '42883' || res.error.code === 'PGRST202') {
         if (body) body.innerHTML = '<div class="empty">watchlist not enabled yet</div>';
         return;
       }
@@ -305,13 +360,12 @@
       const summary = summaryRes.data || [];
 
       // Reshape v2 columns to the legacy field aliases that renderMovers /
-      // renderCoverage consume. Fields not in v2 become null and render as "—".
+      // render functions consume. Fields not in v2 become null and render as "—".
       state.rows = rawRows.map(reshapeV2Row);
       state.gapMap = new Map();   // reset on each load
 
       T.setStatus('Loaded', 'ok');
       renderSummaryStrip(summary);
-      renderCoverage(state.rows);
       renderMovers();
       // NOTE: the owned-events panel is NOT rendered here — it loads independently
       // via loadOwnedEvents() so the movers source/window toggle doesn't reshape it.
@@ -396,23 +450,41 @@
 
   // ---------- Coverage band ----------
 
-  function renderCoverage(rows) {
-    const now = Date.now();
-    const day = 86400000;
-    let total = 0, w30 = 0, w7 = 0, today = 0;
-    rows.forEach(r => {
-      total++;
-      const t = new Date(r.occurs_at_local || r.occurs_at).getTime();
-      if (!Number.isFinite(t)) return;
-      const days = (t - now) / day;
-      if (days <= 30) w30++;
-      if (days <= 7)  w7++;
-      if (days <= 1)  today++;
-    });
-    setText('cvTotal', T.fmtNum(total));
-    setText('cv30d',   T.fmtNum(w30));
-    setText('cv7d',    T.fmtNum(w7));
-    setText('cvToday', T.fmtNum(today));
+  // Server-side counts (get_home_stats, mig 20261006190000): upcoming TEAM
+  // events, ET dates. Was a browser tally of the movers result (capped at 200,
+  // following the movers toggle, frozen with the movers index).
+  const STALE_MS = 2 * 86400000;
+  const fmtAsOf = (iso) => {
+    const d = new Date(iso);
+    return Number.isFinite(d.getTime())
+      ? d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }) : '';
+  };
+  function showStale(id, iso, what) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const t = new Date(iso).getTime();
+    if (!iso || !Number.isFinite(t) || Date.now() - t < STALE_MS) { el.hidden = true; return; }
+    el.textContent = `⚠ ${what} frozen since ${fmtAsOf(iso)} — terminal listing polls are paused (N2S has the marketplace APIs). Treat these numbers as of that date.`;
+    el.hidden = false;
+  }
+
+  async function loadHomeStats() {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+    const res = await Auth.client.rpc('get_home_stats');
+    if (res.error || !res.data) {
+      setText('cvNote', 'coverage not available yet');
+      return;
+    }
+    const cov = res.data.coverage || {};
+    const asOf = res.data.as_of || {};
+    setText('cvTotal', T.fmtNum(cov.total));
+    setText('cv30d',   T.fmtNum(cov.d30));
+    setText('cv7d',    T.fmtNum(cov.d7));
+    setText('cvToday', T.fmtNum(cov.today));
+    setText('cvNote', 'ESPN-mapped teams · ET dates');
+    showStale('moversStale', asOf.movers_index, 'Movers index');
+    showStale('ownedStale', asOf.tevo_inventory, 'TEvo inventory (owned counts + prices)');
   }
 
   // ---------- TOP 50 — MARKET SELLING, WE'RE NOT IN ----------
@@ -495,7 +567,8 @@
     if (metaEl) {
       metaEl.textContent = total
         ? (isRest ? `ranks 51–${Math.min(total, CHART_PAGE + rows.length)} of ${total}${charted}`
-                  : `${total} US events we hold no position in${charted}`)
+                  : `${total} US events we hold no position in${charted}` +
+                    (payload.excluded_crm ? ` · ${payload.excluded_crm} dropped (our CRM sales, 30d)` : ''))
         : '';
     }
 
@@ -744,7 +817,7 @@
     const res = await Auth.client.rpc('get_owned_events_upcoming', { p_days: OWNED_HORIZON_DAYS });
     if (res.error) {
       // RPC not applied yet → honest empty state, no crash.
-      if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+      if (/does not exist|could not find the function/i.test(res.error.message || '') || res.error.code === '42883' || res.error.code === 'PGRST202') {
         body.innerHTML = '<div class="empty">owned-events feed not enabled yet</div>';
         if (countEl) countEl.textContent = '';
         return;
