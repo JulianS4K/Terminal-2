@@ -57,6 +57,11 @@
     // (mig 20260714220000).
     { id: 'cast-watch', label: 'CAST WATCH', href: 'cast-watch.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    // Pickups — the pricing desk's morning list, automated: OUR daily order
+    // pace per future event, ranked relative to how far out it is (hot), plus
+    // listed inventory not clearing by event day (cold). Backed by
+    // /api/broker/pickups → get_d0_pickups (mig 20261006170000). Wired 2026-10-06.
+    { id: 'pickups',   label: 'PICKUPS',   href: 'pickups.html' },
     // Deals — GoTickets BUYABLE deals, benchmarked against the OTHER sources'
     // prices (EVO/amalgam) for the same event×zone: a GoTickets listing priced
     // well below the cross-market zone median = an arbitrage opportunity. Zone is

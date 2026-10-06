@@ -51,7 +51,44 @@
     // whole owned book, not just whichever events happen to be in the movers
     // index for the current source/window toggle. Runs in parallel with movers.
     loadOwnedEvents().catch(e => console.error('[ownedEvents]', e));
+    // Pickups — our daily order pace on events past next week (the pricing
+    // desk's morning list). Own endpoint, runs in parallel; full page at
+    // pickups.html.
+    loadPickups().catch(e => console.error('[pickups]', e));
     load();
+  }
+
+  // ---------- Pickups (top 8 hot; full list on pickups.html) ----------
+  async function loadPickups() {
+    const body = document.getElementById('pickupsBody');
+    if (!body) return;
+    const esc = (window.TermRender && window.TermRender.escapeHtml) || (s => String(s == null ? '' : s));
+    const md = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${+m[2]}/${+m[3]}` : ''; };
+    const n0 = (v) => Number.isFinite(Number(v)) ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+    try {
+      const d = await T.api('/api/broker/pickups?mode=hot&days=4&min_days_out=7&max_days_out=365&limit=8');
+      const rows = d.events || [];
+      const daily0 = (rows[0] && rows[0].daily) || [];
+      setText('pickupsNote', daily0.length ? `daily orders ${md(daily0[0].d)} → ${md(daily0[daily0.length - 1].d)}` : '');
+      if (!rows.length) { body.innerHTML = '<div class="empty">no pickups in the window</div>'; return; }
+      // .pk-tbl + data-label → stacked cards on phones (style.css, Pickups).
+      const td = (label, html, cls) => `<td${cls ? ` class="${cls}"` : ''} data-label="${label}">${html}</td>`;
+      body.innerHTML = '<table class="sales-tbl pk-tbl"><thead><tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th>' +
+        '<th>DAILY ORDERS</th><th>TREND</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">PACE</th></tr></thead><tbody>' +
+        rows.map(r => {
+          const trend = r.trend && r.trend !== 'flat' ? r.trend : '';
+          const pace = Number(r.open_qty) > 0 && r.pace_ratio != null ? Number(r.pace_ratio).toFixed(1) + '×' : '—';
+          const tcls = trend === 'falling' ? 'neg' : trend ? 'pos' : 'muted';
+          return `<tr><td class="pk-name"><a href="event.html?event=${encodeURIComponent(r.tevo_event_id)}">${esc(r.event_name)}</a></td>` +
+            td('Date', esc(md(r.occurs_at_local))) + td('Out', `${n0(r.days_out)}d`, 'num') +
+            td('Daily orders', esc((r.daily || []).map(x => n0(x.orders)).join(', '))) +
+            td('Trend', `<span class="${tcls}">${esc(trend || '—')}</span>`) +
+            td('Tix', n0(r.tix_window), 'num') + td('Sales', `$${n0(r.sales_window)}`, 'num') +
+            td('Pace', esc(pace), 'num') + '</tr>';
+        }).join('') + '</tbody></table>';
+    } catch (e) {
+      body.innerHTML = `<div class="empty neg">${esc(e.message)}</div>`;
+    }
   }
 
   // ---------- Watchlist (first table; max 50/page, client-paged) ----------

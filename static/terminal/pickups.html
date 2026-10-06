@@ -14,57 +14,50 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>Terminal — Sales</title>
+  <title>Terminal — Pickups</title>
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
   <link rel="stylesheet" href="style.css?v=20261006pk2" />
 </head>
-<body data-page="sales">
+<body data-page="pickups">
 
   <header class="topbar">
     <span class="brand">TERMINAL · D0</span>
     <span id="status" class="status">Loading…</span>
   </header>
 
-  <main class="wrap sales">
+  <main class="wrap pickups">
 
-    <!-- Refresh health strip -->
-    <section id="sales-health" class="muted small" style="margin-bottom:8px">
-      <span id="healthStrip">checking refresh health…</span>
+    <section id="pickups-controls">
+      <div class="panel-title row">
+        <span>PICKUPS — OUR ORDER PACE vs HOW FAR OUT</span>
+        <span class="muted small" id="pkNote">—</span>
+      </div>
+      <div class="pk-controls">
+        <div class="ctrl-group" role="tablist" aria-label="mode">
+          <button type="button" class="ctrl-btn is-active" data-mode="hot">🔥 SELLING HOT</button>
+          <button type="button" class="ctrl-btn" data-mode="cold">🧊 NOT SELLING</button>
+        </div>
+        <div class="ctrl-group" aria-label="window">
+          <span class="muted small">last</span>
+          <button type="button" class="ctrl-btn" data-days="1">1d</button>
+          <button type="button" class="ctrl-btn" data-days="2">2d</button>
+          <button type="button" class="ctrl-btn is-active" data-days="4">4d</button>
+          <button type="button" class="ctrl-btn" data-days="7">7d</button>
+        </div>
+        <div class="ctrl-group" aria-label="days out">
+          <span class="muted small">event</span>
+          <button type="button" class="ctrl-btn is-active" data-out="7-365">past next week</button>
+          <button type="button" class="ctrl-btn" data-out="15-365">past 2 weeks</button>
+          <button type="button" class="ctrl-btn" data-out="0-14">inside 2 weeks</button>
+          <button type="button" class="ctrl-btn" data-out="0-365">all</button>
+        </div>
+        <button type="button" class="ctrl-btn" id="pkCopy" title="Copy the list as chat-ready text">COPY FOR CHAT</button>
+      </div>
+      <div class="muted small pk-explain" id="pkExplain"></div>
     </section>
 
-    <!-- League dashboard -->
-    <section id="sales-leagues">
-      <div class="panel-title row">
-        <span>LEAGUE SALES</span>
-        <span class="muted small" id="leaguesNote">realized sales · d0_sales_fact snapshot</span>
-      </div>
-      <div id="leaguesBody"><div class="empty">loading…</div></div>
-      <div class="muted small" style="margin-top:6px">
-        League totals come straight from <code>d0_league_summary</code> — do not sum the
-        per-team figures below (each sale is counted once home + once away).
-      </div>
-    </section>
-
-    <!-- Visiting-team leaderboard for the selected league -->
-    <section id="sales-visitors">
-      <div class="panel-title row">
-        <span>AWAY-TEAM LEADERBOARD — <span id="visLeague">—</span></span>
-        <span class="muted small" id="visNote">pick a league above</span>
-      </div>
-      <div id="visitorsBody"><div class="empty">select a league</div></div>
-    </section>
-
-    <!-- Performer sales report -->
-    <section id="sales-performer">
-      <div class="panel-title row">
-        <span>PERFORMER SALES</span>
-        <form id="perfForm" class="ctrl-group" style="margin:0" autocomplete="off">
-          <input id="perfInput" type="number" inputmode="numeric" min="1"
-                 placeholder="performer_id" class="perf-input" aria-label="performer id" />
-          <button type="submit" class="ctrl-btn">Load</button>
-        </form>
-      </div>
-      <div id="performerBody"><div class="empty">enter a performer_id, or click a team above · e.g. 72393 (Inter Miami)</div></div>
+    <section id="pickups-list">
+      <div id="pkBody"><div class="empty">loading…</div></div>
     </section>
 
   </main>
@@ -75,6 +68,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20261006pk"></script>
-  <script src="sales.js?v=20260702a"></script>
+  <script src="pickups.js?v=20261006b"></script>
 </body>
 </html>

@@ -19,7 +19,7 @@
        _shared/design-tokens.css (same file home/undelivered link). Loaded before
        style.css so its var() refs resolve. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260721a" />
+  <link rel="stylesheet" href="style.css?v=20261006pk2" />
 </head>
 <body data-page="home">
 
@@ -77,6 +77,14 @@
       </div>
       <div id="watchlistBody"><div class="empty">loading…</div></div>
       <div id="watchlistPager" class="wl-pager" hidden></div>
+    </section>
+
+    <section id="pickups-panel">
+      <div class="panel-title row">
+        <span>🔥 PICKUPS — SELLING HOT PAST NEXT WEEK</span>
+        <span class="muted small"><span id="pickupsNote"></span> · <a href="pickups.html">full list + not selling →</a></span>
+      </div>
+      <div id="pickupsBody"><div class="empty">loading…</div></div>
     </section>
 
     <section id="coverage-band">
@@ -155,8 +163,8 @@
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
-  <script src="nav.js?v=20260811deals"></script>
-  <script src="home.js?v=20260709c"></script>
+  <script src="nav.js?v=20261006pk"></script>
+  <script src="home.js?v=20261006pk2"></script>
   <script src="news-ticker.js?v=20260707all500"></script>
 </body>
 </html>
