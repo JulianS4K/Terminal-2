@@ -55,6 +55,8 @@
     // desk's morning list). Own endpoint, runs in parallel; full page at
     // pickups.html.
     loadPickups().catch(e => console.error('[pickups]', e));
+    // Coverage band + data-as-of labels (frozen feeds are labelled, not shown as live).
+    loadHomeStats().catch(e => console.error('[homeStats]', e));
     load();
   }
 
@@ -111,7 +113,7 @@
     const res = await Auth.client.rpc('event_watchlist_list');
     if (res.error) {
       // RPC not applied yet → honest empty state, no crash.
-      if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+      if (/does not exist|could not find the function/i.test(res.error.message || '') || res.error.code === '42883' || res.error.code === 'PGRST202') {
         if (body) body.innerHTML = '<div class="empty">watchlist not enabled yet</div>';
         return;
       }
@@ -305,13 +307,12 @@
       const summary = summaryRes.data || [];
 
       // Reshape v2 columns to the legacy field aliases that renderMovers /
-      // renderCoverage consume. Fields not in v2 become null and render as "—".
+      // render functions consume. Fields not in v2 become null and render as "—".
       state.rows = rawRows.map(reshapeV2Row);
       state.gapMap = new Map();   // reset on each load
 
       T.setStatus('Loaded', 'ok');
       renderSummaryStrip(summary);
-      renderCoverage(state.rows);
       renderMovers();
       // NOTE: the owned-events panel is NOT rendered here — it loads independently
       // via loadOwnedEvents() so the movers source/window toggle doesn't reshape it.
@@ -396,23 +397,41 @@
 
   // ---------- Coverage band ----------
 
-  function renderCoverage(rows) {
-    const now = Date.now();
-    const day = 86400000;
-    let total = 0, w30 = 0, w7 = 0, today = 0;
-    rows.forEach(r => {
-      total++;
-      const t = new Date(r.occurs_at_local || r.occurs_at).getTime();
-      if (!Number.isFinite(t)) return;
-      const days = (t - now) / day;
-      if (days <= 30) w30++;
-      if (days <= 7)  w7++;
-      if (days <= 1)  today++;
-    });
-    setText('cvTotal', T.fmtNum(total));
-    setText('cv30d',   T.fmtNum(w30));
-    setText('cv7d',    T.fmtNum(w7));
-    setText('cvToday', T.fmtNum(today));
+  // Server-side counts (get_home_stats, mig 20261006190000): upcoming TEAM
+  // events, ET dates. Was a browser tally of the movers result (capped at 200,
+  // following the movers toggle, frozen with the movers index).
+  const STALE_MS = 2 * 86400000;
+  const fmtAsOf = (iso) => {
+    const d = new Date(iso);
+    return Number.isFinite(d.getTime())
+      ? d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }) : '';
+  };
+  function showStale(id, iso, what) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const t = new Date(iso).getTime();
+    if (!iso || !Number.isFinite(t) || Date.now() - t < STALE_MS) { el.hidden = true; return; }
+    el.textContent = `⚠ ${what} frozen since ${fmtAsOf(iso)} — terminal listing polls are paused (N2S has the marketplace APIs). Treat these numbers as of that date.`;
+    el.hidden = false;
+  }
+
+  async function loadHomeStats() {
+    const Auth = window.TerminalAuth;
+    if (!Auth || !Auth.client || !Auth.getAccessToken()) return;
+    const res = await Auth.client.rpc('get_home_stats');
+    if (res.error || !res.data) {
+      setText('cvNote', 'coverage not available yet');
+      return;
+    }
+    const cov = res.data.coverage || {};
+    const asOf = res.data.as_of || {};
+    setText('cvTotal', T.fmtNum(cov.total));
+    setText('cv30d',   T.fmtNum(cov.d30));
+    setText('cv7d',    T.fmtNum(cov.d7));
+    setText('cvToday', T.fmtNum(cov.today));
+    setText('cvNote', 'ESPN-mapped teams · ET dates');
+    showStale('moversStale', asOf.movers_index, 'Movers index');
+    showStale('ownedStale', asOf.tevo_inventory, 'TEvo inventory (owned counts + prices)');
   }
 
   // ---------- TOP 50 — MARKET SELLING, WE'RE NOT IN ----------
@@ -495,7 +514,8 @@
     if (metaEl) {
       metaEl.textContent = total
         ? (isRest ? `ranks 51–${Math.min(total, CHART_PAGE + rows.length)} of ${total}${charted}`
-                  : `${total} US events we hold no position in${charted}`)
+                  : `${total} US events we hold no position in${charted}` +
+                    (payload.excluded_crm ? ` · ${payload.excluded_crm} dropped (our CRM sales, 30d)` : ''))
         : '';
     }
 
@@ -744,7 +764,7 @@
     const res = await Auth.client.rpc('get_owned_events_upcoming', { p_days: OWNED_HORIZON_DAYS });
     if (res.error) {
       // RPC not applied yet → honest empty state, no crash.
-      if (/does not exist/i.test(res.error.message || '') || res.error.code === '42883') {
+      if (/does not exist|could not find the function/i.test(res.error.message || '') || res.error.code === '42883' || res.error.code === 'PGRST202') {
         body.innerHTML = '<div class="empty">owned-events feed not enabled yet</div>';
         if (countEl) countEl.textContent = '';
         return;

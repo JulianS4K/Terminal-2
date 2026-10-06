@@ -19,7 +19,7 @@
        _shared/design-tokens.css (same file home/undelivered link). Loaded before
        style.css so its var() refs resolve. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20261006mkt" />
+  <link rel="stylesheet" href="style.css?v=20261006stats" />
 </head>
 <body data-page="home">
 
@@ -88,7 +88,7 @@
     </section>
 
     <section id="coverage-band">
-      <div class="panel-title">COVERAGE — ACTIVE FUTURE SPORTS</div>
+      <div class="panel-title row"><span>COVERAGE — UPCOMING TEAM EVENTS</span><span class="muted small" id="cvNote"></span></div>
       <div class="coverage-grid">
         <div class="cv-cell"><span class="cv-num" id="cvTotal">—</span><span class="cv-lbl">tracked</span></div>
         <div class="cv-cell"><span class="cv-num" id="cv30d">—</span><span class="cv-lbl">≤ 30d</span></div>
@@ -120,6 +120,7 @@
         <span>MOVERS · CROSS-SOURCE INDEX</span>
         <span class="muted small" id="moversCount"></span>
       </div>
+      <div id="moversStale" class="stale-note" hidden></div>
       <div id="moversSummaryStrip" class="muted small" style="margin-bottom:6px"></div>
       <div class="ctrl-row">
         <div class="ctrl-group">
@@ -153,6 +154,7 @@
         <span>S4K-OWNED EVENTS — NEXT 30 DAYS</span>
         <span class="muted small" id="ownedEventCount"></span>
       </div>
+      <div id="ownedStale" class="stale-note" hidden></div>
       <div id="ownedEventsBody"></div>
     </section>
   </main>
@@ -164,7 +166,7 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20261006pk"></script>
-  <script src="home.js?v=20261006mkt"></script>
+  <script src="home.js?v=20261006stats"></script>
   <script src="news-ticker.js?v=20260707all500"></script>
 </body>
 </html>

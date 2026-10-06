@@ -25,6 +25,7 @@
     days: Math.max(1, Math.min(14, parseInt(qs.get('days') || '4', 10) || 4)),
     out:  qs.get('out') || '7-365',
     data: null,
+    tevoAsOf: null,   // get_home_stats as_of.tevo_inventory — Listed/Pace freshness
   };
 
   // ---------- formatting ----------
@@ -103,6 +104,10 @@
         '<b>Pace</b> = tickets/day sold ÷ tickets/day needed to clear our listed qty by event day; <b>sell-out</b> flags inventory that will be gone well before the event (room to raise).'
       : 'Events where we still list tickets that will NOT clear by event day at the current pace, ranked by projected leftover tickets, closer events first. ' +
         'Listed qty = our owned TEvo/SeatGeek listings in the latest daily snapshot — not a Bridge/POS export, so held-back tickets are not counted.';
+    const tevoT = state.tevoAsOf ? new Date(state.tevoAsOf).getTime() : NaN;
+    if (Number.isFinite(tevoT) && Date.now() - tevoT > 2 * 86400000) {
+      el.explain.innerHTML += ` <span class="neg">⚠ <b>Listed</b> and <b>Pace</b> use our TEvo inventory as of ${esc(new Date(tevoT).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }))} — terminal listing polls are paused, so tickets sold since then still count as listed. Order counts are live.</span>`;
+    }
     el.explain.innerHTML += ' <b>SG mkt</b> = every SeatGeek sale on the event in the same window (all sellers, ours included) with our share of it; "—" = SeatGeek\'s sales feed doesn\'t cover that event.';
 
     if (!rows.length) { el.body.innerHTML = '<div class="empty">nothing matches this window</div>'; return; }
@@ -219,5 +224,9 @@
   (async () => {
     if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     load();
+    try {
+      const r = await window.TerminalAuth.client.rpc('get_home_stats');
+      if (!r.error && r.data && r.data.as_of) { state.tevoAsOf = r.data.as_of.tevo_inventory; render(); }
+    } catch (_) { /* freshness note is best-effort */ }
   })();
 })();
