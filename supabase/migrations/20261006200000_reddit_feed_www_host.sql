@@ -12,7 +12,11 @@
 -- Pre-reqs: 20260714210000 (reddit_news_queue keyword branch),
 --           20260714250000 (broadway_social_poll)
 --
--- NOT YET APPLIED — apply is an Applier action under operator direction.
+-- Already applied to prod · via MCP 2026-10-06 18:35 UTC under operator direction
+-- ("also fix reddit feed"). First cycle 18:37–18:38: www.reddit.com 200s,
+-- reddit_news 0 → 50 rows (r/pacers 25, Broadway "MJ" 25), v_reddit_news_ticker 49.
+-- Note: the cron.alter_job made pg_cron reload its job table; the scheduler
+-- paused ~2.5 min (last run 18:34:47 → resumed 18:37) and then caught up.
 --
 -- WHY (KANBAN A1-OPS-SOCIAL-DEAD, operator call (b)): reddit_news is EMPTY.
 --   1. reddit_news_queue_1min / _process_1min were paused by the 2026-08-31
