@@ -1,3 +1,5 @@
+-- Migration 20261006170000 · level:secondary-sales · lane:D0 · writes:get_d0_pickups() · reads:v_s4kcs_orders,seatgeek_orders,evo_orders,evo_order_items,order_status_xref,events,event_listing_snapshot_daily · pre:20260901180000
+--
 -- ============================================================================
 -- Migration 20261006170000 — D0 pickups: our daily order pace per event,
 -- relative to how far out the event is (hot) + open inventory not moving (cold)
