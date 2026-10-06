@@ -1,4 +1,4 @@
--- Migration 20261006170000 · level:secondary-sales · lane:D7 (writes A1's aq_event_map, operator-routed) · writes:aq_event_map,n2s_items,n2s_hub_quick_map,n2s_aq_hub_writeback,n2s_crm_fetch_direct,n2s_pipeline_tick · reads:aq_event_map,events,n2s_items · pre:20260928190000
+-- Migration 20261006170040 · level:secondary-sales · lane:D7 (writes A1's aq_event_map, operator-routed) · writes:aq_event_map,n2s_items,n2s_hub_quick_map,n2s_aq_hub_writeback,n2s_crm_fetch_direct,n2s_pipeline_tick · reads:aq_event_map,events,n2s_items · pre:20260928190000
 --
 -- Already applied to prod · via MCP 2026-10-06 ~17:21 UTC under operator direction
 -- ("use the automatiq table as the lookup table; build 2-3"), after a rolled-back
@@ -7,6 +7,8 @@
 -- 139 declined (left to the matcher); 1.3 s for all 708, 12 ms for the per-tick
 -- call; write-back 0 rows (the hub already held every event); both hooks present;
 -- prod unchanged afterwards. Both crons ran clean after the apply.
+-- Renumbered from 20261006170000 (prefix collided with 20261006170000_d0_pickups_pace);
+-- the function bodies and COMMENTs in prod carry the original "20261006170000" stamp.
 --
 -- ============================================================================
 -- N2S maps through the Automatiq hub (aq_event_map) first, and writes what it
