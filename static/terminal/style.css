@@ -2912,6 +2912,7 @@ tr.n2s-row-gap > td { opacity: .82; }
 .pk-tbl td { vertical-align: top; }
 .pk-tbl td a { color: var(--text); }
 .pk-tbl td.pk-daily { white-space: nowrap; }
+.pk-share { white-space: nowrap; }
 .pk-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; vertical-align: middle; margin-right: 4px; }
 .pk-bar { display: inline-block; width: 6px; background: var(--accent); border-radius: 1px; opacity: .85; }
 .pk-chip { display: inline-block; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); margin: 0 2px 2px 0; white-space: nowrap; }

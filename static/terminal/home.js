@@ -74,7 +74,8 @@
       // .pk-tbl + data-label → stacked cards on phones (style.css, Pickups).
       const td = (label, html, cls) => `<td${cls ? ` class="${cls}"` : ''} data-label="${label}">${html}</td>`;
       body.innerHTML = '<table class="sales-tbl pk-tbl"><thead><tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th>' +
-        '<th>DAILY ORDERS</th><th>TREND</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">PACE</th></tr></thead><tbody>' +
+        '<th>DAILY ORDERS</th><th>TREND</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">PACE</th>' +
+        '<th class="num" title="SeatGeek market sales (all sellers) in the same window; — = not covered by the SG feed">SG MKT</th></tr></thead><tbody>' +
         rows.map(r => {
           const trend = r.trend && r.trend !== 'flat' ? r.trend : '';
           const pace = Number(r.open_qty) > 0 && r.pace_ratio != null ? Number(r.pace_ratio).toFixed(1) + '×' : '—';
@@ -84,7 +85,10 @@
             td('Daily orders', esc((r.daily || []).map(x => n0(x.orders)).join(', '))) +
             td('Trend', `<span class="${tcls}">${esc(trend || '—')}</span>`) +
             td('Tix', n0(r.tix_window), 'num') + td('Sales', `$${n0(r.sales_window)}`, 'num') +
-            td('Pace', esc(pace), 'num') + '</tr>';
+            td('Pace', esc(pace), 'num') +
+            td('SG mkt', r.mkt_tracked
+              ? `${n0(r.mkt_sales_window)}` + (r.sg_share != null ? ` <span class="muted small">ours ${Math.round(Number(r.sg_share) * 100)}%</span>` : '')
+              : '<span class="muted">—</span>', 'num') + '</tr>';
         }).join('') + '</tbody></table>';
     } catch (e) {
       body.innerHTML = `<div class="empty neg">${esc(e.message)}</div>`;

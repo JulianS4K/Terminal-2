@@ -63,6 +63,15 @@
       .map(([k, v]) => `<span class="pk-chip">${esc(k)} ${int(v)}</span>`).join(' ');
   }
 
+  // SeatGeek public sales feed (every SG sale on the event, ours included).
+  // Untracked = the SG pollers don't cover the event → "—", never a false 0.
+  function mktCell(r) {
+    if (!r.mkt_tracked) return '<span class="muted" title="SeatGeek market feed does not cover this event">—</span>';
+    const share = r.sg_share != null ? `<div class="muted small pk-share" title="our SeatGeek orders ÷ all SeatGeek sales in the window">ours ${Math.round(num(r.sg_share) * 100)}%</div>` : '';
+    const tip = `${int(r.mkt_tix_window)} tix in ${int(r.mkt_sales_window)} SeatGeek sales · ${int(r.mkt_sales_today)} today`;
+    return `<span title="${esc(tip)}">${int(r.mkt_sales_window)}</span>${share}`;
+  }
+
   function paceCell(r) {
     if (!(num(r.open_qty) > 0)) return '<span class="muted" title="no listed tickets in the latest snapshot">sold out / unlisted</span>';
     const p = num(r.pace_ratio);
@@ -94,24 +103,28 @@
         '<b>Pace</b> = tickets/day sold ÷ tickets/day needed to clear our listed qty by event day; <b>sell-out</b> flags inventory that will be gone well before the event (room to raise).'
       : 'Events where we still list tickets that will NOT clear by event day at the current pace, ranked by projected leftover tickets, closer events first. ' +
         'Listed qty = our owned TEvo/SeatGeek listings in the latest daily snapshot — not a Bridge/POS export, so held-back tickets are not counted.';
+    el.explain.innerHTML += ' <b>SG mkt</b> = every SeatGeek sale on the event in the same window (all sellers, ours included) with our share of it; "—" = SeatGeek\'s sales feed doesn\'t cover that event.';
 
     if (!rows.length) { el.body.innerHTML = '<div class="empty">nothing matches this window</div>'; return; }
 
     const head = '<tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th><th>DAILY ORDERS</th><th>TREND</th>' +
       '<th class="num">ORDERS</th><th class="num">TIX</th><th class="num">SALES</th><th class="num pk-opt">TODAY</th>' +
       '<th class="num pk-opt">LIFT</th><th class="num pk-opt2">LISTED</th><th class="num">PACE</th>' +
+      '<th class="num" title="SeatGeek market sales (all sellers) in the same window">SG MKT</th>' +
       `<th class="num">${state.mode === 'cold' ? 'PROJ. LEFT' : 'SELL-OUT'}</th><th class="pk-opt">MARKETS</th></tr>`;
     // data-label feeds the phone card layout (style.css .pk-tbl ≤768px).
     const td = (label, html, cls) => `<td${cls ? ` class="${cls}"` : ''} data-label="${label}">${html}</td>`;
     const body = rows.map(r => {
       const tr = TREND[r.trend] || TREND.flat;
       const seq = (r.daily || []).map(v => int(v.orders)).join(', ');
+      const mseq = r.mkt_tracked ? (r.daily || []).map(v => int(v.mkt)).join(', ') : '';
       return '<tr>' +
         `<td class="pk-name"><a href="event.html?event=${encodeURIComponent(r.tevo_event_id)}">${esc(r.event_name)}</a>` +
           (r.venue_name ? `<div class="muted small">${esc(r.venue_name)}</div>` : '') + '</td>' +
         td('Date', esc(md(r.occurs_at_local))) +
         td('Out', `${int(r.days_out)}d`, 'num') +
-        td('Daily orders', `${bars(r.daily)} <span class="muted small">${esc(seq)}</span>`, 'pk-wide pk-daily') +
+        td('Daily orders', `${bars(r.daily)} <span class="muted small">${esc(seq)}</span>` +
+          (mseq ? `<div class="muted small" title="SeatGeek market sales per day">SG mkt ${esc(mseq)}</div>` : ''), 'pk-wide pk-daily') +
         td('Trend', `<span class="${tr.cls}">${tr.label}</span>`) +
         td('Orders', int(r.orders_window), 'num') +
         td('Tix', int(r.tix_window), 'num') +
@@ -120,6 +133,7 @@
         `<td class="num pk-opt" data-label="Lift" title="${int(r.orders_base_28d)} orders in the prior 28 days">${x(r.lift)}</td>` +
         td('Listed', num(r.open_qty) > 0 ? int(r.open_qty) : '—', 'num pk-opt2') +
         td('Pace', paceCell(r), 'num') +
+        td('SG mkt', mktCell(r), 'num') +
         td(state.mode === 'cold' ? 'Proj. left' : 'Sell-out', outcomeCell(r), 'num') +
         td('Markets', marketChips(r.by_market), 'small pk-opt pk-wide') +
         '</tr>';
@@ -143,9 +157,12 @@
     const lines = rows.map(r => {
       const seq = (r.daily || []).map(v => int(v.orders)).join(', ');
       const tr = r.trend && r.trend !== 'flat' ? ` — ${r.trend}` : '';
-      const tail = state.mode === 'hot'
+      const mkt = r.mkt_tracked
+        ? `; SG market ${int(r.mkt_sales_window)} sales` + (r.sg_share != null ? ` (ours ${Math.round(num(r.sg_share) * 100)}%)` : '')
+        : '';
+      const tail = (state.mode === 'hot'
         ? `${int(r.tix_window)} tix, ${money(r.sales_window)} sales`
-        : `${int(r.open_qty)} listed, ~${int(r.projected_unsold)} left at this pace`;
+        : `${int(r.open_qty)} listed, ~${int(r.projected_unsold)} left at this pace`) + mkt;
       return `• ${shortName(r.event_name)} ${md(r.occurs_at_local)}: ${seq}${tr}; ${tail}`;
     });
     return `${title}\n\n${lines.join('\n')}`;
