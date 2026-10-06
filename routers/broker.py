@@ -2539,8 +2539,9 @@ def build_broker_router(
                     clear by event day at the current pace, closest first.
 
         `days` = complete ET days in the window (ending yesterday; today so far
-        rides separately as orders_today). Backed by `get_d0_pickups`
-        (mig 20261006170000, service_role-only) over the CRM book + SeatGeek +
+        rides separately as orders_today). Backed by `get_d0_pickups_v2`
+        (mig 20261006180000; falls back to v1 `get_d0_pickups`, mig 20261006170000;
+        both service_role-only) over the CRM book + SeatGeek market feed +
         TEvo orders; cached 5 minutes per parameter set — the CRM ingest is
         10-minutely, so a fresher read buys nothing.
         """
@@ -2555,16 +2556,28 @@ def build_broker_router(
         if hit and now - hit[0] < 300:
             return hit[1]
         db = get_require_sb()()
+        args = {
+            "p_mode": mode, "p_window_days": days, "p_min_days_out": min_days_out,
+            "p_max_days_out": max_days_out, "p_limit": limit,
+        }
+
+        def _missing(msg: str, fn: str) -> bool:
+            return fn in msg and ("does not exist" in msg or "42883" in msg or "PGRST202" in msg)
+
+        # v2 (mig 20261006180000) adds the SeatGeek market columns; v1 is the
+        # fallback while v2 is unapplied (the page renders SG MKT as "—").
         try:
-            rows = db.rpc("get_d0_pickups", {
-                "p_mode": mode, "p_window_days": days, "p_min_days_out": min_days_out,
-                "p_max_days_out": max_days_out, "p_limit": limit,
-            }).execute().data or []
-        except Exception as e:  # function absent until the migration is applied
-            msg = str(e)
-            if "get_d0_pickups" in msg and ("does not exist" in msg or "42883" in msg or "PGRST202" in msg):
-                raise HTTPException(503, "pickups not available yet — migration 20261006170000 not applied")
-            raise HTTPException(502, f"pickups query failed: {msg[:200]}")
+            rows = db.rpc("get_d0_pickups_v2", args).execute().data or []
+        except Exception as e:
+            if not _missing(str(e), "get_d0_pickups_v2"):
+                raise HTTPException(502, f"pickups query failed: {str(e)[:200]}")
+            try:
+                rows = db.rpc("get_d0_pickups", args).execute().data or []
+            except Exception as e1:  # neither migration applied
+                msg = str(e1)
+                if _missing(msg, "get_d0_pickups"):
+                    raise HTTPException(503, "pickups not available yet — migration 20261006170000 not applied")
+                raise HTTPException(502, f"pickups query failed: {msg[:200]}")
         out = {
             "mode": mode, "window_days": days, "min_days_out": min_days_out,
             "max_days_out": max_days_out, "count": len(rows), "events": rows,
