@@ -307,6 +307,10 @@ def test_server_sitemap_guards(monkeypatch):
     monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
     assert app_module._exos_sitemap() is None
     monkeypatch.setenv("EXOS_PUBLIC_BASE_URL", "https://x.example/")
+    # pin "now" so the fixture event (2026-10-03) never ages out of the sitemap
+    real = exos_seo.build_sitemap
+    monkeypatch.setattr(exos_seo, "build_sitemap",
+                        lambda sb, base: real(sb, base, now=datetime(2026, 10, 1, tzinfo=timezone.utc)))
     assert f"https://x.example/bridge/event/{EV}</loc>" in app_module._exos_sitemap()
 
 
