@@ -98,28 +98,30 @@
     if (!rows.length) { el.body.innerHTML = '<div class="empty">nothing matches this window</div>'; return; }
 
     const head = '<tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th><th>DAILY ORDERS</th><th>TREND</th>' +
-      '<th class="num">ORDERS</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">TODAY</th>' +
-      '<th class="num">LIFT</th><th class="num">LISTED</th><th class="num">PACE</th>' +
-      `<th class="num">${state.mode === 'cold' ? 'PROJ. LEFT' : 'SELL-OUT'}</th><th>MARKETS</th></tr>`;
+      '<th class="num">ORDERS</th><th class="num">TIX</th><th class="num">SALES</th><th class="num pk-opt">TODAY</th>' +
+      '<th class="num pk-opt">LIFT</th><th class="num pk-opt2">LISTED</th><th class="num">PACE</th>' +
+      `<th class="num">${state.mode === 'cold' ? 'PROJ. LEFT' : 'SELL-OUT'}</th><th class="pk-opt">MARKETS</th></tr>`;
+    // data-label feeds the phone card layout (style.css .pk-tbl ≤768px).
+    const td = (label, html, cls) => `<td${cls ? ` class="${cls}"` : ''} data-label="${label}">${html}</td>`;
     const body = rows.map(r => {
       const tr = TREND[r.trend] || TREND.flat;
       const seq = (r.daily || []).map(v => int(v.orders)).join(', ');
       return '<tr>' +
-        `<td><a href="event.html?event=${encodeURIComponent(r.tevo_event_id)}">${esc(r.event_name)}</a>` +
+        `<td class="pk-name"><a href="event.html?event=${encodeURIComponent(r.tevo_event_id)}">${esc(r.event_name)}</a>` +
           (r.venue_name ? `<div class="muted small">${esc(r.venue_name)}</div>` : '') + '</td>' +
-        `<td>${esc(md(r.occurs_at_local))}</td>` +
-        `<td class="num">${int(r.days_out)}d</td>` +
-        `<td>${bars(r.daily)} <span class="muted small">${esc(seq)}</span></td>` +
-        `<td><span class="${tr.cls}">${tr.label}</span></td>` +
-        `<td class="num">${int(r.orders_window)}</td>` +
-        `<td class="num">${int(r.tix_window)}</td>` +
-        `<td class="num">${money(r.sales_window)}</td>` +
-        `<td class="num">${int(r.orders_today)}</td>` +
-        `<td class="num" title="${int(r.orders_base_28d)} orders in the prior 28 days">${x(r.lift)}</td>` +
-        `<td class="num">${num(r.open_qty) > 0 ? int(r.open_qty) : '—'}</td>` +
-        `<td class="num">${paceCell(r)}</td>` +
-        `<td class="num">${outcomeCell(r)}</td>` +
-        `<td class="small">${marketChips(r.by_market)}</td>` +
+        td('Date', esc(md(r.occurs_at_local))) +
+        td('Out', `${int(r.days_out)}d`, 'num') +
+        td('Daily orders', `${bars(r.daily)} <span class="muted small">${esc(seq)}</span>`, 'pk-wide pk-daily') +
+        td('Trend', `<span class="${tr.cls}">${tr.label}</span>`) +
+        td('Orders', int(r.orders_window), 'num') +
+        td('Tix', int(r.tix_window), 'num') +
+        td('Sales', money(r.sales_window), 'num') +
+        td('Today', int(r.orders_today), 'num pk-opt') +
+        `<td class="num pk-opt" data-label="Lift" title="${int(r.orders_base_28d)} orders in the prior 28 days">${x(r.lift)}</td>` +
+        td('Listed', num(r.open_qty) > 0 ? int(r.open_qty) : '—', 'num pk-opt2') +
+        td('Pace', paceCell(r), 'num') +
+        td(state.mode === 'cold' ? 'Proj. left' : 'Sell-out', outcomeCell(r), 'num') +
+        td('Markets', marketChips(r.by_market), 'small pk-opt pk-wide') +
         '</tr>';
     }).join('');
     el.body.innerHTML = `<div class="pk-scroll"><table class="sales-tbl pk-tbl"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;

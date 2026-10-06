@@ -515,11 +515,16 @@ table.wc-daily { width: 100%; }
   margin: 0 24px;
   font-family: var(--mono); font-size: 11px;
   letter-spacing: 0.5px;
+  /* 25 tabs (~2000px) can't fit one row on a laptop screen — wrap onto extra
+     rows instead of widening the page past the viewport. min-width:0 lets the
+     flex item shrink below its content so the wrap actually happens. */
+  flex-wrap: wrap; min-width: 0;
 }
 .topbar nav.pagenav a {
   color: var(--muted);
   text-decoration: none;
   padding: 4px 10px;
+  white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
 .topbar nav.pagenav a:hover { color: var(--text); }
@@ -2890,12 +2895,51 @@ tr.n2s-row-gap > td { opacity: .82; }
 .deals-tbl.small { font-size: 0.85em; }
 
 /* ---------- Pickups (pickups.html) ---------- */
+/* Full-width stacked panels (like .wrap.movers) — main.wrap's default 12-col
+   grid would otherwise park each section in a single 1/12 track. */
+.wrap.pickups { display: flex; flex-direction: column; gap: 12px; }
+.wrap.pickups > section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 12px 16px;
+  min-width: 0;
+}
+#pickups-panel .pk-tbl { width: 100%; }
 .pk-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin: 6px 0; }
 .pk-controls .ctrl-group { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .pk-explain { margin: 4px 0 10px; max-width: 980px; line-height: 1.45; }
 .pk-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .pk-tbl td { vertical-align: top; }
 .pk-tbl td a { color: var(--text); }
+.pk-tbl td.pk-daily { white-space: nowrap; }
 .pk-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; vertical-align: middle; margin-right: 4px; }
 .pk-bar { display: inline-block; width: 6px; background: var(--accent); border-radius: 1px; opacity: .85; }
 .pk-chip { display: inline-block; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); margin: 0 2px 2px 0; white-space: nowrap; }
+/* Mid widths: drop secondary columns before the table has to scroll. */
+@media (max-width: 1280px) { .pk-tbl .pk-opt { display: none; } }
+@media (max-width: 1024px) { .pk-tbl .pk-opt2 { display: none; } }
+/* Phones: every event row becomes a card — name on top, then label/value
+   pairs in a 2-up grid (labels come from each cell's data-label). */
+@media (max-width: 768px) {
+  .wrap.pickups > section { padding: 10px; }
+  .pk-controls { gap: 8px; }
+  .pk-controls .ctrl-group { width: 100%; }
+  .pk-controls #pkCopy { width: 100%; }
+  .pk-scroll { overflow: visible; }
+  .pk-tbl, .pk-tbl tbody { display: block; width: 100%; }
+  .pk-tbl thead { display: none; }
+  .pk-tbl tr {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--line);
+  }
+  .pk-tbl tr:hover td { background: none; }
+  .pk-tbl td { display: block; padding: 0; border: 0; text-align: left !important; min-width: 0; overflow-wrap: anywhere; }
+  .pk-tbl td.pk-daily { white-space: normal; }
+  .pk-tbl td[data-label]::before {
+    content: attr(data-label); display: block;
+    color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  }
+  .pk-tbl td.pk-name, .pk-tbl td.pk-wide { grid-column: 1 / -1; }
+  .pk-tbl td.pk-name a { font-size: 14px; font-weight: 600; }
+  .pk-tbl .pk-opt, .pk-tbl .pk-opt2 { display: block; }
+}

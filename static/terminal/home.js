@@ -71,17 +71,20 @@
       const daily0 = (rows[0] && rows[0].daily) || [];
       setText('pickupsNote', daily0.length ? `daily orders ${md(daily0[0].d)} → ${md(daily0[daily0.length - 1].d)}` : '');
       if (!rows.length) { body.innerHTML = '<div class="empty">no pickups in the window</div>'; return; }
-      body.innerHTML = '<table class="sales-tbl"><thead><tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th>' +
+      // .pk-tbl + data-label → stacked cards on phones (style.css, Pickups).
+      const td = (label, html, cls) => `<td${cls ? ` class="${cls}"` : ''} data-label="${label}">${html}</td>`;
+      body.innerHTML = '<table class="sales-tbl pk-tbl"><thead><tr><th>EVENT</th><th>DATE</th><th class="num">OUT</th>' +
         '<th>DAILY ORDERS</th><th>TREND</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">PACE</th></tr></thead><tbody>' +
         rows.map(r => {
           const trend = r.trend && r.trend !== 'flat' ? r.trend : '';
           const pace = Number(r.open_qty) > 0 && r.pace_ratio != null ? Number(r.pace_ratio).toFixed(1) + '×' : '—';
-          return `<tr><td><a href="event.html?event=${encodeURIComponent(r.tevo_event_id)}">${esc(r.event_name)}</a></td>` +
-            `<td>${esc(md(r.occurs_at_local))}</td><td class="num">${n0(r.days_out)}d</td>` +
-            `<td>${esc((r.daily || []).map(x => n0(x.orders)).join(', '))}</td>` +
-            `<td class="${trend === 'falling' ? 'neg' : trend ? 'pos' : 'muted'}">${esc(trend || '—')}</td>` +
-            `<td class="num">${n0(r.tix_window)}</td><td class="num">$${n0(r.sales_window)}</td>` +
-            `<td class="num">${esc(pace)}</td></tr>`;
+          const tcls = trend === 'falling' ? 'neg' : trend ? 'pos' : 'muted';
+          return `<tr><td class="pk-name"><a href="event.html?event=${encodeURIComponent(r.tevo_event_id)}">${esc(r.event_name)}</a></td>` +
+            td('Date', esc(md(r.occurs_at_local))) + td('Out', `${n0(r.days_out)}d`, 'num') +
+            td('Daily orders', esc((r.daily || []).map(x => n0(x.orders)).join(', '))) +
+            td('Trend', `<span class="${tcls}">${esc(trend || '—')}</span>`) +
+            td('Tix', n0(r.tix_window), 'num') + td('Sales', `$${n0(r.sales_window)}`, 'num') +
+            td('Pace', esc(pace), 'num') + '</tr>';
         }).join('') + '</tbody></table>';
     } catch (e) {
       body.innerHTML = `<div class="empty neg">${esc(e.message)}</div>`;
