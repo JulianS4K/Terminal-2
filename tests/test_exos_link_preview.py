@@ -307,6 +307,13 @@ def test_server_sitemap_guards(monkeypatch):
     monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
     assert app_module._exos_sitemap() is None
     monkeypatch.setenv("EXOS_PUBLIC_BASE_URL", "https://x.example/")
+    # Pin the clock: the fixture event starts 2026-10-03, and build_sitemap drops
+    # events more than a day past start, so a real clock made this a time bomb.
+    import functools
+    from core import exos_seo
+    pinned = functools.partial(exos_seo.build_sitemap,
+                               now=exos_seo.datetime(2026, 10, 1, tzinfo=exos_seo.timezone.utc))
+    monkeypatch.setattr(exos_seo, "build_sitemap", pinned)
     assert f"https://x.example/bridge/event/{EV}</loc>" in app_module._exos_sitemap()
 
 

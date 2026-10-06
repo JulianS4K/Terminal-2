@@ -2525,6 +2525,54 @@ def build_broker_router(
         }
 
 
+    _pickups_cache: dict[tuple, tuple[float, dict]] = {}
+
+    @router.get("/api/broker/pickups")
+    def broker_pickups(mode: str = "hot", days: int = 4, min_days_out: int = 7,
+                       max_days_out: int = 365, limit: int = 50, _=Depends(require_auth)):
+        """Pricing-desk pickups — OUR daily order pace per future event.
+
+        mode=hot  : events selling now, weighted up by how far out they are and
+                    by lift vs the event's own prior-28-day pace (catch the
+                    further-out game people are chipping away at, early).
+        mode=cold : events where we still list tickets (open_qty) that won't
+                    clear by event day at the current pace, closest first.
+
+        `days` = complete ET days in the window (ending yesterday; today so far
+        rides separately as orders_today). Backed by `get_d0_pickups`
+        (mig 20261006170000, service_role-only) over the CRM book + SeatGeek +
+        TEvo orders; cached 5 minutes per parameter set — the CRM ingest is
+        10-minutely, so a fresher read buys nothing.
+        """
+        mode = "cold" if str(mode).lower() == "cold" else "hot"
+        days = max(1, min(int(days), 14))
+        min_days_out = max(0, min(int(min_days_out), 730))
+        max_days_out = max(min_days_out, min(int(max_days_out), 730))
+        limit = max(1, min(int(limit), 200))
+        key = (mode, days, min_days_out, max_days_out, limit)
+        now = datetime.now(timezone.utc).timestamp()
+        hit = _pickups_cache.get(key)
+        if hit and now - hit[0] < 300:
+            return hit[1]
+        db = get_require_sb()()
+        try:
+            rows = db.rpc("get_d0_pickups", {
+                "p_mode": mode, "p_window_days": days, "p_min_days_out": min_days_out,
+                "p_max_days_out": max_days_out, "p_limit": limit,
+            }).execute().data or []
+        except Exception as e:  # function absent until the migration is applied
+            msg = str(e)
+            if "get_d0_pickups" in msg and ("does not exist" in msg or "42883" in msg or "PGRST202" in msg):
+                raise HTTPException(503, "pickups not available yet — migration 20261006170000 not applied")
+            raise HTTPException(502, f"pickups query failed: {msg[:200]}")
+        out = {
+            "mode": mode, "window_days": days, "min_days_out": min_days_out,
+            "max_days_out": max_days_out, "count": len(rows), "events": rows,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _pickups_cache[key] = (now, out)
+        return out
+
     @router.get("/api/broker/movers")
     def broker_movers(window_hours: int = 24, source: str = "merged", window_days: int | None = None,
                       category: str | None = None, include_inactive: bool = False, _=Depends(require_auth)):

@@ -2888,3 +2888,14 @@ tr.n2s-row-gap > td { opacity: .82; }
 .deals-cal { min-width: 220px; flex: 1 1 220px; }
 .deals-cal .deals-tbl.small th, .deals-cal .deals-tbl.small td { padding: 2px 6px; }
 .deals-tbl.small { font-size: 0.85em; }
+
+/* ---------- Pickups (pickups.html) ---------- */
+.pk-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin: 6px 0; }
+.pk-controls .ctrl-group { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.pk-explain { margin: 4px 0 10px; max-width: 980px; line-height: 1.45; }
+.pk-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.pk-tbl td { vertical-align: top; }
+.pk-tbl td a { color: var(--text); }
+.pk-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; vertical-align: middle; margin-right: 4px; }
+.pk-bar { display: inline-block; width: 6px; background: var(--accent); border-radius: 1px; opacity: .85; }
+.pk-chip { display: inline-block; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); margin: 0 2px 2px 0; white-space: nowrap; }

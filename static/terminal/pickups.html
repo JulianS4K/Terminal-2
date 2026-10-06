@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="S4K Terminal" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vibepass-storefront-test.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Terminal — Pickups</title>
+  <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
+  <link rel="stylesheet" href="style.css?v=20261006pk" />
+</head>
+<body data-page="pickups">
+
+  <header class="topbar">
+    <span class="brand">TERMINAL · D0</span>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <main class="wrap pickups">
+
+    <section id="pickups-controls">
+      <div class="panel-title row">
+        <span>PICKUPS — OUR ORDER PACE vs HOW FAR OUT</span>
+        <span class="muted small" id="pkNote">—</span>
+      </div>
+      <div class="pk-controls">
+        <div class="ctrl-group" role="tablist" aria-label="mode">
+          <button type="button" class="ctrl-btn is-active" data-mode="hot">🔥 SELLING HOT</button>
+          <button type="button" class="ctrl-btn" data-mode="cold">🧊 NOT SELLING</button>
+        </div>
+        <div class="ctrl-group" aria-label="window">
+          <span class="muted small">last</span>
+          <button type="button" class="ctrl-btn" data-days="1">1d</button>
+          <button type="button" class="ctrl-btn" data-days="2">2d</button>
+          <button type="button" class="ctrl-btn is-active" data-days="4">4d</button>
+          <button type="button" class="ctrl-btn" data-days="7">7d</button>
+        </div>
+        <div class="ctrl-group" aria-label="days out">
+          <span class="muted small">event</span>
+          <button type="button" class="ctrl-btn is-active" data-out="7-365">past next week</button>
+          <button type="button" class="ctrl-btn" data-out="15-365">past 2 weeks</button>
+          <button type="button" class="ctrl-btn" data-out="0-14">inside 2 weeks</button>
+          <button type="button" class="ctrl-btn" data-out="0-365">all</button>
+        </div>
+        <button type="button" class="ctrl-btn" id="pkCopy" title="Copy the list as chat-ready text">COPY FOR CHAT</button>
+      </div>
+      <div class="muted small pk-explain" id="pkExplain"></div>
+    </section>
+
+    <section id="pickups-list">
+      <div id="pkBody"><div class="empty">loading…</div></div>
+    </section>
+
+  </main>
+
+  <script src="lib/supabase.js"></script>
+  <script src="lib/render.js"></script>
+  <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
+  <script src="auth.js?v=20260608"></script>
+  <script src="app.js?v=20260910api"></script>
+  <script src="nav.js?v=20261006pk"></script>
+  <script src="pickups.js?v=20261006a"></script>
+</body>
+</html>
