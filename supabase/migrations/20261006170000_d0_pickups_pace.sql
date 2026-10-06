@@ -10,7 +10,9 @@
 --           event_listing_snapshot_daily (R)
 -- Pre-reqs: 20260901180000 (s4kcs_orders), v_s4kcs_orders
 --
--- NOT YET APPLIED — apply is an Applier action under operator direction.
+-- Already applied to prod · via MCP 2026-10-06 under operator direction
+-- ("apply it"); verified post-apply: same hot/cold rows as the dry run,
+-- EXECUTE held by service_role (+ owner) only.
 --
 -- Why: the pricing desk (S4K pricing chat, 2026-10-06) hand-builds a
 -- "pickups" list every morning — future events past the next week with
