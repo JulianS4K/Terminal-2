@@ -13,6 +13,11 @@
 --           (W: + service_role, same rule as get_event_orders_daily)
 -- Pre-reqs: 20261006190000 (home stats RPCs), 20260603180000 (source links)
 --
+-- Already applied to prod · via MCP 2026-10-08 under operator direction ("Apply
+-- + merge when green"). Verified: 4 gates rewritten; service_role JWT →
+-- get_home_stats coverage 5,818 / 1,033 / 275 / 24; gmail JWT → 42501;
+-- mcp_verify_key('nope') → 0 rows; 0 keys issued.
+--
 -- MODEL: the FastAPI server (service_role) serves /mcp. A caller presents a
 --   bearer key; the server hashes it (sha256) and asks mcp_verify_key for the
 --   key's tier. 'internal' keys (our team) reach the order book / owned
