@@ -137,6 +137,18 @@ Route handlers live in `routers/`, not the shell. The relevant pieces for the te
 - **Security headers** (`_SecurityHeadersMiddleware`, `server.py`): CSP `connect-src 'self' https://*.supabase.co`.
 - **Token verification** (`core/auth.py` `require_auth`): backend POSTs the incoming bearer to `{SUPABASE_URL}/auth/v1/user` with the anon apikey to validate the session server-side.
 
+## B5a. MCP server (`/mcp`)
+
+The terminal's read surface is also an **MCP server** (`routers/mcp_api.py`, mounted at `/mcp` in `server.py`; Streamable HTTP, stateless, JSON responses). Any MCP client (Claude Code/Desktop, the API's MCP connector, other agents) connects to `https://<render-host>/mcp/` with a bearer API key.
+
+- **Keys** live hashed (sha256) in `mcp_api_keys` (mig 20261008150000; RLS on, service-role only). Issue one from the Supabase SQL editor: `select public.mcp_issue_key('<who/what>', 'internal'|'external', '<your email>');` returns the plaintext **once**; revoke with `select public.mcp_revoke_key(<id>);`. The server resolves a key with `mcp_verify_key(<sha256 hex>)` (bumps `last_used_at` ≤ once a minute). Header: `Authorization: Bearer s4k_…` (or `X-API-Key`).
+- **Tiers** are separate MCP servers behind one URL, so an external caller never sees internal tools:
+  - **external** (partners) — `search_events`, `event_market` (SeatGeek public sales per day, deduped by `sg_sale_id`, + `event_competitors_snapshot`).
+  - **internal** (our team) — the external tools + `pickups` (`get_d0_pickups_v2`), `event_orders` (`get_event_orders_daily`), `event_source_links`, `home_stats`, `market_chart` (`get_sg_market_chart`), `owned_events` (`get_owned_events_upcoming`), `query_view`.
+- **`query_view`** is the ad-hoc read path: a whitelisted view + column list (`QUERY_VIEWS` in `mcp_api.py`; buyer PII excluded), filters `eq|neq|gt|gte|lt|lte|ilike|in`, `order_by`, ≤ 500 rows — built with the parameterized PostgREST client. **No raw SQL**: 553 public functions are PUBLIC-executable and the `http` extension is installed, so a "read-only role" running caller SQL could still make outbound requests.
+- The four email-gated terminal RPCs it calls (`get_home_stats`, `get_sg_market_chart`, `get_owned_events_upcoming`, `get_event_source_links`) also admit `service_role` (same gate as `get_event_orders_daily`).
+- Everything is read-only; no upstream marketplace API is touched (CLAUDE.md rules 1–2). To add a tool: write a plain `fn(db, ...)` in `mcp_api.py`, add it to `EXTERNAL_TOOLS` or `INTERNAL_TOOLS`, test it in `tests/test_mcp_api.py`.
+
 ## B6. Auth flow
 
 - **Client config** (`auth.js:18-20`): `SUPABASE_URL = https://hzrizjeaxlqcxfrtczpq.supabase.co`; `SUPABASE_KEY = sb_publishable_…` (publishable/anon — explicitly commented "Public anon key — safe to embed", `auth.js:13`); `ALLOWED_EMAIL_DOMAIN = s4kent.com`.
