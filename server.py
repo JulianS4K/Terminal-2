@@ -1971,6 +1971,32 @@ from routers.site_essentials import build_site_essentials_router  # noqa: E402
 app.include_router(build_site_essentials_router(_STOREFRONT_BASE_URL))
 
 
+# ---------- MCP server (/mcp) ----------
+#
+# The terminal's read surface as an MCP server for Claude / other MCP clients
+# (routers/mcp_api.py). Bearer API keys from mcp_api_keys pick the tier:
+# external = public market data, internal = + our book. Its session managers
+# run inside the app lifespan, so the default lifespan (which still fires the
+# @app.on_event hooks above) is wrapped rather than replaced.
+import contextlib  # noqa: E402
+
+from routers.mcp_api import MCPApp  # noqa: E402
+
+mcp_app = MCPApp(lambda: require_sb())
+app.mount("/mcp", mcp_app)
+_default_lifespan = app.router.lifespan_context
+
+
+@contextlib.asynccontextmanager
+async def _lifespan_with_mcp(asgi_app):
+    async with mcp_app.lifespan():
+        async with _default_lifespan(asgi_app) as state:
+            yield state
+
+
+app.router.lifespan_context = _lifespan_with_mcp
+
+
 # Static assets (CSS / JS / images) served from /static.
 # Keep this LAST so explicit routes above win.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
