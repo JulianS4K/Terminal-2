@@ -46,7 +46,7 @@ def build_site_essentials_router(storefront_base_url: str) -> APIRouter:
         """Minimal sitemap covering the public storefront entry points. Per-event
         URLs are dynamic + ranked elsewhere; this is the static surface map only.
         """
-        urls = ["/store", "/store/about", "/store/privacy", "/store/terms"]
+        urls = ["/store", "/store/about", "/store/privacy", "/store/terms", "/prices"]
         body = '<?xml version="1.0" encoding="UTF-8"?>\n'
         body += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         for path in urls:
