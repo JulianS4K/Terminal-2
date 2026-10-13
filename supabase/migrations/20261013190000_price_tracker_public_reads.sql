@@ -11,6 +11,14 @@
 --           price_tracker_search(text,int)                    (W, new)
 -- Pre-reqs: none (reads existing tables/views only)
 --
+-- Already applied to prod · via MCP 2026-10-13 under operator direction
+--   ("Apply now"). Verified post-apply on the same samples as the pre-apply
+--   read-only dry runs: venue 33372 -> 21 upcoming (Mercedes-Benz Stadium,
+--   min get-in $32.24); NFL next 7d -> 15; event 3226757 -> 360 history
+--   points, 6 zones, forecast 'flat'; search 'atlanta' -> 6 performers /
+--   6 venues; missing event -> NULL. EXECUTE: service_role only (anon and
+--   authenticated = false on all four).
+--
 -- WHY: /prices is a public get-in price tracker (home table, event page with
 --   price history, performer + venue pages). The pages are served by
 --   routers/prices.py, which calls these with the SERVICE ROLE — so the
