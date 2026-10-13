@@ -677,6 +677,7 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         ("/api/store/verify-human", 30, 60.0),  # bot gate — once per session, generous
         ("/api/store/reserve",  10,  60.0),  # mock reserve, but hits TEvo (tightened for demo)
         ("/api/store/",         60,  60.0),  # public catalog reads
+        ("/api/prices/",       120,  60.0),  # public price tracker (cached reads)
         ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
         ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
         ("/api/admin/",          5,  60.0),  # admin write surface
@@ -1969,6 +1970,16 @@ def scheduler_watchdog_status(_=Depends(require_auth)):
 from routers.site_essentials import build_site_essentials_router  # noqa: E402
 
 app.include_router(build_site_essentials_router(_STOREFRONT_BASE_URL))
+
+
+# ---------- Public price tracker (/prices) ----------
+# Public, no-login get-in price pages (home / event / performer / venue) + the
+# /api/prices/* JSON reads behind them -> routers/prices.py. Reads go through
+# the service-role client to the price_tracker_* SQL fns (mig 20261013190000),
+# which anon/authenticated cannot execute. Operator-directed 2026-10-13.
+from routers.prices import build_prices_router  # noqa: E402
+
+app.include_router(build_prices_router(STATIC_DIR, get_require_sb=lambda: require_sb))
 
 
 # ---------- MCP server (/mcp) ----------

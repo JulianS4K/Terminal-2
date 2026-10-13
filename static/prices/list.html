@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Ticket Prices — VibePass Prices</title>
+  <meta name="description" content="Compare get-in ticket prices across upcoming events and see whether prices are rising or falling." />
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <link rel="stylesheet" href="/static/prices/prices.css?v=20261013" />
+</head>
+<body data-page="list">
+  <div class="hero-bg">
+    <div class="wrap">
+    <header class="topbar">
+      <a class="brand" href="/prices">VibePass <span>Prices</span></a>
+      <div class="search"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><input type="search" placeholder="Team, Artist, or Venue" aria-label="Search teams, artists or venues" autocomplete="off" /></div>
+    </header>
+      <section class="page-head">
+        <h1 id="title">Ticket Prices</h1>
+        <p class="lede" id="lede">Loading…</p>
+      </section>
+    </div>
+  </div>
+  <main class="wrap">
+    <div class="filters">
+      <div class="pills" id="whenPills"><button type="button" class="is-on" data-v="upcoming">Upcoming</button><button type="button" data-v="past">Past</button><button type="button" data-v="all">All</button></div>
+      <span class="grow"></span>
+      <div class="pills" id="sidePills" hidden><button type="button" class="is-on" data-v="all">All</button><button type="button" data-v="home">Home</button><button type="button" data-v="away">Away</button></div>
+      <div class="dow"><button type="button">Days of Week <span aria-hidden="true">▾</span></button>
+          <div class="dow-menu" hidden><label><input type="checkbox" value="0"/> Sunday</label><label><input type="checkbox" value="1"/> Monday</label><label><input type="checkbox" value="2"/> Tuesday</label><label><input type="checkbox" value="3"/> Wednesday</label><label><input type="checkbox" value="4"/> Thursday</label><label><input type="checkbox" value="5"/> Friday</label><label><input type="checkbox" value="6"/> Saturday</label></div></div>
+      <div class="pills" id="timePills"><button type="button" class="is-on" data-v="all">All Times</button><button type="button" data-v="day">Day Only</button><button type="button" data-v="night">Night Only</button></div>
+    </div>
+    <div id="table"></div>
+  </main>
+  <div class="wrap">
+    <footer class="foot">Get-in = the lowest listed price per ticket (before marketplace fees) in the inventory we track. Prices are checked periodically and can lag the live market; always confirm on the marketplace before you buy. Links go to third-party sites.</footer>
+  </div>
+  <script src="/static/lib/s4k.js"></script>
+  <script src="/static/prices/prices.js?v=20261013"></script>
+</body>
+</html>
