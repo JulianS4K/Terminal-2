@@ -1,6 +1,6 @@
 # Buy-side process — EVO + GoTickets — REFERENCE ONLY, NOT IMPLEMENTED
 
-**Doc version:** v3.0.0 (2026-09-10) — the buy is placed **by hand in the
+**Doc version:** v3.1.0 (2026-10-21) — §5: the GoTickets **dry run** now exists (mig `20261021180000`, `n2s_gt_order_dryrun`): every GoTickets cover is logged with the exact Pro API order body and a would_buy/skip decision under SQL-enforced caps; nothing is sent. · v3.0.0 (2026-09-10) — the buy is placed **by hand in the
 vendor console** for both vendors (operator direction 2026-09-09), so the
 former "blockers" are re-framed as the operator's fill list; adds the
 who-supplies-what split now encoded in `n2s_buy_intent.operator_fills` vs
@@ -99,7 +99,15 @@ Not a proposal — the questions that would need answering first:
 2. **Which sources** may auto-buy. GoTickets and TEvo are different
    integrations with different failure modes.
 3. **Dry-run mode** that produces the exact request body and stores it without
-   sending, so the flow can be reviewed against real covers.
+   sending, so the flow can be reviewed against real covers. **Built for
+   GoTickets (2026-10-21, mig `20261021180000`):** `n2s_gt_order_dryrun` logs
+   each GoTickets cover the moment it enters `n2s_cover_queue`, with the
+   `POST /orders` body and `would_buy` / `skip` + `skip_reasons` (gate 1-2 only,
+   listing still live at the quoted price and quantity, timer open, event not
+   started, $2,000 per order, $15,000 per ET day, one buy per order). It checks
+   `n2s_gt_current` (the list N2S covers come from), not
+   `gotickets_listings_snapshots` that `n2s_cover_verify()` still reads. No
+   upstream call; `expectedTotal` and the checkout fields stay NULL.
 4. **What happens when a listing vanishes between verify and purchase** — the
    window is small but non-zero, and this is where an unattended loop would
    lose money quietly.
