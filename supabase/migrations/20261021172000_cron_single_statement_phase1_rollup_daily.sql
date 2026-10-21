@@ -9,8 +9,12 @@
 --   direction ("Yes — apply all of it"). Verified post-apply: all 16 touched
 --   jobs carry the new command/schedule/active state; active multi-statement
 --   commands 33 → 23. Baseline for the 30 min before (16:47–17:17 UTC):
---   704 runs, 1 startup timeout, 2 failed. After-window result: see the
---   KANBAN A1-DB-5 row (measured ~17:55 UTC).
+--   704 runs, 1 startup timeout, 2 failed. RESULT (measured 20:17 UTC): the
+--   five hours before (12:00–16:59) ran 14–35 startup timeouts/hour; from
+--   18:00 to 20:17 (~2,700 runs) ZERO startup timeouts and zero failures. All
+--   14 touched jobs ran clean (663 p50 8.8 s, 642 10 s, 637 64 s, 536 128 s,
+--   635 498 s). The 16 Exos jobs were also paused at ~17:45 (20261021174000),
+--   so the gain is shared between the two changes.
 --
 -- Lane:     A1 (data plane / crons) · 2026-10-21 audit rows KANBAN A1-DB-4, A1-DB-5
 -- Touches:  cron.job rows (W via cron.alter_job) for jobs 153, 226, 263, 428,

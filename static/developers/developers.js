@@ -8,8 +8,8 @@
 (function () {
   'use strict';
 
-  const SUPABASE_URL = 'https://hzrizjeaxlqcxfrtczpq.supabase.co';
-  const SUPABASE_KEY = 'sb_publishable_lIuFt79XqZoGa70NWbg20Q_KBbRSDS8';
+  // Supabase URL + publishable key come from /api/public/config (same source
+  // the login page uses) so no key literal lives in this file.
   const ENDPOINT = location.origin + '/mcp';
 
   const $ = (id) => document.getElementById(id);
@@ -103,9 +103,12 @@
   // ---------------------------------------------------------------- auth + keys
   let client = null;
 
-  function initClient() {
+  async function initClient() {
     if (!window.supabase || !window.supabase.createClient) return null;
-    return window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    const r = await fetch('/api/public/config', { headers: { Accept: 'application/json' } });
+    const cfg = await r.json();
+    if (!cfg.supabase_url || !cfg.supabase_anon_key) return null;
+    return window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
     });
   }
@@ -185,10 +188,14 @@
     setSignedIn(null);
   }
 
-  function wireAuth() {
-    client = initClient();
+  async function wireAuth() {
+    try {
+      client = await initClient();
+    } catch (e) {
+      client = null;
+    }
     if (!client) {
-      showErr('authErr', 'Sign-in library failed to load — reload the page.');
+      showErr('authErr', 'Sign-in is unavailable right now — reload the page.');
       return;
     }
     $('googleBtn').addEventListener('click', signIn);
