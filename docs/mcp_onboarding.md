@@ -36,22 +36,23 @@ claude mcp add --transport http s4k-market https://<host>/mcp \
 
 **ChatGPT (custom connector / Agents SDK)** — add a remote MCP server with the URL above and the `Authorization` header.
 
-**Python (official `mcp` client)**
+**Python (official `mcp` client, 2.x)**
 ```python
-import asyncio
+import asyncio, httpx
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 async def main():
-    async with streamablehttp_client("https://<host>/mcp",
-                                     headers={"Authorization": "Bearer YOUR_KEY"}) as (r, w, _):
-        async with ClientSession(r, w) as s:
-            await s.initialize()
-            hit = await s.call_tool("search", {"query": "Lakers"})
-            print(hit.content[0].text)
+    async with httpx.AsyncClient(headers={"Authorization": "Bearer YOUR_KEY"}) as http:
+        async with streamable_http_client("https://<host>/mcp", http_client=http) as (read, write):
+            async with ClientSession(read, write) as s:
+                await s.initialize()
+                hit = await s.call_tool("search", {"query": "Lakers"})
+                print(hit.content[0].text)
 
 asyncio.run(main())
 ```
+(On `mcp` 1.x the import is `streamablehttp_client(url, headers=...)` and it yields `(read, write, _)`.)
 
 **Plain HTTP (JSON-RPC)** — no client library needed:
 ```bash
