@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co; base-uri 'self'; form-action 'self'" />
+  <title>S4K Market MCP — developers</title>
+  <meta name="description" content="Plug live-event market data into your bot: an MCP server with event search, SeatGeek sales pace, price trends, the daily top-sellers chart, prediction markets, sports state, news and weather." />
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <link rel="stylesheet" href="/static/developers/developers.css?v=20261021" />
+</head>
+<body data-page="developers">
+  <header class="hero">
+    <p class="kicker">S4K Market · MCP server</p>
+    <h1>Live-event market data, for your bot.</h1>
+    <p class="lede">One endpoint your MCP client plugs into: event, performer and venue search · SeatGeek sales pace · price history and zone prices · the daily top-sellers chart · performer trends · multi-source price movers · prediction markets · sports state · news · weather. Every answer says how fresh it is.</p>
+    <p class="meta"><span id="endpointLabel">Endpoint</span> <code id="endpoint">/mcp</code> · Streamable HTTP · read-only · free tier <code>60 req/min · 2,000 req/day</code></p>
+    <p class="meta"><a href="/developers/docs.md">5-minute onboarding doc</a> (Markdown — paste it to your agent) · <a href="/api/mcp/catalog">catalog JSON</a></p>
+  </header>
+
+  <main>
+    <section class="card" id="keyCard">
+      <h2>1 · Get a key</h2>
+      <p class="muted">Sign in with Google and create one key for your account. The key is shown once; creating another one retires the previous.</p>
+      <div id="authSignedOut">
+        <button id="googleBtn" class="btn primary" type="button">Sign in with Google</button>
+        <p id="authErr" class="err" hidden></p>
+      </div>
+      <div id="authSignedIn" hidden>
+        <p class="muted">Signed in as <strong id="whoami"></strong> · <button id="signOutBtn" class="linkbtn" type="button">sign out</button></p>
+        <form id="issueForm" class="row">
+          <label for="labelInput">Label</label>
+          <input id="labelInput" type="text" maxlength="80" placeholder="my bot" />
+          <button id="issueBtn" class="btn primary" type="submit">Create key</button>
+        </form>
+        <p id="issueErr" class="err" hidden></p>
+        <div id="newKey" class="newkey" hidden>
+          <p><strong>Your key — copy it now, it is not shown again.</strong></p>
+          <div class="row">
+            <code id="newKeyValue" class="keyval"></code>
+            <button id="copyKeyBtn" class="btn" type="button">Copy</button>
+          </div>
+        </div>
+        <h3>Your keys</h3>
+        <table class="tbl" id="keysTable">
+          <thead><tr><th>Prefix</th><th>Label</th><th>Status</th><th>Calls today</th><th>Last used</th></tr></thead>
+          <tbody id="keysBody"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2 · Connect your client</h2>
+      <p class="muted">Replace <code>YOUR_KEY</code>. The endpoint is this host's <code>/mcp</code>.</p>
+      <h3>Claude Code / Claude Desktop</h3>
+      <pre><code id="snipClaude"></code></pre>
+      <h3>Cursor · Windsurf · any client that takes JSON</h3>
+      <pre><code id="snipJson"></code></pre>
+      <h3>Plain HTTP (JSON-RPC)</h3>
+      <pre><code id="snipCurl"></code></pre>
+    </section>
+
+    <section class="card">
+      <h2>3 · Tools</h2>
+      <p class="muted">All read-only. Event ids are TEvo event ids — get them from <code>search</code>. Every result includes <code>freshness</code> (as-of · age · stale flag).</p>
+      <ul class="tools" id="toolsList"><li class="muted">loading…</li></ul>
+      <h3>Views you can query with <code>query_public_view</code></h3>
+      <ul class="views" id="viewsList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>4 · How fresh is it right now?</h2>
+      <p class="muted" id="freshGenerated"></p>
+      <table class="tbl">
+        <thead><tr><th>Feed</th><th>What</th><th>As of</th><th>Age</th><th>Rows / 24 h</th><th>Cadence</th></tr></thead>
+        <tbody id="freshBody"><tr><td colspan="6" class="muted">loading…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Rules</h2>
+      <ul>
+        <li>Public market data only. Our own inventory, orders and customers are never served on this endpoint.</li>
+        <li>Free tier: 60 requests/minute, 2,000/day per key; responses over 500 rows are truncated. Need more? Email the address in the footer with what you're building.</li>
+        <li>Data comes from public marketplaces and public sources, refreshed on the cadences above. It is information, not advice; check <code>freshness</code> before acting on a number.</li>
+        <li>Keys are personal. Rotate by creating a new one; the old one stops working immediately.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="muted">S4K Market MCP · <a href="/prices">public price tracker</a> · contact: <a href="mailto:julian@s4kent.com">julian@s4kent.com</a></footer>
+
+  <script src="/static/terminal/lib/supabase.js"></script>
+  <script src="/static/developers/developers.js?v=20261021"></script>
+</body>
+</html>

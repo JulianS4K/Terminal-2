@@ -8,8 +8,9 @@
 
 ## 🎯 CURRENT PRIORITIES
 
-- **★ #1 — Supabase hardening (operator 2026-10-21: "focus on the supabase as most urgent").** Work the 🔴 P0 table top-down: authenticated-readable order views → RLS-off tables → the always-failing rollup cron → cron startup-timeout congestion → stale listing data → storage bloat → edge-function hygiene → repo↔prod migration drift.
-- **★ Product focus:** D0 terminal. D1–D7 lower priority (a focus call, not a lockout — permission is per-action, `PROJECT_BIBLE §2.1`).
+- **★ #1 — The database as an MCP product (operator 2026-10-21: "convert the database into a MCP so people can plug into their bot and get real-time-ish information and trends").** Self-serve keys at `/developers`, public market + trends + prediction markets + sports/news/weather on the external tier, every answer carries an as-of, our book never leaves the internal tier. Rows: 🚀 `D0-MCP-*` below.
+- **★ #2 — Supabase hardening** (the 2026-10-21 audit): security rows closed; what's left is cron phase 2, the rollup rewrite, bloat reclaim and the operator decisions in the 🔴 table.
+- **Product focus otherwise:** D0 terminal. D1–D7 lower priority (a focus call, not a lockout — permission is per-action, `PROJECT_BIBLE §2.1`).
 
 ---
 
@@ -24,6 +25,17 @@
 5. **Duplicate IDs are forbidden.** v1 reused two IDs; renamed on reset: `A1-OPS-24` (last30days) → **A1-OPS-34**, `A1-OPS-29` (retention redesign) → **A1-OPS-35**.
 
 Lane codes (surface regions, not ranks — `PROJECT_BIBLE §2`): `A1` data plane · `B1` build/guards/docs · `D0` terminal + orders · `D1` storefront · `D3` broadway · `D4` Exos (source in `JulianS4K/EXP`) · `D5` fantasy · `D7` N2S (subset of D0) · `Op` operator-only.
+
+### 🚀 MCP product — "plug our data into your bot" (filed 2026-10-21, operator-directed)
+
+Baseline at kickoff: `/mcp` existed since #1024 (2 external tools, 7 internal) with **zero keys ever issued**, no docs, no signup, no per-key limits, no usage log. Decisions 2026-10-21: self-serve signup (Google via Supabase Auth); expose everything public (market prices + sales + trends, prediction markets, sports/news/weather, whitelisted raw views); stale feeds exposed with an as-of, never hidden; same Render service for now.
+
+| Phase | ID | Lane | Scope | Status |
+|---|---|---|---|---|
+| 1 | D0-MCP-1 | D0 [IN PROGRESS, PR #1027] | **Make it a product.** Mig `20261021190000`: `mcp_api_keys` + owner/limits cols, `mcp_usage_daily`, `mcp_verify_key` (now returns limits + today's calls), `mcp_count_call`, `mcp_self_issue_key` (authenticated, one live key per account, ≤5/day), `mcp_my_keys`, `mcp_data_freshness`. `routers/mcp_api.py`: external tier = 14 tools (`search`, `search_events`, `event_market`, `event_prices`, `top_market_events`, `performer_trend`, `price_movers`, `competing_events`, `prediction_markets`, `sports_context`, `news`, `event_weather`, `data_freshness`, `query_public_view`), explicit no-book column lists, per-key rate (in-process) + daily quota (DB) + usage stamp, 60 s cache on chart/movers/freshness. `/developers` page (Google sign-in → key shown once → client snippets → tool list → live freshness table) + `/api/mcp/catalog` + the **5-minute onboarding doc** `docs/mcp_onboarding.md`, served raw at `/developers/docs.md` so agents can read it (operator 2026-10-21: "the mcp should have a onboarding doc for easy fast integration"). Rate buckets `/mcp` 600/min/IP, `/api/mcp/` 60/min. | Authored; mig apply pending operator yes. |
+| 2 | D0-MCP-2 | D0 / A1 | **Trends layer.** Nightly category/league/performer price + volume indices as first-class tools; revive or replace `event_movers_index` (dead since 2026-07-02); freshness SLOs per feed surfaced on the page; resume the EVO get-in feed (A1-DB-6) so `event_prices` stops being stale. | Not started. |
+| 3 | D0-MCP-3 | D0 / Op | **Commercial.** Paid tiers (higher limits), Stripe, per-key usage dashboard, abuse controls beyond rate/quota (per-account key limits exist), a dedicated Render service once traffic warrants. | Not started. |
+| — | D0-MCP-4 | D0 | Follow-ups: MCP resources/prompts for discoverability; `query_public_view` row-level freshness; Redis-backed per-key limiter before >1 dyno (shares the `REDIS_URL` path of the IP limiter). | Backlog. |
 
 ### 🔴 P0 — Supabase (filed 2026-10-21 from the live read-only audit)
 
