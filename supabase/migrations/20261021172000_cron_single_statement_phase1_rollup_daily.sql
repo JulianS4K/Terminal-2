@@ -1,9 +1,16 @@
--- Migration 20261021172000 · level:admin · lane:A1 · writes:cron.job (9 commands, 12 schedules, 1 active flag) · reads:cron.job_run_details · pre:20260926170000, 20260911240000
+-- Migration 20261021172000 · level:admin · lane:A1 · writes:cron.job (10 commands, 12 schedules, 1 active flag) · reads:cron.job_run_details · pre:20260926170000, 20260911240000
 --
 -- ============================================================================
--- Migration 20261021172000 — cron phase 1: single-statement commands for the 9
+-- Migration 20261021172000 — cron phase 1: single-statement commands for the 10
 --   worst scheduler blockers, re-stagger the :13/:43/:17 pile-ups, make the
 --   venue-section rollup daily, retire the dead AXS backfill
+--
+-- Already applied to prod · via MCP 2026-10-21 17:18 UTC under operator
+--   direction ("Yes — apply all of it"). Verified post-apply: all 16 touched
+--   jobs carry the new command/schedule/active state; active multi-statement
+--   commands 33 → 23. Baseline for the 30 min before (16:47–17:17 UTC):
+--   704 runs, 1 startup timeout, 2 failed. After-window result: see the
+--   KANBAN A1-DB-5 row (measured ~17:55 UTC).
 --
 -- Lane:     A1 (data plane / crons) · 2026-10-21 audit rows KANBAN A1-DB-4, A1-DB-5
 -- Touches:  cron.job rows (W via cron.alter_job) for jobs 153, 226, 263, 428,
