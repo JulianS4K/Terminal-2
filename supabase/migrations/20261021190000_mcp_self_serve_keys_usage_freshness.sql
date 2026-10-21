@@ -22,6 +22,17 @@
 --           mcp_data_freshness()             (W: new, service_role — per-feed as-of)
 -- Pre-reqs: 20261008150000 (mcp_api_keys + mcp_issue_key)
 --
+-- Already applied to prod · via MCP 2026-10-21 under operator direction, in
+--   five pieces (schema_migrations rows `20261021190000_…` schema,
+--   `…191000_mcp_data_freshness`, `…190600_mcp_count_call`,
+--   `…190700_mcp_self_serve_issue_and_my_keys`, `…190500_mcp_verify_key_v2`;
+--   this file is the idempotent union). Verified post-apply: see KANBAN
+--   D0-MCP-1. LESSON: the MCP `apply_migration` tool holds any statement
+--   containing DROP (INDEX, FUNCTION) for a confirmation it never receives
+--   and reports a 60 s timeout — the batch rolls back cleanly. That is why the
+--   old `mcp_verify_key(text)` is RENAMED to `mcp_verify_key_v1` below instead
+--   of dropped; drop it from the SQL editor whenever convenient.
+--
 -- MODEL: anyone can sign in to the /developers page with Google (Supabase
 --   Auth; no domain gate — that gate is the terminal app's, not Auth's) and
 --   mint ONE live external key. The browser calls mcp_self_issue_key with its
@@ -62,9 +73,17 @@ GRANT SELECT, INSERT, UPDATE ON public.mcp_usage_daily TO service_role;
 COMMENT ON TABLE public.mcp_usage_daily IS
   'Per-key, per-UTC-day request counts for the /mcp server (mig 20261021190000). Written by mcp_count_call; read by mcp_verify_key (quota) and mcp_my_keys (owner view).';
 
--- 3. Verify (replaced: new return shape) -------------------------------------
-DROP FUNCTION IF EXISTS public.mcp_verify_key(text);
-CREATE FUNCTION public.mcp_verify_key(p_key_hash text)
+-- 3. Verify (replaced: new return shape; old signature parked as _v1) ---------
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'mcp_verify_key'
+               AND pg_get_function_result(p.oid) = 'TABLE(id bigint, label text, tier text)') THEN
+    ALTER FUNCTION public.mcp_verify_key(text) RENAME TO mcp_verify_key_v1;
+    REVOKE EXECUTE ON FUNCTION public.mcp_verify_key_v1(text) FROM PUBLIC, anon, authenticated, service_role;
+  END IF;
+END $$;
+CREATE OR REPLACE FUNCTION public.mcp_verify_key(p_key_hash text)
 RETURNS TABLE(id bigint, label text, tier text, rate_per_min integer, daily_quota integer, calls_today integer)
 LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_temp'
