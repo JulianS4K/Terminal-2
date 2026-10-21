@@ -4,7 +4,7 @@
   "private": true,
   "description": "Root ESLint tooling for the static/ frontend surfaces (coding-recommendation #4: ban raw innerHTML outside the shared S4K lib). App code is not bundled here — the Exos SPA lives in JulianS4K/EXP.",
   "scripts": {
-    "lint:libs": "eslint static/lib",
+    "lint:libs": "eslint static/lib static/prices",
     "lint:all": "eslint static d2_dashboard/static"
   },
   "devDependencies": {
