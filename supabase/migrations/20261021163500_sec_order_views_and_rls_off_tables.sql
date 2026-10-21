@@ -12,6 +12,12 @@
 --           deal_price_adjust, zone_price_observations (ENABLE RLS + REVOKE)
 -- Pre-reqs: none. Idempotent. Reversible (re-GRANT / DISABLE RLS).
 --
+-- Already applied to prod · via MCP 2026-10-21 under operator direction.
+--   Verified post-apply: 0 of the 5 views readable by anon/authenticated,
+--   service_role SELECT intact; v_reddit_news_ticker anon INSERT=false,
+--   SELECT=true; all 8 tables relrowsecurity=true; 0 RLS-off public tables
+--   with client grants remain.
+--
 -- WHY (views): the five views are SECURITY DEFINER-style (no security_invoker),
 --   carry no per-user filter, and `authenticated` holds SELECT — so ANY signed-in
 --   account reads every order with buyer/seller/client names and N2S cover P&L

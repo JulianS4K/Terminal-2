@@ -10,6 +10,11 @@
 --           revoke from anon only (authenticated keeps EXECUTE).
 -- Pre-reqs: none. Idempotent (re-apply is a no-op). Reversible by re-GRANT.
 --
+-- Already applied to prod · via MCP 2026-10-21 under operator direction.
+--   Verified post-apply: guard-only anon-executable SECDEF fns 30 → 0; the 32
+--   writers EXECUTE-able by neither anon nor authenticated; service_role kept;
+--   the 7 browser RPCs authenticated-only; SECDEF fns anon-exec overall 202 → 163.
+--
 -- WHY: two compounding facts found 2026-10-21:
 --   1. `pg_default_acl` for role postgres in schema public grants EXECUTE to anon
 --      and authenticated on EVERY new function, so a migration that forgets the
