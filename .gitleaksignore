@@ -80,3 +80,8 @@ supabase/migrations/20260510060000_dashboard_signal_health_fixes.sql:generic-api
 supabase/functions/probe-espn-data/index.ts:generic-api-key:9
 # TEvo `venue_key` in a synthetic checkout test fixture (tests/fixtures/*).
 tests/fixtures/checkout_sections_six.html:generic-api-key:18
+
+# Supabase PUBLISHABLE (anon) key in the first revision of the developers page —
+# public by design (the same value ships in static/terminal/auth.js); removed from
+# source in f0c2126 (the page now reads it from /api/public/config). History only.
+5e59e73c60fe12020478d5c38dbaf16fb1f04832:static/developers/developers.js:generic-api-key:12
