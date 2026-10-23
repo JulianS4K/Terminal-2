@@ -37,6 +37,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -412,6 +413,160 @@ def event_weather(db, event_id: int) -> dict:
     return rows[0] if rows else {"error": f"event {event_id} not found"}
 
 
+FORECAST_MAX_SECTIONS = 5
+# Keys of predict_event_clearing_price's answer that describe OUR book — never external.
+_BOOK_KEYS = ("own_book_gap",)
+
+
+def _strip_book(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _strip_book(v) for k, v in obj.items() if k not in _BOOK_KEYS}
+    if isinstance(obj, list):
+        return [_strip_book(v) for v in obj]
+    return obj
+
+
+def _forecast_sections_by_inventory(db, event_id: int, n: int) -> list[str]:
+    """Fallback when an event has no recent sales: its sections with the most
+    tickets on the latest TEvo capture (section_metrics PK = event_id, captured_at)."""
+    rows = db.table("section_metrics").select("section,tickets_count,is_ancillary,captured_at") \
+        .eq("event_id", event_id).order("captured_at", desc=True).limit(400).execute().data or []
+    if not rows:
+        return []
+    latest = rows[0].get("captured_at")
+    secs = [r for r in rows if r.get("captured_at") == latest and not r.get("is_ancillary")
+            and str(r.get("section") or "").strip()]
+    secs.sort(key=lambda r: (-(r.get("tickets_count") or 0), str(r.get("section"))))
+    return [str(r["section"]).strip().lower() for r in secs[:n]]
+
+
+def _guard_forecast(f: dict) -> dict:
+    """Label confidence and refuse to publish a prior-only number above the live market.
+
+    With no realized sales the forecaster leans on performer/road-draw priors, which can be
+    stale (e.g. a team's summer `cast_price_ref` median) and land above every current ask.
+    Then `expected_clearing` is re-anchored to the live ask x the category's sold-to-ask
+    ratio and the raw model number is kept as `model_estimate`."""
+    n = f.get("realized_sample_n") or 0
+    f["confidence"] = "high" if n >= 8 else "medium" if n >= 3 else "low"
+    ask = f.get("section_ask_median")
+    exp = f.get("expected_clearing")
+    if n == 0 and not f.get("section_tickets"):
+        f["warning"] = ("no sales and no current listings in this section — the estimate is "
+                        "prior-only; check event_market/team_report before using it")
+    elif n == 0 and ask and exp and exp > ask:
+        anchor = ((f.get("signals") or {}).get("ask_x_ratio") or {}).get("value") \
+            or round(ask * (f.get("sold_to_ask_ratio") or 1.0), 2)
+        f["model_estimate"] = exp
+        f["expected_clearing"] = anchor
+        f["lo"] = min(f.get("lo") or anchor, anchor)
+        f["hi"] = ask
+        f["warning"] = ("no realized sales in this section and the prior-driven model estimate "
+                        "was above every current ask, so expected_clearing is anchored to the "
+                        "live ask x sold-to-ask ratio (band up to the ask median). Low confidence.")
+    return f
+
+
+def price_forecast(db, event_id: int, section: str | None = None, max_sections: int = 3) -> dict:
+    """Predicted clearing price for an event section: `expected_clearing` with a
+    `lo`–`hi` band, `price_heading_24h`, the chance of a sale above ask, and the
+    signals behind it (recent SeatGeek sales in the section, current asks x the
+    category's sold-to-ask ratio, section and opponent priors, demand context:
+    chart rank, injuries, attendance, weather). Every forecast carries
+    `confidence` (high/medium/low by realized sales used) and a `warning` when it
+    rests on priors alone. Pass `section` as it appears on the marketplace
+    (e.g. "226", "floor a"); omit it to forecast the best-selling sections from the
+    last 30 days, or — with no sales — the sections with the most tickets listed.
+    Event ids are TEvo ids."""
+    n = _clamp(max_sections, 1, FORECAST_MAX_SECTIONS, 3)
+    picked_by = "explicit"
+    if section and str(section).strip():
+        sections = [str(section).strip()[:60]]
+    else:
+        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        rows = db.table("seatgeek_sales_snapshots").select("sg_sale_id,section") \
+            .eq("tevo_event_id", event_id).gte("sale_at_utc", since).limit(5000).execute().data or []
+        counts: dict[str, set] = {}
+        for r in rows:
+            sec = str(r.get("section") or "").strip()
+            if sec:
+                counts.setdefault(sec.lower(), set()).add(r.get("sg_sale_id"))
+        sections = [s for s, _ in sorted(counts.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:n]]
+        picked_by = "sales_30d"
+        if not sections:
+            sections = _forecast_sections_by_inventory(db, event_id, n)
+            picked_by = "listed_inventory"
+        if not sections:
+            return {"event_id": event_id, "forecasts": [],
+                    "note": "no sales in 30 days and no current listings — nothing to price; "
+                            "pass `section` explicitly"}
+    out = []
+    for sec in sections:
+        f = _rpc(db, "predict_event_clearing_price", {"p_event_id": event_id, "p_section": sec})
+        if f:
+            out.append(_guard_forecast(_strip_book(f)))
+    return {"event_id": event_id, "forecasts": out, "count": len(out), "sections_picked_by": picked_by,
+            "method": "weighted blend of realized section sales, current asks x sold-to-ask ratio "
+                      "and section/opponent priors, scaled by demand; band = calibrated p25-p75 "
+                      "drift. Each signal carries its weight; realized_sample_n = sales used."}
+
+
+_LIST_KEYS = ("games", "roster", "injuries", "transactions", "player_value", "espn_news", "reddit",
+              "kalshi_futures", "team_market_daily", "sales_daily", "recent_results")
+
+
+def team_report(db, team: str, since: str | None = None, home_only: bool = True,
+                max_games: int = 10, news_limit: int = 8) -> dict:
+    """One call for a team's market and context, e.g. team="New York Knicks" or a
+    TEvo performer id ("16303"). Returns, per upcoming game (home games by default):
+    live TEvo/SeatGeek/GoTickets inventory (get-in, median, p25-p75, tickets), SeatGeek
+    sales pace, a daily trend since `since`, Kalshi win odds, weather and a
+    `data_quality` flag (live / stale / none). Plus the team: ESPN standing, recent
+    results vs the spread, roster, injuries, transactions, player ticket-price value,
+    ESPN news, Reddit, Kalshi futures, and the team's daily market + sales history.
+    `since` (YYYY-MM-DD) defaults to when we started polling the team's games.
+    Metrics are processed, not raw listings. For a price, follow with
+    `price_forecast(event_id)`."""
+    since_d = None
+    if since:
+        try:
+            since_d = datetime.strptime(str(since)[:10], "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return {"error": "since must be YYYY-MM-DD"}
+    out = _rpc(db, "mcp_team_report", {
+        "p_team": str(team or "").strip()[:80], "p_since": since_d, "p_home_only": bool(home_only),
+        "p_max_events": _clamp(max_games, 1, 41, 10), "p_news_limit": _clamp(news_limit, 1, 25, 8)})
+    if not isinstance(out, dict):
+        return {"error": "no report"}
+    out.pop("polling", None)  # which teams we pin is ours — internal `team_book` carries it
+    for k in _LIST_KEYS:
+        if k in out and out[k] is None:
+            out[k] = []
+    notes = []
+    if out.get("games") is not None and not out.get("reddit"):
+        notes.append("no Reddit posts stored for this team in the last 7 days")
+    thin = [g["event_id"] for g in out.get("games", []) if g.get("data_quality") != "live"]
+    if thin:
+        notes.append(f"{len(thin)} game(s) without a TEvo capture in the last 6 h: {thin}")
+    if notes:
+        out["data_notes"] = notes
+    return out
+
+
+GET_STARTED_PATH = Path(__file__).resolve().parent.parent / "docs" / "mcp_onboarding.md"
+
+
+def get_started(db) -> dict:
+    """Start here on first connect: what this server does, the 4 calls that answer
+    most questions (search → team_report / event_market → price_forecast), how
+    freshness works, and the full onboarding guide (Markdown)."""
+    try:
+        guide = GET_STARTED_PATH.read_text(encoding="utf-8")
+    except OSError:
+        guide = ""
+    return {"welcome": INSTRUCTIONS, "quick_start": QUICK_START, "guide_markdown": guide}
+
+
 @_cached
 def data_freshness(db) -> dict:
     """How fresh every feed is right now: as-of time, age, rows in the last
@@ -502,6 +657,24 @@ def market_chart(db, offset: int = 0, limit: int = 50) -> dict:
     return {"events": rows}
 
 
+def team_book(db, team: str, since: str | None = None, home_only: bool = False,
+              max_games: int = 60) -> dict:
+    """Our book on a team (internal): per game since `since` (default 60 days back) our CRM
+    sales — orders, tickets, gross, avg per ticket, split by marketplace — SeatGeek order
+    count, and owned inventory now vs the market (owned tickets / share / median vs market
+    median and get-in); team totals, the 25 latest orders and which polling pins cover the
+    team. Rejected/cancelled orders excluded; no buyer details. Pair with `team_report`."""
+    since_d = None
+    if since:
+        try:
+            since_d = datetime.strptime(str(since)[:10], "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return {"error": "since must be YYYY-MM-DD"}
+    return _rpc(db, "mcp_team_book", {
+        "p_team": str(team or "").strip()[:80], "p_since": since_d, "p_home_only": bool(home_only),
+        "p_max_events": _clamp(max_games, 1, 120, 60)}) or {"error": "no report"}
+
+
 def owned_events(db, days: int = 30) -> dict:
     """Upcoming events where we own tickets (as of the latest TEvo listing poll)."""
     return {"events": _rpc(db, "get_owned_events_upcoming", {"p_days": _clamp(days, 1, 365, 30)}) or []}
@@ -519,18 +692,32 @@ def query_view(db, view: str, columns: list[str] | None = None,
 EXTERNAL_TOOLS: tuple[Callable, ...] = (
     search, search_events, event_market, event_prices, top_market_events, performer_trend,
     price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
-    data_freshness, query_public_view)
+    price_forecast, team_report, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
-    pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, query_view)
+    pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
+    query_view)
 
 INSTRUCTIONS = (
-    "S4K live-event market data (concerts, sports, theater). Event ids are TEvo event ids; "
+    "S4K live-event market data (concerts, sports, theater). First time here? Call "
+    "`get_started`. Event ids are TEvo event ids; "
     "find them with `search` or `search_events`. Dates are the venue's local time unless a "
     "field says _utc. Every answer carries `freshness` (as_of / age_hours / stale) for the "
     "rows it used — call `data_freshness` to see every feed's current age; the TEvo get-in "
     "price feed (`event_prices`) has been paused since 2026-09-27 and is marked stale. "
     "SeatGeek sales, prediction markets, sports state and news update within minutes; the "
-    "chart, movers and performer trends are daily. Read-only.")
+    "chart, movers and performer trends are daily. For a team (e.g. the Knicks) call "
+    "`team_report` — live inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one "
+    "answer. To predict a price, call `price_forecast` "
+    "(per section; omit section for the best sellers) and read `expected_clearing` with its "
+    "`lo`-`hi` band, `confidence` and any `warning`. Read-only.")
+
+QUICK_START = [
+    "search('knicks') → performer + event ids",
+    "team_report('New York Knicks') → every home game: live get-in/median/tickets on TEvo, "
+    "SeatGeek and GoTickets, daily trend, Kalshi odds, injuries, roster, news",
+    "price_forecast(event_id) → expected clearing price per section with a band and confidence",
+    "data_freshness() → how old each feed is before you trust a number",
+]
 
 
 def tool_catalog(tools: tuple[Callable, ...] = EXTERNAL_TOOLS) -> list[dict]:
@@ -560,6 +747,22 @@ def _make_server(name: str, tools: tuple[Callable, ...], get_db: Callable[[], An
         bound.__annotations__ = {k: v for k, v in fn.__annotations__.items() if k != "db"}
         srv.add_tool(bound, name=fn.__name__, description=fn.__doc__,
                      annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+
+    # Onboarding on first connect: clients that list resources/prompts surface these next to
+    # the tools; `get_started` (a tool) covers clients that only call tools.
+    @srv.resource("s4k://onboarding", name="onboarding", title="S4K Market MCP — start here",
+                  description="The onboarding guide: connect, the core calls, recipes, limits.",
+                  mime_type="text/markdown")
+    def _onboarding() -> str:
+        return get_started(None)["guide_markdown"]
+
+    @srv.prompt(name="get_started", title="Get started with S4K market data",
+                description="Walks a new user through the core calls with a live example.")
+    def _get_started_prompt(team: str = "New York Knicks") -> str:
+        return (f"Call `get_started`, then `team_report` for {team}. Summarize the next home game's "
+                "live get-in and median on each source, the trend, Kalshi odds and injuries, then "
+                "call `price_forecast` for that game and report expected_clearing with its band, "
+                "confidence and any warning.")
     return srv
 
 

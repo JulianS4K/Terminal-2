@@ -1,6 +1,6 @@
 # S4K Market MCP — onboarding (5 minutes)
 
-> **Doc version:** v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
+> **Doc version:** v1.2.0 (2026-10-23) — +`team_report` (a team's live TEvo/SeatGeek/GoTickets inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one call), +`get_started` and the `s4k://onboarding` resource / `get_started` prompt served on connect; `price_forecast` now returns `confidence` + `warning` and anchors a no-sales estimate to the live market. · v1.1.0 (2026-10-23) — +`price_forecast` (predicted clearing price per section with a band and the signals behind it) and the "Predict a price" recipe. · v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
 
 Live-event market data for your bot, over the [Model Context Protocol](https://modelcontextprotocol.io): event / performer / venue search, SeatGeek sales pace, price history and zone prices, the daily top-sellers chart, performer trends, multi-source price movers, competing events, prediction markets, sports state, news and weather. Read-only. Every answer tells you how fresh it is.
 
@@ -65,6 +65,8 @@ List tools with `{"method":"tools/list"}`.
 
 ## 3. First three calls (2 minutes)
 
+On connect the server's instructions tell your assistant to call **`get_started`** first; clients that show MCP resources and prompts also list this guide as `s4k://onboarding` and a `get_started` prompt.
+
 ```text
 search(query="Lakers")                       → performer ids, venue ids, upcoming event ids (TEvo ids)
 event_market(event_id=3226757, days=30)      → the event + SeatGeek sales per day + competing events
@@ -77,10 +79,39 @@ top_market_events(limit=25)                  → today's top-selling chart with 
 price_movers(window_days=30, direction="up", source="seatgeek")
 performer_trend(performer_id=51427, days=90)
 event_prices(event_id=3226757)               → get-in history, zones, weather, 24 h direction
+price_forecast(event_id=3226757)             → predicted clearing price for the best-selling sections
+team_report(team="New York Knicks")          → a team's whole market + context in one call (§3c)
 prediction_markets(event_id=…) | (performer_id=…) | (league="NFL")
 sports_context(league="nfl")   news(league="NFL")   event_weather(event_id=…)
 query_public_view(view="sg_market_chart", filters=[{"column":"rank","op":"lte","value":10}])
 ```
+
+## 3b. Predict a price (the common question)
+
+Ask your assistant in plain words, for example:
+
+```text
+What will section 226 at Cardinals at Cowboys on Nov 1 clear at, and should I list above or below that?
+```
+
+With this server connected, the assistant calls `search` to get the event id, then `price_forecast(event_id, section="226")`, and answers from:
+
+- `expected_clearing` — the predicted sale price per ticket (USD, before fees).
+- `lo` / `hi` — the calibrated range; most sales land inside it.
+- `price_heading_24h` and `over_ask_spike_prob_pct` — where asks are heading and the chance of a sale above ask.
+- `signals` — what the number is built from, each with its weight: recent sales in that section (`realized_sale`, with `realized_sample_n`), current asks × the category's sold-to-ask ratio, section and opponent history.
+- `demand_context` — chart rank, injuries, attendance, weather.
+
+Omit `section` to get the event's best-selling sections (or, when it has no recent sales, the sections with the most tickets listed). Every forecast carries `confidence` (`high` ≥ 8 realized sales used, `medium` ≥ 3, else `low`). With no realized sales the model leans on priors; if that lands above every current ask, `expected_clearing` is re-anchored to the live ask × sold-to-ask ratio, the raw number moves to `model_estimate`, and a `warning` says so. Pair it with `event_market` (sales pace) and `prediction_markets` (game odds) for the full picture.
+
+## 3c. A team in one call
+
+```text
+team_report(team="New York Knicks")                        # or the TEvo performer id, "16303"
+team_report(team="16303", since="2026-10-01", max_games=5, home_only=false)
+```
+
+Per upcoming game (home games by default): `evo_now` / `sg_now` (get-in, median, p25–p75, tickets on TEvo and SeatGeek), `gt_seen_24h` (GoTickets), `sg_sales_30d`, `trend_daily` (one point per day since `since`), `kalshi` (win odds), `weather` and `data_quality` (`live` = captured in the last 6 h, `stale`, `none`). For the team: `standing`, `recent_results` (with the spread), `roster`, `injuries`, `transactions`, `player_value` (ticket-price lift when a player plays), `espn_news`, `reddit`, `kalshi_futures`, `team_market_daily` and `sales_daily`. `since` defaults to when we started polling the team's games. Everything is processed metrics — never raw listings — and `data_notes` lists any gap (no Reddit posts, games without a recent capture). Follow with `price_forecast(event_id)` for a price.
 
 ## 4. Reading the answers
 
