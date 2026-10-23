@@ -223,7 +223,7 @@ def test_tier_tool_sets():
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
-                      "event_source_links", "home_stats"}
+                      "event_source_links", "home_stats", "team_book"}
     # ...and no owned/order column leaks through the public view whitelist.
     for cols in m.EXTERNAL_QUERY_VIEWS.values():
         assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c]
@@ -526,7 +526,7 @@ def test_guard_forecast_anchors_prior_only_estimate_to_market():
 
 
 def test_team_report_args_and_normalizing():
-    rep = {"team": {"performer_id": 16303}, "games": [
+    rep = {"team": {"performer_id": 16303}, "polling": [{"pin": "knicks_home"}], "games": [
                {"event_id": 1, "data_quality": "live"}, {"event_id": 2, "data_quality": "none"}],
            "reddit": None, "roster": None, "injuries": [{"name": "x"}]}
     db = FakeDB(rpc_data={"mcp_team_report": rep})
@@ -535,6 +535,7 @@ def test_team_report_args_and_normalizing():
                                             "p_home_only": True, "p_max_events": 41,
                                             "p_news_limit": 1})]
     assert out["reddit"] == [] and out["roster"] == [] and out["injuries"] == [{"name": "x"}]
+    assert "polling" not in out  # our pins never reach the external tier
     assert any("Reddit" in n for n in out["data_notes"])
     assert any("[2]" in n for n in out["data_notes"])
     assert m.team_report(db, "16303", since="last week") == {"error": "since must be YYYY-MM-DD"}
@@ -542,6 +543,17 @@ def test_team_report_args_and_normalizing():
     clean = m.team_report(FakeDB(rpc_data={"mcp_team_report": {
         "games": [{"event_id": 1, "data_quality": "live"}], "reddit": [{"t": 1}]}}), "1")
     assert "data_notes" not in clean
+
+
+def test_team_book_internal_only():
+    book = {"totals": {"orders": 2555}, "polling": [{"pin": "knicks_home"}]}
+    db = FakeDB(rpc_data={"mcp_team_book": book})
+    assert m.team_book(db, "16303", since="2026-08-24", max_games=500) == book
+    assert db.rpcs == [("mcp_team_book", {"p_team": "16303", "p_since": "2026-08-24",
+                                          "p_home_only": False, "p_max_events": 120})]
+    assert m.team_book(db, "16303", since="soon") == {"error": "since must be YYYY-MM-DD"}
+    assert m.team_book(FakeDB(rpc_data={}), "x") == {"error": "no report"}
+    assert m.team_book in m.INTERNAL_TOOLS and m.team_book not in m.EXTERNAL_TOOLS
 
 
 def test_get_started_and_onboarding(monkeypatch, tmp_path):

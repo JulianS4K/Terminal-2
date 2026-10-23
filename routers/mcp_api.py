@@ -512,7 +512,7 @@ def price_forecast(db, event_id: int, section: str | None = None, max_sections: 
 
 
 _LIST_KEYS = ("games", "roster", "injuries", "transactions", "player_value", "espn_news", "reddit",
-              "kalshi_futures", "team_market_daily", "sales_daily", "recent_results", "polling")
+              "kalshi_futures", "team_market_daily", "sales_daily", "recent_results")
 
 
 def team_report(db, team: str, since: str | None = None, home_only: bool = True,
@@ -538,6 +538,7 @@ def team_report(db, team: str, since: str | None = None, home_only: bool = True,
         "p_max_events": _clamp(max_games, 1, 41, 10), "p_news_limit": _clamp(news_limit, 1, 25, 8)})
     if not isinstance(out, dict):
         return {"error": "no report"}
+    out.pop("polling", None)  # which teams we pin is ours — internal `team_book` carries it
     for k in _LIST_KEYS:
         if k in out and out[k] is None:
             out[k] = []
@@ -656,6 +657,24 @@ def market_chart(db, offset: int = 0, limit: int = 50) -> dict:
     return {"events": rows}
 
 
+def team_book(db, team: str, since: str | None = None, home_only: bool = False,
+              max_games: int = 60) -> dict:
+    """Our book on a team (internal): per game since `since` (default 60 days back) our CRM
+    sales — orders, tickets, gross, avg per ticket, split by marketplace — SeatGeek order
+    count, and owned inventory now vs the market (owned tickets / share / median vs market
+    median and get-in); team totals, the 25 latest orders and which polling pins cover the
+    team. Rejected/cancelled orders excluded; no buyer details. Pair with `team_report`."""
+    since_d = None
+    if since:
+        try:
+            since_d = datetime.strptime(str(since)[:10], "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return {"error": "since must be YYYY-MM-DD"}
+    return _rpc(db, "mcp_team_book", {
+        "p_team": str(team or "").strip()[:80], "p_since": since_d, "p_home_only": bool(home_only),
+        "p_max_events": _clamp(max_games, 1, 120, 60)}) or {"error": "no report"}
+
+
 def owned_events(db, days: int = 30) -> dict:
     """Upcoming events where we own tickets (as of the latest TEvo listing poll)."""
     return {"events": _rpc(db, "get_owned_events_upcoming", {"p_days": _clamp(days, 1, 365, 30)}) or []}
@@ -675,7 +694,8 @@ EXTERNAL_TOOLS: tuple[Callable, ...] = (
     price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
     price_forecast, team_report, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
-    pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, query_view)
+    pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
+    query_view)
 
 INSTRUCTIONS = (
     "S4K live-event market data (concerts, sports, theater). First time here? Call "
