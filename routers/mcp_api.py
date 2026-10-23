@@ -554,6 +554,7 @@ def team_report(db, team: str, since: str | None = None, home_only: bool = True,
 
 
 GET_STARTED_PATH = Path(__file__).resolve().parent.parent / "docs" / "mcp_onboarding.md"
+AUTO_PRICER_GUIDE_PATH = Path(__file__).resolve().parent.parent / "docs" / "auto_pricer_field_guide.md"
 
 
 def get_started(db) -> dict:
@@ -675,6 +676,21 @@ def team_book(db, team: str, since: str | None = None, home_only: bool = False,
         "p_max_events": _clamp(max_games, 1, 120, 60)}) or {"error": "no report"}
 
 
+def auto_pricer_setup(db, event_id: int, hours: int = 48) -> dict:
+    """Auto Pricer inputs for one event (internal), per seating level (100s, 200s, …):
+    the SeatGeek quantity markets SG2..SG6+ (`q2`..`q6p`) next to the same curve on EVO
+    and GoTickets, each market's p25/median/p75 with OUR listings excluded, our own
+    count and median, row-bucket Surge % (the guide's ((target ÷ base) − 1) × 100 on the
+    cross-source p25), our CRM sales in the last 7 days, and `suggest`: Dumb vs Smart
+    Pricing (Smart when SG5/SG6+ sits > 20 % over SG2), the SG2 anchor, a Floor at the
+    cheapest pair across sources, Top of Range from the EVO/GT p75, and how far our median
+    sits from each market. SeatGeek/GoTickets prices are all-in, EVO is retail. Read the
+    `s4k://auto-pricer-guide` resource for what each Auto Pricer field does; treat the
+    suggestions as a Preview Pricing starting point (guide §13)."""
+    return _rpc(db, "mcp_auto_pricer_setup", {
+        "p_event_id": event_id, "p_hours": _clamp(hours, 3, 168, 48)}) or {"error": "no data"}
+
+
 def owned_events(db, days: int = 30) -> dict:
     """Upcoming events where we own tickets (as of the latest TEvo listing poll)."""
     return {"events": _rpc(db, "get_owned_events_upcoming", {"p_days": _clamp(days, 1, 365, 30)}) or []}
@@ -695,7 +711,7 @@ EXTERNAL_TOOLS: tuple[Callable, ...] = (
     price_forecast, team_report, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
     pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
-    query_view)
+    auto_pricer_setup, query_view)
 
 INSTRUCTIONS = (
     "S4K live-event market data (concerts, sports, theater). First time here? Call "
@@ -763,6 +779,29 @@ def _make_server(name: str, tools: tuple[Callable, ...], get_db: Callable[[], An
                 "live get-in and median on each source, the trend, Kalshi odds and injuries, then "
                 "call `price_forecast` for that game and report expected_clearing with its band, "
                 "confidence and any warning.")
+
+    # Our pricing playbook: internal tier only.
+    if auto_pricer_setup in tools:
+        @srv.resource("s4k://auto-pricer-guide", name="auto_pricer_guide", title="Auto Pricer Field Guide",
+                      description="What every Auto Pricer field does: Dumb vs Smart Pricing, SG2..SG6+ "
+                                  "quantity markets, delta, spacing, surge, floors, tiers, test protocol.",
+                      mime_type="text/markdown")
+        def _auto_pricer_guide() -> str:
+            try:
+                return AUTO_PRICER_GUIDE_PATH.read_text(encoding="utf-8")
+            except OSError:
+                return ""
+
+        @srv.prompt(name="auto_pricer_advice", title="Auto Pricer settings for an event",
+                    description="Reads the guide, runs auto_pricer_setup and proposes zone settings.")
+        def _auto_pricer_prompt(event: str = "the next Knicks home game") -> str:
+            return (f"Read the s4k://auto-pricer-guide resource. Find {event} with `search`, then call "
+                    "`auto_pricer_setup(event_id)` and `team_book` for our sales and inventory. For each "
+                    "seating level propose Auto Pricer settings — engine (Dumb/Smart), base market and "
+                    "delta, floor, ceiling, top of range, spacing, max single-step drop and row surge % — "
+                    "citing the SG2..SG6+ curve, the EVO/GoTickets cross-check and where our listings sit "
+                    "vs each market. Flag fields the guide marks 'Needs verification' and end with the "
+                    "Preview Pricing test to run first.")
     return srv
 
 
