@@ -384,6 +384,11 @@
       const timer = r.timer_expired
         ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
         : '';
+      // N2B: a peddled sale from the Need2Buy/WaitToBuy Gmail label. No timer;
+      // its event is re-priced every 4 hours until the label comes off.
+      const n2b = r.n2s_status === 'n2b'
+        ? ' <span class="muted small" title="Need to Buy (Gmail WaitToBuy): no timer, re-priced every 4 hours">N2B</span>'
+        : '';
       // GoTickets gives us a deep link. TEvo and SeatGeek do not publish a
       // buy URL to us and there is no known console URL pattern, so rather
       // than guess a link that may 404 or point at the wrong listing, show the
@@ -411,7 +416,7 @@
       const rowCls = [isNew ? 'n2s-row-new' : '', r.has_cover ? '' : 'n2s-row-gap']
         .filter(Boolean).join(' ');
       return `<tr data-n2s="${esc(String(r.n2s_id))}" data-fp="${esc(coverFp(r))}"${rowCls ? ` class="${rowCls}"` : ''}>
-        <td>${esc(r.s4k_source || '')}${chip}${timer}${claimed}</td>
+        <td>${esc(r.s4k_source || '')}${chip}${n2b}${timer}${claimed}</td>
         <td class="n2s-ord">${ordCell(r)}</td>
         <td>${esc(r.event_name || '')}${gtLink(r)}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
         <td>${seat}</td>
