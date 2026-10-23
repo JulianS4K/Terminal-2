@@ -18,7 +18,9 @@
 --                               pin's SG cadence. New trailing column sg_owned.
 --   pinned_listings_poll_tick   most-overdue-first (overdue = age / band interval) instead of
 --                               oldest-first, so near games win when demand exceeds the cap;
---                               caps 70 EVO / 70 GT / 8 SG per 2-min tick.
+--                               caps 70 EVO / 55 GT / 8 SG per 2-min tick (GoTickets
+--                               returns 429 above 60 catalog requests/minute; the tick fires as
+--                               one burst, so GT stays under 60 — 70 drew ~5 % 429s, 2026-10-23).
 --
 -- Expected load (collector_cadence bands × games per band, 2026-10-23): ~45 k EVO and
 -- ~40 k GT polls/day (~30/min each; caps allow 35/min), ~5 k SG/day (~3.5/min, token limit
@@ -89,7 +91,7 @@ SELECT DISTINCT ON (u.tevo_event_id)
 REVOKE ALL ON public.v_listings_poll_pinned_events FROM anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.pinned_listings_poll_tick(
-  p_max_evo integer DEFAULT 70, p_max_gt integer DEFAULT 70, p_max_sg integer DEFAULT 8)
+  p_max_evo integer DEFAULT 70, p_max_gt integer DEFAULT 55, p_max_sg integer DEFAULT 8)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
