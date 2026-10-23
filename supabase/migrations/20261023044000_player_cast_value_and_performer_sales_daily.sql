@@ -45,7 +45,10 @@
 -- "started"; the T-1 price is the listing median, not realised sales — the
 -- sales-side effect is a phase-2 column once performer_sales_daily has history.
 --
--- NOT APPLIED. Apply is operator-gated (CLAUDE.md §1: DDL + cron).
+-- PARTIALLY APPLIED to prod · via MCP 2026-10-23 19:30 UTC (operator-approved): both player
+-- tables, v_cast_price_effect, performer_sales_daily + its builder and nightly cron.
+-- build_player_price_effect / _all and the player cron are NOT applied (bodies contain
+-- DELETE — SQL editor). The two round(double) bugs found on apply are fixed here.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -187,7 +190,7 @@ BEGIN
   SELECT p_league, a.espn_athlete_id, coalesce(at.display_name, at.full_name), a.team_abbr, at.position_abbr,
          a.gp, a.gm,
          round(a.med_p::numeric, 2), round(a.med_m::numeric, 2),
-         round(((a.med_p / nullif(a.med_m, 0)) - 1) * 100, 1),
+         round(((a.med_p / nullif(a.med_m, 0)) - 1)::numeric * 100, 1),
          round((exp(a.r_p - a.r_m) - 1) * 100, 1),
          round((exp(a.rh_p - a.rh_m) - 1) * 100, 1),
          round((exp(a.ra_p - a.ra_m) - 1) * 100, 1),
@@ -248,7 +251,7 @@ SELECT r.cast_run_id, r.show_slug, r.role, r.performer_name, r.engagement_seq, r
        r.is_final_confirmed, r.confidence, r.perfs_priced, r.snapshot_rows,
        r.median_getin, r.avg_getin, r.min_getin, r.max_getin, r.closing_night_getin,
        round(b.show_median_getin::numeric, 2) AS show_median_getin,
-       round((r.median_getin / nullif(b.show_median_getin, 0) - 1) * 100, 1) AS lift_pct,
+       round((r.median_getin / nullif(b.show_median_getin::numeric, 0) - 1) * 100, 1) AS lift_pct,
        b.runs_priced,
        CASE WHEN r.perfs_priced >= 20 THEN 'high' WHEN r.perfs_priced >= 5 THEN 'medium' ELSE 'low' END AS confidence_level
 FROM runs r JOIN base b USING (show_slug);

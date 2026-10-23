@@ -21,9 +21,8 @@
 --             zone_metrics                  NEW 60 d (1.6 GB, no policy today)
 --           venue_section_rollup_catchup(int,int) (W: trailing window 70 → 14 d so the
 --                                           rollup can never fall behind the 21 d raw window)
--- NOT touched: seatgeek_listings_snapshots / seatgeek_sales_snapshots — the
---   2026-09-11 never-purge directive (mig 20260911030000) stands until the
---   operator lifts it explicitly; SALES stay forever regardless. Orders/sales
+-- seatgeek_listings_snapshots: never-purge LIFTED by the operator 2026-10-23 → 7 d.
+--   seatgeek_sales_snapshots: never-purge STANDS (sales kept forever). Orders/sales
 --   tables, event_listing_snapshot_daily, performer_metrics_daily,
 --   venue_section_price_daily, zone_price_observations, sg_market_chart,
 --   performer_sales_daily: INDEFINITE (never in the policy table).
@@ -36,7 +35,9 @@
 -- Depends on 20261023043520 (engine unstuck) — windows only take effect once
 -- the tick runs; the first ticks after apply drain the backlog over ~2 days.
 --
--- NOT APPLIED. Apply is operator-gated (CLAUDE.md §1: DML on retention_policy).
+-- NOT APPLIED via MCP: the apply tool holds top-level UPDATEs on retention_policy.
+-- Run from the SQL editor (operator approved 2026-10-23, incl. lifting never-purge for
+-- seatgeek_listings_snapshots — see the two extra statements in the paste).
 -- ============================================================================
 
 UPDATE public.retention_policy SET keep_days = 7,
@@ -76,6 +77,20 @@ INSERT INTO public.retention_policy (table_name, ts_column, keep_days, enabled, 
 VALUES ('zone_metrics', 'captured_at', 60, true, 50000, 60, 45,
         'Per-zone aggregates — 60 d (v3 2026-10-23). Daily zone features kept forever in zone_price_observations.')
 ON CONFLICT (table_name) DO UPDATE SET keep_days = 60, enabled = true, updated_at = now();
+
+-- SeatGeek LISTINGS: operator lifted the 2026-09-11 never-purge directive for listings
+-- only (2026-10-23). Clear the flag first (the guard trigger refuses enabled=true while
+-- it is set), then enable at 7 d. seatgeek_sales_snapshots keeps never_purge.
+UPDATE public.retention_policy
+   SET meta = (coalesce(meta,'{}'::jsonb) - 'never_purge')
+              || jsonb_build_object('never_purge_lifted', 'operator 2026-10-23: SeatGeek LISTINGS follow the 7-day raw rule; SALES stay never-purge'),
+       updated_at = now()
+ WHERE table_name = 'seatgeek_listings_snapshots';
+UPDATE public.retention_policy
+   SET enabled = true, keep_days = 7, batch_rows = 50000,
+       notes = coalesce(notes,'') || ' | v3 2026-10-23: operator lifted never-purge for LISTINGS only; 7 d. seatgeek_sales_snapshots stays never-purge.',
+       updated_at = now()
+ WHERE table_name = 'seatgeek_listings_snapshots';
 
 -- rollup catch-up window: 70 → 14 days (must stay inside the 21 d section_metrics window)
 CREATE OR REPLACE FUNCTION public.venue_section_rollup_catchup(p_max_days integer DEFAULT 2, p_budget_seconds integer DEFAULT 200)

@@ -217,7 +217,8 @@ def test_tier_tool_sets():
     ext = {f.__name__ for f in m.EXTERNAL_TOOLS}
     assert ext == {"search", "search_events", "event_market", "event_prices", "top_market_events",
                    "performer_trend", "price_movers", "competing_events", "prediction_markets",
-                   "sports_context", "news", "event_weather", "data_freshness", "query_public_view"}
+                   "sports_context", "news", "event_weather", "price_forecast", "data_freshness",
+                   "query_public_view"}
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
@@ -439,6 +440,43 @@ def test_query_public_view_whitelist():
     ok = m.query_public_view(db, "sg_market_chart", filters=[{"column": "rank", "op": "lte", "value": 5}],
                              order_by="rank", limit=5)
     assert ok == {"view": "sg_market_chart", "rows": [], "count": 0}
+
+
+def test_price_forecast_explicit_section_strips_book():
+    fc = {"expected_clearing": 214.2, "lo": 157.48, "hi": 321.33,
+          "demand_context": {"own_book_gap": 12, "attendance": {"rank": 1}},
+          "signals": [{"own_book_gap": 3, "realized_sale": 226}]}
+    db = FakeDB(rpc_data={"predict_event_clearing_price": fc})
+    out = m.price_forecast(db, 3285866, section="  226 ")
+    assert db.rpcs == [("predict_event_clearing_price", {"p_event_id": 3285866, "p_section": "226"})]
+    f = out["forecasts"][0]
+    assert out["count"] == 1 and f["expected_clearing"] == 214.2
+    assert f["demand_context"] == {"attendance": {"rank": 1}}
+    assert f["signals"] == [{"realized_sale": 226}]
+    assert db.queries == []  # explicit section: no sales scan
+
+
+def test_price_forecast_picks_best_selling_sections():
+    sales = [{"sg_sale_id": 1, "section": "226"}, {"sg_sale_id": 2, "section": "226"},
+             {"sg_sale_id": 2, "section": "226"}, {"sg_sale_id": 3, "section": "Floor A"},
+             {"sg_sale_id": 4, "section": "101"}, {"sg_sale_id": 5, "section": "101"},
+             {"sg_sale_id": 6, "section": " "}, {"sg_sale_id": 7, "section": None}]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": sales},
+                rpc_data={"predict_event_clearing_price": {"expected_clearing": 1}})
+    out = m.price_forecast(db, 9, max_sections=2)
+    asked = [a["p_section"] for _, a in db.rpcs]
+    assert asked == ["101", "226"]  # ties by distinct-sale count, then name
+    assert out["count"] == 2
+    calls = db.queries[0].calls
+    assert ("eq", ("tevo_event_id", 9), {}) in calls
+
+
+def test_price_forecast_no_sales_and_empty_rpc():
+    db = FakeDB(tables={"seatgeek_sales_snapshots": []})
+    out = m.price_forecast(db, 9)
+    assert out["forecasts"] == [] and "pass `section`" in out["note"]
+    db = FakeDB(rpc_data={})
+    assert m.price_forecast(db, 9, section="x")["count"] == 0
 
 
 def test_tool_catalog_and_tool_name():

@@ -1,6 +1,6 @@
 # S4K Market MCP — onboarding (5 minutes)
 
-> **Doc version:** v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
+> **Doc version:** v1.1.0 (2026-10-23) — +`price_forecast` (predicted clearing price per section with a band and the signals behind it) and the "Predict a price" recipe. · v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
 
 Live-event market data for your bot, over the [Model Context Protocol](https://modelcontextprotocol.io): event / performer / venue search, SeatGeek sales pace, price history and zone prices, the daily top-sellers chart, performer trends, multi-source price movers, competing events, prediction markets, sports state, news and weather. Read-only. Every answer tells you how fresh it is.
 
@@ -77,10 +77,29 @@ top_market_events(limit=25)                  → today's top-selling chart with 
 price_movers(window_days=30, direction="up", source="seatgeek")
 performer_trend(performer_id=51427, days=90)
 event_prices(event_id=3226757)               → get-in history, zones, weather, 24 h direction
+price_forecast(event_id=3226757)             → predicted clearing price for the best-selling sections
 prediction_markets(event_id=…) | (performer_id=…) | (league="NFL")
 sports_context(league="nfl")   news(league="NFL")   event_weather(event_id=…)
 query_public_view(view="sg_market_chart", filters=[{"column":"rank","op":"lte","value":10}])
 ```
+
+## 3b. Predict a price (the common question)
+
+Ask your assistant in plain words, for example:
+
+```text
+What will section 226 at Cardinals at Cowboys on Nov 1 clear at, and should I list above or below that?
+```
+
+With this server connected, the assistant calls `search` to get the event id, then `price_forecast(event_id, section="226")`, and answers from:
+
+- `expected_clearing` — the predicted sale price per ticket (USD, before fees).
+- `lo` / `hi` — the calibrated range; most sales land inside it.
+- `price_heading_24h` and `over_ask_spike_prob_pct` — where asks are heading and the chance of a sale above ask.
+- `signals` — what the number is built from, each with its weight: recent sales in that section (`realized_sale`, with `realized_sample_n`), current asks × the category's sold-to-ask ratio, section and opponent history.
+- `demand_context` — chart rank, injuries, attendance, weather.
+
+Omit `section` to get the event's best-selling sections. A forecast with `realized_sample_n: 0` rests on asks and priors only — treat its band as wide. Pair it with `event_market` (sales pace) and `prediction_markets` (game odds) for the full picture.
 
 ## 4. Reading the answers
 

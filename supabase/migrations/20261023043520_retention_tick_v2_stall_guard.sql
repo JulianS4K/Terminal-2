@@ -40,7 +40,10 @@
 -- The GT heap itself is reclaimed in A1-DATA-1 P1 (CTAS swap), after which the
 -- probe drops to seconds.
 --
--- NOT APPLIED. Apply is operator-gated (CLAUDE.md §1: DDL + cron change).
+-- PARTIALLY APPLIED to prod · via MCP 2026-10-23 19:25 UTC (operator-approved): the two
+-- retention_policy columns, record_retention_health() and cron retention_health_hourly.
+-- retention_tick() itself is NOT applied — the MCP apply tool holds any body containing
+-- DELETE for a confirmation it never gets; run that function from the SQL editor.
 -- ============================================================================
 
 ALTER TABLE public.retention_policy

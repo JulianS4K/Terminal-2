@@ -412,6 +412,54 @@ def event_weather(db, event_id: int) -> dict:
     return rows[0] if rows else {"error": f"event {event_id} not found"}
 
 
+FORECAST_MAX_SECTIONS = 5
+# Keys of predict_event_clearing_price's answer that describe OUR book — never external.
+_BOOK_KEYS = ("own_book_gap",)
+
+
+def _strip_book(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _strip_book(v) for k, v in obj.items() if k not in _BOOK_KEYS}
+    if isinstance(obj, list):
+        return [_strip_book(v) for v in obj]
+    return obj
+
+
+def price_forecast(db, event_id: int, section: str | None = None, max_sections: int = 3) -> dict:
+    """Predicted clearing price for an event section: `expected_clearing` with a
+    `lo`–`hi` band, `price_heading_24h`, the chance of a sale above ask, and the
+    signals behind it (recent SeatGeek sales in the section, current asks x the
+    category's sold-to-ask ratio, section and opponent priors, demand context:
+    chart rank, injuries, attendance, weather). Pass `section` as it appears on
+    the marketplace (e.g. "226", "floor a"); omit it to forecast the event's
+    best-selling sections from the last 30 days. Event ids are TEvo ids."""
+    if section and str(section).strip():
+        sections = [str(section).strip()[:60]]
+    else:
+        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        rows = db.table("seatgeek_sales_snapshots").select("sg_sale_id,section") \
+            .eq("tevo_event_id", event_id).gte("sale_at_utc", since).limit(5000).execute().data or []
+        counts: dict[str, set] = {}
+        for r in rows:
+            sec = str(r.get("section") or "").strip()
+            if sec:
+                counts.setdefault(sec.lower(), set()).add(r.get("sg_sale_id"))
+        n = _clamp(max_sections, 1, FORECAST_MAX_SECTIONS, 3)
+        sections = [s for s, _ in sorted(counts.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:n]]
+        if not sections:
+            return {"event_id": event_id, "forecasts": [],
+                    "note": "no SeatGeek sales on this event in 30 days — pass `section` explicitly"}
+    out = []
+    for sec in sections:
+        f = _rpc(db, "predict_event_clearing_price", {"p_event_id": event_id, "p_section": sec})
+        if f:
+            out.append(_strip_book(f))
+    return {"event_id": event_id, "forecasts": out, "count": len(out),
+            "method": "weighted blend of realized section sales, current asks x sold-to-ask ratio "
+                      "and section/opponent priors, scaled by demand; band = calibrated p25-p75 "
+                      "drift. Each signal carries its weight; realized_sample_n = sales used."}
+
+
 @_cached
 def data_freshness(db) -> dict:
     """How fresh every feed is right now: as-of time, age, rows in the last
@@ -519,7 +567,7 @@ def query_view(db, view: str, columns: list[str] | None = None,
 EXTERNAL_TOOLS: tuple[Callable, ...] = (
     search, search_events, event_market, event_prices, top_market_events, performer_trend,
     price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
-    data_freshness, query_public_view)
+    price_forecast, data_freshness, query_public_view)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
     pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, query_view)
 
@@ -530,7 +578,9 @@ INSTRUCTIONS = (
     "rows it used — call `data_freshness` to see every feed's current age; the TEvo get-in "
     "price feed (`event_prices`) has been paused since 2026-09-27 and is marked stale. "
     "SeatGeek sales, prediction markets, sports state and news update within minutes; the "
-    "chart, movers and performer trends are daily. Read-only.")
+    "chart, movers and performer trends are daily. To predict a price, call `price_forecast` "
+    "(per section; omit section for the best sellers) and read `expected_clearing` with its "
+    "`lo`-`hi` band and the signal weights. Read-only.")
 
 
 def tool_catalog(tools: tuple[Callable, ...] = EXTERNAL_TOOLS) -> list[dict]:
