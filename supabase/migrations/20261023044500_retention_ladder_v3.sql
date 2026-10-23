@@ -1,4 +1,4 @@
--- Migration 20261023044500 · level:ops · lane:A1 (data plane — retention) · writes:retention_policy(rows),venue_section_rollup_catchup()(replace) · reads:retention_policy · pre:20261023043520,20260911162500,20260705153500
+-- Migration 20261023044500 · level:ops · lane:A1 (data plane — retention) · writes:retention_policy(rows),venue_section_rollup_catchup()(replace) · reads:retention_policy · pre:20261023050000,20261023043520,20260911162500,20260705153500
 --
 -- ============================================================================
 -- Migration 20261023044500 — retention ladder v3: 7-day raw listings, trend
@@ -27,6 +27,11 @@
 --   venue_section_price_daily, zone_price_observations, sg_market_chart,
 --   performer_sales_daily: INDEFINITE (never in the policy table).
 --
+-- CONVERT BEFORE PURGE (operator 2026-10-23, mig 20261023050000): gotickets / seatgeek
+-- listings and section_metrics keep every row at or after listing_rollup_frontier(source) —
+-- the first day not yet rolled into the daily layer — so no unconverted day can be deleted,
+-- whatever order the backfill and this ladder run in. Requires 20261023050000.
+--
 -- SAFE BECAUSE (verified 2026-10-23): compute_event_listing_snapshot reads raw
 -- rows within 25 h; get_broker_event_page_v2's frontier reads 7 d; every
 -- longer-window reader (refresh_cast_price_ref, the forecaster, movers) reads
@@ -47,7 +52,7 @@ UPDATE public.retention_policy SET keep_days = 7,
 WHERE table_name = 'listings_snapshots';
 
 UPDATE public.retention_policy SET keep_days = 7,
-  keep_where = 'EXISTS (SELECT 1 FROM public.deal_listing_spell s WHERE s.source = ''gotickets'' AND s.listing_id = t.gt_listing_id) AND t.captured_at > now() - interval ''90 days''',
+  keep_where = '(EXISTS (SELECT 1 FROM public.deal_listing_spell s WHERE s.source = ''gotickets'' AND s.listing_id = t.gt_listing_id) AND t.captured_at > now() - interval ''90 days'') OR t.captured_at >= public.listing_rollup_frontier(''gt'')',
   notes = coalesce(notes,'') || ' | v3 2026-10-23: 7 d; deal evidence kept 90 d, not forever.',
   updated_at = now()
 WHERE table_name = 'gotickets_listings_snapshots';
@@ -57,6 +62,7 @@ UPDATE public.retention_policy SET keep_days = 7,
 WHERE table_name IN ('ticketsdata_listings_snapshots', 'event_section_row_snapshots');
 
 UPDATE public.retention_policy SET keep_days = 21,
+  keep_where = 't.captured_at >= public.listing_rollup_frontier(''evo'')',
   notes = coalesce(notes,'') || ' | v3 2026-10-23: 21 d (daily section medians kept forever in venue_section_price_daily; catchup window 14 d).',
   updated_at = now()
 WHERE table_name = 'section_metrics';
@@ -88,6 +94,7 @@ UPDATE public.retention_policy
  WHERE table_name = 'seatgeek_listings_snapshots';
 UPDATE public.retention_policy
    SET enabled = true, keep_days = 7, batch_rows = 50000,
+       keep_where = 't.captured_at >= public.listing_rollup_frontier(''sg'')',
        notes = coalesce(notes,'') || ' | v3 2026-10-23: operator lifted never-purge for LISTINGS only; 7 d. seatgeek_sales_snapshots stays never-purge.',
        updated_at = now()
  WHERE table_name = 'seatgeek_listings_snapshots';

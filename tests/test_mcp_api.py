@@ -13,6 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import anyio
 import pytest
 
 os.environ.setdefault("STOREFRONT_SQL_ONLY", "false")
@@ -217,8 +218,8 @@ def test_tier_tool_sets():
     ext = {f.__name__ for f in m.EXTERNAL_TOOLS}
     assert ext == {"search", "search_events", "event_market", "event_prices", "top_market_events",
                    "performer_trend", "price_movers", "competing_events", "prediction_markets",
-                   "sports_context", "news", "event_weather", "price_forecast", "data_freshness",
-                   "query_public_view"}
+                   "sports_context", "news", "event_weather", "price_forecast", "team_report",
+                   "data_freshness", "query_public_view", "get_started"}
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
@@ -304,6 +305,16 @@ def test_http_tiers_and_calls(fake_db):
         assert ok["result"]["isError"] is False and "42" in ok["result"]["content"][0]["text"]
         ev = _rpc_call(c, EXT_KEY, "tools/call", {"name": "search_events", "arguments": {"query": "Colts"}}).json()
         assert "Colts" in ev["result"]["content"][0]["text"]
+
+        # First connect: initialize carries the "call get_started" instruction, and the
+        # onboarding guide is listed as a resource and a prompt.
+        assert "get_started" in init.json()["result"]["instructions"]
+        res = _rpc_call(c, EXT_KEY, "resources/list").json()["result"]["resources"]
+        assert [r["uri"] for r in res] == ["s4k://onboarding"]
+        guide = _rpc_call(c, EXT_KEY, "resources/read", {"uri": "s4k://onboarding"}).json()
+        assert "S4K Market MCP" in guide["result"]["contents"][0]["text"]
+        prompts = _rpc_call(c, EXT_KEY, "prompts/list").json()["result"]["prompts"]
+        assert [p["name"] for p in prompts] == ["get_started"]
 
 
 # ---------------------------------------------------------------- external tools (2026-10-21)
@@ -472,11 +483,85 @@ def test_price_forecast_picks_best_selling_sections():
 
 
 def test_price_forecast_no_sales_and_empty_rpc():
-    db = FakeDB(tables={"seatgeek_sales_snapshots": []})
+    db = FakeDB(tables={"seatgeek_sales_snapshots": [], "section_metrics": []})
     out = m.price_forecast(db, 9)
     assert out["forecasts"] == [] and "pass `section`" in out["note"]
     db = FakeDB(rpc_data={})
     assert m.price_forecast(db, 9, section="x")["count"] == 0
+
+
+def test_price_forecast_no_sales_falls_back_to_listed_inventory():
+    secs = [{"section": "112", "tickets_count": 74, "is_ancillary": False, "captured_at": "t2"},
+            {"section": "Parking", "tickets_count": 99, "is_ancillary": True, "captured_at": "t2"},
+            {"section": "226", "tickets_count": 53, "is_ancillary": False, "captured_at": "t2"},
+            {"section": "999", "tickets_count": 500, "is_ancillary": False, "captured_at": "t1"}]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": [], "section_metrics": secs},
+                rpc_data={"predict_event_clearing_price": {"expected_clearing": 1}})
+    out = m.price_forecast(db, 9, max_sections=5)
+    assert [a["p_section"] for _, a in db.rpcs] == ["112", "226"]  # latest capture, no ancillary
+    assert out["sections_picked_by"] == "listed_inventory"
+
+
+def test_guard_forecast_anchors_prior_only_estimate_to_market():
+    # Knicks 2026-10-23: no sales, stale team prior → model said 547.71 vs a 329.84 ask median.
+    f = m._guard_forecast({"expected_clearing": 547.71, "lo": 361.38, "hi": 738.11,
+                           "realized_sample_n": 0, "section_ask_median": 329.84,
+                           "section_tickets": 74, "sold_to_ask_ratio": 0.5511,
+                           "signals": {"ask_x_ratio": {"value": 181.78}}})
+    assert f["expected_clearing"] == 181.78 and f["model_estimate"] == 547.71
+    assert f["lo"] == 181.78 and f["hi"] == 329.84
+    assert f["confidence"] == "low" and "anchored" in f["warning"]
+    # no ask_x_ratio signal → ask x ratio
+    f = m._guard_forecast({"expected_clearing": 500, "realized_sample_n": 0,
+                           "section_ask_median": 200, "section_tickets": 5, "sold_to_ask_ratio": 0.5})
+    assert f["expected_clearing"] == 100.0
+    # no listings and no sales → warn, keep number
+    f = m._guard_forecast({"expected_clearing": 90, "realized_sample_n": 0, "section_tickets": 0})
+    assert f["expected_clearing"] == 90 and "prior-only" in f["warning"]
+    # real sales → untouched, confidence by sample size
+    f = m._guard_forecast({"expected_clearing": 400, "realized_sample_n": 8,
+                           "section_ask_median": 300, "section_tickets": 9})
+    assert f["expected_clearing"] == 400 and f["confidence"] == "high" and "warning" not in f
+    assert m._guard_forecast({"realized_sample_n": 3})["confidence"] == "medium"
+
+
+def test_team_report_args_and_normalizing():
+    rep = {"team": {"performer_id": 16303}, "games": [
+               {"event_id": 1, "data_quality": "live"}, {"event_id": 2, "data_quality": "none"}],
+           "reddit": None, "roster": None, "injuries": [{"name": "x"}]}
+    db = FakeDB(rpc_data={"mcp_team_report": rep})
+    out = m.team_report(db, " New York Knicks ", since="2026-08-14T00:00", max_games=99, news_limit=0)
+    assert db.rpcs == [("mcp_team_report", {"p_team": "New York Knicks", "p_since": "2026-08-14",
+                                            "p_home_only": True, "p_max_events": 41,
+                                            "p_news_limit": 1})]
+    assert out["reddit"] == [] and out["roster"] == [] and out["injuries"] == [{"name": "x"}]
+    assert any("Reddit" in n for n in out["data_notes"])
+    assert any("[2]" in n for n in out["data_notes"])
+    assert m.team_report(db, "16303", since="last week") == {"error": "since must be YYYY-MM-DD"}
+    assert m.team_report(FakeDB(rpc_data={}), "nobody") == {"error": "no report"}
+    clean = m.team_report(FakeDB(rpc_data={"mcp_team_report": {
+        "games": [{"event_id": 1, "data_quality": "live"}], "reddit": [{"t": 1}]}}), "1")
+    assert "data_notes" not in clean
+
+
+def test_get_started_and_onboarding(monkeypatch, tmp_path):
+    out = m.get_started(None)
+    assert out["welcome"] == m.INSTRUCTIONS and "get_started" in m.INSTRUCTIONS
+    assert out["quick_start"] and "S4K Market MCP" in out["guide_markdown"]
+    monkeypatch.setattr(m, "GET_STARTED_PATH", tmp_path / "missing.md")
+    assert m.get_started(None)["guide_markdown"] == ""
+
+
+def test_server_exposes_onboarding_resource_and_prompt():
+    srv = m._make_server("t", m.EXTERNAL_TOOLS, lambda: FakeDB())
+    res = anyio.run(srv.list_resources)
+    assert [str(r.uri) for r in res] == ["s4k://onboarding"]
+    body = anyio.run(srv.read_resource, "s4k://onboarding")
+    assert "S4K Market MCP" in str(body)
+    prompts = anyio.run(srv.list_prompts)
+    assert [p.name for p in prompts] == ["get_started"]
+    msg = anyio.run(srv.get_prompt, "get_started", {"team": "Boston Celtics"})
+    assert "Boston Celtics" in str(msg)
 
 
 def test_tool_catalog_and_tool_name():
