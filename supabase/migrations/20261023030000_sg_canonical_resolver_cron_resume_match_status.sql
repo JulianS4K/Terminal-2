@@ -57,7 +57,12 @@
 -- on their own jobs). `event_mapper_run` sets its own 170 s statement_timeout.
 -- Schedule :21 — no other hourly job fires on that minute (checked 2026-10-23).
 --
--- NOT APPLIED. Apply is operator-gated (CLAUDE.md §1: cron change + DML).
+-- Already applied to prod · via MCP 2026-10-23 03:02 UTC (operator-approved; the
+-- DROP TRIGGER IF EXISTS line was omitted on apply — the trigger did not exist —
+-- because the MCP tool holds any statement containing DROP). Verified: 246
+-- active '21 * * * *' single statement; trigger enabled; status table now
+-- ignored_historic 185 (no tevo) · matched 11,090 (all with tevo) · pending
+-- 2,896 (none with tevo). First resolver run lands 03:21 UTC.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
