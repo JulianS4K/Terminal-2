@@ -370,6 +370,32 @@ def build_open_notebook_router(
         background.add_task(_run_podcast, episode["id"], job["id"])
         return {"episode": episode, "job_id": job["id"]}
 
+    @router.post("/api/notebook/notebooks/{notebook_id}/narrate")
+    def onb_generate_narration(notebook_id: str, background: BackgroundTasks,
+                               body: dict = Body(...), _=Depends(require_auth)):
+        """Single-voice 'read aloud → shareable mp3'. Synthesizes the given text
+        straight to audio (no outline/transcript LLM stages) and stores a public
+        mp3 URL on an episode row — same list/player/share surface as podcasts."""
+        _enabled()
+        db = _db()
+        if not repo.get_notebook(db, notebook_id):
+            raise HTTPException(404, "notebook not found")
+        text = (body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(400, "text required to narrate")
+        voice = (body.get("voice") or "alloy").strip()
+        episode = repo.create_episode(db, {
+            "notebook_id": notebook_id,
+            "name": body.get("name") or "Narration",
+            "episode_profile": {"kind": "narration", "voice": voice},
+            "speaker_profile": {"speakers": [{"name": "Narrator", "voice_id": voice}]},
+            "content": text,
+            "status": "queued",
+        })
+        job = repo.create_job(db, kind="narration", ref_id=episode["id"])
+        background.add_task(_run_narration, episode["id"], job["id"])
+        return {"episode": episode, "job_id": job["id"]}
+
     # ---- performer SQL sources -------------------------------------------
     @router.post("/api/notebook/performers/resolve")
     def onb_resolve_performer(body: dict = Body(...), _=Depends(require_auth)):
@@ -457,6 +483,12 @@ def build_open_notebook_router(
     def _run_podcast(episode_id: str, job_id: str):
         try:
             onb_podcasts.generate_episode(get_require_sb()(), episode_id, job_id=job_id)
+        except Exception:
+            pass  # status already recorded on the episode + job rows
+
+    def _run_narration(episode_id: str, job_id: str):
+        try:
+            onb_podcasts.generate_narration(get_require_sb()(), episode_id, job_id=job_id)
         except Exception:
             pass  # status already recorded on the episode + job rows
 

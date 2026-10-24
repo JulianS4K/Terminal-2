@@ -543,9 +543,50 @@
           <button class="nb-btn" id="podGen">Generate</button>
         </div>
       </div></div>
+      <div class="nb-card"><div class="nb-form">
+        <div class="t">Narrate text → shareable mp3</div>
+        <textarea class="nb-in" id="narrText" placeholder="Paste text to read aloud (a note, an answer, anything)…"></textarea>
+        <div class="nb-split">
+          <div>
+            <div class="nb-note">Episode name</div>
+            <input class="nb-in" id="narrName" placeholder="Narration" />
+          </div>
+          <div>
+            <div class="nb-note">Voice</div>
+            <select class="nb-in" id="narrVoice">
+              <option>alloy</option><option>echo</option><option>fable</option>
+              <option>onyx</option><option>nova</option><option>shimmer</option>
+            </select>
+          </div>
+        </div>
+        <div class="nb-row between">
+          <span class="nb-note">Single voice, no transcript. Produces a shareable mp3 link; needs an OpenAI key.</span>
+          <button class="nb-btn" id="narrGen">Narrate</button>
+        </div>
+      </div></div>
       <div id="podList"><div class="nb-empty">Loading episodes…</div></div>`;
     el('podGen').addEventListener('click', genPodcast);
+    el('narrGen').addEventListener('click', genNarration);
     await loadEpisodes();
+  }
+
+  async function genNarration() {
+    const text = el('narrText').value.trim();
+    if (!text) { setStatus('enter some text to narrate', 'err'); return; }
+    const body = {
+      text,
+      name: el('narrName').value.trim() || 'Narration',
+      voice: el('narrVoice').value || 'alloy',
+    };
+    try {
+      el('narrGen').disabled = true;
+      const res = await apiFetch(`/api/notebook/notebooks/${state.current.id}/narrate`, { method: 'POST', body });
+      setStatus('narration queued — generating mp3…', 'ok');
+      el('narrText').value = '';
+      await loadEpisodes();
+      pollEpisode(res.episode.id);
+    } catch (e) { setStatus(e.message, 'err'); }
+    finally { el('narrGen').disabled = false; }
   }
 
   async function genPodcast() {
@@ -579,13 +620,25 @@
             <button class="nb-btn danger" data-delep="${esc(e.id)}">Delete</button>
           </div>
           ${e.error ? `<div class="m" style="color:${e.status === 'done' ? 'var(--accent)' : 'var(--neg)'}">${esc(e.error)}</div>` : ''}
-          ${e.audio_url ? `<audio controls preload="none" style="width:100%;margin-top:8px" src="${esc(e.audio_url)}"></audio>` : ''}
+          ${e.audio_url ? `<audio controls preload="none" style="width:100%;margin-top:8px" src="${esc(e.audio_url)}"></audio>
+          <div class="nb-row" style="gap:8px;margin-top:6px">
+            <button class="nb-btn" data-copyep="${esc(e.audio_url)}">Copy link</button>
+            <a class="nb-btn" href="${esc(e.audio_url)}" download target="_blank" rel="noopener">Download</a>
+          </div>` : ''}
           ${e.status === 'done' && e.content ? `<pre class="nb-transcript" style="white-space:pre-wrap;margin-top:8px;max-height:260px;overflow:auto;font-size:12px;line-height:1.5">${esc(e.content)}</pre>` : ''}
         </div>`).join('') : '<div class="nb-empty">No episodes yet.</div>';
       box.querySelectorAll('button[data-delep]').forEach(b => b.addEventListener('click', async () => {
         if (!confirm('Delete episode?')) return;
         try { await apiFetch(`/api/notebook/episodes/${b.dataset.delep}`, { method: 'DELETE' }); await loadEpisodes(); }
         catch (e) { setStatus(e.message, 'err'); }
+      }));
+      box.querySelectorAll('button[data-copyep]').forEach(b => b.addEventListener('click', async () => {
+        const url = b.dataset.copyep;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(url);
+          else { const t = document.createElement('textarea'); t.value = url; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+          setStatus('audio link copied', 'ok');
+        } catch (_) { setStatus('copy failed — link: ' + url, 'err'); }
       }));
     } catch (e) { setStatus(e.message, 'err'); }
   }
