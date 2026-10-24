@@ -198,6 +198,29 @@ def test_health_empty_returns_object():
     assert r.status_code == 200 and r.json() == {}
 
 
+# ---- drivers (per-instance) ----
+def test_drivers_counts_online_and_erroring():
+    rows = [
+        {"driver_id": "a", "label": "kiosk", "online": True, "error_24h": 0},
+        {"driver_id": "b", "label": None, "online": False, "error_24h": 3},
+    ]
+    r = _client(_Sb(tables={"v_paciolan_drivers": rows})).get(
+        "/api/paciolan/drivers")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 2
+    assert body["online"] == 1        # only 'a'
+    assert body["erroring"] == 1      # only 'b' (error_24h > 0)
+
+
+def test_drivers_empty():
+    r = _client(_Sb(tables={"v_paciolan_drivers": []})).get(
+        "/api/paciolan/drivers")
+    body = r.json()
+    assert body["count"] == 0 and body["drivers"] == []
+    assert body["online"] == 0 and body["erroring"] == 0
+
+
 # ---- sections ----
 def test_sections_endpoint():
     rows = [{"level": "U", "section_label": "16U", "pct_available": 81.4,
