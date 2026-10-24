@@ -1,0 +1,146 @@
+source_event_id,platform,school_host,event_date,event_time,venue,opponent,aq_short_event_id,ticket_evolution,gotickets,seatgeek,stubhub,vivid_seats,tickpick,gametime,ticketmaster,sources_mapped_count
+pv:21:9643173,provenue,mlb.tickets.com,2026-08-23,13:35,Citizens Bank Park,,7P63X9D,3101506,1190236,17694063,159262247,5966797,,,,5
+260:NFB26:FB01,paciolan,nautickets.evenue.net,2026-08-29,14:00,Walkup Skydome,Football vs Eastern Washington,,3433351,1629863,18126596,160427467,6288282,,,,5
+233:F26:F01,paciolan,godeacs.evenue.net,2026-09-03,19:00,Allegacy Stadium,Akron,,3400622,1435099,17965064,160265549,6205721,,,,5
+126:F26:01,paciolan,huskers.evenue.net,2026-09-05,11:00,Memorial Stadium,Ohio,36MJPMZ,3292251,1287504,17984356,159766135,6206530,,,4809738,6
+158:F26:FB01,paciolan,csurams.evenue.net,2026-09-05,16:00,Canvas Stadium,Football vs. Wyoming,,3241119,1373383,17986058,159478580,6178998,,,,5
+187:FB26:F01,paciolan,kstatesports.evenue.net,2026-09-05,18:00,Bill Snyder Family Stadium,K-State Football vs. Nicholls,VYV5QZQ,3243786,1447984,18024460,160324181,6473651,,,4835726,6
+245:F26:F01,paciolan,pittsburghpanthers.evenue.net,2026-09-05,12:30,Acrisure Stadium,Miami (OH),5KNGB7G,3241022,1356596,17965050,159932593,6199860,,,4811641,6
+415:FB26:F01,paciolan,uconnhuskies.evenue.net,2026-09-05,12:00,Rentschler Field,Football vs. Lafayette,,3305715,1348725,18028951,159955411,6368029,,,,5
+431:F26:F01,paciolan,hawkeyesports.evenue.net,2026-09-05,15:15,Kinnick Stadium,NIU,BP3KYOD,3312472,1369632,17936149,160228320,6206351,,,4785738,6
+457:F26:01,paciolan,hokiesports.evenue.net,2026-09-05,19:30,Lane Stadium,VMI,Y5YDMDN,3250473,1335329,17997465,159927981,6207016,,,,5
+467:F26:F01,paciolan,sfajacks.evenue.net,2026-09-05,19:00,Homer Bryce Stadium,Football vs East Texas A&M,,,1535536,18012988,160425521,6498326,,,,4
+521:FB27:FB01,paciolan,arizonawildcats.evenue.net,2026-09-05,18:30,Casino Del Sol Stadium,Northern Arizona,NZ59BD2,3330200,1464879,18024316,160324613,6185528,,,4827175,6
+912:FB26:FB01,paciolan,usajaguars.evenue.net,2026-09-05,18:00,Hancock Whitney Stadium,Football vs Southeastern Louisiana,,3411070,1526776,18127621,160324460,6482923,,,,5
+977:F26:02,paciolan,kuathletics.evenue.net,2026-09-11,19:00,David Booth Kansas Memorial Stadium,Missouri,,3230772,1376586,18024445,160324383,6369854,,,,5
+126:F26:02,paciolan,huskers.evenue.net,2026-09-12,18:00,Memorial Stadium,Bowling Green,7P7JGDD,3292249,1287505,17984355,159926164,6206529,,,4809739,6
+158:F26:FB02,paciolan,csurams.evenue.net,2026-09-12,17:00,Canvas Stadium,Football vs. Southern Utah,,3241118,1368414,17986060,160060118,6178999,,,,5
+166:F26:F01,paciolan,uabsports.evenue.net,2026-09-12,14:30,Protective Stadium,Football vs. ULM,,3400156,1437526,18077238,159997366,6205546,,,2305954083573142000,6
+245:F26:F02,paciolan,pittsburghpanthers.evenue.net,2026-09-12,15:30,Acrisure Stadium,Uni. of Central Florida (UCF),6ZB34W4,3241020,1356597,17965052,160228473,6199861,,,4811642,6
+260:NFB26:FB02,paciolan,nautickets.evenue.net,2026-09-12,14:00,Walkup Skydome,Football vs. UIW - Family Weekend,,3433352,1609722,18169350,160206469,,,,,4
+345:26FB:FB0912,paciolan,uritix.evenue.net,2026-09-12,12:00,Centreville Bank Stadium,ELON,,3405791,1642263,17971632,160109236,6429659,,,,5
+415:FB26:F02,paciolan,uconnhuskies.evenue.net,2026-09-12,15:30,Rentschler Field,Football vs. Maryland,,3291900,1348726,18028953,159955419,6368033,,,,5
+418:F26:01,paciolan,auburntigers.evenue.net,2026-09-12,18:45,Jordan-Hare Stadium,AUBURN FOOTBALL VS. SOUTHERN MISS,KBYGBV2,3233867,1335574,17956743,160067992,6292262,,,4833758,6
+445:FB26:FB01,paciolan,gofrogs.evenue.net,2026-09-12,19:00,Amon G. Carter Stadium,Grambling State,M7Y2QEO,3257923,1425108,18012530,160324269,6316172,,,4826842,6
+457:F26:02,paciolan,hokiesports.evenue.net,2026-09-12,12:00,Lane Stadium,Old Dominion,WQKDXDJ,3238532,1335330,17997467,159927982,6207018,,,4768281,6
+475:FB26:F01,paciolan,goheels.evenue.net,2026-09-12,12:00,KENAN STADIUM,ETSU,ZQGPMJ7,3392398,1432066,17965046,160125590,6473725,,,4767940,6
+530:F26:F2601,paciolan,okstate.evenue.net,2026-09-12,11:00,Boone Pickens Stadium,Oregon,Z5AAAGX,3283497,1353404,18024476,160204370,6024630,,,4827025,6
+586:FB26:FB01,paciolan,tulanegreenwave.evenue.net,2026-09-12,18:00,Yulman Stadium,South Alabama,,3258720,1405765,18094058,160201392,6473150,,,,5
+692:F26:F01,paciolan,goccusports.evenue.net,2026-09-12,19:30,Brooks Stadium,Football vs. Fordham,,3374128,1521528,18150134,160379220,6371814,,,,5
+925:FB26:F01,paciolan,utrockets.evenue.net,2026-09-12,15:30,Glass Bowl,Central Connecticut State,,3428106,1537826,18147714,160416796,6802467,,,,5
+987:F26:F01,paciolan,uwbadgers.evenue.net,2026-09-12,18:15,Camp Randall Stadium,Western Illinois,MK5O4ZM,3231484,1287420,17936235,159927900,6169427,,,4772196,6
+245:F26:F03,paciolan,pittsburghpanthers.evenue.net,2026-09-17,19:30,Acrisure Stadium,Syracuse,4B67WQJ,3241019,1356595,18033318,159996524,6206978,,,4834989,6
+233:F26:F02,paciolan,godeacs.evenue.net,2026-09-18,19:30,Allegacy Stadium,Miami,,3188803,1376969,18033447,159996706,,,,,4
+126:F26:03,paciolan,huskers.evenue.net,2026-09-19,18:15,Memorial Stadium,North Dakota,WQ3ZMN6,3292250,1287506,17984354,159926163,6206528,,,4809740,6
+126:F26:FP03,paciolan,huskers.evenue.net,2026-09-19,,Memorial Stadium,Cole Swindell Field Pass,WQ3ZMN6,,,17984354,159926163,6206528,,,4809740,4
+158:F26:FB03,paciolan,csurams.evenue.net,2026-09-19,17:30,Canvas Stadium,Football vs. BYU,SYS-cbc4849cee,3241117,1368415,17986062,160060119,6179000,,,,5
+398:F26:F03,paciolan,mgoblue.evenue.net,2026-09-19,15:30,Michigan Stadium,UTEP,PGOO239,3244108,1334771,18035333,159927978,6205008,,,4768250,6
+530:F26:F2602,paciolan,okstate.evenue.net,2026-09-19,18:00,Boone Pickens Stadium,Murray State,34MYQZZ,3282210,1377504,18024478,160204385,6303970,,,,5
+894:FB26:F01,paciolan,wsucougars.evenue.net,2026-09-19,12:30,Gesa Field,FB26 vs Duquesne,,3348484,1460937,18069009,160479695,6205783,,,,5
+912:FB26:FB02,paciolan,usajaguars.evenue.net,2026-09-19,18:00,Hancock Whitney Stadium,Football vs Ohio,,3405808,1526777,18176904,160379439,6482925,,,,5
+925:FB26:F02,paciolan,utrockets.evenue.net,2026-09-19,15:00,Glass Bowl,Temple,,3320459,1642276,18147716,160203438,,,,,4
+987:F26:F02,paciolan,uwbadgers.evenue.net,2026-09-19,11:30,Camp Randall Stadium,Eastern Michigan,XQVO2P3,3290889,1431973,17962246,159927901,6169435,,,4772197,6
+692:F26:F02,paciolan,goccusports.evenue.net,2026-09-24,19:30,Brooks Stadium,Football vs. Liberty,,3352338,1521529,18150136,160379251,6371816,,,,5
+166:F26:F02,paciolan,uabsports.evenue.net,2026-09-25,18:00,Protective Stadium,Football vs. Navy,,3215527,1437521,18093824,159997341,6296797,,,2305954083573273000,6
+245:F26:F04,paciolan,pittsburghpanthers.evenue.net,2026-09-26,12:00,Acrisure Stadium,Bucknell,63DDB2Y,3289280,1417051,17965054,160228480,6474958,,,4811643,6
+467:F26:F02,paciolan,sfajacks.evenue.net,2026-09-26,17:00,Homer Bryce Stadium,Football vs Northeastern State,,3373063,1535537,18012990,160238815,6498337,,,,5
+479:F26:F02,paciolan,smumustangs.evenue.net,2026-09-26,,Gerald J. Ford Stadium,Missouri State,GXAK3W9,3219684,1368950,18033350,160418583,6317771,,,4833771,6
+586:FB26:FB02,paciolan,tulanegreenwave.evenue.net,2026-09-26,,Yulman Stadium,Southern Miss,,3261229,1405766,18094060,160212608,6473129,,,,5
+596:FB26:FB02,paciolan,semo.evenue.net,2026-09-26,18:00,Houck Stadium,SEMO Football vs. West Florida,,,1722872,18208488,161208192,,,,,3
+727:FB26:FB02,paciolan,redhawktix.evenue.net,2026-09-26,,Yager Stadium,Miami Football vs. UCONN,,3411020,1558273,18147684,160059769,6552184,,,,5
+894:FB26:F02,paciolan,wsucougars.evenue.net,2026-09-26,16:30,Gesa Field,FB26 vs Arizona,,3348485,1460938,18041102,160479696,6205784,,,,5
+925:FB26:F03,paciolan,utrockets.evenue.net,2026-09-26,,Glass Bowl,San Diego State,,3336180,1537827,18147718,160059827,6206980,,,,5
+126:F26:04,paciolan,huskers.evenue.net,2026-10-03,,Memorial Stadium,Maryland,K45OAVB,3244119,1360030,18035439,159926143,6170682,,,4809742,6
+158:F26:FB04,paciolan,csurams.evenue.net,2026-10-03,16:00,Canvas Stadium,Football vs. Oregon State,SYS-25e700352d,3320999,1471001,18068939,160479651,6651178,,,,5
+166:F26:F03,paciolan,uabsports.evenue.net,2026-10-03,14:30,Protective Stadium,Football vs. Samford,,3403880,1437527,18077240,159997368,6297179,,,2305954083573338600,6
+233:F26:F03,paciolan,godeacs.evenue.net,2026-10-03,,Allegacy Stadium,Stanford,,3188735,1376970,18033444,159996705,,,,,4
+345:26FB:FB1003,paciolan,uritix.evenue.net,2026-10-03,12:00,Centreville Bank Stadium,BROWN,,3405781,1567283,17971634,160106809,6429661,,,,5
+415:FB26:F03,paciolan,uconnhuskies.evenue.net,2026-10-03,12:00,Rentschler Field,Football vs. Syracuse,,3305716,1348728,18028955,159955430,6368040,,,,5
+445:FB26:FB03,paciolan,gofrogs.evenue.net,2026-10-03,,Amon G. Carter Stadium,BYU,BPNX76P,3241048,1368428,18024488,159917330,6172480,,,4827164,6
+467:F26:F03,paciolan,sfajacks.evenue.net,2026-10-03,17:00,Homer Bryce Stadium,Football vs Incarnate Word,,3375179,1535538,18012992,160231319,6498399,,,,5
+475:FB26:F02,paciolan,goheels.evenue.net,2026-10-03,,KENAN STADIUM,NOTRE DAME,APVNOKQ,3156939,1432067,17965048,160125607,6096061,,,4739426,6
+692:F26:F03,paciolan,goccusports.evenue.net,2026-10-03,,Brooks Stadium,Football vs. Georgia Southern,,3411023,1521530,18150140,160686463,6783256,,,,5
+727:FB26:FB03,paciolan,redhawktix.evenue.net,2026-10-03,,Yager Stadium,Miami Football vs. Bowling Green,,3372302,1558274,18147686,160059760,6823804,,,,5
+894:FB26:F03,paciolan,wsucougars.evenue.net,2026-10-03,18:30,Gesa Field,FB26 vs Fresno State,,3348463,1460939,18069011,160479697,6651240,,,,5
+912:FB26:FB03,paciolan,usajaguars.evenue.net,2026-10-03,,Hancock Whitney Stadium,Football vs ULM,,3411071,1526778,18176907,160686057,6783439,,,,5
+977:F26:03,paciolan,kuathletics.evenue.net,2026-10-03,,David Booth Kansas Memorial Stadium,Middle Tennessee,,3402399,1518652,18024447,160324388,6556971,,,,5
+987:F26:F03,paciolan,uwbadgers.evenue.net,2026-10-03,,Camp Randall Stadium,Michigan State,PG5MJ29,3231480,1335688,18035548,159927892,6169440,,,4838321,6
+126:F26:05,paciolan,huskers.evenue.net,2026-10-10,,Memorial Stadium,Indiana,K45OA2P,3244118,1360029,18035349,159926144,6170684,,,4809741,6
+245:F26:F05,paciolan,pittsburghpanthers.evenue.net,2026-10-10,,Acrisure Stadium,North Carolina (UNC),369O3WZ,3241024,1356594,18033319,159996527,6206976,,,4834990,6
+260:NFB26:FB03,paciolan,nautickets.evenue.net,2026-10-10,14:00,Walkup Skydome,Football vs. Montana,,3184321,1286333,18169352,160427474,,,,,4
+530:F26:F2603,paciolan,okstate.evenue.net,2026-10-10,,Boone Pickens Stadium,UCF,PG57EVW,3241111,1353403,18024480,159917186,6172360,,,4836401,6
+925:FB26:F04,paciolan,utrockets.evenue.net,2026-10-10,,Glass Bowl,Buffalo,,3344850,1537828,18147720,160059834,6823662,,,,5
+166:F26:F04,paciolan,uabsports.evenue.net,2026-10-15,18:30,Protective Stadium,Football vs. East Carolina,,3215461,1437524,18093826,159997340,6296791,,,2305954083573469700,6
+586:FB26:FB03,paciolan,tulanegreenwave.evenue.net,2026-10-16,18:30,Yulman Stadium,Memphis,,3214788,1377055,18094062,160021916,6297079,,,,5
+692:F26:F04,paciolan,goccusports.evenue.net,2026-10-16,20:00,Brooks Stadium,Football vs. Appalachian State,,3386314,1521531,18150142,160387041,6783269,,,,5
+260:NFB26:FB04,paciolan,nautickets.evenue.net,2026-10-17,16:00,Walkup Skydome,Football vs. Portland State - Homecoming,,3433354,1629864,18169354,160427482,,,,,4
+457:F26:04,paciolan,hokiesports.evenue.net,2026-10-17,,Lane Stadium,Georgia Tech,6ZO9K94,3241249,1335326,18033437,159956994,6207021,,,4768283,6
+479:F26:F04,paciolan,smumustangs.evenue.net,2026-10-17,,Gerald J. Ford Stadium,Virginia,Y3OBZQV,3188644,1368947,18033352,159996565,6209678,,,4833773,6
+596:FB26:FB03,paciolan,semo.evenue.net,2026-10-17,14:00,Houck Stadium,SEMO Football vs. Western Illinois,,,1722873,18012388,160285974,6529858,,,,4
+727:FB26:FB04,paciolan,redhawktix.evenue.net,2026-10-17,,Yager Stadium,Miami Football vs. Akron,,3372305,1558275,18147688,160752383,6823816,,,,5
+415:FB26:F04,paciolan,uconnhuskies.evenue.net,2026-10-23,19:00,Rentschler Field,Football vs. UMASS,,3305714,1348729,18028959,159955440,,,,,4
+158:F26:FB05,paciolan,csurams.evenue.net,2026-10-24,16:30,Canvas Stadium,Football vs. San Diego State,,3321000,1471002,18068940,160479652,6651180,,,,5
+345:26FB:FB1024,paciolan,uritix.evenue.net,2026-10-24,12:00,Centreville Bank Stadium,ALBANY,,3405793,1567284,17971636,160106945,6429657,,,,5
+467:F26:F04,paciolan,sfajacks.evenue.net,2026-10-24,17:00,Homer Bryce Stadium,Football vs Southeastern,,3375315,1535539,18012994,160231330,,,,,4
+475:FB26:F03,paciolan,goheels.evenue.net,2026-10-24,,KENAN STADIUM,SYRACUSE,55BOEYM,3188624,1377028,18033280,159996816,6209623,,,4767956,6
+479:F26:F05,paciolan,smumustangs.evenue.net,2026-10-24,,Gerald J. Ford Stadium,California,AA43G5B,3188658,1368946,18033351,159996563,6209669,,,,5
+530:F26:F2604,paciolan,okstate.evenue.net,2026-10-24,,Boone Pickens Stadium,Colorado,Y5V9NEN,3241108,1353400,18024482,159917188,6172357,,,4827026,6
+586:FB26:FB04,paciolan,tulanegreenwave.evenue.net,2026-10-24,,Yulman Stadium,UTSA,,3215551,1377058,18094064,160021919,6297071,,,,5
+894:FB26:F04,paciolan,wsucougars.evenue.net,2026-10-24,15:00,Gesa Field,FB26 vs Boise State,,3348487,1460940,18069013,160479699,6651242,,,,5
+925:FB26:F05,paciolan,utrockets.evenue.net,2026-10-24,,Glass Bowl,Western Michigan,,3344854,1537829,18147786,160059837,6823682,,,,5
+977:F26:04,paciolan,kuathletics.evenue.net,2026-10-24,,David Booth Kansas Memorial Stadium,Baylor,,3243895,1367464,18024449,159917034,6172353,,,,5
+987:F26:F04,paciolan,uwbadgers.evenue.net,2026-10-24,,Camp Randall Stadium,USC,6ZMDYB7,3231483,1431978,18035549,159927890,6169446,,,4838322,6
+tmw:cota:3A00642D96C856BF,ticketmaster-web,www.ticketmaster.com,2026-10-24,,Circuit of The Americas,,APYE67J,3017608,1057019,17565120,158501986,5809736,,,,5
+126:F26:06,paciolan,huskers.evenue.net,2026-10-31,,Memorial Stadium,Washington,DPNZQXA,3244121,1360032,18035447,159926145,6170681,,,4809744,6
+233:F26:F04,paciolan,godeacs.evenue.net,2026-10-31,,Allegacy Stadium,Virginia,,3289430,1376971,18033446,159996707,,,,,4
+245:F26:F06,paciolan,pittsburghpanthers.evenue.net,2026-10-31,,Acrisure Stadium,Georgia Tech,K4EKY6B,3241023,1356593,18033320,159996525,6206973,,,4834991,6
+345:26FB:FB1031,paciolan,uritix.evenue.net,2026-10-31,12:00,Centreville Bank Stadium,MAINE,,3405796,1567285,17971638,160107010,6429653,,,,5
+431:F26:F05,paciolan,hawkeyesports.evenue.net,2026-10-31,,Kinnick Stadium,Wisconsin,OOMOYZP,3231495,1368476,18035437,159918372,6166307,,,4844013,6
+445:FB26:FB05,paciolan,gofrogs.evenue.net,2026-10-31,,Amon G. Carter Stadium,Kansas,V6P9B2Q,3241049,1368430,18024492,159917329,6172488,,,4827163,6
+467:F26:F05,paciolan,sfajacks.evenue.net,2026-10-31,14:00,Homer Bryce Stadium,Football vs Houston Christian,,3374962,1535540,18012996,160231338,,,,,4
+475:FB26:F04,paciolan,goheels.evenue.net,2026-10-31,,KENAN STADIUM,MIAMI (FL),6D5POJY,3188622,1377026,18033281,159996813,6209621,,,4767957,6
+596:FB26:FB04,paciolan,semo.evenue.net,2026-10-31,13:00,Houck Stadium,SEMO Football vs. Gardner-Webb,,,1722874,18012390,160418142,,,,,3
+912:FB26:FB04,paciolan,usajaguars.evenue.net,2026-10-31,,Hancock Whitney Stadium,Football vs Louisiana Tech,,3409552,1526779,18176906,160712004,6783443,,,,5
+727:FB26:FB05,paciolan,redhawktix.evenue.net,2026-11-03,19:00,Yager Stadium,Miami Football vs. Buffalo,,3372308,1558276,18147690,160059758,6823826,,,,5
+479:F26:F06,paciolan,smumustangs.evenue.net,2026-11-06,18:00,Gerald J. Ford Stadium,Virginia Tech,D4DWYDA,3250475,1644492,18033353,160102222,6432387,,,4833775,6
+158:F26:FB06,paciolan,csurams.evenue.net,2026-11-07,16:00,Canvas Stadium,Football vs. Boise State,,3320998,1471003,18068941,160479653,6651182,,,,5
+166:F26:F05,paciolan,uabsports.evenue.net,2026-11-07,,Protective Stadium,Football vs. Charlotte,,3215142,1437525,18093828,159997343,6296787,,,2305954083573535000,6
+233:F26:F05,paciolan,godeacs.evenue.net,2026-11-07,,Allegacy Stadium,Merrimack,,3402893,1387473,17965066,160276830,,,,,4
+415:FB26:F05,paciolan,uconnhuskies.evenue.net,2026-11-07,12:00,Rentschler Field,Football vs. North Carolina,,3305718,1348727,18028957,160357737,,,,,4
+586:FB26:FB05,paciolan,tulanegreenwave.evenue.net,2026-11-07,,Yulman Stadium,Tulsa,,3216347,1377057,18094066,160021918,6297075,,,,5
+692:F26:F05,paciolan,goccusports.evenue.net,2026-11-07,,Brooks Stadium,Football vs. Old Dominion,,3403984,1521532,18150144,160686465,6783285,,,,5
+977:F26:05,paciolan,kuathletics.evenue.net,2026-11-07,,David Booth Kansas Memorial Stadium,UCF,,3243896,1367465,18024451,159917031,6172354,,,,5
+987:F26:F05,paciolan,uwbadgers.evenue.net,2026-11-07,,Camp Randall Stadium,Rutgers,NZ5D9A6,3231482,1335690,18035551,159927891,6169441,,,4838323,6
+727:FB26:FB06,paciolan,redhawktix.evenue.net,2026-11-10,19:00,Yager Stadium,Miami Football vs. Ohio,,3372311,1558277,18147692,160059759,6823838,,,,5
+925:FB26:F06,paciolan,utrockets.evenue.net,2026-11-11,,Glass Bowl,UMass,,3344846,1537830,18147788,160752729,6823708,,,,5
+245:F26:F07,paciolan,pittsburghpanthers.evenue.net,2026-11-13,19:00,Acrisure Stadium,Florida State,DPGW54A,3241021,1356592,18033321,159996526,6206972,,,4834992,6
+260:NFB26:FB05,paciolan,nautickets.evenue.net,2026-11-14,14:00,Walkup Skydome,Football vs. Weber State,,3433355,1629873,18169356,160427498,,,,,4
+345:26FB:FB1114,paciolan,uritix.evenue.net,2026-11-14,12:00,Centreville Bank Stadium,TOWSON,,3405784,1642797,17971640,160106817,6429655,,,,5
+415:FB26:F06,paciolan,uconnhuskies.evenue.net,2026-11-14,12:00,Rentschler Field,Football vs. James Madison,,3305713,1348730,18028961,159955445,6368052,,,,5
+457:F26:05,paciolan,hokiesports.evenue.net,2026-11-14,,Lane Stadium,Stanford,369WXW2,3250476,1394318,18033438,160102210,6207022,,,4768280,6
+475:FB26:F05,paciolan,goheels.evenue.net,2026-11-14,,KENAN STADIUM,LOUISVILLE,Y3ONYX5,3188699,1377025,18033283,159996812,6209619,,,4767955,6
+479:F26:F07,paciolan,smumustangs.evenue.net,2026-11-14,,Gerald J. Ford Stadium,Wake Forest,44MKXOD,3188627,1368948,18033360,159996564,6209682,,,4833776,6
+530:F26:F2605,paciolan,okstate.evenue.net,2026-11-14,,Boone Pickens Stadium,Texas Tech,WQV629J,3241110,1353401,18024484,159917189,6172358,,,4836402,6
+692:F26:F06,paciolan,goccusports.evenue.net,2026-11-14,,Brooks Stadium,Football vs. Arkansas State,,3411022,1521533,18150146,160686469,6783298,,,,5
+894:FB26:F05,paciolan,wsucougars.evenue.net,2026-11-14,19:30,Gesa Field,FB26 vs Colorado State,,3321004,1460941,18069010,160479701,6651244,,,,5
+912:FB26:FB05,paciolan,usajaguars.evenue.net,2026-11-14,,Hancock Whitney Stadium,Football vs Troy,,3411045,1526780,18176909,160686058,6783447,,,,5
+467:F26:F06,paciolan,sfajacks.evenue.net,2026-11-19,18:00,Homer Bryce Stadium,Football vs Northwestern State,,3374422,1535541,18012998,160230939,,,,,4
+tmlvgp:57:GS26KZ19,ticketmaster,am.ticketmaster.com,2026-11-19,16:30:00,,,PGJDA73,3026271,1356495,17565134,158487337,5809770,,,,5
+tmlvgp:70:GS26TG19,ticketmaster,am.ticketmaster.com,2026-11-19,16:30:00,,,PGJDA73,3026271,1356495,17565134,158487337,5809770,,,,5
+925:FB26:F07,paciolan,utrockets.evenue.net,2026-11-20,19:30,Glass Bowl,Bowling Green,,3344853,1537831,18147790,160059836,6823717,,,,5
+tmlvgp:57:GS26KZ20,ticketmaster,am.ticketmaster.com,2026-11-20,16:30:00,,,V6JQY9J,3026272,1356496,17565136,158487348,5809771,,,,5
+126:F26:07,paciolan,huskers.evenue.net,2026-11-21,,Memorial Stadium,Ohio State,DPNZQ76,3244120,1360031,18035351,159926142,6170683,,,4809743,6
+166:F26:F06,paciolan,uabsports.evenue.net,2026-11-21,,Protective Stadium,Football vs. UTSA,,3214107,1437523,18093830,159997342,6296793,,,2305954083573666300,6
+260:NFB26:FB06,paciolan,nautickets.evenue.net,2026-11-21,14:00,Walkup Skydome,Football vs. Northern Colorado,,3405825,1629870,18169358,160427509,,,,,4
+398:F26:F11,paciolan,mgoblue.evenue.net,2026-11-21,,Michigan Stadium,UCLA,EQ5QW2Q,3244107,1334768,18035343,159918404,6166344,,,4844064,6
+415:FB26:F07,paciolan,uconnhuskies.evenue.net,2026-11-21,15:30,Rentschler Field,Football vs. Old Dominion,,3305712,1449864,18028963,160531089,,,,,4
+586:FB26:FB06,paciolan,tulanegreenwave.evenue.net,2026-11-21,,Yulman Stadium,North Texas,,3214869,1377056,18094071,160021917,6297077,,,,5
+596:FB26:FB05,paciolan,semo.evenue.net,2026-11-21,13:00,Houck Stadium,SEMO Football vs. UT Martin,,,1722875,18012392,160305642,,,,,3
+977:F26:06,paciolan,kuathletics.evenue.net,2026-11-21,,David Booth Kansas Memorial Stadium,BYU,,3242970,1367463,18024453,159917033,,,,,4
+912:FB26:FB06,paciolan,usajaguars.evenue.net,2026-11-27,14:00,Hancock Whitney Stadium,Football vs App State,,3343770,1547670,18176908,160686141,6783457,,,,5
+158:F26:FB07,paciolan,csurams.evenue.net,2026-11-28,,Canvas Stadium,Football vs. TBD,,3348490,1509672,18068942,160479655,,,,,4
+233:F26:F06,paciolan,godeacs.evenue.net,2026-11-28,,Allegacy Stadium,Duke,,3188751,1376968,18033445,159996704,,,,,4
+457:F26:06,paciolan,hokiesports.evenue.net,2026-11-28,,Lane Stadium,Virginia,OO7G4GN,3237288,1335332,18033439,159956993,6207020,,,,5
+475:FB26:F06,paciolan,goheels.evenue.net,2026-11-28,,KENAN STADIUM,NC STATE,VZ3WVYX,3188704,1377027,18033282,159996814,6209622,,,4767954,6
+530:F26:F2606,paciolan,okstate.evenue.net,2026-11-28,,Boone Pickens Stadium,Kansas,MK57Y9O,3241109,1353402,18024486,159917187,6172359,,,4836403,6
+894:FB26:F06,paciolan,wsucougars.evenue.net,2026-11-28,,Gesa Field,FB26 vs Flex Game,,3434001,1509669,18069012,160479705,,,,,4
