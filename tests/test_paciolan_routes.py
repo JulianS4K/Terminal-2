@@ -117,6 +117,92 @@ def test_ingest_ok_calls_rpc_and_returns_snapshot_id():
     assert sb.rpc_calls == [("paciolan_ingest", {"p_payload": PAYLOAD})]
 
 
+# ---- CSV ingest (the box-office inventory export) ----
+_CSV_HEADER = ("host,org_id,distributor_id,policy_cd,group_code,season_cd,"
+               "item_cd,event_id,event_url,type,event_name,opponent,venue,"
+               "event_date,event_time,time_tbd,event_dt_local,event_dt_utc,"
+               "sale_from_dt,sold_out,opponent,venue,event_date,event_time,"
+               "event_time,row,qty,seat_first,seat_last,seats_range,price_level,"
+               "pl_desc,price_type,pt_desc,price_usd,facility_fee_usd,"
+               "per_ticket_fee_usd,all_in_price_usd,seat_key_first,"
+               "seat_key_last,view_from_section_url")
+_CSV_ROW = ("gohuskies.evenue.net,343,UW,,FBS,FB26,FB01,343:FB26:FB01,"
+            "https://gohuskies.evenue.net/event/FB26/FB01,S,"
+            "Football vs. Washington State,Washington State,Husky Stadium,"
+            "2026-09-06,13:00,FALSE,2026-09-06T13:00:00.000Z,"
+            "2026-09-06T20:00:00.000Z,2026-05-19T09:00:00.000Z,FALSE,"
+            "Washington State,Husky Stadium,2026-09-06,"
+            "Football 2026 (343:FB26:FB01),13:00,10,11,1,11,1-11,14,Corners 100,"
+            "A,Single Game Ticket,125,2,17.5,144.5,100:101:10:1,100:101:10:11,"
+            "https://media.evenue.net/p_101.jpg")
+_CSV_OK = _CSV_HEADER + "\n" + _CSV_ROW + "\n"
+_CSV_HEADERS = {"X-Ingest-Secret": "right", "Content-Type": "text/csv"}
+
+
+def test_csv_ingest_not_configured_returns_503():
+    r = _client(_Sb(), secret=None).post(
+        "/api/paciolan/csv-ingest", content=_CSV_OK, headers=_CSV_HEADERS)
+    assert r.status_code == 503
+
+
+def test_csv_ingest_bad_secret_returns_401():
+    c = _client(_Sb(), secret="right")
+    r = c.post("/api/paciolan/csv-ingest", content=_CSV_OK,
+               headers={"X-Ingest-Secret": "wrong", "Content-Type": "text/csv"})
+    assert r.status_code == 401
+    r2 = c.post("/api/paciolan/csv-ingest", content=_CSV_OK,
+                headers={"Content-Type": "text/csv"})  # missing header
+    assert r2.status_code == 401
+
+
+def test_csv_ingest_unparseable_returns_422():
+    c = _client(_Sb(), secret="right")
+    r = c.post("/api/paciolan/csv-ingest", content="a,b,c\n1,2,3\n",
+               headers=_CSV_HEADERS)
+    assert r.status_code == 422
+    assert "unparseable" in r.json()["detail"]
+
+
+def test_csv_ingest_no_blocks_returns_422():
+    # Valid header, one row with neither a seat key nor a seats range → 0 blocks.
+    empty_row = "gohuskies.evenue.net" + "," * 40
+    c = _client(_Sb(), secret="right")
+    r = c.post("/api/paciolan/csv-ingest",
+               content=_CSV_HEADER + "\n" + empty_row + "\n",
+               headers=_CSV_HEADERS)
+    assert r.status_code == 422
+    assert "no seat blocks" in r.json()["detail"]
+
+
+def test_csv_ingest_ok_parses_and_calls_rpc():
+    sb = _Sb(rpc=515)
+    c = _client(sb, secret="right")
+    r = c.post("/api/paciolan/csv-ingest", content=_CSV_OK,
+               headers={**_CSV_HEADERS, "X-Source-Filename": "evenue_343.csv"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["snapshot_id"] == 515
+    assert body["event_id"] == "343:FB26:FB01"
+    assert body["blocks"] == 1
+    assert body["seats"] == 11
+    # RPC got the parsed payload with the filename threaded in.
+    name, params = sb.rpc_calls[0]
+    assert name == "paciolan_csv_ingest"
+    payload = params["p_payload"]
+    assert payload["source_filename"] == "evenue_343.csv"
+    assert payload["event"]["org_id"] == "343"           # derived, not corrupt col
+    assert payload["blocks"][0]["section"] == "101"
+
+
+def test_csv_ingest_ok_without_filename_header():
+    sb = _Sb(rpc=1)
+    c = _client(sb, secret="right")
+    r = c.post("/api/paciolan/csv-ingest", content=_CSV_OK, headers=_CSV_HEADERS)
+    assert r.status_code == 200
+    assert "source_filename" not in sb.rpc_calls[0][1]["p_payload"]
+
+
 # ---- listings ----
 def test_listings_summary_math():
     rows = [

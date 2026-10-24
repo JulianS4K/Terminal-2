@@ -20,7 +20,9 @@ import hmac
 import os
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
+
+import paciolan_client
 
 
 def build_paciolan_router(get_require_sb: Callable[[], Callable],
@@ -58,6 +60,46 @@ def build_paciolan_router(get_require_sb: Callable[[], Callable],
             "seats": len(payload.get("seats") or []),
             "available_seats": sum(1 for s in (payload.get("seats") or [])
                                    if s.get("available")),
+        }
+
+    @router.post("/api/paciolan/csv-ingest")
+    def paciolan_csv_ingest(
+        body: str = Body(..., media_type="text/csv"),
+        x_ingest_secret: str | None = Header(None, alias="X-Ingest-Secret"),
+        source_filename: str | None = Header(None, alias="X-Source-Filename"),
+    ):
+        """Ingest one eVenue inventory-CSV export (the box-office source).
+
+        Body: the raw CSV text (Content-Type: text/csv). The server parses it
+        with paciolan_client.parse_inventory_csv() — defending against the
+        export's duplicate headers, header-junk rows, and corrupted org_id/
+        event_url columns — then saves the {event, blocks} payload via the SECDEF
+        paciolan_csv_ingest(jsonb) RPC. Returns snapshot_id + block/seat counts.
+        Shared-secret gated (X-Ingest-Secret, never service_role)."""
+        expected = os.environ.get("PACIOLAN_INGEST_SECRET")
+        if not expected:
+            raise HTTPException(503, "Paciolan ingest not configured")
+        if not x_ingest_secret or not hmac.compare_digest(x_ingest_secret, expected):
+            raise HTTPException(401, "bad or missing X-Ingest-Secret")
+        try:
+            parsed = paciolan_client.parse_inventory_csv(body)
+        except ValueError as exc:
+            raise HTTPException(422, f"unparseable eVenue CSV: {exc}")
+        if not parsed.get("blocks"):
+            raise HTTPException(422, "CSV parsed but contained no seat blocks")
+        if source_filename:
+            parsed["source_filename"] = source_filename
+
+        db = get_require_sb()()
+        res = db.rpc("paciolan_csv_ingest", {"p_payload": parsed}).execute()
+        snap_id = getattr(res, "data", None)
+        blocks = parsed["blocks"]
+        return {
+            "ok": True,
+            "snapshot_id": snap_id,
+            "event_id": parsed["event"].get("event_id"),
+            "blocks": len(blocks),
+            "seats": sum(int(b.get("qty") or 0) for b in blocks),
         }
 
     @router.get("/api/paciolan/events")
