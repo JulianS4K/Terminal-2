@@ -46,6 +46,7 @@
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
     wireN2s();
+    wireGtDryRun();
     wireEventSearch();
     wireFeeToggle();
     prefillFromQuery();
@@ -207,6 +208,93 @@
     if (document.hidden) { stopN2sFeed(); setN2sLive(false); }
     else { loadN2s({ background: true }); startN2sFeed(); }
   });
+
+  // ---------- GoTickets auto-buy dry run ----------
+  //
+  // n2s_gt_order_dryrun (mig 20261021180000) via /api/broker/n2s-gt-dryrun —
+  // the table has no grant for browser roles, so it is read server-side like
+  // the covers book. It only ever says what WOULD be ordered; nothing here, or
+  // anywhere, sends it. Polls at the covers feed's cadence, skipped on a
+  // hidden tab.
+
+  function wireGtDryRun() {
+    if (!document.getElementById('gtdTable')) return;
+    const run = document.getElementById('gtdRun');
+    if (run) run.addEventListener('click', () => loadGtDryRun());
+    const dec = document.getElementById('gtdDecision');
+    if (dec) dec.addEventListener('change', () => loadGtDryRun());
+    loadGtDryRun();
+    setInterval(() => { if (!document.hidden) loadGtDryRun({ background: true }); }, N2S_POLL_MS);
+  }
+
+  async function loadGtDryRun(opts) {
+    const wrap = document.getElementById('gtdTable');
+    const meta = document.getElementById('gtdMeta');
+    if (!wrap) return;
+    const background = !!(opts && opts.background);
+    if (!background) wrap.innerHTML = '<div class="empty">loading…</div>';
+    const decision = (document.getElementById('gtdDecision') || {}).value || '';
+    try {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (decision) qs.set('decision', decision);
+      const d = await T.api(`/api/broker/n2s-gt-dryrun?${qs.toString()}`);
+      renderGtDryRun(d.rows || []);
+      if (meta) {
+        const t = d.today || {};
+        meta.textContent = `today (ET): ${t.logged || 0} logged · ${t.would_buy || 0} would buy` +
+          ` · ${money(t.would_spend || 0)} would spend · ${t.skipped || 0} skipped` +
+          ` · ${new Date().toTimeString().slice(0, 5)}`;
+      }
+    } catch (err) {
+      const msg = err && err.message ? err.message : err;
+      if (background) { if (meta) meta.textContent = `dry-run feed stalled: ${msg}`; }
+      else { wrap.innerHTML = emptyHtml(`dry run unavailable: ${msg}`); if (meta) meta.textContent = ''; }
+    }
+  }
+
+  // Letters only: "Floor 6" -> "floor", "106" -> "". A gate-1 match where BOTH
+  // sides name a level and the names differ is the Floor-vs-Loge false match
+  // (order 7933791) — flag it rather than trust the gate.
+  function levelWord(s) { return String(s || '').replace(/[^a-z]/gi, '').toLowerCase(); }
+  function levelMismatch(r) {
+    const a = levelWord(r.sold_section), b = levelWord(r.sub_section);
+    return r.cover_gate === 1 && a !== '' && b !== '' && a !== b;
+  }
+
+  function renderGtDryRun(rows) {
+    const wrap = document.getElementById('gtdTable');
+    if (!rows.length) { wrap.innerHTML = emptyHtml('no dry-run rows yet'); return; }
+    const seat = (sec, row, qty, ea) =>
+      `${esc(sec || '—')} / ${esc(row || '—')} × ${esc(qty == null ? '—' : qty)} @ ${money(ea)}`;
+    const body = rows.map(r => {
+      const when = new Date(r.captured_at).toLocaleString(undefined,
+        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const warn = levelMismatch(r)
+        ? ` <span class="badge neg" title="sold and listing name different levels">⚠ level</span>` : '';
+      const dec = r.decision === 'would_buy'
+        ? '<span class="badge pos">would buy</span>'
+        : `<span class="badge muted">skip</span> <span class="muted small">${
+            esc((r.skip_reasons || []).join(', ').replace(/_/g, ' '))}</span>`;
+      const ref = r.payload && r.payload._reference;
+      const buy = ref && /^https:\/\//.test(ref.buy_url || '') ? ref.buy_url : null;
+      const listing = seat(r.sub_section, r.sub_row, r.sub_qty, r.quoted_ea) +
+        ` <span class="muted small">= ${money(r.quoted_total)}</span>` +
+        (buy ? ` <a href="${esc(buy)}" target="_blank" rel="noopener noreferrer">GT&nbsp;↗</a>` : '');
+      return `<tr>
+        <td class="muted small">${esc(when)}</td>
+        <td>${esc(r.s4k_source || '—')}<div class="muted small">${esc(r.order_number || '')}</div></td>
+        <td>${esc(r.event_name || '—')}<div class="muted small">${esc(r.event_date || '')}</div></td>
+        <td>${seat(r.sold_section, r.sold_row, r.sold_qty, r.sold_ea)}</td>
+        <td>${listing}${warn}</td>
+        <td>${r.cover_cost == null ? '—' : pnlCell(-r.cover_cost)}</td>
+        <td><span class="muted small">${esc(r.cover_gate == null ? '' : r.cover_gate)}</span> ${esc(r.cover_label || '')}</td>
+        <td>${dec}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<div class="subs-table-wrap"><table class="subs-table"><thead><tr>
+      <th>Logged</th><th>Order</th><th>Event</th><th>Sold</th><th>GoTickets listing</th>
+      <th>P/L</th><th>Gate</th><th>Decision</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
 
   function setN2sLive(on) {
     const pill = document.getElementById('n2sLive');

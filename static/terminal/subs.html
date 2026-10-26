@@ -60,6 +60,11 @@
       color: #60a5fa;
     }
     .n2s-gate-cell { max-width: 300px; }
+    #gt-dryrun-panel { margin-top: 24px; }
+    #gt-dryrun-panel .pos { color: var(--pos); }
+    #gt-dryrun-panel .neg { color: var(--neg); }
+    #gt-dryrun-panel .badge.pos { border-color: var(--pos); }
+    #gt-dryrun-panel .badge.neg { border-color: var(--neg); }
   </style>
 </head>
 <body data-page="subs">
@@ -151,6 +156,35 @@
         </div>
       </div>
       <div id="n2sTable"></div>
+    </section>
+
+    <section id="gt-dryrun-panel">
+      <div class="panel-title row">
+        <span>GOTICKETS AUTO-BUY — DRY RUN</span>
+        <span id="gtdMeta" class="muted small"></span>
+      </div>
+      <p class="muted small">
+        What an auto-buyer <strong>would</strong> have ordered on GoTickets for each new cover
+        (<code>n2s_gt_order_dryrun</code>). <strong>Nothing is sent</strong> — no code path calls
+        GoTickets' order endpoint. <em>Would buy</em> only on gate 1 (Index, same section);
+        every other gate is logged as a skip with <em>gate moves buyer</em>. A ⚠ marks a
+        gate-1 match whose named level differs (e.g. sold <em>Floor 6</em> vs listing
+        <em>Loge 6</em>) — check those by hand. P/L is sale minus listing total.
+      </p>
+      <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="gtdDecision">Decision</label>
+          <select id="gtdDecision">
+            <option value="">all</option>
+            <option value="would_buy">would buy</option>
+            <option value="skip">skip</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <button id="gtdRun" type="button" class="btn">Refresh</button>
+        </div>
+      </div>
+      <div id="gtdTable"></div>
     </section>
 
     <section id="subs-form-panel">
@@ -252,6 +286,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20261006pk"></script>
-  <script src="subs.js?v=20260910single"></script>
+  <script src="subs.js?v=20261026gtdry"></script>
 </body>
 </html>

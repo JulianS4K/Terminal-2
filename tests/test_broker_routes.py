@@ -84,6 +84,9 @@ class _FakeQuery:
     def lte(self, *_a, **_k):
         return self
 
+    def gte(self, *_a, **_k):
+        return self
+
     def range(self, *_a, **_k):
         return self
 
@@ -1527,3 +1530,42 @@ def test_n2s_covers_gap_row_carries_no_gate(client, monkeypatch):
     row = client.get("/api/broker/n2s-covers").json()["rows"][0]
     assert row["has_cover"] is False
     assert row["cover_gate"] is None and row["cover_label"] is None
+
+
+# ---------- /api/broker/n2s-gt-dryrun ----------
+
+def _dry_row(**kw):
+    r = {"dryrun_id": 96, "captured_at": "2026-10-26T18:02:40Z", "decision": "skip",
+         "skip_reasons": ["gate_moves_buyer"], "cover_gate": 5, "quoted_total": 755.96,
+         "cover_cost": -235.64, "payload": {"_dry_run": True}}
+    r.update(kw)
+    return r
+
+
+def test_n2s_gt_dryrun_tallies_today_from_would_buys_only(client, monkeypatch):
+    rows = [_dry_row(),
+            _dry_row(dryrun_id=95, decision="would_buy", skip_reasons=[], cover_gate=1,
+                     quoted_total=175.83),
+            _dry_row(dryrun_id=94, decision="would_buy", skip_reasons=[], cover_gate=1,
+                     quoted_total=670.48)]
+    fake = FakeSupabase(table_data={"n2s_gt_order_dryrun": rows})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-gt-dryrun").json()
+    assert body["count"] == 3
+    # Spend is what would actually be ordered: skips cost nothing.
+    assert body["today"]["would_buy"] == 2 and body["today"]["skipped"] == 1
+    assert body["today"]["would_spend"] == 846.31
+    # Read-only: only the dry-run table is touched, no RPC is called.
+    assert fake.rpc_calls == []
+    assert set(fake.table_calls) == {"n2s_gt_order_dryrun"}
+
+
+def test_n2s_gt_dryrun_rejects_unknown_decision(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    assert client.get("/api/broker/n2s-gt-dryrun?decision=buy").status_code == 400
+
+
+def test_n2s_gt_dryrun_empty(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    body = client.get("/api/broker/n2s-gt-dryrun?decision=would_buy").json()
+    assert body["rows"] == [] and body["today"]["would_spend"] == 0
