@@ -66,6 +66,9 @@ class _FakeQuery:
     def eq(self, *_a, **_k):
         return self
 
+    def neq(self, *_a, **_k):
+        return self
+
     def in_(self, *_a, **_k):
         return self
 
@@ -1275,6 +1278,73 @@ def test_n2s_covers_hidden_late_count_respects_the_profit_filter(client, monkeyp
     assert fake.table_calls.count("v_n2s_orders") == 2
 
 
+def test_n2s_covers_kind_filter_narrows_page_and_late_count(client, monkeypatch):
+    """Type filter: ped = Gmail Need2Buy rows (status n2b), n2s = the rest.
+    The hidden_late count query must narrow the same way as the page."""
+    seen = []
+
+    class _Rec(type(FakeSupabase().table("x"))):
+        def eq(self, col, val):
+            seen.append(("eq", col, val))
+            return self
+
+        def neq(self, col, val):
+            seen.append(("neq", col, val))
+            return self
+
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    fake.table = lambda name: (fake.table_calls.append(name),
+                               _Rec(fake.table_data.get(name, [])))[1]
+    _use_db(monkeypatch, fake)
+
+    body = client.get("/api/broker/n2s-covers?kind=ped").json()
+    assert body["filters"]["kind"] == "ped"
+    assert seen.count(("eq", "n2s_status", "n2b")) == 2
+
+    seen.clear()
+    client.get("/api/broker/n2s-covers?kind=n2s")
+    assert seen.count(("neq", "n2s_status", "n2b")) == 2
+    assert ("eq", "n2s_status", "n2b") not in seen
+
+    assert client.get("/api/broker/n2s-covers").json()["filters"]["kind"] is None
+    assert client.get("/api/broker/n2s-covers?kind=bogus").status_code == 422
+
+
+def test_n2s_covers_gate_and_reason_filters(client, monkeypatch):
+    """Gate takes one gate 1-6 or a group (direct = 1-2, offer = 3-6); reason
+    is no_cover_reason. Both narrow the page AND the hidden_late count."""
+    seen = []
+
+    class _Rec(type(FakeSupabase().table("x"))):
+        def eq(self, col, val):
+            seen.append(("eq", col, val))
+            return self
+
+        def lte(self, col, val):
+            seen.append(("lte", col, val))
+            return self
+
+        def gte(self, col, val):
+            seen.append(("gte", col, val))
+            return self
+
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    fake.table = lambda name: (fake.table_calls.append(name),
+                               _Rec(fake.table_data.get(name, [])))[1]
+    _use_db(monkeypatch, fake)
+
+    for qs, call in (("gate=4", ("eq", "cover_gate", 4)),
+                     ("gate=direct", ("lte", "cover_gate", 2)),
+                     ("gate=offer", ("gte", "cover_gate", 3)),
+                     ("reason=no_match", ("eq", "no_cover_reason", "no_match"))):
+        seen.clear()
+        body = client.get(f"/api/broker/n2s-covers?{qs}").json()
+        assert seen.count(call) == 2, qs
+    assert body["filters"]["reason"] == "no_match"
+    assert client.get("/api/broker/n2s-covers?gate=7").status_code == 422
+    assert client.get("/api/broker/n2s-covers?reason=bogus").status_code == 422
+
+
 def test_n2s_covers_serves_the_source_order_key(client, monkeypatch):
     """The panel needs the marketplace's own order id to look the obligation up
     while it is still live. EVO's order_number is an <invoice>-<order>
@@ -1321,10 +1391,11 @@ def test_n2s_covers_applies_every_filter(client, monkeypatch):
     fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
     _use_db(monkeypatch, fake)
     body = client.get("/api/broker/n2s-covers"
-                      "?source=Gametime&days=14&limit=5&offset=10").json()
+                      "?source=Gametime&days=14&kind=ped&limit=5&offset=10").json()
     assert body["filters"] == {"source": "Gametime", "days": 14,
                                "with_sub": None, "include_late": False,
-                               "profitable": False,
+                               "profitable": False, "kind": "ped",
+                               "gate": None, "reason": None,
                                "limit": 5, "offset": 10}
     assert body["count"] == 1
 

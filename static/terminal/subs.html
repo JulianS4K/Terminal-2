@@ -104,9 +104,20 @@
         whole and the row says <em>buy N</em> — the spare seat is paid for, and is
         already counted in the cost. <strong>Claim</strong> records an intent and hands you a fill
         sheet; it buys nothing — the purchase is made by hand in the vendor console.
-        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row.
+        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row. <strong>Type</strong> splits CRM N2S orders from <em>PED</em> (peddled sales on the Gmail Need2Buy label, no timer). <strong>Gate</strong> keeps only covers of that gate (1-2 direct, 3-6 move the buyer); <strong>No-cover reason</strong> keeps only uncovered orders with that reason.
       </p>
       <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="n2sKind">Type</label>
+          <!-- N2S = CRM need-to-sub orders (10-minute window, timer).
+               PED = peddled sales from the Gmail Need2Buy/WaitToBuy label:
+               no timer, re-priced until the label comes off. -->
+          <select id="n2sKind">
+            <option value="">all</option>
+            <option value="n2s">N2S</option>
+            <option value="ped">PED</option>
+          </select>
+        </div>
         <div class="subs-field narrow">
           <label for="n2sSource">Marketplace</label>
           <select id="n2sSource">
@@ -131,6 +142,35 @@
             <option value="true">has sub</option>
             <option value="false">no sub</option>
             <option value="profit">profitable only</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sGate">Gate</label>
+          <!-- 1-2 cover the buyer's own section and can be bought directly;
+               3-6 MOVE the buyer and need their acceptance first. Picking a
+               gate hides uncovered rows. -->
+          <select id="n2sGate">
+            <option value="">all</option>
+            <option value="direct">1-2 direct</option>
+            <option value="offer">3-6 offer subs</option>
+            <option value="1">1 Index</option>
+            <option value="2">2 S4KTrading</option>
+            <option value="3">3 Index offer subs</option>
+            <option value="4">4 offer subs S4KTrading</option>
+            <option value="5">5 Index Down offer subs</option>
+            <option value="6">6 Down offer subs S4KTrading</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sReason">No-cover reason</label>
+          <!-- Why an order has no cover. Picking one hides covered rows. -->
+          <select id="n2sReason">
+            <option value="">all</option>
+            <option value="no_match">no match</option>
+            <option value="window_closed">window closed</option>
+            <option value="unmapped">unmapped</option>
+            <option value="event_not_catalogued">event not in catalogue</option>
+            <option value="awaiting_source_pull">pulling</option>
           </select>
         </div>
         <div class="subs-field narrow">
@@ -286,6 +326,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20261006pk"></script>
-  <script src="subs.js?v=20261026gtdry"></script>
+  <script src="subs.js?v=20261026gate"></script>
 </body>
 </html>

@@ -41,7 +41,11 @@
   'use strict';
   const T = window.Terminal;
 
-  function init() {
+  async function init() {
+    // Wait for the Supabase session before any /api/broker call (as deals.js does):
+    // without it the first covers fetch can go out with no bearer token and 401,
+    // and a signed-out visitor is sent to login instead of shown that 401.
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
@@ -176,7 +180,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
+    ['n2sKind', 'n2sGate', 'n2sReason', 'n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -318,6 +322,16 @@
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
     const late = (document.getElementById('n2sLate') || {}).value || '';
+    const kind = (document.getElementById('n2sKind') || {}).value || '';
+    // PED rows have no timer, so the Timer filter cannot change what they
+    // show. Grey it out rather than let it look like it does something.
+    const lateEl = document.getElementById('n2sLate');
+    if (lateEl) lateEl.disabled = kind === 'ped';
+    if (kind) qs.set('kind', kind);
+    const gate = (document.getElementById('n2sGate') || {}).value || '';
+    const reason = (document.getElementById('n2sReason') || {}).value || '';
+    if (gate) qs.set('gate', gate);
+    if (reason) qs.set('reason', reason);
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
     // "profitable only" lives in the same select as has/no sub because it is a
@@ -472,10 +486,11 @@
       const timer = r.timer_expired
         ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
         : '';
-      // N2B: a peddled sale from the Need2Buy/WaitToBuy Gmail label. No timer;
-      // its event is re-priced every 4 hours until the label comes off.
+      // PED: a peddled sale from the Need2Buy/WaitToBuy Gmail label (status n2b),
+      // tagged so it reads apart from CRM N2S orders. No timer; its event is
+      // re-priced every 4 hours until the label comes off.
       const n2b = r.n2s_status === 'n2b'
-        ? ' <span class="muted small" title="Need to Buy (Gmail WaitToBuy): no timer, re-priced every 4 hours">N2B</span>'
+        ? ' <span class="small" style="color:var(--warn)" title="Peddled sale (Gmail Need2Buy/WaitToBuy): no timer, re-priced every 4 hours">PED</span>'
         : '';
       // GoTickets gives us a deep link. TEvo and SeatGeek do not publish a
       // buy URL to us and there is no known console URL pattern, so rather
