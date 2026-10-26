@@ -678,6 +678,8 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         ("/api/store/reserve",  10,  60.0),  # mock reserve, but hits TEvo (tightened for demo)
         ("/api/store/",         60,  60.0),  # public catalog reads
         ("/api/prices/",       120,  60.0),  # public price tracker (cached reads)
+        ("/api/mcp/",           60,  60.0),  # developer catalog (cached)
+        ("/mcp",               600,  60.0),  # MCP endpoint — per-key limits apply inside MCPApp
         ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
         ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
         ("/api/admin/",          5,  60.0),  # admin write surface
@@ -1981,6 +1983,15 @@ from routers.prices import build_prices_router  # noqa: E402
 
 app.include_router(build_prices_router(STATIC_DIR, get_require_sb=lambda: require_sb))
 
+# ---------- Developer portal (/developers) ----------
+#
+# Where anyone signs in and mints an external key for /mcp (the key is issued
+# by mcp_self_issue_key from the browser's own session), plus the public
+# /api/mcp/catalog (tool list + per-feed freshness) -> routers/developers.py.
+from routers.developers import build_developers_router  # noqa: E402
+
+app.include_router(build_developers_router(STATIC_DIR, get_require_sb=lambda: require_sb))
+
 
 # ---------- MCP server (/mcp) ----------
 #
@@ -1993,7 +2004,7 @@ import contextlib  # noqa: E402
 
 from routers.mcp_api import MCPApp  # noqa: E402
 
-mcp_app = MCPApp(lambda: require_sb())
+mcp_app = MCPApp(lambda: require_sb(), limiter=_ip_limiter)
 app.mount("/mcp", mcp_app)
 _default_lifespan = app.router.lifespan_context
 

@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
+import anyio
 import pytest
 
 os.environ.setdefault("STOREFRONT_SQL_ONLY", "false")
@@ -63,7 +65,8 @@ class _Rpc:
             raise self.db.errors[self.name]
         if self.name == "mcp_verify_key":
             tier = self.db.keys.get(self.args["p_key_hash"])
-            return type("R", (), {"data": [{"id": 1, "label": "t", "tier": tier}] if tier else []})()
+            row = {"id": 1, "label": "t", "tier": tier, **self.db.limits.get(tier, {})}
+            return type("R", (), {"data": [row] if tier else []})()
         return type("R", (), {"data": self.db.rpc_data.get(self.name)})()
 
 
@@ -74,6 +77,7 @@ class FakeDB:
         self.errors = errors or {}
         self.keys = {m.hash_key(INT_KEY): "internal", m.hash_key(EXT_KEY): "external",
                      m.hash_key("s4k_weird"): "admin"}
+        self.limits: dict = {}
         self.queries, self.rpcs = [], []
 
     def table(self, name):
@@ -140,7 +144,8 @@ def test_event_market_dedupes_and_groups():
 def test_event_market_untracked_no_competitors():
     db = FakeDB(tables={"events": [{"id": 7}]})
     out = m.event_market(db, 7)
-    assert out["seatgeek_market"] == {"days": 30, "tracked": False, "total_sales": 0, "daily": []}
+    assert out["seatgeek_market"] == {"days": 30, "tracked": False, "total_sales": 0, "daily": [],
+                                      "last_sale_at": None}
     assert out["competing_events"] == {"competitors_count": 0, "competitors": []}
 
 
@@ -211,10 +216,18 @@ def test_query_view_default_columns():
 
 def test_tier_tool_sets():
     ext = {f.__name__ for f in m.EXTERNAL_TOOLS}
-    assert ext == {"search_events", "event_market"}
+    assert ext == {"search", "search_events", "event_market", "event_prices", "top_market_events",
+                   "performer_trend", "price_movers", "competing_events", "prediction_markets",
+                   "sports_context", "news", "event_weather", "price_forecast", "team_report",
+                   "data_freshness", "query_public_view", "get_started"}
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
-    assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart"}
+    assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
+                      "event_source_links", "home_stats", "team_book"}
+    # ...and no owned/order column leaks through the public view whitelist.
+    for cols in m.EXTERNAL_QUERY_VIEWS.values():
+        assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c]
+    assert "v_s4kcs_orders" not in m.EXTERNAL_QUERY_VIEWS and "v_s4kcs_orders" in m.QUERY_VIEWS
 
 
 # ---------------------------------------------------------------- auth
@@ -270,10 +283,14 @@ def test_http_tiers_and_calls(fake_db):
     with TestClient(app_module.app) as c:
         init = _rpc_call(c, EXT_KEY, "initialize", {
             "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}})
-        assert init.status_code == 200 and init.json()["result"]["serverInfo"]["name"] == "s4k-terminal"
+        assert init.status_code == 200 and init.json()["result"]["serverInfo"]["name"] == "s4k-market"
 
         ext_tools = {t["name"] for t in _rpc_call(c, EXT_KEY, "tools/list").json()["result"]["tools"]}
-        assert ext_tools == {"search_events", "event_market"}
+        assert ext_tools == {f.__name__ for f in m.EXTERNAL_TOOLS}
+        # cached tools expose their real signature, not the wrapper's
+        chart = next(t for t in _rpc_call(c, EXT_KEY, "tools/list").json()["result"]["tools"]
+                     if t["name"] == "top_market_events")
+        assert set(chart["inputSchema"]["properties"]) == {"limit", "chart_date"}
         int_list = _rpc_call(c, INT_KEY, "tools/list").json()["result"]["tools"]
         assert {t["name"] for t in int_list} == {f.__name__ for f in m.INTERNAL_TOOLS}
         pk = next(t for t in int_list if t["name"] == "pickups")
@@ -288,3 +305,381 @@ def test_http_tiers_and_calls(fake_db):
         assert ok["result"]["isError"] is False and "42" in ok["result"]["content"][0]["text"]
         ev = _rpc_call(c, EXT_KEY, "tools/call", {"name": "search_events", "arguments": {"query": "Colts"}}).json()
         assert "Colts" in ev["result"]["content"][0]["text"]
+
+        # First connect: initialize carries the "call get_started" instruction, and the
+        # onboarding guide is listed as a resource and a prompt.
+        assert "get_started" in init.json()["result"]["instructions"]
+        res = _rpc_call(c, EXT_KEY, "resources/list").json()["result"]["resources"]
+        assert [r["uri"] for r in res] == ["s4k://onboarding"]
+        guide = _rpc_call(c, EXT_KEY, "resources/read", {"uri": "s4k://onboarding"}).json()
+        assert "S4K Market MCP" in guide["result"]["contents"][0]["text"]
+        prompts = _rpc_call(c, EXT_KEY, "prompts/list").json()["result"]["prompts"]
+        assert [p["name"] for p in prompts] == ["get_started"]
+
+
+# ---------------------------------------------------------------- external tools (2026-10-21)
+
+@pytest.fixture(autouse=True)
+def _fresh_cache():
+    m.reset_cache()
+    yield
+    m.reset_cache()
+
+
+def test_as_of_blocks():
+    assert m._as_of(None) == {"as_of": None, "age_hours": None, "stale": True}
+    assert m._as_of("not a date") == {"as_of": "not a date", "age_hours": None, "stale": True}
+    recent = m._as_of(datetime.now(timezone.utc).isoformat())
+    assert recent["stale"] is False and recent["age_hours"] < 1
+    old = m._as_of("2026-01-01T00:00:00Z")
+    assert old["stale"] is True and old["age_hours"] > 1000
+    naive = m._as_of("2026-01-01T00:00:00")
+    assert naive["stale"] is True
+
+
+def test_search_and_event_prices():
+    db = FakeDB(rpc_data={"price_tracker_search": {"performers": [{"id": 1}], "venues": [], "events": []},
+                          "price_tracker_event": {"event": {"id": 9}, "current": {"captured_at": "2026-09-27T03:44:40+00:00"}}})
+    assert m.search(db, "  Lakers ", limit=999)["performers"] == [{"id": 1}]
+    assert db.rpcs[0] == ("price_tracker_search", {"p_q": "Lakers", "p_limit": 25})
+    out = m.event_prices(db, 9)
+    assert out["freshness"]["stale"] is True and out["event"] == {"id": 9}
+    assert m.event_prices(FakeDB(), 9) == {"error": "event 9 not found"}
+    assert m.search(FakeDB(), "x") == {"query": "x"}
+
+
+def test_top_market_events_latest_and_history():
+    rows = [{"chart_date": "2026-10-21", "rank": 1, "prev_rank": 3}, {"chart_date": "2026-10-21", "rank": 2, "prev_rank": None}]
+    db = FakeDB(tables={"sg_market_chart": rows})
+    out = m.top_market_events(db, limit=0)
+    assert out["chart_date"] == "2026-10-21" and out["count"] == 2
+    assert [r["rank_change"] for r in out["events"]] == [2, None]
+    assert len(db.queries) == 2  # head + rows
+    # cached: same args → no new queries
+    assert m.top_market_events(db, limit=0) is out and len(db.queries) == 2
+    hist = m.top_market_events(db, chart_date="2026-10-01T00:00")
+    assert hist["chart_date"] == "2026-10-01" and len(db.queries) == 3  # rows only
+    assert m.top_market_events(FakeDB())["events"] == []
+
+
+def test_performer_trend():
+    rows = [{"snapshot_date": "2026-10-20", "performer_name": "Colts"}, {"snapshot_date": "2026-10-21", "performer_name": "Colts"}]
+    db = FakeDB(tables={"performer_metrics_daily": rows})
+    out = m.performer_trend(db, 51, days=5000, split="bogus")
+    assert out["split"] == "all" and out["days"] == 730 and out["performer_name"] == "Colts"
+    assert out["freshness"]["as_of"] == "2026-10-21"
+    empty = m.performer_trend(FakeDB(), 51, split="home")
+    assert empty["series"] == [] and empty["performer_name"] is None and empty["split"] == "home"
+
+
+def test_price_movers_scoring_and_names():
+    agg = [
+        {"event_id": 1, "window_days": 30, "computed_at": "2026-10-21T07:20:00+00:00", "days_to_event": 3,
+         "sg_price_recent": 110, "sg_price_prior": 100, "sg_cur_price": 112,
+         "ev_price_recent": 50, "ev_price_prior": 100, "ev_cur_price": 48},
+        {"event_id": 2, "window_days": 30, "computed_at": "2026-10-21T07:20:00+00:00", "days_to_event": 9,
+         "sg_price_recent": 80, "sg_price_prior": 100, "sg_cur_price": 79},
+        {"event_id": 3, "window_days": 30, "computed_at": "2026-10-21T07:20:00+00:00", "sg_price_recent": 5, "sg_price_prior": None},
+        {"event_id": 4, "window_days": 30, "computed_at": "2026-10-20T07:20:00+00:00", "sg_price_recent": 999, "sg_price_prior": 1},
+    ]
+    db = FakeDB(tables={"event_movers_agg": agg, "events": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]})
+    up = m.price_movers(db, window_days=99, direction="UP", source="seatgeek", limit=10)
+    assert up["window_days"] == 30 and [x["event_id"] for x in up["movers"]] == [1, 2]
+    assert up["movers"][0]["change_pct"] == 10.0 and up["movers"][0]["event"] == {"id": 1, "name": "A"}
+    assert up["movers"][0]["all_sources"]["tevo"] == {"recent": 50, "prior": 100, "now": 48}
+    down = m.price_movers(db, window_days=30, direction="down", source="tevo", limit=1)
+    assert down["source"] == "tevo" and [x["event_id"] for x in down["movers"]] == [1]
+    assert down["movers"][0]["change_pct"] == -50.0
+    assert m.price_movers(FakeDB(), source="nope")["movers"] == []
+
+
+def test_competing_prediction_sports_news_weather():
+    db = FakeDB(tables={
+        "event_competitors_snapshot": [{"tevo_event_id": 1, "competitors_count": 2, "competitors": [], "refreshed_at": "2026-10-21T11:40:00Z"}],
+        "prediction_market_xref": [{"market_id": "m1"}],
+        "prediction_markets": [{"market_id": "m1", "updated_at": "2026-10-21T17:43:00Z"}],
+        "espn_event_snapshots": [{"espn_event_id": "e1", "captured_at": "2026-10-21T17:40:00Z"}],
+        "v_reddit_news_ticker": [{"title": "t", "created_utc": "2026-10-21T18:01:00Z"}],
+        "v_event_weather_with_fallback": [{"tevo_event_id": 1, "is_indoor": True}],
+    })
+    assert m.competing_events(db, 1)["competitors_count"] == 2
+    assert m.competing_events(FakeDB(), 1) == {"event_id": 1, "competitors_count": 0, "competitors": [],
+                                               "freshness": m._as_of(None)}
+    by_event = m.prediction_markets(db, event_id=1)
+    assert by_event["count"] == 1 and by_event["freshness"]["as_of"] == "2026-10-21T17:43:00Z"
+    assert ("eq", ("tevo_event_id", 1), {}) in db.queries[1].calls
+    m.prediction_markets(db, performer_id=5)
+    assert ("eq", ("tevo_performer_id", 5), {}) in db.queries[3].calls
+    assert m.prediction_markets(FakeDB(), event_id=1) == {"markets": [], "count": 0, "freshness": m._as_of(None)}
+    league = m.prediction_markets(db, league="nfl", limit=0)
+    assert ("eq", ("league", "NFL"), {}) in db.queries[-1].calls and league["count"] == 1
+    assert m.prediction_markets(db)["count"] == 1  # unfiltered: latest markets
+    games = m.sports_context(db, "NFL", espn_event_id="e1")
+    assert games["count"] == 1 and games["freshness"]["as_of"] == "2026-10-21T17:40:00Z"
+    assert ("eq", ("espn_league", "nfl"), {}) in db.queries[-1].calls
+    assert m.sports_context(FakeDB(), "nba")["games"] == []
+    n = m.news(db, league="NFL", query=" rookie ")
+    assert n["count"] == 1 and ("ilike", ("title", "%rookie%"), {}) in db.queries[-1].calls
+    assert m.news(FakeDB())["items"] == []
+    assert m.event_weather(db, 1) == {"tevo_event_id": 1, "is_indoor": True}
+    assert m.event_weather(FakeDB(), 1) == {"error": "event 1 not found"}
+
+
+def test_data_freshness_cached():
+    db = FakeDB(rpc_data={"mcp_data_freshness": {"feeds": [{"feed": "news"}]}})
+    assert m.data_freshness(db)["feeds"][0]["feed"] == "news"
+    assert m.data_freshness(db)["feeds"] and len(db.rpcs) == 1  # argument-keyed cache
+    m.reset_cache()
+    assert m.data_freshness(FakeDB()) == {"feeds": []}
+
+
+def test_ttl_cache_evicts_oldest():
+    c = m._TTLCache(60.0, max_items=1)
+    c.put("a", 1)
+    c.put("b", 2)
+    assert c.get("a") is None and c.get("b") == 2
+    c.put("b", 3)  # existing key: no eviction needed
+    assert c.get("b") == 3
+
+
+def test_query_public_view_whitelist():
+    db = FakeDB()
+    out = m.query_public_view(db, "v_s4kcs_orders")
+    assert "error" in out and "v_s4kcs_orders" not in out["views"]
+    bad = m.query_public_view(db, "event_listing_snapshot_daily", columns=["evo_owned_tickets"])
+    assert bad["error"].startswith("columns not allowed")
+    ok = m.query_public_view(db, "sg_market_chart", filters=[{"column": "rank", "op": "lte", "value": 5}],
+                             order_by="rank", limit=5)
+    assert ok == {"view": "sg_market_chart", "rows": [], "count": 0}
+
+
+def test_price_forecast_explicit_section_strips_book():
+    fc = {"expected_clearing": 214.2, "lo": 157.48, "hi": 321.33,
+          "demand_context": {"own_book_gap": 12, "attendance": {"rank": 1}},
+          "signals": [{"own_book_gap": 3, "realized_sale": 226}]}
+    db = FakeDB(rpc_data={"predict_event_clearing_price": fc})
+    out = m.price_forecast(db, 3285866, section="  226 ")
+    assert db.rpcs == [("predict_event_clearing_price", {"p_event_id": 3285866, "p_section": "226"})]
+    f = out["forecasts"][0]
+    assert out["count"] == 1 and f["expected_clearing"] == 214.2
+    assert f["demand_context"] == {"attendance": {"rank": 1}}
+    assert f["signals"] == [{"realized_sale": 226}]
+    assert db.queries == []  # explicit section: no sales scan
+
+
+def test_price_forecast_picks_best_selling_sections():
+    sales = [{"sg_sale_id": 1, "section": "226"}, {"sg_sale_id": 2, "section": "226"},
+             {"sg_sale_id": 2, "section": "226"}, {"sg_sale_id": 3, "section": "Floor A"},
+             {"sg_sale_id": 4, "section": "101"}, {"sg_sale_id": 5, "section": "101"},
+             {"sg_sale_id": 6, "section": " "}, {"sg_sale_id": 7, "section": None}]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": sales},
+                rpc_data={"predict_event_clearing_price": {"expected_clearing": 1}})
+    out = m.price_forecast(db, 9, max_sections=2)
+    asked = [a["p_section"] for _, a in db.rpcs]
+    assert asked == ["101", "226"]  # ties by distinct-sale count, then name
+    assert out["count"] == 2
+    calls = db.queries[0].calls
+    assert ("eq", ("tevo_event_id", 9), {}) in calls
+
+
+def test_price_forecast_no_sales_and_empty_rpc():
+    db = FakeDB(tables={"seatgeek_sales_snapshots": [], "section_metrics": []})
+    out = m.price_forecast(db, 9)
+    assert out["forecasts"] == [] and "pass `section`" in out["note"]
+    db = FakeDB(rpc_data={})
+    assert m.price_forecast(db, 9, section="x")["count"] == 0
+
+
+def test_price_forecast_no_sales_falls_back_to_listed_inventory():
+    secs = [{"section": "112", "tickets_count": 74, "is_ancillary": False, "captured_at": "t2"},
+            {"section": "Parking", "tickets_count": 99, "is_ancillary": True, "captured_at": "t2"},
+            {"section": "226", "tickets_count": 53, "is_ancillary": False, "captured_at": "t2"},
+            {"section": "999", "tickets_count": 500, "is_ancillary": False, "captured_at": "t1"}]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": [], "section_metrics": secs},
+                rpc_data={"predict_event_clearing_price": {"expected_clearing": 1}})
+    out = m.price_forecast(db, 9, max_sections=5)
+    assert [a["p_section"] for _, a in db.rpcs] == ["112", "226"]  # latest capture, no ancillary
+    assert out["sections_picked_by"] == "listed_inventory"
+
+
+def test_guard_forecast_anchors_prior_only_estimate_to_market():
+    # Knicks 2026-10-23: no sales, stale team prior → model said 547.71 vs a 329.84 ask median.
+    f = m._guard_forecast({"expected_clearing": 547.71, "lo": 361.38, "hi": 738.11,
+                           "realized_sample_n": 0, "section_ask_median": 329.84,
+                           "section_tickets": 74, "sold_to_ask_ratio": 0.5511,
+                           "signals": {"ask_x_ratio": {"value": 181.78}}})
+    assert f["expected_clearing"] == 181.78 and f["model_estimate"] == 547.71
+    assert f["lo"] == 181.78 and f["hi"] == 329.84
+    assert f["confidence"] == "low" and "anchored" in f["warning"]
+    # no ask_x_ratio signal → ask x ratio
+    f = m._guard_forecast({"expected_clearing": 500, "realized_sample_n": 0,
+                           "section_ask_median": 200, "section_tickets": 5, "sold_to_ask_ratio": 0.5})
+    assert f["expected_clearing"] == 100.0
+    # no listings and no sales → warn, keep number
+    f = m._guard_forecast({"expected_clearing": 90, "realized_sample_n": 0, "section_tickets": 0})
+    assert f["expected_clearing"] == 90 and "prior-only" in f["warning"]
+    # real sales → untouched, confidence by sample size
+    f = m._guard_forecast({"expected_clearing": 400, "realized_sample_n": 8,
+                           "section_ask_median": 300, "section_tickets": 9})
+    assert f["expected_clearing"] == 400 and f["confidence"] == "high" and "warning" not in f
+    assert m._guard_forecast({"realized_sample_n": 3})["confidence"] == "medium"
+
+
+def test_team_report_args_and_normalizing():
+    rep = {"team": {"performer_id": 16303}, "polling": [{"pin": "knicks_home"}], "games": [
+               {"event_id": 1, "data_quality": "live"}, {"event_id": 2, "data_quality": "none"}],
+           "reddit": None, "roster": None, "injuries": [{"name": "x"}]}
+    db = FakeDB(rpc_data={"mcp_team_report": rep})
+    out = m.team_report(db, " New York Knicks ", since="2026-08-14T00:00", max_games=99, news_limit=0)
+    assert db.rpcs == [("mcp_team_report", {"p_team": "New York Knicks", "p_since": "2026-08-14",
+                                            "p_home_only": True, "p_max_events": 41,
+                                            "p_news_limit": 1})]
+    assert out["reddit"] == [] and out["roster"] == [] and out["injuries"] == [{"name": "x"}]
+    assert "polling" not in out  # our pins never reach the external tier
+    assert any("Reddit" in n for n in out["data_notes"])
+    assert any("[2]" in n for n in out["data_notes"])
+    assert m.team_report(db, "16303", since="last week") == {"error": "since must be YYYY-MM-DD"}
+    assert m.team_report(FakeDB(rpc_data={}), "nobody") == {"error": "no report"}
+    clean = m.team_report(FakeDB(rpc_data={"mcp_team_report": {
+        "games": [{"event_id": 1, "data_quality": "live"}], "reddit": [{"t": 1}]}}), "1")
+    assert "data_notes" not in clean
+
+
+def test_team_book_internal_only():
+    book = {"totals": {"orders": 2555}, "polling": [{"pin": "knicks_home"}]}
+    db = FakeDB(rpc_data={"mcp_team_book": book})
+    assert m.team_book(db, "16303", since="2026-08-24", max_games=500) == book
+    assert db.rpcs == [("mcp_team_book", {"p_team": "16303", "p_since": "2026-08-24",
+                                          "p_home_only": False, "p_max_events": 120})]
+    assert m.team_book(db, "16303", since="soon") == {"error": "since must be YYYY-MM-DD"}
+    assert m.team_book(FakeDB(rpc_data={}), "x") == {"error": "no report"}
+    assert m.team_book in m.INTERNAL_TOOLS and m.team_book not in m.EXTERNAL_TOOLS
+
+
+def test_get_started_and_onboarding(monkeypatch, tmp_path):
+    out = m.get_started(None)
+    assert out["welcome"] == m.INSTRUCTIONS and "get_started" in m.INSTRUCTIONS
+    assert out["quick_start"] and "S4K Market MCP" in out["guide_markdown"]
+    monkeypatch.setattr(m, "GET_STARTED_PATH", tmp_path / "missing.md")
+    assert m.get_started(None)["guide_markdown"] == ""
+
+
+def test_server_exposes_onboarding_resource_and_prompt():
+    srv = m._make_server("t", m.EXTERNAL_TOOLS, lambda: FakeDB())
+    res = anyio.run(srv.list_resources)
+    assert [str(r.uri) for r in res] == ["s4k://onboarding"]
+    body = anyio.run(srv.read_resource, "s4k://onboarding")
+    assert "S4K Market MCP" in str(body)
+    prompts = anyio.run(srv.list_prompts)
+    assert [p.name for p in prompts] == ["get_started"]
+    msg = anyio.run(srv.get_prompt, "get_started", {"team": "Boston Celtics"})
+    assert "Boston Celtics" in str(msg)
+
+
+def test_tool_catalog_and_tool_name():
+    cat = {t["name"]: t for t in m.tool_catalog()}
+    assert cat["top_market_events"]["parameters"] == ["limit", "chart_date"]
+    assert cat["search"]["description"].startswith("Find performers")
+    assert m._tool_name(b'{"jsonrpc":"2.0","method":"tools/call","params":{"name":"news"}}') == "news"
+    assert m._tool_name(b'[{"method":"initialize"}]') == "initialize"
+    assert m._tool_name(b'{"method":"tools/call","params":{}}') == "tools/call"
+    assert m._tool_name(b"") == "rpc" and m._tool_name(b"{garbage") == "rpc" and m._tool_name(b"[]") == "rpc"
+    assert m._tool_name(b"42") == "rpc"
+
+
+def test_resolve_key_limits_and_defaults():
+    db = FakeDB()
+    app = m.MCPApp(lambda: db)
+    info = app.resolve_key({"x-api-key": EXT_KEY})
+    assert info == {"id": 1, "tier": "external", "rate_per_min": 60, "daily_quota": 2000, "calls_today": 0}
+    db.limits["external"] = {"rate_per_min": 5, "daily_quota": 10, "calls_today": 7}
+    assert app.resolve_key({"x-api-key": EXT_KEY})["calls_today"] == 7
+    assert app.resolve_key({"authorization": f"bearer {INT_KEY}"})["tier"] == "internal"
+    # usage stamp never raises
+    db.errors["mcp_count_call"] = RuntimeError("down")
+    app._count(1, "news")
+    assert db.rpcs[-1][0] == "mcp_count_call"
+
+
+class _DenyLimiter:
+    def check(self, key, n, w):
+        self.last = (key, n, w)
+        return False
+
+
+def test_http_rate_and_quota(fake_db, monkeypatch):
+    deny = _DenyLimiter()
+    monkeypatch.setattr(app_module.mcp_app, "_limiter", deny)
+    with TestClient(app_module.app) as c:
+        r = _rpc_call(c, EXT_KEY, "tools/list")
+        assert r.status_code == 429 and r.json()["error"] == "rate limited" and r.headers["retry-after"] == "60"
+        assert deny.last == ("mcp:1", 60, 60.0)
+    monkeypatch.setattr(app_module.mcp_app, "_limiter", None)
+    fake_db.limits["external"] = {"daily_quota": 3, "calls_today": 3}
+    with TestClient(app_module.app) as c:
+        r = _rpc_call(c, EXT_KEY, "tools/list")
+        assert r.status_code == 429 and r.json()["error"] == "daily quota exhausted"
+        # internal key unaffected; its POST is counted with the tool name
+        ok = _rpc_call(c, INT_KEY, "tools/call", {"name": "pickups", "arguments": {}})
+        assert ok.status_code == 200
+        assert ("mcp_count_call", {"p_key_id": 1, "p_tool": "pickups"}) in fake_db.rpcs
+
+
+class _FakeManager:
+    """Stands in for a StreamableHTTPSessionManager: records what it was handed."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def handle_request(self, scope, receive, send):
+        body, more = b"", True
+        while more:
+            msg = await receive()
+            body += msg.get("body", b"")
+            more = msg.get("more_body", False)
+        self.calls.append((scope["method"], body))
+        if scope["method"] == "POST":
+            # a real manager may read again after the body — must see the raw stream
+            assert (await receive())["type"] == "http.disconnect"
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+
+def _asgi(app, method, chunks, headers):
+    """Drive the ASGI app once; return (status, body) and what it sent."""
+    import anyio
+
+    sent = []
+    queue = list(chunks)
+
+    async def receive():
+        if queue:
+            body = queue.pop(0)
+            return {"type": "http.request", "body": body, "more_body": bool(queue)}
+        return {"type": "http.disconnect"}
+
+    async def send(msg):
+        sent.append(msg)
+
+    scope = {"type": "http", "method": method, "path": "/mcp",
+             "headers": [(k.encode(), v.encode()) for k, v in headers.items()]}
+    anyio.run(app, scope, receive, send)
+    return sent
+
+
+def test_asgi_get_passthrough_and_post_replay():
+    db = FakeDB()
+    app = m.MCPApp(lambda: db)
+    mgr = _FakeManager()
+    app._managers = {"external": mgr, "internal": mgr}
+    hdr = {"authorization": f"Bearer {EXT_KEY}"}
+    # GET: handed straight to the manager with the original receive; not stamped
+    _asgi(app, "GET", [], hdr)
+    assert mgr.calls == [("GET", b"")]
+    assert not [r for r in db.rpcs if r[0] == "mcp_count_call"]
+    # POST in two chunks: body re-assembled, replayed intact, stamped with the tool name
+    body = b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"news","arguments":{}}}'
+    sent = _asgi(app, "POST", [body[:20], body[20:]], hdr)
+    assert mgr.calls[-1] == ("POST", body)
+    assert ("mcp_count_call", {"p_key_id": 1, "p_tool": "news"}) in db.rpcs
+    assert sent[0]["status"] == 200
