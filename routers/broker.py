@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from zoneinfo import ZoneInfo
 
 import requests
@@ -57,6 +57,15 @@ def _s4kcs_payload(payload, row: dict, *, via: str) -> dict:
         delivery=row.get("delivery"),
         note=note,
     )
+
+
+def _n2s_kind(q, kind: str):
+    """Narrow the N2S book to one kind of obligation. PED rows are the
+    peddled sales from the Gmail Need2Buy/WaitToBuy label (status 'n2b': no
+    timer, re-priced until the label comes off); everything else is a CRM N2S
+    order. "n2s" is the complement, not status='n2s', so a status added later
+    still shows somewhere."""
+    return q.eq("n2s_status", "n2b") if kind == "ped" else q.neq("n2s_status", "n2b")
 
 
 def _batch_fallback_zones(db, pairs: list[tuple]) -> dict[tuple, str | None]:
@@ -1060,6 +1069,7 @@ def build_broker_router(
         with_sub: bool | None = None,
         include_late: bool = False,
         profitable: bool = False,
+        kind: Literal["n2s", "ped"] | None = None,
         _=Depends(require_auth),
     ):
         """N2S ("Need to Sub") — the WHOLE open book, with the sub attached
@@ -1205,6 +1215,8 @@ def build_broker_router(
             # `by_no_cover_reason` come back as zeros here and the UI says
             # which book you are looking at.
             q = q.lt("cover_cost", 0)
+        if kind:
+            q = _n2s_kind(q, kind)
         # Actionable rows first, cheapest cover first; then the uncovered block
         # oldest-alert first, since that is the longest-unsettled obligation.
         # Postgres sorts NULLs last on ASC, so uncovered rows fall through
@@ -1240,6 +1252,8 @@ def build_broker_router(
                 # including them would in fact reveal zero profitable covers,
                 # which sends the operator to a switch that cannot help.
                 lq = lq.lt("cover_cost", 0)
+            if kind:
+                lq = _n2s_kind(lq, kind)
             # count="exact" makes PostgREST return the row count, which is the
             # whole point of the query — the rows themselves are discarded.
             hidden_late = int(getattr(lq.execute(), "count", 0) or 0)
@@ -1285,7 +1299,7 @@ def build_broker_router(
             "refreshed_at": stamp,
             "filters": {"source": source, "days": days, "with_sub": with_sub,
                         "include_late": include_late, "profitable": profitable,
-                        "limit": limit, "offset": offset},
+                        "kind": kind, "limit": limit, "offset": offset},
         }
 
     @router.get("/api/broker/n2s-gt-dryrun")

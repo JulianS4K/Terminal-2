@@ -104,9 +104,20 @@
         whole and the row says <em>buy N</em> — the spare seat is paid for, and is
         already counted in the cost. <strong>Claim</strong> records an intent and hands you a fill
         sheet; it buys nothing — the purchase is made by hand in the vendor console.
-        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row.
+        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row. <strong>Type</strong> splits CRM N2S orders from <em>PED</em> (peddled sales on the Gmail Need2Buy label, no timer).
       </p>
       <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="n2sKind">Type</label>
+          <!-- N2S = CRM need-to-sub orders (10-minute window, timer).
+               PED = peddled sales from the Gmail Need2Buy/WaitToBuy label:
+               no timer, re-priced until the label comes off. -->
+          <select id="n2sKind">
+            <option value="">all</option>
+            <option value="n2s">N2S</option>
+            <option value="ped">PED</option>
+          </select>
+        </div>
         <div class="subs-field narrow">
           <label for="n2sSource">Marketplace</label>
           <select id="n2sSource">
@@ -286,6 +297,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20261006pk"></script>
-  <script src="subs.js?v=20261026ped"></script>
+  <script src="subs.js?v=20261026type"></script>
 </body>
 </html>

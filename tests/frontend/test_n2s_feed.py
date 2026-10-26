@@ -412,6 +412,31 @@ def test_profitable_only_is_an_option_of_the_sub_filter(feed_page, live_server):
     assert "with_sub" not in last
 
 
+def test_type_filter_sends_kind_and_greys_the_timer_for_ped(feed_page, live_server):
+    """Type splits CRM N2S orders from PED (Gmail Need2Buy, no timer). PED
+    sends kind=ped and disables the Timer select, which cannot affect it."""
+    urls = []
+
+    def _covers(route):
+        urls.append(route.request.url)
+        _json_route(route, _payload([_cover(1)]))
+
+    feed_page.route(_COVERS_RE, _covers)
+    feed_page.goto(f"{live_server}/terminal/subs.html", wait_until="domcontentloaded")
+    feed_page.wait_for_selector("#n2sTable tr[data-n2s]")
+    assert "kind=" not in urls[-1]
+
+    feed_page.select_option("#n2sKind", "ped")
+    feed_page.wait_for_timeout(300)
+    assert "kind=ped" in urls[-1]
+    assert feed_page.is_disabled("#n2sLate")
+
+    feed_page.select_option("#n2sKind", "n2s")
+    feed_page.wait_for_timeout(300)
+    assert "kind=n2s" in urls[-1]
+    assert not feed_page.is_disabled("#n2sLate")
+
+
 def test_gate_label_distinguishes_actionable_from_offer(feed_page, live_server):
     """Gates 1-2 and 3-6 must NOT render the same.
 

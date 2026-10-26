@@ -180,7 +180,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
+    ['n2sKind', 'n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -322,6 +322,12 @@
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
     const late = (document.getElementById('n2sLate') || {}).value || '';
+    const kind = (document.getElementById('n2sKind') || {}).value || '';
+    // PED rows have no timer, so the Timer filter cannot change what they
+    // show. Grey it out rather than let it look like it does something.
+    const lateEl = document.getElementById('n2sLate');
+    if (lateEl) lateEl.disabled = kind === 'ped';
+    if (kind) qs.set('kind', kind);
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
     // "profitable only" lives in the same select as has/no sub because it is a
