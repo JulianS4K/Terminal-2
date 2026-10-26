@@ -472,10 +472,11 @@
       const timer = r.timer_expired
         ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
         : '';
-      // N2B: a peddled sale from the Need2Buy/WaitToBuy Gmail label. No timer;
-      // its event is re-priced every 4 hours until the label comes off.
+      // PED: a peddled sale from the Need2Buy/WaitToBuy Gmail label (status n2b),
+      // tagged so it reads apart from CRM N2S orders. No timer; its event is
+      // re-priced every 4 hours until the label comes off.
       const n2b = r.n2s_status === 'n2b'
-        ? ' <span class="muted small" title="Need to Buy (Gmail WaitToBuy): no timer, re-priced every 4 hours">N2B</span>'
+        ? ' <span class="small" style="color:var(--warn)" title="Peddled sale (Gmail Need2Buy/WaitToBuy): no timer, re-priced every 4 hours">PED</span>'
         : '';
       // GoTickets gives us a deep link. TEvo and SeatGeek do not publish a
       // buy URL to us and there is no known console URL pattern, so rather
