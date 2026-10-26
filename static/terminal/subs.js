@@ -488,9 +488,9 @@
         : '';
       // PED: a peddled sale from the Need2Buy/WaitToBuy Gmail label (status n2b),
       // tagged so it reads apart from CRM N2S orders. No timer; its event is
-      // re-priced every 4 hours until the label comes off.
+      // re-priced on every poll until the label comes off.
       const n2b = r.n2s_status === 'n2b'
-        ? ' <span class="small" style="color:var(--warn)" title="Peddled sale (Gmail Need2Buy/WaitToBuy): no timer, re-priced every 4 hours">PED</span>'
+        ? ' <span class="small" style="color:var(--warn)" title="Peddled sale (Gmail Need2Buy/WaitToBuy): no timer, re-priced on every poll until bought, filled or cancelled">PED</span>'
         : '';
       // GoTickets gives us a deep link. TEvo and SeatGeek do not publish a
       // buy URL to us and there is no known console URL pattern, so rather

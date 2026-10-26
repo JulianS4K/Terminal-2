@@ -10,7 +10,7 @@
  * the WaitToBuy label, parses the sale, and sends the WHOLE labelled set to
  * the Supabase RPC public.n2b_ingest_from_apps_script (mig 20261009180000).
  * Each sale becomes an N2B row in the N2S pipeline: the event is mapped and
- * priced on TEvo / GoTickets / SeatGeek every 4 hours, with no timer, and
+ * priced on TEvo / GoTickets / SeatGeek on every poll, with no timer, and
  * covers show on the terminal Subs page like N2S ones.
  *
  * A sale stops being priced when:
