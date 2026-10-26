@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -1285,6 +1286,61 @@ def build_broker_router(
             "filters": {"source": source, "days": days, "with_sub": with_sub,
                         "include_late": include_late, "profitable": profitable,
                         "limit": limit, "offset": offset},
+        }
+
+    @router.get("/api/broker/n2s-gt-dryrun")
+    def broker_n2s_gt_dryrun(
+        limit: int = 100,
+        decision: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """GoTickets auto-buy DRY RUN — what an auto-buyer would have ordered.
+
+        Reads `n2s_gt_order_dryrun` (mig 20261021180000), which a trigger on
+        the cover-queue rebuild fills with one row per new GoTickets cover and
+        its `would_buy` / `skip` decision. Nothing here — or anywhere — sends
+        the order; `payload` is the body that WOULD be posted, kept for
+        review. Read-only by RULE 2: there is no route that buys.
+
+        `would_buy` is gate 1 (Index, same section) only since mig
+        20261021223000; gates 2-6 are logged as `skip` with
+        `gate_moves_buyer`. `cover_cost` keeps the queue's sign: positive is
+        a loss.
+
+        `today` is tallied on the New York day (an auto-buyer's daily cap
+        resets on ET), from its own read so the `decision` filter cannot skew
+        it.
+        """
+        if decision not in (None, "", "would_buy", "skip"):
+            raise HTTPException(status_code=400, detail="decision must be would_buy or skip")
+        db = get_require_sb()()
+        cols = ("dryrun_id,captured_at,order_number,s4k_source,event_name,event_date,"
+                "sold_section,sold_row,sold_qty,sold_ea,sub_section,sub_row,sub_qty,"
+                "quoted_ea,quoted_total,cover_cost,cover_gate,cover_label,"
+                "decision,skip_reasons,payload")
+        q = db.table("n2s_gt_order_dryrun").select(cols)
+        if decision:
+            q = q.eq("decision", decision)
+        rows = (q.order("dryrun_id", desc=True)
+                 .limit(max(1, min(int(limit), 500))).execute().data) or []
+
+        et = ZoneInfo("America/New_York")
+        today = datetime.now(et).date()
+        start = datetime.combine(today, datetime.min.time(), tzinfo=et)
+        day = (db.table("n2s_gt_order_dryrun").select("decision,quoted_total")
+                 .gte("captured_at", start.astimezone(timezone.utc).isoformat())
+                 .execute().data) or []
+        buys = [r for r in day if r.get("decision") == "would_buy"]
+        return {
+            "count": len(rows),
+            "rows": rows,
+            "today": {
+                "date": today.isoformat(),
+                "logged": len(day),
+                "would_buy": len(buys),
+                "skipped": len(day) - len(buys),
+                "would_spend": round(sum(float(r.get("quoted_total") or 0) for r in buys), 2),
+            },
         }
 
     @router.get("/api/broker/n2s-covers/verify")
