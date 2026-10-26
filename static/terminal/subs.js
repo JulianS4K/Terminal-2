@@ -41,7 +41,11 @@
   'use strict';
   const T = window.Terminal;
 
-  function init() {
+  async function init() {
+    // Wait for the Supabase session before any /api/broker call (as deals.js does):
+    // without it the first covers fetch can go out with no bearer token and 401,
+    // and a signed-out visitor is sent to login instead of shown that 401.
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
