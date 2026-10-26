@@ -180,7 +180,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sKind', 'n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
+    ['n2sKind', 'n2sGate', 'n2sReason', 'n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -328,6 +328,10 @@
     const lateEl = document.getElementById('n2sLate');
     if (lateEl) lateEl.disabled = kind === 'ped';
     if (kind) qs.set('kind', kind);
+    const gate = (document.getElementById('n2sGate') || {}).value || '';
+    const reason = (document.getElementById('n2sReason') || {}).value || '';
+    if (gate) qs.set('gate', gate);
+    if (reason) qs.set('reason', reason);
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
     // "profitable only" lives in the same select as has/no sub because it is a

@@ -436,6 +436,13 @@ def test_type_filter_sends_kind_and_greys_the_timer_for_ped(feed_page, live_serv
     assert "kind=n2s" in urls[-1]
     assert not feed_page.is_disabled("#n2sLate")
 
+    feed_page.select_option("#n2sGate", "offer")
+    feed_page.wait_for_timeout(300)
+    assert "gate=offer" in urls[-1]
+    feed_page.select_option("#n2sReason", "no_match")
+    feed_page.wait_for_timeout(300)
+    assert "reason=no_match" in urls[-1]
+
 
 def test_gate_label_distinguishes_actionable_from_offer(feed_page, live_server):
     """Gates 1-2 and 3-6 must NOT render the same.

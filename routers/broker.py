@@ -59,13 +59,34 @@ def _s4kcs_payload(payload, row: dict, *, via: str) -> dict:
     )
 
 
-def _n2s_kind(q, kind: str):
-    """Narrow the N2S book to one kind of obligation. PED rows are the
-    peddled sales from the Gmail Need2Buy/WaitToBuy label (status 'n2b': no
-    timer, re-priced until the label comes off); everything else is a CRM N2S
-    order. "n2s" is the complement, not status='n2s', so a status added later
-    still shows somewhere."""
-    return q.eq("n2s_status", "n2b") if kind == "ped" else q.neq("n2s_status", "n2b")
+def _n2s_narrow(q, kind: str | None, gate: str | None, reason: str | None):
+    """The Subs page's Type / Gate / Reason filters, applied identically to the
+    page query and the hidden_late count.
+
+    kind: PED rows are the peddled sales from the Gmail Need2Buy/WaitToBuy
+    label (status 'n2b': no timer, re-priced until the label comes off);
+    everything else is a CRM N2S order. "n2s" is the complement, not
+    status='n2s', so a status added later still shows somewhere.
+
+    gate: one cover gate 1-6, or a group: "direct" (1-2, the buyer's own
+    section) / "offer" (3-6, the buyer is moved and must accept first). A gate
+    implies a cover, so it hides every uncovered row.
+
+    reason: why an order has no cover (no_cover_reason). Implies uncovered.
+    """
+    if kind == "ped":
+        q = q.eq("n2s_status", "n2b")
+    elif kind == "n2s":
+        q = q.neq("n2s_status", "n2b")
+    if gate == "direct":
+        q = q.lte("cover_gate", 2)
+    elif gate == "offer":
+        q = q.gte("cover_gate", 3)
+    elif gate:
+        q = q.eq("cover_gate", int(gate))
+    if reason:
+        q = q.eq("no_cover_reason", reason)
+    return q
 
 
 def _batch_fallback_zones(db, pairs: list[tuple]) -> dict[tuple, str | None]:
@@ -1070,6 +1091,9 @@ def build_broker_router(
         include_late: bool = False,
         profitable: bool = False,
         kind: Literal["n2s", "ped"] | None = None,
+        gate: Literal["1", "2", "3", "4", "5", "6", "direct", "offer"] | None = None,
+        reason: Literal["unmapped", "awaiting_source_pull", "event_not_catalogued",
+                        "no_match", "window_closed"] | None = None,
         _=Depends(require_auth),
     ):
         """N2S ("Need to Sub") — the WHOLE open book, with the sub attached
@@ -1215,8 +1239,7 @@ def build_broker_router(
             # `by_no_cover_reason` come back as zeros here and the UI says
             # which book you are looking at.
             q = q.lt("cover_cost", 0)
-        if kind:
-            q = _n2s_kind(q, kind)
+        q = _n2s_narrow(q, kind, gate, reason)
         # Actionable rows first, cheapest cover first; then the uncovered block
         # oldest-alert first, since that is the longest-unsettled obligation.
         # Postgres sorts NULLs last on ASC, so uncovered rows fall through
@@ -1252,8 +1275,7 @@ def build_broker_router(
                 # including them would in fact reveal zero profitable covers,
                 # which sends the operator to a switch that cannot help.
                 lq = lq.lt("cover_cost", 0)
-            if kind:
-                lq = _n2s_kind(lq, kind)
+            lq = _n2s_narrow(lq, kind, gate, reason)
             # count="exact" makes PostgREST return the row count, which is the
             # whole point of the query — the rows themselves are discarded.
             hidden_late = int(getattr(lq.execute(), "count", 0) or 0)
@@ -1299,7 +1321,8 @@ def build_broker_router(
             "refreshed_at": stamp,
             "filters": {"source": source, "days": days, "with_sub": with_sub,
                         "include_late": include_late, "profitable": profitable,
-                        "kind": kind, "limit": limit, "offset": offset},
+                        "kind": kind, "gate": gate, "reason": reason,
+                        "limit": limit, "offset": offset},
         }
 
     @router.get("/api/broker/n2s-gt-dryrun")
