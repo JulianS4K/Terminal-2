@@ -790,3 +790,15 @@ def test_polling_coverage_internal_summary():
     assert out["games_by_pin"]["knicks_home"]["sources"] == {"evo": 1, "sg": 1}
     assert out["sg_sales_pulls_24h"] == {"pulls": 5, "ok": 2, "rate_limited": 1, "failed": 1,
                                          "pending": 1, "new_sales": 5}
+
+
+def test_market_depth_edges():
+    assert m._pctl([], 0.5) is None
+    # a capture with an unparseable timestamp still counts as the zone's latest, never as "24 h ago"
+    db = FakeDB(tables={"zone_metrics": [{"event_id": 7, "captured_at": "not-a-time", "zone": "Pit",
+                                          "getin_price": 50, "retail_median": 80, "tickets_count": 4}]})
+    z = m.zone_prices(db, 7)["zones"][0]
+    assert z["zone"] == "Pit" and z["getin_change_24h_pct"] is None and z["tickets_change_24h"] is None
+    db2 = FakeDB()
+    assert m.zone_trend(db2, 7)["zones"] == {}
+    assert not [c for c in db2.queries[0].calls if c[0] == "eq" and c[1][0] == "zone"]
