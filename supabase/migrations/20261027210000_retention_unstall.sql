@@ -1,4 +1,4 @@
--- Migration 20261027210000 · level:ops · lane:A1 (data plane — retention engine) · writes:retention_tick()(replace),retention_policy(2 rows) · reads:retention_policy,retention_run_log · pre:20261023043520
+-- Migration 20261027210000 · level:ops · lane:A1 (data plane — retention engine) · writes:retention_tick()(replace),retention_policy(2 rows),cron_policy(1 row) · reads:retention_policy,retention_run_log · pre:20261023043520
 --
 -- KANBAN A1-DB-25 — retention engine stalled since 2026-10-12 (operator 2026-10-27: "start on A1-DB-25").
 --
@@ -137,6 +137,13 @@ UPDATE public.retention_policy
    SET next_eligible_at = now() + interval '7 days', updated_at = now(),
        notes = notes || ' PARKED 2026-10-27 (A1-DB-25): no writer since 09-27 and every surviving row is keep_where evidence, so each sweep cost 6-15 min for 0 rows. Reclaim via A1-DATA-1 CTAS swap.'
  WHERE table_name = 'gotickets_listings_snapshots' AND next_eligible_at IS NULL;
+
+-- 4. cron gate: with a 60-min minimum interval every other hourly fire was 'skip_offpeak' —
+--    the fire is logged a few ms after :44:00, so the next :44 check sees 59m59.9s. 55 min.
+UPDATE public.cron_policy
+   SET peak_min_interval_min = 55, offpeak_min_interval_min = 55, updated_at = now(),
+       notes = notes || ' 2026-10-27 (A1-DB-25): 60 -> 55 min; a 60-min gate skipped every other hourly fire (fire logged ms after :44:00).'
+ WHERE jobname = 'retention_tick_hourly' AND offpeak_min_interval_min = 60;
 
 -- VERIFY: next :44 tick sweeps the 10-12 policies first;
 --   SELECT table_name, last_run_at, last_deleted, clean_runs, next_eligible_at FROM retention_policy WHERE enabled ORDER BY last_run_at;
