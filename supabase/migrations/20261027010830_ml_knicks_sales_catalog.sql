@@ -19,8 +19,8 @@
 --                           alongside and games > 2 h apart (playoff "Date TBD" placeholders run
 --                           up to 2 days off) are kept out of both training views.
 --   ml_knicks_sales         one row per unique sale (SeatGeek by sg_sale_id, SeatData by
---                           content_hash) with hours_to_event, level (floor/100s/200s/300s/
---                           400s/other), row band, and the market at the time of sale from
+--                           content_hash) with hours_to_event, level (courtside/baseline/100s/
+--                           200s/300s/400s/other), row band, and the market at the time of sale from
 --                           the daily snapshot (EVO get-in/median, SG median). ctx_stale =
 --                           true when no live event_metrics existed that day (the Sep 27 –
 --                           Oct 23 snapshots are frozen copies), so training can drop them.
@@ -55,6 +55,8 @@
 -- sales history) — a separate, operator-approved job. Any game any source names later is
 -- picked up on the next run.
 --
+-- Already applied to prod · via MCP 2026-10-27 (schema_migrations 20261027015423). Verified:
+-- RLS on, anon/authenticated cannot read or execute, cron active, tick skips during peak.
 -- Read-only on every source; writes only the three new ml_* tables. No upstream API calls.
 -- Cross-lane read: n2s_zone_of() is D7's resolver, reused (not copied) so both agree on zones.
 -- ROLLBACK: SELECT cron.unschedule('ml_knicks_catalog_offpeak');
