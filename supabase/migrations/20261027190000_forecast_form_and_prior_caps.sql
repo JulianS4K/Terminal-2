@@ -19,6 +19,9 @@
 --      + 0.15·(away win% − .5)·g_a/(g_a+15), clamped to 0.85–1.15 (g = games played, so the
 --      first weeks barely move it). Applied at ≥ half strength even with realized sales (45 d
 --      of sales mostly predate the current record); output gains `form_mult`.
+--   4. speed: the `est` CTE is MATERIALIZED. It holds get_event_demand_context(), which the
+--      planner was re-evaluating for every reference — 12 calls × ~1 s per forecast (profiled
+--      with track_functions); now 1 call. A forecast went from ~15 s to ~6 s under load.
 --
 -- ROLLBACK: re-apply predict_event_clearing_price from its previous migration (or invert
 --           the replacements below); DROP FUNCTION _price_form_mult(jsonb).
@@ -86,5 +89,14 @@ BEGIN
   END LOOP;
   EXECUTE v_def;
 END $patch$;
+
+-- 4. evaluate the demand context once (separate step: idempotent on its own)
+DO $mat$
+DECLARE v_def text := pg_get_functiondef('public.predict_event_clearing_price(bigint,text)'::regprocedure);
+BEGIN
+  IF position('est AS (SELECT sig.*,' in v_def) > 0 THEN
+    EXECUTE replace(v_def, 'est AS (SELECT sig.*,', 'est AS MATERIALIZED (SELECT sig.*,');
+  END IF;
+END $mat$;
 
 -- VERIFY: SELECT predict_event_clearing_price(3465615, '225') -> 'expected_clearing', ... -> 'form_mult', ... -> 'road_draw_mult';
