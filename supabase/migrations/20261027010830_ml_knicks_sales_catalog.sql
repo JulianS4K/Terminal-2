@@ -1,4 +1,4 @@
--- Migration 20261027010830 · level:feature · lane:A1 (data plane — ML training data) · writes:ml_knicks_games(new),ml_knicks_sales(new),ml_knicks_catalog_state(new),v_ml_knicks_sales_train(new),v_ml_knicks_sales_playoff(new),_ml_level_of()(new),_ml_row_band()(new),ml_knicks_catalog_tick()(new),cron ml_knicks_catalog_offpeak(new) · reads:sg_events_canonical,aq_event_map,seatgeek_orders,seatgeek_sales_snapshots,seatdata_sales_snapshots,event_listing_snapshot_daily,event_metrics,performer_metrics_daily,listings_poll_pins · pre:20261023051000 (listings_poll_pins)
+-- Migration 20261027010830 · level:feature · lane:A1 (data plane — ML training data) · writes:ml_knicks_games(new),ml_knicks_sales(new),ml_knicks_catalog_state(new),v_ml_knicks_sales_train(new),v_ml_knicks_sales_playoff(new),_ml_level_of()(new),_ml_row_band()(new),_ml_generic_zone()(new),_ml_section_clean()(new),ml_knicks_catalog_tick()(new),cron ml_knicks_catalog_offpeak(new) · reads:sg_events_canonical,aq_event_map,seatgeek_orders,seatgeek_sales_snapshots,seatdata_sales_snapshots,event_listing_snapshot_daily,event_metrics,performer_metrics_daily,listings_poll_pins,performer_zones,zone_rules,zone_metrics,n2s_zone_of() · pre:20261023051000 (listings_poll_pins)
 --
 -- ============================================================================
 -- Knicks sales catalogue: one clean row per sale, ready for model training
@@ -28,6 +28,15 @@
 --                           new rows through the per-event indexes.
 --                           Also the Knicks home-performer level that day (performer_metrics_daily,
 --                           split 'home': get-in median, price median, games listed).
+--                           ZONE: each sale is placed in the curated Knicks/MSG zone (22 zones —
+--                           Courtside Apples … Club Platinum/Gold/Silver … U1–U4 … 400) via
+--                           n2s_zone_of(), the unambiguous section+ROW resolver (zones are row
+--                           tiers inside a section: 106–108 rows 1–8 Platinum, 9–17 Gold, 18–22
+--                           Silver); NULL on ambiguity, then the generic zone_rules (SRO →
+--                           standing, Club → club). Dry run on 1,662 real sales: ~98% curated.
+--                           Plus that zone's market at sale time from zone_metrics (latest
+--                           capture ≤ 36 h before the sale: get-in, p25, median, tickets, our
+--                           share) — same zone names, so price_vs_zone_median is like-for-like.
 --   v_ml_knicks_sales_train REGULAR SEASON ONLY (regular + NBA Cup group/knockout games, which
 --                           count toward the regular-season record). Playoffs and preseason are
 --                           excluded — operator 2026-10-27: "Playoffs dont count to regular season".
@@ -47,9 +56,10 @@
 -- picked up on the next run.
 --
 -- Read-only on every source; writes only the three new ml_* tables. No upstream API calls.
+-- Cross-lane read: n2s_zone_of() is D7's resolver, reused (not copied) so both agree on zones.
 -- ROLLBACK: SELECT cron.unschedule('ml_knicks_catalog_offpeak');
 --           DROP VIEW v_ml_knicks_sales_train, v_ml_knicks_sales_playoff; DROP TABLE ml_knicks_sales, ml_knicks_catalog_state, ml_knicks_games;
---           DROP FUNCTION ml_knicks_catalog_tick(integer), _ml_level_of(text), _ml_row_band(text);
+--           DROP FUNCTION ml_knicks_catalog_tick(integer), _ml_level_of(text), _ml_row_band(text), _ml_generic_zone(text), _ml_section_clean(text);
 -- ============================================================================
 
 SET LOCAL lock_timeout = '10s';
@@ -90,9 +100,11 @@ CREATE TABLE IF NOT EXISTS public.ml_knicks_sales (
   quantity            integer,
   section             text,
   row_label           text,
-  level               text        NOT NULL,      -- floor | 100s | 200s | 300s | 400s | other
+  level               text        NOT NULL,      -- courtside | baseline | 100s | 200s | 300s | 400s | other
   row_band            text        NOT NULL,      -- 1-3 | 4-7 | 8-12 | 13-18 | 19+ | alpha | unknown
-  zone                text,
+  zone                text,                      -- curated Knicks/MSG zone, else generic zone_rules
+  zone_source         text,                      -- curated | generic | NULL (no match)
+  sd_zone             text,                      -- SeatData's own zone label (SeatData rows only)
   stock_type          text,
   delivery_method     text,
   is_instant          boolean,
@@ -103,6 +115,12 @@ CREATE TABLE IF NOT EXISTS public.ml_knicks_sales (
   ctx_owned_share     numeric,
   ctx_sg_getin        numeric,
   ctx_sg_median       numeric,
+  ctx_zone_getin      numeric,                   -- this sale's zone, latest zone_metrics ≤ 36 h before
+  ctx_zone_p25        numeric,
+  ctx_zone_median     numeric,
+  ctx_zone_tickets    integer,
+  ctx_zone_owned_share numeric,
+  ctx_zone_at         timestamptz,
   ctx_perf_home_getin  numeric,                  -- Knicks home performer that day
   ctx_perf_home_median numeric,
   ctx_perf_home_games  integer,
@@ -111,6 +129,7 @@ CREATE TABLE IF NOT EXISTS public.ml_knicks_sales (
   PRIMARY KEY (source, sale_key)
 );
 CREATE INDEX IF NOT EXISTS ml_knicks_sales_game_idx  ON public.ml_knicks_sales (sg_event_id, sale_at);
+CREATE INDEX IF NOT EXISTS ml_knicks_sales_zone_idx  ON public.ml_knicks_sales (zone, days_to_event);
 CREATE INDEX IF NOT EXISTS ml_knicks_sales_train_idx ON public.ml_knicks_sales (is_regular_season, season, level, days_to_event);
 
 CREATE TABLE IF NOT EXISTS public.ml_knicks_catalog_state (
@@ -131,17 +150,25 @@ COMMENT ON TABLE public.ml_knicks_sales IS
   'One row per unique Knicks-home sale (SeatGeek + SeatData) with time-to-event, level, row band and market context at sale time. Built off-peak by ml_knicks_catalog_tick (mig 20261027010830).';
 
 -- ---------------------------------------------------------------------------
--- Helpers (MSG layout: 1–9 = floor sections, 1xx/2xx/3xx/4xx = bowl levels)
+-- Helpers (MSG layout: "4 D"…"12 D" / VIP = courtside, 1–9 = baseline club + risers,
+-- 1xx/2xx/3xx/4xx = bowl levels)
 -- ---------------------------------------------------------------------------
+-- "Section 226" / "Sec. 226" → "226" (feeds sometimes prefix the word; zone rules never do)
+CREATE OR REPLACE FUNCTION public._ml_section_clean(p_section text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = public, pg_temp AS $$
+  SELECT nullif(btrim(regexp_replace(coalesce(p_section, ''), '^\s*(section|sec)\.?\s+', '', 'i')), '')
+$$;
+
 CREATE OR REPLACE FUNCTION public._ml_level_of(p_section text)
 RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = public, pg_temp AS $$
   SELECT CASE
-    WHEN p_section IS NULL THEN 'other'
-    WHEN p_section ~* '(floor|court)' OR p_section ~ '^\s*\d{1,2}\s*$' THEN 'floor'
-    WHEN substring(p_section FROM '(\d{3})') ~ '^1' THEN '100s'
-    WHEN substring(p_section FROM '(\d{3})') ~ '^2' THEN '200s'
-    WHEN substring(p_section FROM '(\d{3})') ~ '^3' THEN '300s'
-    WHEN substring(p_section FROM '(\d{3})') ~ '^4' THEN '400s'
+    WHEN public._ml_section_clean(p_section) IS NULL THEN 'other'
+    WHEN public._ml_section_clean(p_section) ~* '^\s*(vip\s*\d+|\d{1,2}\s*d)\s*$' OR public._ml_section_clean(p_section) ~* 'court' THEN 'courtside'
+    WHEN public._ml_section_clean(p_section) ~ '^\s*\d\s*$' THEN 'baseline'              -- MSG 1–9: baseline club + risers
+    WHEN substring(public._ml_section_clean(p_section) FROM '(\d{3})') ~ '^1' THEN '100s'
+    WHEN substring(public._ml_section_clean(p_section) FROM '(\d{3})') ~ '^2' THEN '200s'
+    WHEN substring(public._ml_section_clean(p_section) FROM '(\d{3})') ~ '^3' THEN '300s'
+    WHEN substring(public._ml_section_clean(p_section) FROM '(\d{3})') ~ '^4' THEN '400s'
     ELSE 'other' END
 $$;
 
@@ -157,6 +184,23 @@ RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = public, pg_t
       ELSE '19+' END
     WHEN btrim(p_row) ~* '^[a-z]{1,2}$' THEN 'alpha'
     ELSE 'unknown' END
+$$;
+
+-- Generic fallback for sections no curated zone covers (SRO, clubs, suites…).
+-- zone_rules patterns are upper-case; match case-insensitively; higher priority wins
+-- (UPPER BLEACHER 60 beats BLEACHER 50).
+CREATE OR REPLACE FUNCTION public._ml_generic_zone(p_section text)
+RETURNS text LANGUAGE sql STABLE PARALLEL SAFE SET search_path = public, pg_temp AS $$
+  SELECT r.zone FROM public.zone_rules r
+   WHERE r.active AND public._ml_section_clean(p_section) IS NOT NULL
+     AND CASE r.match_type
+           WHEN 'prefix'    THEN upper(public._ml_section_clean(p_section)) LIKE upper(r.section_pattern) || '%'
+           WHEN 'substring' THEN strpos(upper(public._ml_section_clean(p_section)), upper(r.section_pattern)) > 0
+           WHEN 'regex'     THEN public._ml_section_clean(p_section) ~* r.section_pattern
+           WHEN 'exact'     THEN upper(public._ml_section_clean(p_section)) = upper(r.section_pattern)
+           ELSE false END
+   ORDER BY r.priority DESC, r.id
+   LIMIT 1
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -179,6 +223,7 @@ DECLARE
   v_done      integer := 0;
   v_caller    text;
   v_knicks_pid bigint;
+  v_venue     bigint;
 BEGIN
   -- Inside SECURITY DEFINER, current_user is the function OWNER, so the usual
   -- `current_user NOT IN (...)` guard always passes. Check the CALLER's role instead:
@@ -274,6 +319,22 @@ BEGIN
      AND (s.game_type, s.season, s.opponent, s.occurs_at) IS DISTINCT FROM (k.game_type, k.season, k.opponent, k.occurs_at);
 
   SELECT performer_id INTO v_knicks_pid FROM public.listings_poll_pins WHERE pin_key = 'knicks_home' LIMIT 1;
+  -- the venue the curated Knicks zones are drawn for (MSG); every catalogued game is at MSG
+  SELECT z.venue_id INTO v_venue FROM public.performer_zones z
+   WHERE z.performer_id = v_knicks_pid AND z.source = 'curated'
+   GROUP BY z.venue_id ORDER BY count(*) DESC LIMIT 1;
+
+  -- re-zone sales whose zone was not curated (rules can be added later); cheap — few rows
+  UPDATE public.ml_knicks_sales s
+     SET zone = z.zone, zone_source = z.src
+    FROM (SELECT x.source, x.sale_key,
+                 coalesce(public.n2s_zone_of(v_knicks_pid, v_venue, public._ml_section_clean(x.section), x.row_label), public._ml_generic_zone(x.section)) AS zone,
+                 CASE WHEN public.n2s_zone_of(v_knicks_pid, v_venue, public._ml_section_clean(x.section), x.row_label) IS NOT NULL THEN 'curated'
+                      WHEN public._ml_generic_zone(x.section) IS NOT NULL THEN 'generic' END AS src
+            FROM public.ml_knicks_sales x
+           WHERE x.zone_source IS DISTINCT FROM 'curated' AND v_venue IS NOT NULL) z
+   WHERE s.source = z.source AND s.sale_key = z.sale_key
+     AND (s.zone, s.zone_source) IS DISTINCT FROM (z.zone, z.src);
 
   -- 2. Per game, catalogue new sales (least-recently-run first, wall-clock budget) --
   FOR g IN
@@ -292,7 +353,8 @@ BEGIN
       INSERT INTO public.ml_knicks_sales AS t
         (source, sale_key, sg_event_id, tevo_event_id, season, game_type, opponent, occurs_at, sale_at,
          hours_to_event, days_to_event, price, quantity, section, row_label, level, row_band,
-         stock_type, delivery_method, is_instant,
+         zone, zone_source, stock_type, delivery_method, is_instant,
+         ctx_zone_getin, ctx_zone_p25, ctx_zone_median, ctx_zone_tickets, ctx_zone_owned_share, ctx_zone_at,
          ctx_snapshot_date, ctx_evo_getin, ctx_evo_median, ctx_evo_tickets, ctx_owned_share, ctx_sg_getin, ctx_sg_median,
          ctx_perf_home_getin, ctx_perf_home_median, ctx_perf_home_games, ctx_stale,
          cataloged_at)
@@ -301,18 +363,30 @@ BEGIN
              floor(extract(epoch FROM g.occurs_at - s.sale_at_utc) / 86400.0)::int,
              s.broadcast_price, s.quantity, s.section, s.row,
              public._ml_level_of(s.section), public._ml_row_band(s.row),
-             s.stock_type, s.delivery_method, s.is_instant,
+             s.zone, s.zone_source, s.stock_type, s.delivery_method, s.is_instant,
+             zc.getin_price, zc.retail_p25, zc.retail_median, zc.tickets_count, zc.owned_share, zc.captured_at,
              ctx.snapshot_date, ctx.eg, ctx.em, ctx.et, ctx.own_share, ctx.sgg, ctx.sgm,
              pf.getin_median, pf.price_median, pf.event_count,
              NOT EXISTS (SELECT 1 FROM public.event_metrics m
                           WHERE m.event_id = g.tevo_event_id
                             AND m.captured_at BETWEEN s.sale_at_utc - interval '36 hours' AND s.sale_at_utc + interval '12 hours'),
              now()
-        FROM (SELECT DISTINCT ON (x.sg_sale_id) x.*
-                FROM public.seatgeek_sales_snapshots x
-               WHERE x.sg_event_id = g.sg_event_id AND x.id > g.sg_wm AND x.id <= v_max_id
-                 AND x.sg_sale_id IS NOT NULL AND x.broadcast_price > 0 AND x.sale_at_utc IS NOT NULL
-               ORDER BY x.sg_sale_id, x.pulled_at DESC) s
+        FROM (SELECT d.*,
+                     coalesce(d.cz, public._ml_generic_zone(d.section)) AS zone,
+                     CASE WHEN d.cz IS NOT NULL THEN 'curated'
+                          WHEN public._ml_generic_zone(d.section) IS NOT NULL THEN 'generic' END AS zone_source
+                FROM (SELECT DISTINCT ON (x.sg_sale_id) x.*,
+                             CASE WHEN v_venue IS NOT NULL THEN public.n2s_zone_of(v_knicks_pid, v_venue, public._ml_section_clean(x.section), x.row) END AS cz
+                        FROM public.seatgeek_sales_snapshots x
+                       WHERE x.sg_event_id = g.sg_event_id AND x.id > g.sg_wm AND x.id <= v_max_id
+                         AND x.sg_sale_id IS NOT NULL AND x.broadcast_price > 0 AND x.sale_at_utc IS NOT NULL
+                       ORDER BY x.sg_sale_id, x.pulled_at DESC) d) s
+        LEFT JOIN LATERAL (
+          SELECT zm.getin_price, zm.retail_p25, zm.retail_median, zm.tickets_count, zm.owned_share, zm.captured_at
+            FROM public.zone_metrics zm
+           WHERE zm.event_id = g.tevo_event_id AND zm.zone = s.zone
+             AND zm.captured_at BETWEEN s.sale_at_utc - interval '36 hours' AND s.sale_at_utc
+           ORDER BY zm.captured_at DESC LIMIT 1) zc ON g.tevo_event_id IS NOT NULL AND s.zone IS NOT NULL
         LEFT JOIN LATERAL (
           SELECT d.snapshot_date, avg(d.evo_retail_getin) eg, avg(d.evo_retail_median) em, avg(d.evo_tickets_count)::int et,
                  round(avg(d.evo_owned_tickets)::numeric / nullif(avg(d.evo_tickets_count), 0), 3) own_share,
@@ -334,7 +408,11 @@ BEGIN
       ON CONFLICT (source, sale_key) DO UPDATE SET
         price = EXCLUDED.price, quantity = EXCLUDED.quantity, sale_at = EXCLUDED.sale_at,
         hours_to_event = EXCLUDED.hours_to_event, days_to_event = EXCLUDED.days_to_event,
-        occurs_at = EXCLUDED.occurs_at, cataloged_at = now();
+        occurs_at = EXCLUDED.occurs_at, zone = EXCLUDED.zone, zone_source = EXCLUDED.zone_source,
+        ctx_zone_getin = EXCLUDED.ctx_zone_getin, ctx_zone_p25 = EXCLUDED.ctx_zone_p25,
+        ctx_zone_median = EXCLUDED.ctx_zone_median, ctx_zone_tickets = EXCLUDED.ctx_zone_tickets,
+        ctx_zone_owned_share = EXCLUDED.ctx_zone_owned_share, ctx_zone_at = EXCLUDED.ctx_zone_at,
+        cataloged_at = now();
       GET DIAGNOSTICS v_n = ROW_COUNT;
       v_sg_rows := v_sg_rows + v_n;
       INSERT INTO public.ml_knicks_catalog_state (source, sg_event_id, last_source_id, rows_upserted, last_run_at)
@@ -355,15 +433,30 @@ BEGIN
       IF v_max_id IS NOT NULL THEN
         INSERT INTO public.ml_knicks_sales AS t
           (source, sale_key, sg_event_id, tevo_event_id, season, game_type, opponent, occurs_at, sale_at,
-           hours_to_event, days_to_event, price, quantity, section, row_label, level, row_band, zone,
+           hours_to_event, days_to_event, price, quantity, section, row_label, level, row_band, zone, zone_source, sd_zone,
+           ctx_zone_getin, ctx_zone_p25, ctx_zone_median, ctx_zone_tickets, ctx_zone_owned_share, ctx_zone_at,
            ctx_perf_home_getin, ctx_perf_home_median, ctx_perf_home_games, ctx_stale, cataloged_at)
         SELECT 'seatdata', x.content_hash, g.sg_event_id, g.tevo_event_id, g.season, g.game_type, g.opponent, g.occurs_at, x.sale_timestamp,
                round((extract(epoch FROM g.occurs_at - x.sale_timestamp) / 3600.0)::numeric, 2),
                floor(extract(epoch FROM g.occurs_at - x.sale_timestamp) / 86400.0)::int,
                x.price, x.quantity, x.section, x.row,
-               public._ml_level_of(x.section), public._ml_row_band(x.row), x.zone,
+               public._ml_level_of(x.section), public._ml_row_band(x.row), x.zone_resolved, x.zone_source, x.zone,
+               zc.getin_price, zc.retail_p25, zc.retail_median, zc.tickets_count, zc.owned_share, zc.captured_at,
                pf.getin_median, pf.price_median, pf.event_count, true, now()
-          FROM public.seatdata_sales_snapshots x
+          FROM (SELECT y.*,
+                       coalesce(y.cz, public._ml_generic_zone(y.section)) AS zone_resolved,
+                       CASE WHEN y.cz IS NOT NULL THEN 'curated'
+                            WHEN public._ml_generic_zone(y.section) IS NOT NULL THEN 'generic' END AS zone_source
+                  FROM (SELECT x0.*, CASE WHEN v_venue IS NOT NULL THEN public.n2s_zone_of(v_knicks_pid, v_venue, public._ml_section_clean(x0.section), x0.row) END AS cz
+                          FROM public.seatdata_sales_snapshots x0
+                         WHERE x0.tevo_event_id = g.tevo_event_id AND x0.id > g.sd_wm AND x0.id <= v_max_id
+                           AND x0.price > 0 AND x0.sale_timestamp IS NOT NULL AND x0.content_hash IS NOT NULL) y) x
+          LEFT JOIN LATERAL (
+            SELECT zm.getin_price, zm.retail_p25, zm.retail_median, zm.tickets_count, zm.owned_share, zm.captured_at
+              FROM public.zone_metrics zm
+             WHERE zm.event_id = g.tevo_event_id AND zm.zone = x.zone_resolved
+               AND zm.captured_at BETWEEN x.sale_timestamp - interval '36 hours' AND x.sale_timestamp
+             ORDER BY zm.captured_at DESC LIMIT 1) zc ON x.zone_resolved IS NOT NULL
           LEFT JOIN LATERAL (
             SELECT p.getin_median, p.price_median, p.event_count
               FROM public.performer_metrics_daily p
@@ -371,8 +464,6 @@ BEGIN
                AND p.snapshot_date BETWEEN (x.sale_timestamp AT TIME ZONE 'America/New_York')::date - 2
                                        AND (x.sale_timestamp AT TIME ZONE 'America/New_York')::date
              ORDER BY p.snapshot_date DESC LIMIT 1) pf ON v_knicks_pid IS NOT NULL
-         WHERE x.tevo_event_id = g.tevo_event_id AND x.id > g.sd_wm AND x.id <= v_max_id
-           AND x.price > 0 AND x.sale_timestamp IS NOT NULL AND x.content_hash IS NOT NULL
         ON CONFLICT (source, sale_key) DO NOTHING;
         GET DIAGNOSTICS v_n = ROW_COUNT;
         v_sd_rows := v_sd_rows + v_n;
@@ -399,8 +490,8 @@ END $$;
 
 REVOKE ALL ON FUNCTION public.ml_knicks_catalog_tick(integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.ml_knicks_catalog_tick(integer) TO service_role;
-REVOKE ALL ON FUNCTION public._ml_level_of(text), public._ml_row_band(text) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public._ml_level_of(text), public._ml_row_band(text) TO service_role;
+REVOKE ALL ON FUNCTION public._ml_level_of(text), public._ml_row_band(text), public._ml_generic_zone(text), public._ml_section_clean(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._ml_level_of(text), public._ml_row_band(text), public._ml_generic_zone(text), public._ml_section_clean(text) TO service_role;
 
 -- ---------------------------------------------------------------------------
 -- Training view
@@ -413,6 +504,9 @@ SELECT s.*,
        round(s.price / nullif(s.ctx_evo_getin, 0), 3)  AS price_vs_evo_getin,
        round(s.price / nullif(s.ctx_sg_median, 0), 3)  AS price_vs_sg_median,
        round(s.price / nullif(s.ctx_perf_home_median, 0), 3) AS price_vs_knicks_home_median,
+       round(s.price / nullif(s.ctx_zone_median, 0), 3) AS price_vs_zone_median,
+       round(s.price / nullif(s.ctx_zone_getin, 0), 3)  AS price_vs_zone_getin,
+       round(s.price / nullif(s.ctx_zone_p25, 0), 3)    AS price_vs_zone_p25,
        CASE WHEN s.hours_to_event < 0    THEN 'after_tip'
             WHEN s.hours_to_event < 6    THEN 'h0_6'
             WHEN s.hours_to_event < 24   THEN 'h6_24'
@@ -437,6 +531,9 @@ SELECT s.*,
        round(s.price / nullif(s.ctx_evo_getin, 0), 3)  AS price_vs_evo_getin,
        round(s.price / nullif(s.ctx_sg_median, 0), 3)  AS price_vs_sg_median,
        round(s.price / nullif(s.ctx_perf_home_median, 0), 3) AS price_vs_knicks_home_median,
+       round(s.price / nullif(s.ctx_zone_median, 0), 3) AS price_vs_zone_median,
+       round(s.price / nullif(s.ctx_zone_getin, 0), 3)  AS price_vs_zone_getin,
+       round(s.price / nullif(s.ctx_zone_p25, 0), 3)    AS price_vs_zone_p25,
        CASE WHEN s.hours_to_event < 0    THEN 'after_tip'
             WHEN s.hours_to_event < 6    THEN 'h0_6'
             WHEN s.hours_to_event < 24   THEN 'h6_24'
@@ -466,6 +563,8 @@ END $c$;
 -- ============================================================================
 -- VERIFY: SELECT season, game_type, count(*) FROM public.ml_knicks_games GROUP BY 1,2 ORDER BY 1,2;
 --         SELECT is_regular_season, game_type, count(*) FROM public.ml_knicks_sales GROUP BY 1,2;
+--         SELECT zone_source, zone, count(*), percentile_cont(0.5) WITHIN GROUP (ORDER BY price_vs_zone_median)
+--           FROM public.ml_knicks_sales GROUP BY 1,2 ORDER BY 3 DESC;
 --         SELECT source, season, level, count(*), percentile_cont(0.5) WITHIN GROUP (ORDER BY price)
 --           FROM public.ml_knicks_sales GROUP BY 1,2,3 ORDER BY 1,2,3;
 --         SELECT * FROM cron.job WHERE jobname = 'ml_knicks_catalog_offpeak';
