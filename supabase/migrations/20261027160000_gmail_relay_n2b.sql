@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS public.gmail_relay_msgs (
   thread_id    text NOT NULL,
   internal_at  timestamptz,
   subject      text,
+  sender       text,
   body         text,
   labels       text[] NOT NULL DEFAULT '{}',
   kind         text NOT NULL,          -- sale | step | cancel | other
@@ -159,20 +160,25 @@ BEGIN
     SELECT DISTINCT ON (x->>'id') x->>'id' AS id, x->>'thread_id' AS tid,
            to_timestamp(nullif(x->>'internal_ms', '')::bigint / 1000.0) AS at,
            coalesce(x->>'subject', '') AS subj, left(coalesce(x->>'body', ''), 20000) AS body,
+           coalesce(x->>'from', '') AS sender,
            coalesce(ARRAY(SELECT jsonb_array_elements_text(x->'labels')), '{}') AS labels
       FROM jsonb_array_elements(coalesce(p_payload->'messages', '[]')) x
      WHERE x->>'id' IS NOT NULL AND x->>'thread_id' IS NOT NULL
   ), c AS (
+    -- Only the POS sender is trusted. Anyone can reply into a sale thread
+    -- with a "[SUCCESS] [Step 3/8]" or "CANCEL" subject, and that must not
+    -- mark a sale bought or cancelled.
     SELECT m.*,
-           CASE WHEN subj ~* 'PEDDLING SALE RECEIVED' AND subj !~* 'cancel' THEN 'sale'
+           CASE WHEN sender !~* '(^|[<\s])orders@s4kent\.com>?\s*$'              THEN 'other'
+                WHEN subj ~* 'PEDDLING SALE RECEIVED' AND subj !~* 'cancel' THEN 'sale'
                 WHEN subj ~* '\[SUCCESS\]\s*\[Step [2-8]/\d+\]'             THEN 'step'
-                WHEN subj ~* 'cancel'                                       THEN 'cancel'
+                WHEN subj ~* '\ycancel'                                     THEN 'cancel'
                 ELSE 'other' END AS kind
       FROM m
   )
   INSERT INTO public.gmail_relay_msgs AS g
-         (msg_id, thread_id, internal_at, subject, body, labels, kind, order_no, site_order, step, sale)
-  SELECT id, tid, at, subj, body, labels, kind,
+         (msg_id, thread_id, internal_at, subject, sender, body, labels, kind, order_no, site_order, step, sale)
+  SELECT id, tid, at, subj, sender, body, labels, kind,
          CASE kind
            WHEN 'sale' THEN nullif(public.gmail_relay_parse_sale(subj, body)->>'pos_order', '')::bigint
            WHEN 'step' THEN substring(subj from 'Order #(\d+)')::bigint
@@ -208,9 +214,11 @@ BEGIN
 
   -- 4. what we still need from Gmail
   SELECT coalesce(array_agg(b.thread_id), '{}') INTO v_want_thr
+    -- threads we hold NOTHING for: one whose messages are stored but hold no
+    -- trusted sale is not asked for again (that would refetch it every run)
     FROM (SELECT b.thread_id FROM public.gmail_relay_book b
            WHERE NOT EXISTS (SELECT 1 FROM public.gmail_relay_msgs g
-                              WHERE g.thread_id = b.thread_id AND g.kind = 'sale')
+                              WHERE g.thread_id = b.thread_id)
            ORDER BY b.thread_id LIMIT 50) b;
   SELECT coalesce(array_agg(c), '{}') INTO v_want_msg
     FROM (SELECT c FROM jsonb_array_elements_text(coalesce(p_payload->'candidates', '[]')) c
@@ -229,8 +237,8 @@ BEGIN
               JOIN public.gmail_relay_msgs g ON g.thread_id = bk.thread_id AND g.kind = 'sale'
              WHERE g.sale IS NOT NULL
              ORDER BY g.order_no, g.internal_at) s;
-    -- full sync only when every book thread's sale is known; otherwise a
-    -- missing parse would close an open sale
+    -- full sync only when every book thread has been fetched; otherwise a
+    -- thread not read yet would close an open sale
     v_n2b := public.n2b_ingest_from_apps_script(
                v_items, v_expected, v_complete AND cardinality(v_want_thr) = 0);
   END IF;
@@ -326,6 +334,7 @@ GRANT EXECUTE ON FUNCTION public.gmail_relay_parse_sale(text, text) TO service_r
 COMMENT ON FUNCTION public.gmail_relay_sync(text, jsonb) IS
   'Gmail relay (S4K_GmailRelay.gs). Secret-gated on APPSCRIPT_INGEST_SECRET. '
   'payload: {book:[thread ids with a need2Buy label], book_complete:bool, cancelled:[book thread ids with a cancel label], '
-  'candidates:[recent message ids], messages:[{id,thread_id,internal_ms,subject,body,labels:[names]}], acks:[{id,ok,error}]}. '
+  'candidates:[recent message ids], messages:[{id,thread_id,internal_ms,subject,from,body,labels:[names]}], acks:[{id,ok,error}]}. '
+  'Only messages from orders@s4kent.com count as sale / step / cancel. '
   'returns: {want_msgs, want_threads, searches:[gmail queries], actions:[{id,thread_id,reason,add,remove,read}], n2b, book}. '
   'Decides N2B rows (via n2b_ingest_from_apps_script) and the bought / event-passed label changes (20261027160000).';
