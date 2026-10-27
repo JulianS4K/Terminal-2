@@ -149,6 +149,8 @@ MOVER_SOURCES = {"ev": "tevo", "sg": "seatgeek", "sh": "stubhub", "gt": "gametim
 MOVER_COLS = "event_id,window_days,computed_at,days_to_event," + ",".join(
     f"{p}_price_recent,{p}_price_prior,{p}_cur_price" for p in MOVER_SOURCES)
 ZONE_COLS = ",".join(EXTERNAL_QUERY_VIEWS["zone_metrics"])
+THIN_ZONE_TICKETS = 10          # zone_prices: below this, flag the zone `thin`
+INJURY_MAX_AGE_DAYS = 7         # team_report: injury notes not re-seen since are dropped
 ZONE_TREND_COLS = ("zone,capture_date,days_to_event,tickets_count,getin_price,retail_p25,"
                    "retail_median,retail_p75,vel_tickets_sold,vel_getin_delta_pct,vel_median_delta_pct")
 # event-level context in the feature store (same on every zone row of a day)
@@ -542,9 +544,17 @@ def zone_prices(db, event_id: int) -> dict:
                       "median_change_24h_pct": _chg(r.get("retail_median"), prev.get("retail_median")),
                       "tickets_change_24h": (r.get("tickets_count") or 0) - prev["tickets_count"]
                       if prev.get("tickets_count") is not None else None})
+    for z in zones:  # few tickets → one listing moves the "median"; say so instead of hiding it
+        z["thin"] = (z.get("tickets_count") or 0) < THIN_ZONE_TICKETS
     zones.sort(key=lambda x: -(float(x.get("retail_median") or 0)))
-    return {"event_id": event_id, "zones": zones, "count": len(zones),
-            "freshness": _as_of(rows[0].get("captured_at"))}
+    out = {"event_id": event_id, "zones": zones, "count": len(zones),
+           "freshness": _as_of(rows[0].get("captured_at"))}
+    thin = [z["zone"] for z in zones if z["thin"]]
+    if thin:
+        out["note"] = (f"{len(thin)} of {len(zones)} zones have fewer than {THIN_ZONE_TICKETS} tickets on "
+                       "TEvo (`thin`: true) — their medians rest on a listing or two; check "
+                       "`event_sales` (what actually sold) and `team_report` (SeatGeek depth)")
+    return out
 
 
 def zone_trend(db, event_id: int, zone: str | None = None, days: int = 60) -> dict:
@@ -566,22 +576,58 @@ def zone_trend(db, event_id: int, zone: str | None = None, days: int = 60) -> di
             "freshness": _as_of(last)}
 
 
+def form_mult(ctx: dict | None) -> float:
+    """Team-form price factor — mirrors SQL `_price_form_mult` (mig 20261027190000):
+    1 + 0.30·(home win% − .5)·g/(g+15) + 0.15·(away win% − .5)·g/(g+15), clamped 0.85–1.15,
+    g = games played, so the first weeks of a season barely move it."""
+    adj = 0.0
+    for side, coef in (("home", 0.30), ("away", 0.15)):
+        rec = str(((ctx or {}).get(side) or {}).get("record") or "")
+        parts = rec.split("-")
+        if len(parts) < 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+            continue
+        w, losses = int(parts[0]), int(parts[1])
+        g = w + losses
+        if g:
+            adj += coef * (w / g - 0.5) * g / (g + 15)
+    return round(max(0.85, min(1.15, 1 + adj)), 4)
+
+
 def game_context(db, event_id: int, capture_date: str | None = None) -> dict:
-    """Everything the demand model sees about one game on one day: both teams' records,
-    streaks, seeds and games back; betting line (spread, total, moneylines, win
-    probability); star player and injury status, injured count, player page views; news
-    buzz; rivalry; national TV; weather and alerts; primary (box-office) price vs the
-    resale floor; holiday; competing events nearby. Latest day by default
-    (`capture_date` = YYYY-MM-DD for history). From the nightly feature store."""
+    """What drives demand for one game, live: both teams' records, streaks and seeds, the
+    team-form price factor (`form_mult`), players out per side, Reddit / X buzz, attendance
+    rank, weather alert, and the prediction-market win odds per team (Kalshi / Polymarket).
+    Plus the nightly feature-store row (`feature_store`: betting line, star player and
+    injury status, rivalry, national TV, primary vs resale, holiday, competing events) for
+    the latest day or `capture_date` (YYYY-MM-DD) — marked stale when it is behind.
+    Event ids are TEvo ids."""
+    live = _strip_book(_rpc(db, "get_event_demand_context", {"p_event_id": event_id}) or {})
+    live.pop("note", None)  # internal explainer for the forecaster
+    odds = prediction_markets(db, event_id=event_id, limit=10)
     q = db.table("zone_price_observations").select(",".join(GAME_CONTEXT_COLS)).eq("event_id", event_id)
     if capture_date:
         q = q.eq("capture_date", str(capture_date)[:10])
     rows = q.order("capture_date", desc=True).limit(1).execute().data or []
-    if not rows:
-        return {"event_id": event_id, "context": None, "freshness": _as_of(None),
-                "note": "no feature-store row — the event is not polled or not built yet"}
-    return {"event_id": event_id, "capture_date": rows[0]["capture_date"], "context": rows[0],
-            "freshness": _as_of(rows[0]["capture_date"])}
+    fs = rows[0] if rows else None
+    notes = []
+    if not live:
+        notes.append("no live demand context — the event may not be a team game we track")
+    if fs is None:
+        notes.append("no feature-store row yet (built nightly for polled events)")
+    elif fs.get("opponent_name") is None and fs.get("mkt_spread") is None:
+        notes.append("feature store has no ESPN link for this game yet (no opponent / betting line); "
+                     "records and win odds above come from the live context and prediction markets")
+    out = {"event_id": event_id, "live": live or None, "form_mult": form_mult(live or {}),
+           "win_odds": [{"team": m.get("team_name"), "yes_price": m.get("yes_price"),
+                         "source": m.get("source"), "volume": m.get("volume"),
+                         "updated_at": m.get("updated_at")} for m in odds.get("markets", [])],
+           "feature_store": fs, "capture_date": fs["capture_date"] if fs else None,
+           "freshness": {"live": _as_of(((live or {}).get("home") or {}).get("as_of")),
+                         "win_odds": odds.get("freshness"),
+                         "feature_store": _as_of(fs["capture_date"] if fs else None)}}
+    if notes:
+        out["data_notes"] = notes
+    return out
 
 
 def model_price_prediction(db, event_id: int | None = None, limit: int = 200) -> dict:
@@ -665,8 +711,9 @@ def price_forecast(db, event_id: int, section: str | None = None, max_sections: 
     """Predicted clearing price for an event section: `expected_clearing` with a
     `lo`–`hi` band, `price_heading_24h`, the chance of a sale above ask, and the
     signals behind it (recent SeatGeek sales in the section, current asks x the
-    category's sold-to-ask ratio, section and opponent priors, demand context:
-    chart rank, injuries, attendance, weather). Every forecast carries
+    category's sold-to-ask ratio, section and opponent priors capped at 2x the live ask,
+    demand context: chart rank, injuries, attendance, weather, and team form —
+    `form_mult` from both teams' win/loss records). Every forecast carries
     `confidence` (high/medium/low by realized sales used) and a `warning` when it
     rests on priors alone. Pass `section` as it appears on the marketplace
     (e.g. "226", "floor a"); omit it to forecast the best-selling sections from the
@@ -701,8 +748,10 @@ def price_forecast(db, event_id: int, section: str | None = None, max_sections: 
             out.append(_guard_forecast(_strip_book(f)))
     return {"event_id": event_id, "forecasts": out, "count": len(out), "sections_picked_by": picked_by,
             "method": "weighted blend of realized section sales, current asks x sold-to-ask ratio "
-                      "and section/opponent priors, scaled by demand; band = calibrated p25-p75 "
-                      "drift. Each signal carries its weight; realized_sample_n = sales used."}
+                      "and section/opponent priors (each prior capped at 2x the live ask), scaled by "
+                      "demand and team form (form_mult: both teams' win/loss records, shrunk early "
+                      "in the season); band = calibrated p25-p75 drift. Each signal carries its "
+                      "weight; realized_sample_n = sales used."}
 
 
 _LIST_KEYS = ("games", "roster", "injuries", "transactions", "player_value", "espn_news", "reddit",
@@ -737,6 +786,19 @@ def team_report(db, team: str, since: str | None = None, home_only: bool = True,
         if k in out and out[k] is None:
             out[k] = []
     notes = []
+    # the injury feed keeps a player's last note after they drop off the report — e.g. preseason
+    # "rest" notes; keep only notes seen in the last INJURY_MAX_AGE_DAYS
+    fresh, dropped = [], 0
+    for inj in out.get("injuries") or []:
+        age = _as_of(inj.get("as_of"))["age_hours"] if inj.get("as_of") else None
+        if age is None or age <= INJURY_MAX_AGE_DAYS * 24:
+            fresh.append(inj)
+        else:
+            dropped += 1
+    if "injuries" in out:
+        out["injuries"] = fresh
+    if dropped:
+        notes.append(f"{dropped} injury note(s) older than {INJURY_MAX_AGE_DAYS} days left out (not on the current report)")
     if out.get("games") is not None and not out.get("reddit"):
         notes.append("no Reddit posts stored for this team in the last 7 days")
     thin = [g["event_id"] for g in out.get("games", []) if g.get("data_quality") != "live"]

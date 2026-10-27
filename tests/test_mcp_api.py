@@ -754,14 +754,57 @@ def test_zone_trend_groups_by_zone():
     assert ("eq", ("zone", "Lower"), {}) in db.queries[0].calls
 
 
-def test_game_context_columns_are_public():
-    db = FakeDB(tables={"zone_price_observations": [{"capture_date": "2026-10-26", "mkt_spread": -4.5}]})
+def test_game_context_live_odds_and_feature_store():
+    ctx = {"home": {"record": "0-3", "as_of": _iso(3)}, "away": {"record": "3-0"}, "note": "x",
+           "own_book_gap": {"ours": 1}, "demand_mult": 0.9}
+    db = FakeDB(rpc_data={"get_event_demand_context": ctx},
+                tables={"zone_price_observations": [{"capture_date": "2026-10-26", "mkt_spread": -4.5}],
+                        "prediction_market_xref": [{"market_id": "K1"}],
+                        "prediction_markets": [{"team_name": "New York", "yes_price": 0.61, "source": "kalshi",
+                                                "updated_at": _iso(1)}]})
     out = m.game_context(db, 7, capture_date="2026-10-26T00:00")
-    assert out["capture_date"] == "2026-10-26" and out["context"]["mkt_spread"] == -4.5
-    assert ("eq", ("capture_date", "2026-10-26"), {}) in db.queries[0].calls
+    assert out["live"]["home"]["record"] == "0-3" and "own_book_gap" not in out["live"] and "note" not in out["live"]
+    assert out["form_mult"] == m.form_mult(ctx) and out["form_mult"] < 1
+    assert out["win_odds"][0]["yes_price"] == 0.61
+    assert out["capture_date"] == "2026-10-26" and out["feature_store"]["mkt_spread"] == -4.5
+    assert "data_notes" not in out and out["freshness"]["live"]["stale"] is False
+    fs_q = next(q for q in db.queries if q.table == "zone_price_observations")
+    assert ("eq", ("capture_date", "2026-10-26"), {}) in fs_q.calls
     assert not [c for c in m.GAME_CONTEXT_COLS if "owned" in c or "wholesale" in c]
     assert set(m.GAME_CONTEXT_COLS) <= set(m.EXTERNAL_QUERY_VIEWS["zone_price_observations"])
-    assert m.game_context(FakeDB(), 7)["context"] is None
+    empty = m.game_context(FakeDB(), 7)
+    assert empty["live"] is None and empty["feature_store"] is None and len(empty["data_notes"]) == 2
+    unlinked = m.game_context(FakeDB(rpc_data={"get_event_demand_context": ctx},
+                                     tables={"zone_price_observations": [{"capture_date": "2026-10-25",
+                                                                          "opponent_name": None}]}), 7)
+    assert any("ESPN link" in n for n in unlinked["data_notes"])
+
+
+def test_form_mult_mirrors_sql():
+    assert m.form_mult({"home": {"record": "0-3"}, "away": {"record": "3-0"}}) == 0.9875
+    assert m.form_mult({"home": {"record": "30-10"}, "away": {"record": "10-30"}}) == 1.0273
+    assert m.form_mult({"home": {"record": "60-5"}, "away": {"record": "60-5"}}) == 1.15
+    assert m.form_mult({}) == 1.0 and m.form_mult(None) == 1.0
+    assert m.form_mult({"home": {"record": "0-0"}, "away": {"record": "n/a"}}) == 1.0
+
+
+def test_team_report_drops_stale_injury_notes():
+    rep = {"games": [{"event_id": 1, "data_quality": "live"}], "reddit": [{"t": 1}],
+           "injuries": [{"name": "old", "as_of": _iso(24 * 13)}, {"name": "new", "as_of": _iso(20)},
+                        {"name": "undated"}]}
+    out = m.team_report(FakeDB(rpc_data={"mcp_team_report": rep}), "16303")
+    assert [i["name"] for i in out["injuries"]] == ["new", "undated"]
+    assert any("1 injury note" in n for n in out["data_notes"])
+
+
+def test_zone_prices_flags_thin_zones():
+    rows = [{"event_id": 7, "captured_at": _iso(1), "zone": "Courtside", "tickets_count": 2, "retail_median": 3000},
+            {"event_id": 7, "captured_at": _iso(1), "zone": "U4", "tickets_count": 270, "retail_median": 270}]
+    out = m.zone_prices(FakeDB(tables={"zone_metrics": rows}), 7)
+    z = {r["zone"]: r for r in out["zones"]}
+    assert z["Courtside"]["thin"] is True and z["U4"]["thin"] is False
+    assert "1 of 2 zones" in out["note"]
+    assert "note" not in m.zone_prices(FakeDB(tables={"zone_metrics": rows[1:]}), 7)
 
 
 def test_model_price_prediction_with_and_without_run():
