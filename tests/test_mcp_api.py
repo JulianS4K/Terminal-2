@@ -219,14 +219,16 @@ def test_tier_tool_sets():
     assert ext == {"search", "search_events", "event_market", "event_prices", "top_market_events",
                    "performer_trend", "price_movers", "competing_events", "prediction_markets",
                    "sports_context", "news", "event_weather", "price_forecast", "team_report",
-                   "data_freshness", "query_public_view", "get_started"}
+                   "event_sales", "zone_prices", "zone_trend", "game_context",
+                   "model_price_prediction", "data_freshness", "query_public_view", "get_started"}
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
-                      "event_source_links", "home_stats", "team_book"}
+                      "event_source_links", "home_stats", "team_book", "polling_coverage"}
     # ...and no owned/order column leaks through the public view whitelist.
     for cols in m.EXTERNAL_QUERY_VIEWS.values():
-        assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c]
+        assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c
+                    or "wholesale" in c]
     assert "v_s4kcs_orders" not in m.EXTERNAL_QUERY_VIEWS and "v_s4kcs_orders" in m.QUERY_VIEWS
 
 
@@ -683,3 +685,108 @@ def test_asgi_get_passthrough_and_post_replay():
     assert mgr.calls[-1] == ("POST", body)
     assert ("mcp_count_call", {"p_key_id": 1, "p_tool": "news"}) in db.rpcs
     assert sent[0]["status"] == 200
+
+
+# ---------------------------------------------------------------- market depth tools (2026-10-27)
+
+def _iso(hours_ago: float) -> str:
+    from datetime import timedelta
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+
+
+def test_event_sales_dedupes_and_summarises():
+    rows = [  # newest first, sale 1 stored twice (older pulls re-stored every sale)
+        {"sg_sale_id": "1", "sale_at_utc": "2026-10-26T20:00:00Z", "broadcast_price": 300, "quantity": 2,
+         "section": "226", "row": "5", "pulled_at": _iso(1)},
+        {"sg_sale_id": "1", "sale_at_utc": "2026-10-26T20:00:00Z", "broadcast_price": 300, "quantity": 2,
+         "section": "226", "row": "5", "pulled_at": _iso(30)},
+        {"sg_sale_id": "2", "sale_at_utc": "2026-10-25T20:00:00Z", "broadcast_price": 100, "quantity": 1,
+         "section": "226", "row": "9", "pulled_at": _iso(30)},
+        {"sg_sale_id": "3", "sale_at_utc": "2026-10-24T20:00:00Z", "broadcast_price": 200, "quantity": 4,
+         "section": "227", "row": "1", "pulled_at": _iso(30)},
+    ]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": rows})
+    out = m.event_sales(db, 42, days=999, section=" 22 ", limit=2)
+    assert out["summary"]["sales"] == 3 and out["summary"]["tickets"] == 7
+    assert out["summary"]["price_median"] == 200 and out["summary"]["price_min"] == 100
+    assert [s["sg_sale_id"] for s in out["sales"]] == ["1", "2"]
+    assert "pulled_at" not in out["sales"][0]
+    assert out["freshness"]["stale"] is False
+    calls = db.queries[0].calls
+    assert ("eq", ("tevo_event_id", 42), {}) in calls
+    assert ("ilike", ("section", "%22%"), {}) in calls
+    # min_quantity drops the single
+    out2 = m.event_sales(db, 42, min_quantity=2)
+    assert out2["summary"]["sales"] == 2
+
+
+def test_zone_prices_latest_and_24h_change():
+    rows = [
+        {"event_id": 7, "captured_at": _iso(0.5), "zone": "Lower", "getin_price": 220, "retail_median": 400,
+         "tickets_count": 90},
+        {"event_id": 7, "captured_at": _iso(0.5), "zone": "Upper", "getin_price": 90, "retail_median": 150,
+         "tickets_count": 300},
+        {"event_id": 7, "captured_at": _iso(12), "zone": "Lower", "getin_price": 210, "retail_median": 390,
+         "tickets_count": 95},
+        {"event_id": 7, "captured_at": _iso(25), "zone": "Lower", "getin_price": 200, "retail_median": 380,
+         "tickets_count": 100},
+    ]
+    db = FakeDB(tables={"zone_metrics": rows})
+    out = m.zone_prices(db, 7)
+    z = {r["zone"]: r for r in out["zones"]}
+    assert [r["zone"] for r in out["zones"]] == ["Lower", "Upper"]   # by median, high first
+    assert z["Lower"]["getin_change_24h_pct"] == 10.0 and z["Lower"]["tickets_change_24h"] == -10
+    assert z["Upper"]["getin_change_24h_pct"] is None
+    assert "event_id" not in z["Lower"]
+    sel = db.queries[0].calls[0]
+    assert sel == ("select", (m.ZONE_COLS,), {}) and "owned" not in m.ZONE_COLS and "wholesale" not in m.ZONE_COLS
+    assert m.zone_prices(FakeDB(), 7)["zones"] == []
+
+
+def test_zone_trend_groups_by_zone():
+    rows = [{"zone": "Lower", "capture_date": "2026-10-25", "getin_price": 200},
+            {"zone": "Upper", "capture_date": "2026-10-25", "getin_price": 90},
+            {"zone": "Lower", "capture_date": "2026-10-26", "getin_price": 210}]
+    db = FakeDB(tables={"zone_price_observations": rows})
+    out = m.zone_trend(db, 7, zone="Lower", days=5000)
+    assert set(out["zones"]) == {"Lower", "Upper"} and len(out["zones"]["Lower"]) == 2
+    assert out["days"] == 365
+    assert ("eq", ("zone", "Lower"), {}) in db.queries[0].calls
+
+
+def test_game_context_columns_are_public():
+    db = FakeDB(tables={"zone_price_observations": [{"capture_date": "2026-10-26", "mkt_spread": -4.5}]})
+    out = m.game_context(db, 7, capture_date="2026-10-26T00:00")
+    assert out["capture_date"] == "2026-10-26" and out["context"]["mkt_spread"] == -4.5
+    assert ("eq", ("capture_date", "2026-10-26"), {}) in db.queries[0].calls
+    assert not [c for c in m.GAME_CONTEXT_COLS if "owned" in c or "wholesale" in c]
+    assert set(m.GAME_CONTEXT_COLS) <= set(m.EXTERNAL_QUERY_VIEWS["zone_price_observations"])
+    assert m.game_context(FakeDB(), 7)["context"] is None
+
+
+def test_model_price_prediction_with_and_without_run():
+    db = FakeDB(tables={"v_ml_knicks_price_latest": [{"zone": "Lower", "predicted_price": 410}],
+                        "ml_model_runs": [{"run_id": 3, "trained_at": _iso(2), "metrics": {"mdape_model": 18}}]})
+    out = m.model_price_prediction(db, event_id=99)
+    assert out["count"] == 1 and out["run"]["run_id"] == 3 and "note" not in out
+    assert ("eq", ("tevo_event_id", 99), {}) in db.queries[0].calls
+    assert ("eq", ("status", "ok"), {}) in db.queries[1].calls
+    empty = m.model_price_prediction(FakeDB())
+    assert empty["run"] is None and "note" in empty
+
+
+def test_polling_coverage_internal_summary():
+    db = FakeDB(tables={
+        "listings_poll_pins": [{"pin_key": "knicks_home"}],
+        "listings_poll_league_pins": [{"league": "NBA"}],
+        "v_listings_poll_pinned_events": [
+            {"tevo_event_id": 1, "pin_key": "knicks_home", "sources": ["evo", "sg"], "hours_to_event": 20},
+            {"tevo_event_id": 2, "pin_key": "league:NBA", "sources": ["sg"], "hours_to_event": 200}],
+        "sg_broker_pending": [{"rows_persisted": 5}, {"rows_persisted": 0}, {"rows_persisted": -429},
+                              {"rows_persisted": -1}, {"rows_persisted": None}],
+    })
+    out = m.polling_coverage(db)
+    assert out["games_total"] == 2 and out["games_by_pin"]["knicks_home"]["next_48h"] == 1
+    assert out["games_by_pin"]["knicks_home"]["sources"] == {"evo": 1, "sg": 1}
+    assert out["sg_sales_pulls_24h"] == {"pulls": 5, "ok": 2, "rate_limited": 1, "failed": 1,
+                                         "pending": 1, "new_sales": 5}

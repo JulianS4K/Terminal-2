@@ -8,11 +8,14 @@ The key is hashed (sha256) and resolved by ``mcp_verify_key`` (migs
   event/performer/venue search, SeatGeek market sales pace, price history +
   zone prices + forecast, the daily top-selling chart, performer trends,
   multi-source price movers, competing events, prediction markets, sports
-  state, news, weather, a per-feed freshness report, and read-only queries
-  over a whitelist of public views.
+  state, news, weather, every SeatGeek sale per event, the market by seating
+  zone (live + daily history), per-game demand context from the feature store,
+  the learned price model's predictions, a per-feed freshness report, and
+  read-only queries over a whitelist of public views.
 - ``internal`` (our team): everything external gets, plus our book — pickups,
   per-event orders across every source, home stats, the market chart with our
-  positions excluded, owned events, and the wider ``query_view`` whitelist.
+  positions excluded, owned events, what we poll, and the wider ``query_view``
+  whitelist (owned / wholesale zone columns).
 
 Each tier is its own MCP server, so an external caller never even sees the
 internal tool list, and every external column list is explicit — no owned
@@ -81,6 +84,34 @@ EXTERNAL_QUERY_VIEWS: dict[str, tuple[str, ...]] = {
                            "last_price", "volume", "url", "status", "updated_at"),
     "v_reddit_news_ticker": ("reddit_post_id", "subreddit", "league", "title", "permalink",
                              "link_url", "link_flair_text", "created_utc"),
+    # per-zone market captures (TEvo) — wholesale and owned columns stay internal
+    "zone_metrics": ("event_id", "captured_at", "zone", "zone_source", "tickets_count",
+                     "groups_count", "sections_count", "retail_min", "retail_p25", "retail_median",
+                     "retail_mean", "retail_p75", "retail_p90", "retail_max", "getin_price"),
+    # the daily feature store (one row per event × zone × day) — public market + context only
+    "zone_price_observations": (
+        "event_id", "zone", "zone_source", "capture_date", "captured_at", "performer_id",
+        "performer_name", "venue_id", "venue_capacity", "venue_is_indoor", "opponent_performer_id",
+        "opponent_name", "espn_event_id", "espn_league", "home_away", "event_local_ts", "event_date",
+        "event_dow", "event_is_weekend", "event_start_bucket", "days_to_event", "event_month",
+        "season_year", "holiday_name", "tickets_count", "groups_count", "sections_count",
+        "retail_min", "retail_p25", "retail_median", "retail_mean", "retail_p75", "retail_p90",
+        "retail_max", "getin_price", "fill_rate", "home_wins", "home_losses", "home_win_pct",
+        "home_games_back", "home_playoff_seed", "home_streak", "opp_wins", "opp_losses",
+        "opp_win_pct", "opp_games_back", "opp_playoff_seed", "opp_streak", "mkt_spread",
+        "mkt_over_under", "mkt_home_ml", "mkt_away_ml", "mkt_home_win_prob", "game_attendance",
+        "star_athlete_name", "star_out", "star_injury_status", "home_injured_count",
+        "star_athlete_pv", "roster_wiki_pv_sum", "perf_popularity", "perf_daily_price_median",
+        "perf_daily_getin_median", "market_competing_events", "is_rivalry", "rivalry_name",
+        "rivalry_intensity", "wx_temp_f", "wx_precip_pct", "wx_wind_mph", "wx_summary",
+        "wx_has_alert", "primary_getin", "primary_median", "primary_listings",
+        "primary_flip_margin_pct", "primary_signal", "vel_prev_capture_date", "vel_tickets_sold",
+        "vel_getin_delta_pct", "vel_median_delta_pct", "buzz_home_news_7d", "is_national_tv",
+        "broadcast_networks"),
+    # latest learned price-model predictions (Knicks home games; scripts/train_knicks_price.py)
+    "v_ml_knicks_price_latest": ("run_id", "model", "trained_at", "sg_event_id", "tevo_event_id",
+                                 "opponent", "occurs_at", "zone", "predicted_price", "p10", "p90",
+                                 "ctx_zone_getin", "ctx_zone_median", "predicted_vs_zone_getin"),
 }
 QUERY_VIEWS: dict[str, tuple[str, ...]] = {
     **EXTERNAL_QUERY_VIEWS,
@@ -93,6 +124,9 @@ QUERY_VIEWS: dict[str, tuple[str, ...]] = {
     "seatgeek_orders": ("sg_order_id", "status", "created_at_sg", "sg_event_id", "sg_event_name",
                         "sale_price", "sale_section", "sale_row", "sale_quantity",
                         "payment_total", "tevo_event_id"),
+    "zone_metrics": EXTERNAL_QUERY_VIEWS["zone_metrics"]
+    + ("wholesale_min", "wholesale_median", "owned_groups_count", "owned_tickets_count",
+       "owned_share", "owned_median_retail"),
 }
 FILTER_OPS = ("eq", "neq", "gt", "gte", "lt", "lte", "ilike", "in")
 MAX_ROWS = 500
@@ -114,6 +148,33 @@ WEATHER_COLS = ("tevo_event_id,event_name,occurs_at_local,venue_name,is_indoor,d
 MOVER_SOURCES = {"ev": "tevo", "sg": "seatgeek", "sh": "stubhub", "gt": "gametime", "vd": "vivid"}
 MOVER_COLS = "event_id,window_days,computed_at,days_to_event," + ",".join(
     f"{p}_price_recent,{p}_price_prior,{p}_cur_price" for p in MOVER_SOURCES)
+ZONE_COLS = ",".join(EXTERNAL_QUERY_VIEWS["zone_metrics"])
+ZONE_TREND_COLS = ("zone,capture_date,days_to_event,tickets_count,getin_price,retail_p25,"
+                   "retail_median,retail_p75,vel_tickets_sold,vel_getin_delta_pct,vel_median_delta_pct")
+# event-level context in the feature store (same on every zone row of a day)
+GAME_CONTEXT_COLS = (
+    "capture_date", "performer_id", "performer_name", "opponent_name", "home_away", "espn_league",
+    "event_local_ts", "event_dow", "event_is_weekend", "days_to_event", "holiday_name",
+    "venue_capacity", "venue_is_indoor", "home_wins", "home_losses", "home_win_pct",
+    "home_games_back", "home_playoff_seed", "home_streak", "opp_wins", "opp_losses", "opp_win_pct",
+    "opp_games_back", "opp_playoff_seed", "opp_streak", "mkt_spread", "mkt_over_under",
+    "mkt_home_ml", "mkt_away_ml", "mkt_home_win_prob", "game_attendance", "star_athlete_name",
+    "star_out", "star_injury_status", "home_injured_count", "star_athlete_pv", "roster_wiki_pv_sum",
+    "perf_popularity", "perf_daily_price_median", "perf_daily_getin_median",
+    "market_competing_events", "is_rivalry", "rivalry_name", "rivalry_intensity", "wx_temp_f",
+    "wx_precip_pct", "wx_wind_mph", "wx_summary", "wx_has_alert", "primary_getin",
+    "primary_median", "primary_listings", "primary_flip_margin_pct", "primary_signal",
+    "buzz_home_news_7d", "is_national_tv", "broadcast_networks")
+ML_MODEL = "knicks_price_ridge_v1"
+ML_PRED_COLS = ",".join(EXTERNAL_QUERY_VIEWS["v_ml_knicks_price_latest"])
+ML_RUN_COLS = "run_id,model,trained_at,n_train,n_test,games_train,games_test,metrics,status"
+
+
+def _pctl(xs: list[float], q: float) -> float | None:
+    """Nearest-rank percentile of an already sorted list (None when empty)."""
+    if not xs:
+        return None
+    return xs[min(len(xs) - 1, max(0, int(round(q * (len(xs) - 1)))))]
 
 
 def hash_key(key: str) -> str:
@@ -413,6 +474,139 @@ def event_weather(db, event_id: int) -> dict:
     return rows[0] if rows else {"error": f"event {event_id} not found"}
 
 
+def event_sales(db, event_id: int, days: int = 30, section: str | None = None,
+                min_quantity: int = 1, limit: int = 200) -> dict:
+    """Individual SeatGeek sales for one event (all sellers): sale time (UTC), price per
+    ticket, quantity, section, row — newest first — plus a summary (count, tickets,
+    min / p25 / median / p75 / max price). `section` narrows to one section (case-insensitive
+    fragment, e.g. "226" or "floor"). Covers every game we poll: sales are pulled daily, every
+    6 h inside 48 h of the event and once after it. Event ids are TEvo ids."""
+    days = _clamp(days, 1, 365, 30)
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    q = db.table("seatgeek_sales_snapshots") \
+        .select("sg_sale_id,sale_at_utc,broadcast_price,quantity,section,row,pulled_at") \
+        .eq("tevo_event_id", event_id).gte("sale_at_utc", since)
+    if section and str(section).strip():
+        q = q.ilike("section", f"%{str(section).strip()[:40]}%")
+    rows = q.order("sale_at_utc", desc=True).limit(5000).execute().data or []
+    seen: dict[Any, dict] = {}
+    pulled = None
+    for r in rows:
+        pulled = max(pulled or "", str(r.get("pulled_at") or ""))
+        if (r.get("quantity") or 0) >= _clamp(min_quantity, 1, 100, 1):
+            seen.setdefault(r.get("sg_sale_id"), r)
+    sales = [{k: v for k, v in s.items() if k != "pulled_at"} for s in seen.values()]
+    prices = sorted(float(s["broadcast_price"]) for s in sales if s.get("broadcast_price") is not None)
+    summary = {"sales": len(sales), "tickets": sum(int(s.get("quantity") or 0) for s in sales),
+               "price_min": prices[0] if prices else None, "price_p25": _pctl(prices, 0.25),
+               "price_median": _pctl(prices, 0.5), "price_p75": _pctl(prices, 0.75),
+               "price_max": prices[-1] if prices else None,
+               "last_sale_at": sales[0]["sale_at_utc"] if sales else None}
+    return {"event_id": event_id, "days": days, "section": section, "summary": summary,
+            "sales": sales[:_clamp(limit, 1, MAX_ROWS, 200)], "freshness": _as_of(pulled or None),
+            "note": "price = seller's price per ticket before fees (SeatGeek broadcast_price)"}
+
+
+def zone_prices(db, event_id: int) -> dict:
+    """The market for an event by seating zone right now (e.g. "Lower Center", "Upper
+    Corner"): tickets, listings, sections, get-in, p25 / median / p75 / p90 asks per zone from
+    the latest capture, and each zone's change vs ~24 h earlier. Zones are curated per venue
+    where we have a map, otherwise generic (lower / club / upper / floor). Event ids are TEvo ids."""
+    since = (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
+    rows = db.table("zone_metrics").select(ZONE_COLS).eq("event_id", event_id) \
+        .gte("captured_at", since).order("captured_at", desc=True).limit(3000).execute().data or []
+    if not rows:
+        return {"event_id": event_id, "zones": [], "freshness": _as_of(None),
+                "note": "no zone capture in the last 36 h — the event may not be polled"}
+    latest: dict[str, dict] = {}
+    day_ago: dict[str, dict] = {}
+    for r in rows:  # newest first
+        z = r.get("zone")
+        if z not in latest:
+            latest[z] = r
+        try:
+            t = datetime.fromisoformat(str(r["captured_at"]).replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+        if datetime.now(timezone.utc) - t >= timedelta(hours=24) and z not in day_ago:
+            day_ago[z] = r
+
+    def _chg(now, then):
+        return round((float(now) - float(then)) / float(then) * 100, 1) if now and then else None
+
+    zones = []
+    for z, r in latest.items():
+        prev = day_ago.get(z) or {}
+        zones.append({**{k: v for k, v in r.items() if k != "event_id"},
+                      "getin_change_24h_pct": _chg(r.get("getin_price"), prev.get("getin_price")),
+                      "median_change_24h_pct": _chg(r.get("retail_median"), prev.get("retail_median")),
+                      "tickets_change_24h": (r.get("tickets_count") or 0) - prev["tickets_count"]
+                      if prev.get("tickets_count") is not None else None})
+    zones.sort(key=lambda x: -(float(x.get("retail_median") or 0)))
+    return {"event_id": event_id, "zones": zones, "count": len(zones),
+            "freshness": _as_of(rows[0].get("captured_at"))}
+
+
+def zone_trend(db, event_id: int, zone: str | None = None, days: int = 60) -> dict:
+    """Daily history per seating zone for an event from the feature store: tickets listed,
+    get-in, p25 / median / p75 ask, and the day-over-day change (tickets sold, get-in and
+    median move). `zone` narrows to one zone (exact name from `zone_prices`). Built nightly."""
+    days = _clamp(days, 1, 365, 60)
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    q = db.table("zone_price_observations").select(ZONE_TREND_COLS).eq("event_id", event_id) \
+        .gte("capture_date", since)
+    if zone and str(zone).strip():
+        q = q.eq("zone", str(zone).strip()[:60])
+    rows = q.order("capture_date").limit(2000).execute().data or []
+    series: dict[str, list] = {}
+    for r in rows:
+        series.setdefault(r.pop("zone", None), []).append(r)
+    last = rows[-1]["capture_date"] if rows else None
+    return {"event_id": event_id, "days": days, "zones": series, "count": len(rows),
+            "freshness": _as_of(last)}
+
+
+def game_context(db, event_id: int, capture_date: str | None = None) -> dict:
+    """Everything the demand model sees about one game on one day: both teams' records,
+    streaks, seeds and games back; betting line (spread, total, moneylines, win
+    probability); star player and injury status, injured count, player page views; news
+    buzz; rivalry; national TV; weather and alerts; primary (box-office) price vs the
+    resale floor; holiday; competing events nearby. Latest day by default
+    (`capture_date` = YYYY-MM-DD for history). From the nightly feature store."""
+    q = db.table("zone_price_observations").select(",".join(GAME_CONTEXT_COLS)).eq("event_id", event_id)
+    if capture_date:
+        q = q.eq("capture_date", str(capture_date)[:10])
+    rows = q.order("capture_date", desc=True).limit(1).execute().data or []
+    if not rows:
+        return {"event_id": event_id, "context": None, "freshness": _as_of(None),
+                "note": "no feature-store row — the event is not polled or not built yet"}
+    return {"event_id": event_id, "capture_date": rows[0]["capture_date"], "context": rows[0],
+            "freshness": _as_of(rows[0]["capture_date"])}
+
+
+def model_price_prediction(db, event_id: int | None = None, limit: int = 200) -> dict:
+    """The learned price model's expected sale price per zone for upcoming games, with a
+    p10–p90 band and the zone's current get-in / median for comparison, plus the model's
+    held-out accuracy (median absolute % error vs simple baselines). Retrained daily on
+    every catalogued sale. Coverage today: New York Knicks home games. Pass `event_id`
+    (TEvo id) for one game, or omit it for all of them."""
+    q = db.table("v_ml_knicks_price_latest").select(ML_PRED_COLS)
+    if event_id is not None:
+        q = q.eq("tevo_event_id", event_id)
+    rows = q.order("occurs_at").order("zone").limit(_clamp(limit, 1, MAX_ROWS, 200)).execute().data or []
+    run = db.table("ml_model_runs").select(ML_RUN_COLS).eq("model", ML_MODEL).eq("status", "ok") \
+        .order("run_id", desc=True).limit(1).execute().data or []
+    out = {"model": ML_MODEL, "predictions": rows, "count": len(rows),
+           "run": run[0] if run else None,
+           "freshness": _as_of(run[0]["trained_at"] if run else None),
+           "method": "ridge regression on log price over catalogued sales (zone, level, row band, "
+                     "opponent, time to tip, weekday, quantity) and the zone/event market at sale "
+                     "time; band = held-out residual p10-p90. Price = pair sold now, before fees."}
+    if not run:
+        out["note"] = "the model has not completed a training run yet"
+    return out
+
+
 FORECAST_MAX_SECTIONS = 5
 # Keys of predict_event_clearing_price's answer that describe OUR book — never external.
 _BOOK_KEYS = ("own_book_gap",)
@@ -609,7 +803,8 @@ def query_public_view(db, view: str, columns: list[str] | None = None,
                       descending: bool = False, limit: int = 100) -> dict:
     """Read-only query over a whitelisted PUBLIC view (events, SeatGeek sales,
     daily listing ladder, competitors, market chart, performer metrics,
-    prediction markets, news). filters: [{column, op, value}], op in
+    prediction markets, news, zone captures, the daily feature store, the price
+    model's predictions). filters: [{column, op, value}], op in
     eq|neq|gt|gte|lt|lte|ilike|in (value is a list for `in`). Call with an
     unknown view to list views + columns."""
     return _query_view(db, EXTERNAL_QUERY_VIEWS, view, columns, filters, order_by, descending, limit)
@@ -680,6 +875,35 @@ def owned_events(db, days: int = 30) -> dict:
     return {"events": _rpc(db, "get_owned_events_upcoming", {"p_days": _clamp(days, 1, 365, 30)}) or []}
 
 
+def polling_coverage(db) -> dict:
+    """What we poll (internal): the team and league pins, how many upcoming games each
+    covers and on which sources (evo / gt / sg), and the last 24 h of SeatGeek sales pulls
+    (ok / rate-limited / failed, new sales stored)."""
+    pins = db.table("listings_poll_pins").select("pin_key,performer_id,venue_name,sources,enabled") \
+        .limit(500).execute().data or []
+    leagues = db.table("listings_poll_league_pins").select("league,sources,enabled") \
+        .limit(100).execute().data or []
+    games = db.table("v_listings_poll_pinned_events").select("tevo_event_id,pin_key,sources,hours_to_event") \
+        .limit(20000).execute().data or []
+    per_pin: dict[str, dict] = {}
+    for g in games:
+        p = per_pin.setdefault(g.get("pin_key"), {"games": 0, "next_48h": 0, "sources": {}})
+        p["games"] += 1
+        if (g.get("hours_to_event") or 1e9) <= 48:
+            p["next_48h"] += 1
+        for s in g.get("sources") or []:
+            p["sources"][s] = p["sources"].get(s, 0) + 1
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    pulls = db.table("sg_broker_pending").select("rows_persisted").eq("scope", "sales") \
+        .gte("fired_at", since).limit(20000).execute().data or []
+    rp = [r.get("rows_persisted") for r in pulls]
+    return {"pins": pins, "league_pins": leagues, "games_by_pin": per_pin, "games_total": len(games),
+            "sg_sales_pulls_24h": {"pulls": len(rp), "ok": sum(1 for x in rp if x is not None and x >= 0),
+                                   "rate_limited": rp.count(-429), "failed": rp.count(-1),
+                                   "pending": rp.count(None),
+                                   "new_sales": sum(x for x in rp if x and x > 0)}}
+
+
 def query_view(db, view: str, columns: list[str] | None = None,
                filters: list[dict] | None = None, order_by: str | None = None,
                descending: bool = False, limit: int = 100) -> dict:
@@ -692,10 +916,11 @@ def query_view(db, view: str, columns: list[str] | None = None,
 EXTERNAL_TOOLS: tuple[Callable, ...] = (
     search, search_events, event_market, event_prices, top_market_events, performer_trend,
     price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
-    price_forecast, team_report, data_freshness, query_public_view, get_started)
+    price_forecast, team_report, event_sales, zone_prices, zone_trend, game_context,
+    model_price_prediction, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
     pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
-    query_view)
+    polling_coverage, query_view)
 
 INSTRUCTIONS = (
     "S4K live-event market data (concerts, sports, theater). First time here? Call "
@@ -709,13 +934,17 @@ INSTRUCTIONS = (
     "`team_report` — live inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one "
     "answer. To predict a price, call `price_forecast` "
     "(per section; omit section for the best sellers) and read `expected_clearing` with its "
-    "`lo`-`hi` band, `confidence` and any `warning`. Read-only.")
+    "`lo`-`hi` band, `confidence` and any `warning`; for Knicks home games also "
+    "`model_price_prediction` (learned per-zone model). Drill down with `event_sales` "
+    "(every sale), `zone_prices` (live market by seating zone), `zone_trend` (daily zone "
+    "history) and `game_context` (records, line, injuries, buzz, weather). Read-only.")
 
 QUICK_START = [
     "search('knicks') → performer + event ids",
     "team_report('New York Knicks') → every home game: live get-in/median/tickets on TEvo, "
     "SeatGeek and GoTickets, daily trend, Kalshi odds, injuries, roster, news",
     "price_forecast(event_id) → expected clearing price per section with a band and confidence",
+    "zone_prices(event_id) / event_sales(event_id) → live asks by zone / every sale, newest first",
     "data_freshness() → how old each feed is before you trust a number",
 ]
 

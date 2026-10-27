@@ -1,8 +1,8 @@
 # S4K Market MCP — onboarding (5 minutes)
 
-> **Doc version:** v1.2.0 (2026-10-23) — +`team_report` (a team's live TEvo/SeatGeek/GoTickets inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one call), +`get_started` and the `s4k://onboarding` resource / `get_started` prompt served on connect; `price_forecast` now returns `confidence` + `warning` and anchors a no-sales estimate to the live market. · v1.1.0 (2026-10-23) — +`price_forecast` (predicted clearing price per section with a band and the signals behind it) and the "Predict a price" recipe. · v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
+> **Doc version:** v1.3.0 (2026-10-27) — +5 market-depth tools: `event_sales` (every SeatGeek sale, now for every game we poll), `zone_prices` (live market by seating zone with 24 h change), `zone_trend` (daily zone history), `game_context` (records, betting line, injuries, buzz, rivalry, TV, weather, primary vs resale for one game), `model_price_prediction` (learned per-zone price model, Knicks home games); `query_public_view` gains `zone_metrics`, `zone_price_observations`, `v_ml_knicks_price_latest`; new §3d recipes. · v1.2.0 (2026-10-23) — +`team_report` (a team's live TEvo/SeatGeek/GoTickets inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one call), +`get_started` and the `s4k://onboarding` resource / `get_started` prompt served on connect; `price_forecast` now returns `confidence` + `warning` and anchors a no-sales estimate to the live market. · v1.1.0 (2026-10-23) — +`price_forecast` (predicted clearing price per section with a band and the signals behind it) and the "Predict a price" recipe. · v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
 
-Live-event market data for your bot, over the [Model Context Protocol](https://modelcontextprotocol.io): event / performer / venue search, SeatGeek sales pace, price history and zone prices, the daily top-sellers chart, performer trends, multi-source price movers, competing events, prediction markets, sports state, news and weather. Read-only. Every answer tells you how fresh it is.
+Live-event market data for your bot, over the [Model Context Protocol](https://modelcontextprotocol.io): event / performer / venue search, every SeatGeek sale and the sales pace, the market by seating zone (live and daily), price history, two price predictors, the daily top-sellers chart, performer trends, multi-source price movers, competing events, per-game demand context (records, betting line, injuries, news buzz, weather), prediction markets, sports state and news. Read-only. Every answer tells you how fresh it is.
 
 This file is served at `/developers/docs.md` on the host you got your key from, so an agent can read it directly.
 
@@ -81,6 +81,11 @@ performer_trend(performer_id=51427, days=90)
 event_prices(event_id=3226757)               → get-in history, zones, weather, 24 h direction
 price_forecast(event_id=3226757)             → predicted clearing price for the best-selling sections
 team_report(team="New York Knicks")          → a team's whole market + context in one call (§3c)
+event_sales(event_id=…, section="226")      → every sale: time, price, qty, section, row + summary (§3d)
+zone_prices(event_id=…)                      → live asks by seating zone, change vs 24 h ago (§3d)
+zone_trend(event_id=…, zone="Lower Center")  → that zone's daily history
+game_context(event_id=…)                     → records, line, injuries, buzz, rivalry, TV, weather
+model_price_prediction(event_id=…)           → learned per-zone price with p10–p90 (Knicks home games)
 prediction_markets(event_id=…) | (performer_id=…) | (league="NFL")
 sports_context(league="nfl")   news(league="NFL")   event_weather(event_id=…)
 query_public_view(view="sg_market_chart", filters=[{"column":"rank","op":"lte","value":10}])
@@ -113,12 +118,29 @@ team_report(team="16303", since="2026-10-01", max_games=5, home_only=false)
 
 Per upcoming game (home games by default): `evo_now` / `sg_now` (get-in, median, p25–p75, tickets on TEvo and SeatGeek), `gt_seen_24h` (GoTickets), `sg_sales_30d`, `trend_daily` (one point per day since `since`), `kalshi` (win odds), `weather` and `data_quality` (`live` = captured in the last 6 h, `stale`, `none`). For the team: `standing`, `recent_results` (with the spread), `roster`, `injuries`, `transactions`, `player_value` (ticket-price lift when a player plays), `espn_news`, `reddit`, `kalshi_futures`, `team_market_daily` and `sales_daily`. `since` defaults to when we started polling the team's games. Everything is processed metrics — never raw listings — and `data_notes` lists any gap (no Reddit posts, games without a recent capture). Follow with `price_forecast(event_id)` for a price.
 
+## 3d. Market depth — sales, zones, context, the learned model
+
+```text
+event_sales(event_id=3465633, days=14, section="floor", min_quantity=2, limit=100)
+zone_prices(event_id=3465633)
+zone_trend(event_id=3465633, zone="Upper Corner", days=30)
+game_context(event_id=3465633)                     # or capture_date="2026-10-25" for an earlier day
+model_price_prediction()                           # all upcoming Knicks home games
+```
+
+- **`event_sales`** — individual SeatGeek sales (all sellers), newest first, with `summary` (sales, tickets, min / p25 / median / p75 / max). Every game we poll gets its sales pulled daily, every 6 h in the last 48 h and once after the game, so recent and final sales are both there. `price` is the seller's price per ticket before fees.
+- **`zone_prices`** — the current market per seating zone (curated per venue where we have a seat map, else lower / club / upper / floor): tickets, listings, sections, get-in, p25–p90 asks, plus `getin_change_24h_pct`, `median_change_24h_pct` and `tickets_change_24h`. A shrinking ticket count with a rising get-in is a zone selling through.
+- **`zone_trend`** — one row per zone per day from the nightly feature store: tickets, get-in, p25 / median / p75 and the day-over-day move (`vel_tickets_sold`, `vel_getin_delta_pct`, `vel_median_delta_pct`).
+- **`game_context`** — what drives demand for that game: both teams' records, streaks, seeds and games back; spread, total, moneylines and win probability; star player and injury status; news buzz; rivalry; national TV; weather and alerts; the box-office (primary) price vs the resale floor; holiday; competing events.
+- **`model_price_prediction`** — a model trained daily on every catalogued sale predicts what a pair in each zone sells for now, with a p10–p90 band. `run.metrics` reports its held-out error next to two baselines (the zone's median ask, the zone's historical median), so you can see how much to trust it. Today it covers New York Knicks home games; `price_forecast` covers every event per section.
+
 ## 4. Reading the answers
 
 - **Ids.** `event_id` / `tevo_event_id` are TEvo event ids; `performer_id` / `venue_id` likewise. Get them from `search` or `search_events`.
 - **Time.** `occurs_at_local` is the venue's local time; fields ending `_utc` are UTC.
-- **Freshness.** Tools return `freshness: {as_of, age_hours, stale}` for the rows they used (`stale` = older than 48 h). `data_freshness` lists every feed. Cadences: SeatGeek sales, prediction markets, sports state and news update within minutes; the chart, movers and performer trends are daily; **the TEvo get-in price feed (`event_prices`) has been paused since 2026-09-27 and reports `stale: true`** until it resumes.
+- **Freshness.** Tools return `freshness: {as_of, age_hours, stale}` for the rows they used (`stale` = older than 48 h). `data_freshness` lists every feed. Cadences: SeatGeek sales, prediction markets, sports state and news update within minutes; zone captures follow each game's polling cadence (minutes near the event, daily far out); the chart, movers, performer trends, `zone_trend` / `game_context` (feature store) and the learned model are daily; **the TEvo get-in price feed (`event_prices`) has been paused since 2026-09-27 and reports `stale: true`** until it resumes.
 - **Prices** are listing/sale prices in USD as published by the marketplace (SeatGeek `broadcast_price` is the seller's price before fees).
+- **Zones vs sections.** `price_forecast` and `event_sales` work per marketplace section ("226"); `zone_prices`, `zone_trend` and `model_price_prediction` per seating zone (a group of sections). Zone names come from `zone_prices`.
 - **Prediction markets** give implied probability 0..1 (`yes_price`) from Kalshi / Polymarket, linked to our events and teams.
 
 ## 5. Limits and errors
