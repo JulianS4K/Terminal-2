@@ -40,6 +40,12 @@ const N2B = {
   PAGE: 100,
   // Beyond this the run is partial, so it must not close missing sales.
   MAX_THREADS: 1500,
+  // A sale email never changes, so its parse is cached per thread and a run
+  // only reads threads it has not seen. Without this every run re-read every
+  // labelled thread (getMessages + body + labels, ~5 Gmail calls each), which
+  // at every 5 minutes used up the account's daily Gmail quota.
+  CACHE_PREFIX: 'n2b_it1_',
+  CACHE_SECS: 21600,
 };
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -116,22 +122,62 @@ function n2bCollect_() {
   let start = 0;
   let threads = 0;
   let complete = true;
+  const all = [];
 
   while (true) {
     const page = GmailApp.search(N2B.QUERY, start, N2B.PAGE);
     threads += page.length;
-    page.forEach(thread => {
-      const it = n2bParseThread_(thread);
-      if (!it) { unparsed.push(thread.getId()); return; }
-      if (seen[it.pos_order]) return;          // one row per sale
-      seen[it.pos_order] = true;
-      items.push(it);
-    });
+    page.forEach(t => all.push(t));
     if (page.length < N2B.PAGE) break;
     start += N2B.PAGE;
     if (start >= N2B.MAX_THREADS) { complete = false; break; }
   }
+
+  // Cancellation is the one part of a sale that can change, so it is read
+  // fresh every run, but with two searches rather than per-thread reads.
+  const cancelled = n2bCancelledIds_();
+
+  const cache = CacheService.getScriptCache();
+  const keys = all.map(t => N2B.CACHE_PREFIX + t.getId());
+  const hits = keys.length ? cache.getAll(keys) : {};
+  const fresh = {};
+  let parsed = 0;
+
+  all.forEach(thread => {
+    const id = thread.getId();
+    const key = N2B.CACHE_PREFIX + id;
+    let it = null;
+    if (hits[key]) { try { it = JSON.parse(hits[key]); } catch (e) { it = null; } }
+    if (!it) {
+      it = n2bParseThread_(thread);
+      parsed++;
+      if (!it) { unparsed.push(id); return; }
+      fresh[key] = JSON.stringify(it);
+    }
+    it.cancelled = !!(it.cancelled || cancelled[id]);
+    if (seen[it.pos_order]) return;          // one row per sale
+    seen[it.pos_order] = true;
+    items.push(it);
+  });
+  if (Object.keys(fresh).length) cache.putAll(fresh, N2B.CACHE_SECS);
+  console.log(`N2B: parsed ${parsed} new thread(s), ${all.length - parsed} from cache`);
   return { items, unparsed, threads, complete };
+}
+
+/** Thread ids in the labelled book that are cancelled: a cancel label, or any
+ *  message with CANCEL in its subject. Two searches, no per-thread reads. */
+function n2bCancelledIds_() {
+  const out = {};
+  const labels = N2B.CANCEL_LABELS
+    .map(l => 'label:' + l.toLowerCase().replace(/[\/ ]/g, '-')).join(' OR ');
+  // The CANCEL query drops the PEDDLING subject term: Gmail matches terms per
+  // message, and the cancel notice is a different message in the thread. A
+  // miss here is still caught when the cached parse expires (CACHE_SECS).
+  const book = N2B.QUERY.replace(/\s*subject:"[^"]*"/, '');
+  [N2B.QUERY + ' (' + labels + ')', book + ' subject:CANCEL'].forEach(q => {
+    GmailApp.search(q, 0, 500).forEach(t => { out[t.getId()] = true; });
+  });
+  return out;
 }
 
 function n2bParseThread_(thread) {
