@@ -8,6 +8,7 @@ rows per table / RPC.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -220,7 +221,7 @@ def test_tier_tool_sets():
                    "performer_trend", "price_movers", "competing_events", "prediction_markets",
                    "sports_context", "news", "event_weather", "price_forecast", "team_report",
                    "event_sales", "zone_prices", "zone_trend", "game_context",
-                   "model_price_prediction", "data_freshness", "query_public_view", "get_started"}
+                   "model_price_prediction", "seat_map", "data_freshness", "query_public_view", "get_started"}
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
@@ -845,3 +846,114 @@ def test_market_depth_edges():
     db2 = FakeDB()
     assert m.zone_trend(db2, 7)["zones"] == {}
     assert not [c for c in db2.queries[0].calls if c[0] == "eq" and c[1][0] == "zone"]
+
+
+# ---------------------------------------------------------------- seat map artifact
+
+_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+        '<script>alert(1)</script>'
+        '<polygon fill="#999999" points="0,0 1,1" data-section-id="Lower Level Sideline 107" onclick="x()"/>'
+        '<polygon fill="#999999" points="0,0 1,1" data-section-id="Upper Level 419" class="mapnode"/>'
+        '<path fill="#999999" d="M0 0" data-section-id="Floor 1"></path>'
+        '<polygon fill="#999999" points="0,0" data-section-id="Middle Level Corner 222"/></svg>')
+
+
+def _seat_db(sales=None, sections=None, events=None):
+    return FakeDB(tables={
+        "events": [{"id": 9, "name": "Nets at Knicks", "venue_id": 896, "configuration_id": 3845,
+                    "venue_name": "MSG", "occurs_at_local": "2026-11-02T19:30:00-05:00"}] if events is None else events,
+        "venue_section_map": [{"section_raw": "107", "seatmap_key": "lower level sideline 107", "configuration_id": 3845},
+                              {"section_raw": "107", "seatmap_key": "stale key 107", "configuration_id": 0}],
+        "seatgeek_sales_snapshots": sales if sales is not None else [
+            {"sg_sale_id": "a", "section": "107", "broadcast_price": 500, "pulled_at": _iso(2)},
+            {"sg_sale_id": "a", "section": "107", "broadcast_price": 500, "pulled_at": _iso(30)},
+            {"sg_sale_id": "b", "section": "107", "broadcast_price": 700, "pulled_at": _iso(2)},
+            {"sg_sale_id": "c", "section": "419", "broadcast_price": 150, "pulled_at": _iso(2)},
+            {"sg_sale_id": "d", "section": "VIP East", "broadcast_price": 900, "pulled_at": _iso(2)},
+            {"sg_sale_id": "e", "section": "1", "broadcast_price": None, "pulled_at": _iso(2)}],
+        "section_metrics": sections or [],
+    })
+
+
+def test_seat_map_sold_paints_sections_and_returns_artifacts(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    out = m.seat_map(_seat_db(), 9, metric="sold", days=999)
+    assert [type(c).__name__ for c in out] == ["TextContent", "EmbeddedResource", "EmbeddedResource"]
+    s = json.loads(out[0].text)
+    assert s["sections_on_map"] == 4 and s["sections_priced"] == 2 and s["days"] == 180
+    assert s["sections_unplaced"] == {"vip east": 1}
+    top = {r["section"]: r for r in s["sections"]}
+    assert top["Lower Level Sideline 107"]["price"] == 500 and top["Lower Level Sideline 107"]["sales"] == 2
+    assert top["Upper Level 419"]["price"] == 150          # placed by the trailing section number
+    svg, page = out[1].resource, out[2].resource
+    assert svg.mime_type == "image/svg+xml" and page.mime_type == "text/html"
+    assert str(page.uri) == "s4k://seatmap/9/sold.html"
+    assert 'fill="#999999"' not in svg.text and m.SEATMAP_NODATA in svg.text   # Floor 1 / 222: no data
+    assert "<title>Lower Level Sideline 107: $500 median sale (2 sales)</title>" in svg.text
+    assert "</polygon>" in svg.text                                   # self-closing → opened to hold <title>
+    assert "<title>Floor 1: no data</title></path>" in svg.text and svg.text.count("</path>") == 1
+    assert "Nets at Knicks" in page.text and "Median sale" in page.text and s["legend"]
+
+
+def test_seat_map_ask_metric_and_errors(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    t = _iso(1)
+    secs = [{"section": "107", "tickets_count": 4, "retail_median": 410, "captured_at": t},
+            {"section": "107 ", "tickets_count": 1, "retail_median": 900, "captured_at": t},
+            {"section": "222", "tickets_count": 10, "retail_median": None, "captured_at": t},
+            {"section": "419", "tickets_count": 6, "retail_median": 120, "captured_at": _iso(30)}]
+    db = _seat_db(sections=secs)
+    s = json.loads(m.seat_map(db, 9, metric="ASK")[0].text)
+    assert s["metric"] == "ask" and s["days"] is None and s["sections_priced"] == 1
+    assert s["sections"][0] == {"section": "Lower Level Sideline 107", "price": 410, "tickets": 5}
+    vsm = next(q for q in db.queries if q.table == "venue_section_map")
+    assert ("eq", ("platform", "evo"), {}) in vsm.calls
+    assert json.loads(m.seat_map(_seat_db(events=[]), 9)[0].text)["error"] == "event 9 not found"
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: None)
+    assert "no seat map" in json.loads(m.seat_map(_seat_db(), 9)[0].text)["error"]
+    empty = json.loads(m.seat_map(FakeDB(tables={"events": [{"id": 9, "venue_id": None}]}), 9)[0].text)
+    assert "no seat map" in empty["error"]
+
+
+def test_seat_map_no_sales_is_all_grey(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    out = m.seat_map(_seat_db(sales=[]), 9)
+    s = json.loads(out[0].text)
+    assert s["sections_priced"] == 0 and s["legend"] == [] and s["median_overall"] is None
+    assert out[1].resource.text.count(m.SEATMAP_NODATA) == 4
+
+
+def test_seatmap_svg_fetch_sanitizes_and_caches(monkeypatch):
+    m._svg_cache._d.clear()
+    calls = []
+
+    class R:
+        text = '<svg><script>x</script><foreignObject><b/></foreignObject><g onload="y()"/></svg>'
+
+    def fetch(v, c, f, a):
+        calls.append((v, c, f))
+        return R()
+    monkeypatch.setattr(m._seatmap, "_fetch_tevo_seatmap_file", fetch)
+    svg = m._seatmap_svg(896, 3845)
+    assert svg == "<svg><g/></svg>" and m._seatmap_svg(896, 3845) == svg and len(calls) == 1
+
+    def boom(*a):
+        raise RuntimeError("down")
+    monkeypatch.setattr(m._seatmap, "_fetch_tevo_seatmap_file", boom)
+    assert m._seatmap_svg(1, 2) is None and m._seatmap_svg(1, 2) is None   # failure cached too
+    m._svg_cache._d.clear()
+
+
+def test_weighted_median():
+    assert m._weighted_median([(100, 1), (300, 5), (200, 1)]) == 300
+    assert m._weighted_median([(5, 1)]) == 5
+
+
+def test_seat_map_over_mcp_returns_content_blocks(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    srv = m._make_server("t", m.EXTERNAL_TOOLS, lambda: _seat_db())
+    tool = next(t for t in anyio.run(srv.list_tools) if t.name == "seat_map")
+    assert tool.output_schema is None and set(tool.input_schema["properties"]) == {"event_id", "metric", "days"}
+    res = anyio.run(srv.call_tool, "seat_map", {"event_id": 9})
+    assert not res.is_error and [c.type for c in res.content] == ["text", "resource", "resource"]
+    assert res.content[2].resource.mime_type == "text/html"

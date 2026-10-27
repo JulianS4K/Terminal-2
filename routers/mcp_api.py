@@ -34,8 +34,11 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import html
 import inspect
 import json
+import re
+import statistics
 import threading
 import time
 from collections.abc import Callable
@@ -47,7 +50,9 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import EmbeddedResource, TextContent, TextResourceContents, ToolAnnotations
+
+from routers import seatmap as _seatmap  # the same read-only TEvo map fetch as /api/store/seatmap
 
 INTERNAL, EXTERNAL = "internal", "external"
 DEFAULT_RATE_PER_MIN, DEFAULT_DAILY_QUOTA = 60, 2000
@@ -653,6 +658,195 @@ def model_price_prediction(db, event_id: int | None = None, limit: int = 200) ->
     return out
 
 
+# --------------------------------------------------------------------------
+# Seat map — the venue map coloured by price, returned as an artifact
+# --------------------------------------------------------------------------
+SEATMAP_TTL_S = 86400.0                    # maps are immutable per venue/configuration
+_svg_cache = _TTLCache(SEATMAP_TTL_S, max_items=32)
+SEATMAP_COLORS = ("#d6eaf8", "#85c1e9", "#3498db", "#21618c", "#0b2e4a")   # cheap → expensive
+SEATMAP_NODATA = "#d5d8dc"
+CONTENT_TOOLS = frozenset({"seat_map"})   # return MCP content blocks, not a JSON object
+_SECTION_TAG = re.compile(
+    r"<(polygon|path|rect|ellipse|circle|polyline)\b([^>]*?)\bdata-section-id=\"([^\"]+)\"([^>]*?)(/?)>", re.I)
+_SVG_UNSAFE = (re.compile(r"<script\b.*?</script\s*>", re.I | re.S),
+               re.compile(r"<foreignObject\b.*?</foreignObject\s*>", re.I | re.S),
+               re.compile(r"\son[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*')", re.I))
+
+
+def _seatmap_svg(venue_id: int, configuration_id: int) -> str | None:
+    """The TEvo map SVG for a venue configuration (public read host, GET only — same
+    fetch as routers/seatmap.py), scripts and event handlers stripped, cached for a day."""
+    key = ("svg", venue_id, configuration_id)
+    hit = _svg_cache.get(key)
+    if hit is not None:
+        return hit or None
+    try:
+        r = _seatmap._fetch_tevo_seatmap_file(venue_id, configuration_id, "map.svg", "image/svg+xml")
+        svg = r.text
+    except Exception:
+        svg = ""
+    for pat in _SVG_UNSAFE:
+        svg = pat.sub("", svg)
+    _svg_cache.put(key, svg)
+    return svg or None
+
+
+def _norm_section(s: Any) -> str:
+    return " ".join(str(s or "").lower().split())
+
+
+def _seatmap_values(db, event_id: int, metric: str, days: int) -> tuple[dict[str, list], Any]:
+    """Per marketplace section: the values to colour by, and the as-of time.
+    sold → every distinct SeatGeek sale price in `days`; ask → the latest TEvo capture's
+    median ask per section, weighted by tickets (each section's value repeated per ticket
+    would be heavy, so (value, weight) pairs)."""
+    out: dict[str, list] = {}
+    if metric == "ask":
+        rows = db.table("section_metrics").select("section,tickets_count,retail_median,captured_at") \
+            .eq("event_id", event_id).order("captured_at", desc=True).limit(600).execute().data or []
+        latest = rows[0]["captured_at"] if rows else None
+        for r in rows:
+            if r.get("captured_at") == latest and r.get("retail_median") is not None:
+                out.setdefault(_norm_section(r.get("section")), []).append(
+                    (float(r["retail_median"]), int(r.get("tickets_count") or 1)))
+        return out, latest
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = db.table("seatgeek_sales_snapshots").select("sg_sale_id,section,broadcast_price,pulled_at") \
+        .eq("tevo_event_id", event_id).gte("sale_at_utc", since).limit(5000).execute().data or []
+    seen: dict[Any, dict] = {}
+    pulled = None
+    for r in rows:
+        pulled = max(pulled or "", str(r.get("pulled_at") or ""))
+        seen.setdefault(r.get("sg_sale_id"), r)
+    for r in seen.values():
+        if r.get("broadcast_price") is not None:
+            out.setdefault(_norm_section(r.get("section")), []).append((float(r["broadcast_price"]), 1))
+    return out, pulled or None
+
+
+def _weighted_median(pairs: list[tuple[float, int]]) -> float:
+    pts = sorted(pairs)
+    half, run = sum(w for _, w in pts) / 2, 0
+    for v, w in pts:
+        run += w
+        if run >= half:
+            return v
+    return pts[-1][0]  # pragma: no cover — unreachable for non-empty input
+
+
+def seat_map(db, event_id: int, metric: str = "sold", days: int = 30) -> list[TextContent | EmbeddedResource]:
+    """The event's seat map coloured by price per section — an artifact you can show the
+    user. metric = sold (median SeatGeek sale price per section over `days`, default) or ask
+    (median TEvo asking price per section right now). Returns a JSON summary (legend, the
+    priced sections, sections we could not place), the coloured map as an SVG resource and a
+    self-contained HTML page (map + legend + section table) — render the HTML resource as an
+    artifact. Sections without data are grey. Event ids are TEvo ids."""
+    metric = "ask" if str(metric).lower() == "ask" else "sold"
+    days = _clamp(days, 1, 180, 30)
+
+    def _text(obj: dict) -> list:
+        return [TextContent(type="text", text=json.dumps(obj, default=str))]
+
+    ev = (db.table("events").select("id,name,occurs_at_local,venue_id,venue_name,configuration_id,configuration_name")
+          .eq("id", event_id).limit(1).execute().data or [])
+    if not ev:
+        return _text({"error": f"event {event_id} not found"})
+    ev = ev[0]
+    venue, cfg = ev.get("venue_id"), ev.get("configuration_id")
+    svg = _seatmap_svg(int(venue), int(cfg)) if venue and cfg else None
+    if not svg:
+        return _text({"error": "no seat map for this event's venue configuration", "event": ev})
+
+    svg_keys = {_norm_section(m[2]): m[2] for m in _SECTION_TAG.findall(svg)}  # normalized → as drawn
+    by_last: dict[str, list[str]] = {}
+    for k in svg_keys:
+        by_last.setdefault(k.split()[-1], []).append(k)
+    platform = "evo" if metric == "ask" else "sg"
+    cw_rows = db.table("venue_section_map").select("section_raw,seatmap_key,configuration_id") \
+        .eq("tevo_venue_id", venue).eq("platform", platform).in_("configuration_id", [cfg, 0]) \
+        .limit(2000).execute().data or []
+    crosswalk: dict[str, str] = {}
+    for r in sorted(cw_rows, key=lambda r: r.get("configuration_id") != cfg):  # this configuration first
+        crosswalk.setdefault(_norm_section(r.get("section_raw")), _norm_section(r.get("seatmap_key")))
+
+    values, as_of = _seatmap_values(db, event_id, metric, days)
+    placed: dict[str, list] = {}
+    unplaced: dict[str, int] = {}
+    for sec, pairs in values.items():
+        key = crosswalk.get(sec)
+        if key not in svg_keys:
+            cands = by_last.get(sec.split()[-1] if sec else "", [])
+            key = cands[0] if len(cands) == 1 else None
+        if key:
+            placed.setdefault(key, []).extend(pairs)
+        else:
+            unplaced[sec] = sum(w for _, w in pairs)
+
+    priced = {k: (_weighted_median(p), sum(w for _, w in p)) for k, p in placed.items()}
+    vals = sorted(v for v, _ in priced.values())
+    breaks = [vals[min(len(vals) - 1, int(len(vals) * q / 5))] for q in range(1, 5)] if vals else []
+
+    def _color(v: float) -> str:
+        return SEATMAP_COLORS[sum(1 for b in breaks if v >= b)]
+
+    unit = "median sale" if metric == "sold" else "median ask"
+
+    def _paint(m: re.Match) -> str:
+        tag, pre, sec_id, post, close = m.groups()
+        attrs = re.sub(r'\sfill="[^"]*"', "", f"{pre}{post}")
+        hit = priced.get(_norm_section(sec_id))
+        fill = _color(hit[0]) if hit else SEATMAP_NODATA
+        title = (f"{sec_id}: ${hit[0]:,.0f} {unit} ({hit[1]} {'sales' if metric == 'sold' else 'tickets'})"
+                 if hit else f"{sec_id}: no data")
+        open_tag = f'<{tag}{attrs} data-section-id="{html.escape(sec_id)}" fill="{fill}">'
+        return f"{open_tag}<title>{html.escape(title)}</title></{tag}>" if close else f"{open_tag}<title>{html.escape(title)}</title>"
+
+    painted = _SECTION_TAG.sub(_paint, svg)
+    edges = [vals[0]] + breaks + [vals[-1]] if vals else []
+    legend = [{"color": SEATMAP_COLORS[i], "from": round(edges[i]), "to": round(edges[i + 1])}
+              for i in range(len(edges) - 1)] if edges else []
+    top = sorted(({"section": svg_keys[k], "price": round(v), ("sales" if metric == "sold" else "tickets"): n}
+                  for k, (v, n) in priced.items()), key=lambda r: -r["price"])
+    summary = {
+        "event": {k: ev.get(k) for k in ("id", "name", "occurs_at_local", "venue_name", "configuration_name")},
+        "metric": metric, "days": days if metric == "sold" else None,
+        "sections_on_map": len(svg_keys), "sections_priced": len(priced),
+        "sections_unplaced": dict(sorted(unplaced.items(), key=lambda kv: -kv[1])[:20]),
+        "legend": legend, "sections": top[:60],
+        "median_overall": round(statistics.median(vals)) if vals else None,
+        "freshness": _as_of(as_of),
+        "artifact": "the text/html resource is a self-contained page (map, legend, table) — show it "
+                    "to the user as an artifact; the image/svg+xml resource is the map alone",
+    }
+    title = f"{ev.get('name')} — {'sold prices' if metric == 'sold' else 'asking prices'} by section"
+    legend_html = "".join(f'<span class="sw" style="background:{x["color"]}"></span>${x["from"]:,}–${x["to"]:,} '
+                          for x in legend) + f'<span class="sw" style="background:{SEATMAP_NODATA}"></span>no data'
+    rows_html = "".join(f"<tr><td>{html.escape(r['section'])}</td><td>${r['price']:,}</td>"
+                        f"<td>{r.get('sales', r.get('tickets'))}</td></tr>" for r in top[:40])
+    page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>
+<style>:root{{color-scheme:light dark;--bg:#fff;--fg:#1b1f24;--mut:#5f6b7a;--line:#e3e7ec}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#111418;--fg:#e8ebef;--mut:#9aa5b1;--line:#2a3038}}}}
+body{{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}}
+h1{{font-size:18px;margin:0 0 4px}}p{{margin:0 0 12px;color:var(--mut)}}
+.map svg{{width:100%;height:auto;max-width:900px;display:block}}
+.legend{{margin:8px 0 12px}}.sw{{display:inline-block;width:14px;height:14px;border-radius:3px;margin:0 4px 0 10px;vertical-align:-2px}}
+table{{border-collapse:collapse;margin-top:16px;min-width:280px}}td,th{{padding:4px 10px;border-bottom:1px solid var(--line);text-align:left}}
+</style></head><body><h1>{html.escape(str(ev.get('name')))}</h1>
+<p>{html.escape(str(ev.get('venue_name') or ''))} · {html.escape(str(ev.get('occurs_at_local') or '')[:16].replace('T', ' '))} ·
+{'median sale price per section, last ' + str(days) + ' days (SeatGeek, before fees)' if metric == 'sold' else 'median asking price per section now (TEvo)'}
+· {len(priced)} of {len(svg_keys)} sections priced · as of {html.escape(str(as_of or 'n/a'))[:16]}</p>
+<div class="legend">{legend_html}</div><div class="map">{painted}</div>
+<table><tr><th>Section</th><th>{'Median sale' if metric == 'sold' else 'Median ask'}</th><th>{'Sales' if metric == 'sold' else 'Tickets'}</th></tr>{rows_html}</table>
+</body></html>"""
+    base = f"s4k://seatmap/{event_id}/{metric}"
+    return [TextContent(type="text", text=json.dumps(summary, default=str)),
+            EmbeddedResource(type="resource", resource=TextResourceContents(
+                uri=f"{base}.svg", mime_type="image/svg+xml", text=painted)),
+            EmbeddedResource(type="resource", resource=TextResourceContents(
+                uri=f"{base}.html", mime_type="text/html", text=page))]
+
+
 FORECAST_MAX_SECTIONS = 5
 # Keys of predict_event_clearing_price's answer that describe OUR book — never external.
 _BOOK_KEYS = ("own_book_gap",)
@@ -979,7 +1173,7 @@ EXTERNAL_TOOLS: tuple[Callable, ...] = (
     search, search_events, event_market, event_prices, top_market_events, performer_trend,
     price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
     price_forecast, team_report, event_sales, zone_prices, zone_trend, game_context,
-    model_price_prediction, data_freshness, query_public_view, get_started)
+    model_price_prediction, seat_map, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
     pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
     polling_coverage, query_view)
@@ -999,7 +1193,8 @@ INSTRUCTIONS = (
     "`lo`-`hi` band, `confidence` and any `warning`; for Knicks home games also "
     "`model_price_prediction` (learned per-zone model). Drill down with `event_sales` "
     "(every sale), `zone_prices` (live market by seating zone), `zone_trend` (daily zone "
-    "history) and `game_context` (records, line, injuries, buzz, weather). Read-only.")
+    "history) and `game_context` (records, line, injuries, buzz, weather). `seat_map` returns the "
+    "venue map coloured by price per section as an HTML page — show it as an artifact. Read-only.")
 
 QUICK_START = [
     "search('knicks') → performer + event ids",
@@ -1007,6 +1202,7 @@ QUICK_START = [
     "SeatGeek and GoTickets, daily trend, Kalshi odds, injuries, roster, news",
     "price_forecast(event_id) → expected clearing price per section with a band and confidence",
     "zone_prices(event_id) / event_sales(event_id) → live asks by zone / every sale, newest first",
+    "seat_map(event_id) → the venue map coloured by sale price per section (HTML artifact)",
     "data_freshness() → how old each feed is before you trust a number",
 ]
 
@@ -1036,8 +1232,11 @@ def _make_server(name: str, tools: tuple[Callable, ...], get_db: Callable[[], An
         sig = inspect.signature(getattr(fn, "__wrapped__", fn))
         bound.__signature__ = sig.replace(parameters=list(sig.parameters.values())[1:])
         bound.__annotations__ = {k: v for k, v in fn.__annotations__.items() if k != "db"}
+        # tools that return MCP content blocks (seat_map: text + SVG + HTML) are unstructured;
+        # the rest return JSON objects
         srv.add_tool(bound, name=fn.__name__, description=fn.__doc__,
-                     annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+                     annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+                     structured_output=False if fn.__name__ in CONTENT_TOOLS else None)
 
     # Onboarding on first connect: clients that list resources/prompts surface these next to
     # the tools; `get_started` (a tool) covers clients that only call tools.

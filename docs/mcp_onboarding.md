@@ -1,6 +1,6 @@
 # S4K Market MCP — onboarding (5 minutes)
 
-> **Doc version:** v1.3.1 (2026-10-27) — `price_forecast` adds team form (`form_mult` from both teams' win/loss records) and caps every prior at 2× the live ask; `game_context` answers live (records, form, players out, buzz, win odds) with the feature store as a second layer; `zone_prices` flags `thin` zones; `team_report` drops injury notes not seen in 7 days. · v1.3.0 (2026-10-27) — +5 market-depth tools: `event_sales` (every SeatGeek sale, now for every game we poll), `zone_prices` (live market by seating zone with 24 h change), `zone_trend` (daily zone history), `game_context` (records, betting line, injuries, buzz, rivalry, TV, weather, primary vs resale for one game), `model_price_prediction` (learned per-zone price model, Knicks home games); `query_public_view` gains `zone_metrics`, `zone_price_observations`, `v_ml_knicks_price_latest`; new §3d recipes. · v1.2.0 (2026-10-23) — +`team_report` (a team's live TEvo/SeatGeek/GoTickets inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one call), +`get_started` and the `s4k://onboarding` resource / `get_started` prompt served on connect; `price_forecast` now returns `confidence` + `warning` and anchors a no-sales estimate to the live market. · v1.1.0 (2026-10-23) — +`price_forecast` (predicted clearing price per section with a band and the signals behind it) and the "Predict a price" recipe. · v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
+> **Doc version:** v1.4.0 (2026-10-27) — +`seat_map`: the venue's seat map coloured by sold (or asking) price per section, returned as an SVG and a self-contained HTML page to show as an artifact (§3e). · v1.3.1 (2026-10-27) — `price_forecast` adds team form (`form_mult` from both teams' win/loss records) and caps every prior at 2× the live ask; `game_context` answers live (records, form, players out, buzz, win odds) with the feature store as a second layer; `zone_prices` flags `thin` zones; `team_report` drops injury notes not seen in 7 days. · v1.3.0 (2026-10-27) — +5 market-depth tools: `event_sales` (every SeatGeek sale, now for every game we poll), `zone_prices` (live market by seating zone with 24 h change), `zone_trend` (daily zone history), `game_context` (records, betting line, injuries, buzz, rivalry, TV, weather, primary vs resale for one game), `model_price_prediction` (learned per-zone price model, Knicks home games); `query_public_view` gains `zone_metrics`, `zone_price_observations`, `v_ml_knicks_price_latest`; new §3d recipes. · v1.2.0 (2026-10-23) — +`team_report` (a team's live TEvo/SeatGeek/GoTickets inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one call), +`get_started` and the `s4k://onboarding` resource / `get_started` prompt served on connect; `price_forecast` now returns `confidence` + `warning` and anchors a no-sales estimate to the live market. · v1.1.0 (2026-10-23) — +`price_forecast` (predicted clearing price per section with a band and the signals behind it) and the "Predict a price" recipe. · v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
 
 Live-event market data for your bot, over the [Model Context Protocol](https://modelcontextprotocol.io): event / performer / venue search, every SeatGeek sale and the sales pace, the market by seating zone (live and daily), price history, two price predictors, the daily top-sellers chart, performer trends, multi-source price movers, competing events, per-game demand context (records, betting line, injuries, news buzz, weather), prediction markets, sports state and news. Read-only. Every answer tells you how fresh it is.
 
@@ -86,6 +86,7 @@ zone_prices(event_id=…)                      → live asks by seating zone, ch
 zone_trend(event_id=…, zone="Lower Center")  → that zone's daily history
 game_context(event_id=…)                     → records, line, injuries, buzz, rivalry, TV, weather
 model_price_prediction(event_id=…)           → learned per-zone price with p10–p90 (Knicks home games)
+seat_map(event_id=…)                         → the venue map coloured by price per section — an HTML artifact (§3e)
 prediction_markets(event_id=…) | (performer_id=…) | (league="NFL")
 sports_context(league="nfl")   news(league="NFL")   event_weather(event_id=…)
 query_public_view(view="sg_market_chart", filters=[{"column":"rank","op":"lte","value":10}])
@@ -134,6 +135,22 @@ model_price_prediction()                           # all upcoming Knicks home ga
 - **`zone_trend`** — one row per zone per day from the nightly feature store: tickets, get-in, p25 / median / p75 and the day-over-day move (`vel_tickets_sold`, `vel_getin_delta_pct`, `vel_median_delta_pct`).
 - **`game_context`** — what drives demand for that game. `live`: both teams' records, streaks and seeds, players out per side, Reddit / X buzz, attendance rank, weather alert; `form_mult` (the team-form factor `price_forecast` applies); `win_odds` from Kalshi / Polymarket. `feature_store` (nightly): spread, total, moneylines, star player and injury status, rivalry, national TV, box-office vs resale floor, holiday, competing events — `freshness.feature_store` says how old it is, and `data_notes` says when a game has no ESPN link yet.
 - **`model_price_prediction`** — a model trained daily on every catalogued sale predicts what a pair in each zone sells for now, with a p10–p90 band. `run.metrics` reports its held-out error next to two baselines (the zone's median ask, the zone's historical median), so you can see how much to trust it. Today it covers New York Knicks home games; `price_forecast` covers every event per section.
+
+## 3e. The seat map (an artifact)
+
+```text
+seat_map(event_id=3465617)                       # median SeatGeek sale per section, last 30 days
+seat_map(event_id=3465617, metric="ask")         # median asking price per section right now (TEvo)
+seat_map(event_id=3465617, days=7)
+```
+
+Returns three MCP content blocks:
+
+1. **JSON summary** — `legend` (five price bands, cheap → expensive), `sections` (each priced section with its median and the sales or tickets behind it), `sections_on_map` / `sections_priced`, `sections_unplaced` (marketplace section names we could not place on the drawing), `freshness`.
+2. **`image/svg+xml`** (`s4k://seatmap/<event>/<metric>.svg`) — the venue's own seat map with every section filled by its price band (grey = no data) and a hover title per section ("Middle Level Sideline 225: $259 median sale (6 sales)").
+3. **`text/html`** (`s4k://seatmap/<event>/<metric>.html`) — a self-contained page: the coloured map, the legend and a section table; light and dark mode. **Show this one to the user as an artifact** (Claude: render it as an HTML artifact; other clients: save and open it).
+
+Sections are matched through our marketplace-section → map crosswalk for the event's venue configuration, falling back to the section number. Sections with a single sale are coloured like the rest — check the sales count in the table before reading much into one.
 
 ## 4. Reading the answers
 
