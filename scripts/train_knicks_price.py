@@ -19,8 +19,10 @@ Model : ridge regression on log(price), numpy only (no sklearn in this repo, sam
 Eval  : the most recent TEST_SHARE of games (by tip-off) are held out. Reported errors:
         median absolute % error of the model, the plain ridge alone, and two baselines (the
         zone's median ask at sale time, and the zone's median training price), plus a rolling
-        backtest (train on the first k games, score the next 3). The final model is refit on
-        all games; p10/p90 bands come from the held-out log residuals.
+        backtest (train on the first k games, score the next 3) and a forward backtest (train
+        on every sale before a date, score the next 14 days of sales). Sales are weighted by
+        recency (half-life RECENCY_HALF_LIFE_DAYS). The final model is refit on all games;
+        p10/p90 bands come from the held-out log residuals.
 Output: one ml_model_runs row (status ok | skipped | failed) and, when ok, one
         ml_price_predictions row per upcoming game × zone: the expected sale price for a
         pair sold now. Nothing upstream is called.
@@ -37,6 +39,7 @@ import json
 import math
 import os
 import sys
+from datetime import datetime, timezone
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from typing import Any
@@ -63,6 +66,12 @@ ANCHOR_COLS = ("ctx_sg_median", "ctx_evo_median", "ctx_perf_home_median")
 ANCHOR_WEIGHT = 0.5
 ROLLING_MIN_GAMES = 8
 ROLLING_STEP = 3
+# recency: a sale's weight halves every RECENCY_HALF_LIFE_DAYS before the newest training sale.
+# Backtest 2026-10-28: by-game rolling MdAPE 13.0% -> 11.8%; next-2-weeks windows 14.2/16.7/13.9%
+# -> 13.5/16.3/12.4% (14, 21, 30 and 45 days tried; 30 best overall).
+RECENCY_HALF_LIFE_DAYS = 30.0
+FORWARD_WINDOW_DAYS = 14
+FORWARD_WINDOWS = 3
 
 CATEGORICAL = ("zone", "level", "row_band", "opponent", "horizon_bucket", "game_dow", "game_type", "qty_bucket")
 # feature name → (column, transform)
@@ -76,7 +85,7 @@ NUMERIC: dict[str, tuple[str, str]] = {
     "log_hours_to_event": ("hours_to_event", "log1p_pos"),
     "zone_owned_share": ("ctx_zone_owned_share", "raw"),
 }
-TRAIN_COLUMNS = sorted({"sg_event_id", "occurs_at", "price", "quantity", "level", "row_band", "zone",
+TRAIN_COLUMNS = sorted({"sg_event_id", "occurs_at", "sale_at", "price", "quantity", "level", "row_band", "zone",
                         "opponent", "horizon_bucket", "game_dow", "game_type"} | {c for c, _ in NUMERIC.values()})
 
 
@@ -182,12 +191,36 @@ class FeatureSpec:
 # ---------------------------------------------------------------------------
 # model
 # ---------------------------------------------------------------------------
-def fit_ridge(X: np.ndarray, y: np.ndarray, lam: float = LAMBDA) -> np.ndarray:
-    """Ridge with an unpenalised intercept; returns [intercept, coef...]."""
+def fit_ridge(X: np.ndarray, y: np.ndarray, lam: float = LAMBDA, w: np.ndarray | None = None) -> np.ndarray:
+    """Ridge with an unpenalised intercept and optional row weights; returns [intercept, coef...]."""
     Xi = np.hstack([np.ones((X.shape[0], 1)), X])
+    w = np.ones(X.shape[0]) if w is None else w
     P = lam * np.eye(Xi.shape[1])
     P[0, 0] = 0.0
-    return np.linalg.solve(Xi.T @ Xi + P, Xi.T @ y)
+    return np.linalg.solve(Xi.T @ (w[:, None] * Xi) + P, Xi.T @ (w * y))
+
+
+def _sale_ts(row: dict) -> float:
+    """Epoch seconds of the sale, nan when missing or unparseable."""
+    v = row.get("sale_at")
+    try:
+        t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return math.nan
+    return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).timestamp()
+
+
+def recency_weights(rows: list[dict]) -> np.ndarray:
+    """Weight halving every RECENCY_HALF_LIFE_DAYS before the newest sale, scaled to mean 1;
+    a sale without a time gets the mean weight."""
+    t = np.array([_sale_ts(r) for r in rows])
+    ok = np.isfinite(t)
+    if not ok.any():
+        return np.ones(len(rows))
+    age = (t[ok].max() - np.where(ok, t, t[ok].max())) / 86400
+    w = 0.5 ** (age / RECENCY_HALF_LIFE_DAYS)
+    w = w / w[ok].mean()
+    return np.where(ok, w, 1.0)
 
 
 def predict_log(X: np.ndarray, beta: np.ndarray) -> np.ndarray:
@@ -219,9 +252,10 @@ def fit_model(rows: list[dict]) -> tuple[FeatureSpec, np.ndarray, np.ndarray | N
     log(price / anchor)."""
     spec = FeatureSpec.fit(rows)
     X, y = spec.matrix(rows), np.log([float(r["price"]) for r in rows])
+    w = recency_weights(rows)
     a = np.array([_anchor(r) for r in rows])
     ok = np.isfinite(a)
-    return spec, fit_ridge(X, y), (fit_ridge(X[ok], y[ok] - a[ok]) if ok.any() else None)
+    return spec, fit_ridge(X, y, w=w), (fit_ridge(X[ok], y[ok] - a[ok], w=w[ok]) if ok.any() else None)
 
 
 def predict_model(model: tuple[FeatureSpec, np.ndarray, np.ndarray | None], rows: list[dict]) -> np.ndarray:
@@ -280,6 +314,30 @@ def rolling_backtest(rows: list[dict]) -> list[dict]:
     return out
 
 
+def forward_backtest(rows: list[dict]) -> list[dict]:
+    """The realistic test: train on every sale before a cut-off, score the next
+    FORWARD_WINDOW_DAYS of sales on every game. The last FORWARD_WINDOWS windows before the
+    newest sale; windows with fewer than 20 test sales or 300 training sales are skipped."""
+    t = np.array([_sale_ts(r) for r in rows])
+    if not np.isfinite(t).any():
+        return []
+    span = FORWARD_WINDOW_DAYS * 86400
+    newest, out = np.nanmax(t), []
+    for i in range(FORWARD_WINDOWS, 0, -1):
+        cut = newest - i * span
+        train = [r for r, x in zip(rows, t) if x < cut]
+        test = [r for r, x in zip(rows, t) if cut <= x < cut + span]
+        if len(test) < 20 or len(train) < MIN_ROWS:
+            continue
+        y = np.array([float(r["price"]) for r in test])
+        p = np.exp(predict_model(fit_model(train), test))
+        out.append({"from": datetime.fromtimestamp(cut, timezone.utc).date().isoformat(),
+                    "days": FORWARD_WINDOW_DAYS, "train_sales": len(train), "test_sales": len(test),
+                    "mdape_model": mdape(y, p),
+                    "median_bias_pct": round(float(np.median((p - y) / y)) * 100, 2)})
+    return out
+
+
 def evaluate(train: list[dict], test: list[dict]) -> tuple[dict, np.ndarray]:
     model = fit_model(train)
     y_test = np.array([float(r["price"]) for r in test])
@@ -322,6 +380,7 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
     metrics["within_band_p10_p90"] = round(float(np.mean((resid >= lo) & (resid <= hi))), 3) if len(resid) else None
     metrics["band_log"] = [round(lo, 4), round(hi, 4)]
 
+    metrics["forward"] = forward_backtest(sales)
     rolling = rolling_backtest(sales)
     metrics["rolling"] = rolling
     metrics["rolling_mean_mdape"] = round(float(np.mean([w["mdape_model"] for w in rolling])), 2) if rolling else None
@@ -366,7 +425,8 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
     return {
         "status": "ok", "n_train": len(train), "n_test": len(test),
         "games_train": len(g_train), "games_test": len(g_test), "metrics": metrics,
-        "feature_spec": {**spec.to_json(), "anchor": list(ANCHOR_COLS), "anchor_weight": ANCHOR_WEIGHT},
+        "feature_spec": {**spec.to_json(), "anchor": list(ANCHOR_COLS), "anchor_weight": ANCHOR_WEIGHT,
+                         "recency_half_life_days": RECENCY_HALF_LIFE_DAYS},
         "coef": {"(intercept)": round(float(beta[0]), 6),
                  **{n: round(float(b), 6) for n, b in zip(spec.names, beta[1:])},
                  **({"anchored": {"(intercept)": round(float(beta_anchored[0]), 6),

@@ -131,3 +131,46 @@ def test_rolling_backtest_windows_and_metrics():
     assert "mdape_plain_ridge" in m and "median_bias_pct" in m
     assert res["feature_spec"]["anchor"] == list(tkp.ANCHOR_COLS) and "anchored" in res["coef"]
     assert tkp.train_and_predict(_synthetic(games=6, per_game=60), [])["metrics"]["rolling_mean_mdape"] is None
+
+
+def test_recency_weights_halve_per_half_life_and_default_missing():
+    rows = [{"sale_at": "2026-10-28T00:00:00Z"}, {"sale_at": "2026-09-28T00:00:00+00:00"},
+            {"sale_at": None}, {"sale_at": "2026-10-28T00:00:00"}]
+    w = tkp.recency_weights(rows)
+    assert w[1] / w[0] == pytest.approx(0.5 ** (30 / tkp.RECENCY_HALF_LIFE_DAYS))
+    assert w[2] == 1.0 and w[3] == pytest.approx(w[0])
+    assert np.mean(w[[0, 1, 3]]) == pytest.approx(1.0)
+    assert np.all(tkp.recency_weights([{"sale_at": "garbage"}, {}]) == 1.0)
+    assert math.isnan(tkp._sale_ts({"sale_at": "not a time"}))
+
+
+def test_weighted_ridge_follows_heavier_rows():
+    X = np.zeros((4, 1))
+    y = np.log(np.array([100.0, 100.0, 200.0, 200.0]))
+    even = tkp.fit_ridge(X, y)
+    heavy_new = tkp.fit_ridge(X, y, w=np.array([0.1, 0.1, 1.0, 1.0]))
+    assert math.exp(even[0]) == pytest.approx(math.sqrt(100 * 200))
+    assert math.exp(heavy_new[0]) > 180
+
+
+def _dated(rows: list[dict], start_day: int = 1) -> list[dict]:
+    """Spread synthetic sales over ~60 days, newest last."""
+    for i, r in enumerate(rows):
+        r["sale_at"] = f"2026-{8 + (start_day + i * 60 // len(rows)) // 31:02d}-" \
+                       f"{1 + (start_day + i * 60 // len(rows)) % 31:02d}T12:00:00Z"
+    return rows
+
+
+def test_forward_backtest_scores_the_next_two_weeks():
+    rows = _dated(_synthetic(games=10, per_game=120))
+    windows = tkp.forward_backtest(rows)
+    assert len(windows) == tkp.FORWARD_WINDOWS
+    assert [w["days"] for w in windows] == [14, 14, 14]
+    assert windows[0]["from"] < windows[1]["from"] < windows[2]["from"]
+    assert all(w["test_sales"] >= 20 and w["train_sales"] >= tkp.MIN_ROWS for w in windows)
+    assert all(w["mdape_model"] < 20 and abs(w["median_bias_pct"]) < 10 for w in windows)
+    assert tkp.forward_backtest(_synthetic(games=4, per_game=20)) == []          # no sale times
+    assert tkp.forward_backtest(_dated(_synthetic(games=4, per_game=20))) == []  # too few sales
+    res = tkp.train_and_predict(rows, [])
+    assert res["metrics"]["forward"] == windows
+    assert res["feature_spec"]["recency_half_life_days"] == tkp.RECENCY_HALF_LIFE_DAYS
