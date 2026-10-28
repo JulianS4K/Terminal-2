@@ -105,11 +105,14 @@ def test_not_ours_and_other_markets():
 
 
 def test_unverified_and_unknown_markets_block_the_accept():
-    for src in ("Vivid Seats", "StubHub", "Gametime.Co", "Viagogo", "Ticketmaster"):
+    for src in ("StubHub", "Gametime.Co", "Viagogo", "Ticketmaster"):
         p = a.plan_cover(_order(s4k_source=src), owned=False, now=NOW)
         assert p["go"] is False and p["blocked_by"] == [f"accept sale on {src}"]
-    vivid = {x["step"]: x for x in a.plan_cover(_order(s4k_source="Vivid Seats"), owned=False, now=NOW)["steps"]}
-    assert vivid[1]["request"]["url"].endswith("getOrder?orderId=7596791") and vivid[6]["request"] is None
+    vp = a.plan_cover(_order(s4k_source="Vivid Seats"), owned=False, now=NOW)
+    vivid = {x["step"]: x for x in vp["steps"]}
+    assert vp["go"] is True and vivid[1]["request"]["url"].endswith("getOrder?orderId=7596791")
+    assert vivid[6]["request"]["url"].endswith("/webservices/v1/confirmOrder") and vivid[6]["sent"] is False
+    assert vivid[6]["body"] == {"orderId": "7596791", "shipNow": False}
     odd = a.plan_cover(_order(s4k_source="Somewhere", sub_source="weird"), owned=False, now=NOW)
     s = {x["step"]: x for x in odd["steps"]}
     assert s[4]["detail"]["reason"] == "unsupported source weird" and s[5]["ok"] is False
