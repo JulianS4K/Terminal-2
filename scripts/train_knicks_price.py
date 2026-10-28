@@ -49,6 +49,8 @@ MIN_GAMES = 4
 MIN_ROWS = 300
 TEST_SHARE = 0.2
 LAMBDA = 3.0
+# zones that are a catch-all, not a seating area: never priced
+UNPRICED_ZONES = frozenset({"unmapped"})
 
 CATEGORICAL = ("zone", "level", "row_band", "opponent", "horizon_bucket", "game_dow", "game_type", "qty_bucket")
 # feature name → (column, transform)
@@ -264,6 +266,8 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
         mode[c] = {z: cnt.most_common(1)[0][0] for z, cnt in per_zone.items()}
     preds = []
     for u in upcoming:
+        if not u.get("zone") or u["zone"] in UNPRICED_ZONES:
+            continue
         z = _cat(u, "zone")
         row = dict(u)
         row["quantity"] = 2

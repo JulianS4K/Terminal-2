@@ -55,6 +55,8 @@ def test_fit_beats_zone_baseline_and_scores_upcoming():
                  "hours_to_event": 200.0, "opponent": "BOS", "game_dow": 5, "game_type": "regular",
                  "ctx_zone_median": ZONES[z] * 1.35 * 1.08, "ctx_zone_getin": ZONES[z] * 1.35 * 0.8,
                  "ctx_zone_p25": ZONES[z] * 1.35 * 0.9, "ctx_perf_home_median": 250.0} for z in ZONES]
+    # catch-all and missing zones are never priced
+    upcoming += [{**upcoming[0], "zone": "unmapped"}, {**upcoming[0], "zone": None}]
     res = tkp.train_and_predict(sales, upcoming)
     assert res["status"] == "ok"
     m = res["metrics"]
