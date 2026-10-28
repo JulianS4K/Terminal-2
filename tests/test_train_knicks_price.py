@@ -56,8 +56,10 @@ def test_fit_beats_zone_baseline_and_scores_upcoming():
                  "ctx_zone_median": ZONES[z] * 1.35 * 1.08, "ctx_zone_getin": ZONES[z] * 1.35 * 0.8,
                  "ctx_zone_p25": ZONES[z] * 1.35 * 0.9, "ctx_perf_home_median": 250.0} for z in ZONES]
     # catch-all and missing zones are never priced
-    upcoming += [{**upcoming[0], "zone": "unmapped"}, {**upcoming[0], "zone": None}]
+    upcoming += [{**upcoming[0], "zone": "unmapped"}, {**upcoming[0], "zone": None},
+                 {**upcoming[0], "zone": "Courtside"}]
     res = tkp.train_and_predict(sales, upcoming)
+    assert res["note"] == f"not priced (fewer than {tkp.MIN_LEVEL_COUNT} training sales): Courtside (0)"
     assert res["status"] == "ok"
     m = res["metrics"]
     assert m["mdape_model"] < m["mdape_baseline_zone_train_median"]

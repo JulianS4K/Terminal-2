@@ -264,9 +264,16 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
         for r in sales:
             per_zone[_cat(r, "zone")][_cat(r, c)] += 1
         mode[c] = {z: cnt.most_common(1)[0][0] for z, cnt in per_zone.items()}
-    preds = []
+    # only zones the model has learned (>= MIN_LEVEL_COUNT sales); a rarer zone folds into
+    # "__other__" and its price would be a cross-zone guess (2026-10-28: Courtside at $650
+    # against a $2,300 get-in, with 0 Courtside sales in training)
+    zone_sales = Counter(r.get("zone") for r in sales)
+    preds, unpriced = [], Counter()
     for u in upcoming:
         if not u.get("zone") or u["zone"] in UNPRICED_ZONES:
+            continue
+        if zone_sales[u["zone"]] < MIN_LEVEL_COUNT:
+            unpriced[u["zone"]] += 1
             continue
         z = _cat(u, "zone")
         row = dict(u)
@@ -290,6 +297,8 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
         "coef": {"(intercept)": round(float(beta[0]), 6),
                  **{n: round(float(b), 6) for n, b in zip(spec.names, beta[1:])}},
         "predictions": preds,
+        "note": (f"not priced (fewer than {MIN_LEVEL_COUNT} training sales): "
+                 + ", ".join(f"{z} ({zone_sales[z]})" for z in sorted(unpriced))) if unpriced else None,
     }
 
 
