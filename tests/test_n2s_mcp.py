@@ -172,3 +172,40 @@ def test_gt_dryrun_summary_aggregates():
     # Both would-buys point at one listing (the default fixture's) — exactly what a buyer
     # without a cross-order lock would double-buy — and two skips share L1.
     assert sorted(x["gt_listing_id"] for x in s["listings_on_multiple_orders"]) == ["7792279723", "L1"]
+
+
+def test_defaults_edges_and_errors(monkeypatch):
+    # Unfiltered calls add no filters; a NULL cost / no listing id / empty queue are tolerated.
+    db = FakeDB(tables={"v_n2s_orders": [], "n2s_cover_history": [], "n2s_crm_direct_log": [],
+                        "n2s_items": [], "n2s_gt_order_dryrun": [_dry(cover_cost=None, payload={})],
+                        "n2s_cover_queue": [{"sub_source": "gotickets", "refreshed_at": "2026-10-28T15:00:00Z"},
+                                            {"sub_source": None, "refreshed_at": None}]})
+    n.n2s_book(db)
+    assert [c[0] for c in db.queries[-1].calls] == ["select", "order", "limit"]
+    n.n2s_cover_history(db)
+    assert [c[0] for c in db.queries[-1].calls] == ["select", "gte", "order", "limit"]
+    row = n.gt_dryrun(db)["rows"][0]
+    assert row["profit"] is None and row["gt_listing_id"] is None
+    s = n.gt_dryrun_summary(db)
+    assert s["by_gate"]["1"]["profitable"] == 0 and s["by_gate"]["1"]["loss"] == 0.0
+    h = n.n2s_health(db)
+    assert h["cover_queue"]["by_source"] == {"gotickets": 1, "?": 1}
+    assert h["cover_queue"]["refreshed_at"] == "2026-10-28T15:00:00Z" and h["newest_order_at"] is None
+
+    # Parser: a primary facet in a section not asked for is skipped; one with no priced
+    # offer still counts its seats but has no price.
+    body = {"facets": [{"section": "101", "inventoryTypes": ["primary"], "offers": ["X"], "count": 3},
+                       {"section": "102", "inventoryTypes": ["primary"], "offers": ["Z"], "count": 2}],
+            "_embedded": {"offer": [{"offerId": "X", "totalPrice": None}]}}
+    assert n._tm_primary_sections(body, ["101"]) == {"101": {"section": "101", "seats": 3, "min_total_each": None}}
+
+    import ticketsdata_client
+
+    class Boom:
+        @classmethod
+        def from_vault(cls, db, timeout=30):
+            raise ticketsdata_client.TicketsDataError("HTTP 402 — plan quota exhausted")
+
+    monkeypatch.setattr(ticketsdata_client, "TicketsDataClient", Boom)
+    assert n.tm_primary(FakeDB(), "https://www.ticketmaster.com/x/event/0A0064") == {
+        "error": "HTTP 402 — plan quota exhausted"}
