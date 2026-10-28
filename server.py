@@ -2006,12 +2006,20 @@ from routers.mcp_api import MCPApp  # noqa: E402
 
 mcp_app = MCPApp(lambda: require_sb(), limiter=_ip_limiter)
 app.mount("/mcp", mcp_app)
+
+# The N2S desk as its own MCP server (routers/n2s_mcp.py): internal keys only, same key
+# check / limits / usage stamp, different tools. Kept off /mcp so the market-data server's
+# tool list never grows N2S tools.
+from routers.n2s_mcp import make_n2s_app  # noqa: E402
+
+n2s_mcp_app = make_n2s_app(lambda: require_sb(), limiter=_ip_limiter)
+app.mount("/n2s-mcp", n2s_mcp_app)
 _default_lifespan = app.router.lifespan_context
 
 
 @contextlib.asynccontextmanager
 async def _lifespan_with_mcp(asgi_app):
-    async with mcp_app.lifespan():
+    async with mcp_app.lifespan(), n2s_mcp_app.lifespan():
         async with _default_lifespan(asgi_app) as state:
             yield state
 
