@@ -481,6 +481,38 @@ def event_weather(db, event_id: int) -> dict:
     return rows[0] if rows else {"error": f"event {event_id} not found"}
 
 
+SALES_PAGE = 5000
+SALES_MAX_ROWS = 60000      # snapshot rows; each sale is re-stored on every pull (~15 rows per sale)
+_TURN = re.compile(r"^(?:turn (\d{1,2})\b|t(\d{1,2})-\d+$)")
+_SECTION_CODE = re.compile(r"^([a-z]{2,3})(\d{3})$")
+_TRAILING_NUMBER = re.compile(r"^(.*[a-z].*?)[\s\-#]+(?:sec(?:tion)?\.?\s*)?\d+[a-z]?$")
+
+
+def _sales_rows(db, event_id: int, since: str | None = None,
+                section: str | None = None) -> tuple[list[dict], str | None]:
+    """Every distinct SeatGeek sale of an event, newest first, and the newest pull time.
+    The snapshot table repeats each sale on every pull, so it is read in pages until the
+    last page comes back short (a single 5,000-row read dropped older sales on busy events)."""
+    seen: dict[Any, dict] = {}
+    pulled = None
+    for start in range(0, SALES_MAX_ROWS, SALES_PAGE):
+        q = db.table("seatgeek_sales_snapshots") \
+            .select("sg_sale_id,sale_at_utc,broadcast_price,quantity,section,row,pulled_at") \
+            .eq("tevo_event_id", event_id)
+        if since:
+            q = q.gte("sale_at_utc", since)
+        if section:
+            q = q.ilike("section", f"%{section}%")
+        page = q.order("sale_at_utc", desc=True).order("sg_sale_id") \
+            .range(start, start + SALES_PAGE - 1).execute().data or []
+        for r in page:
+            pulled = max(pulled or "", str(r.get("pulled_at") or ""))
+            seen.setdefault(r.get("sg_sale_id"), r)
+        if len(page) < SALES_PAGE:
+            break
+    return [{k: v for k, v in r.items() if k != "pulled_at"} for r in seen.values()], pulled or None
+
+
 def event_sales(db, event_id: int, days: int = 30, section: str | None = None,
                 min_quantity: int = 1, limit: int = 200) -> dict:
     """Individual SeatGeek sales for one event (all sellers): sale time (UTC), price per
@@ -490,19 +522,10 @@ def event_sales(db, event_id: int, days: int = 30, section: str | None = None,
     6 h inside 48 h of the event and once after it. Event ids are TEvo ids."""
     days = _clamp(days, 1, 365, 30)
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    q = db.table("seatgeek_sales_snapshots") \
-        .select("sg_sale_id,sale_at_utc,broadcast_price,quantity,section,row,pulled_at") \
-        .eq("tevo_event_id", event_id).gte("sale_at_utc", since)
-    if section and str(section).strip():
-        q = q.ilike("section", f"%{str(section).strip()[:40]}%")
-    rows = q.order("sale_at_utc", desc=True).limit(5000).execute().data or []
-    seen: dict[Any, dict] = {}
-    pulled = None
-    for r in rows:
-        pulled = max(pulled or "", str(r.get("pulled_at") or ""))
-        if (r.get("quantity") or 0) >= _clamp(min_quantity, 1, 100, 1):
-            seen.setdefault(r.get("sg_sale_id"), r)
-    sales = [{k: v for k, v in s.items() if k != "pulled_at"} for s in seen.values()]
+    frag = str(section).strip()[:40] if section and str(section).strip() else None
+    rows, pulled = _sales_rows(db, event_id, since, frag)
+    min_q = _clamp(min_quantity, 1, 100, 1)
+    sales = [r for r in rows if (r.get("quantity") or 0) >= min_q]
     prices = sorted(float(s["broadcast_price"]) for s in sales if s.get("broadcast_price") is not None)
     summary = {"sales": len(sales), "tickets": sum(int(s.get("quantity") or 0) for s in sales),
                "price_min": prices[0] if prices else None, "price_p25": _pctl(prices, 0.25),
@@ -510,8 +533,116 @@ def event_sales(db, event_id: int, days: int = 30, section: str | None = None,
                "price_max": prices[-1] if prices else None,
                "last_sale_at": sales[0]["sale_at_utc"] if sales else None}
     return {"event_id": event_id, "days": days, "section": section, "summary": summary,
-            "sales": sales[:_clamp(limit, 1, MAX_ROWS, 200)], "freshness": _as_of(pulled or None),
+            "sales": sales[:_clamp(limit, 1, MAX_ROWS, 200)], "freshness": _as_of(pulled),
             "note": "price = seller's price per ticket before fees (SeatGeek broadcast_price)"}
+
+
+def _sale_area(section: Any) -> str:
+    """A seating area from a section name: the trailing section number dropped from a named
+    stand ("Club Level 210" → "club level"), a circuit's turn as "turn N" for both marketplace
+    names and broker shorthand ("Turn 12 Bleachers 8", "t12-8"), a numbered bowl
+    section grouped by level ("226" → "200s", "mg122" → "mg 100s"), anything else as written
+    (lower-cased)."""
+    s = re.sub(r"\s+", " ", str(section or "").strip().lower())
+    s = re.sub(r"^(section|sec)\.?\s+", "", s)
+    if not s:
+        return "unknown"
+    if s.isdigit():
+        n = int(s)
+        return f"{n // 100 * 100}s" if n >= 100 else f"section {n}"
+    turn = _TURN.match(s)                      # racing circuits: "turn 15 grandstand 8", "t15-8"
+    if turn:
+        return f"turn {int(turn.group(1) or turn.group(2))}"
+    code = _SECTION_CODE.match(s)              # broker shorthand, e.g. "mg122" → "mg 100s"
+    if code:
+        return f"{code.group(1)} {int(code.group(2)) // 100 * 100}s"
+    m = _TRAILING_NUMBER.match(s)
+    return m.group(1).strip() if m and " " in m.group(1).strip() else s
+
+
+def _lin_pctl(xs: list[float], q: float) -> float:
+    """Linear-interpolated percentile of a sorted, non-empty list (SQL percentile_cont)."""
+    pos = (len(xs) - 1) * q
+    lo, hi = int(pos), min(int(pos) + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
+
+
+def _when_bucket(days_out: float | None) -> str:
+    if days_out is None:
+        return "undated"
+    if days_out > 120:
+        return "4mo_plus"
+    if days_out > 14:
+        return "2wk_to_4mo"
+    return "3d_to_2wk" if days_out > 3 else "last_3d"
+
+
+def _parse_ts(v: Any) -> datetime | None:
+    if not v:
+        return None
+    try:
+        t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _price_groups(items: list[tuple[str, float, int, Any]], occurs_at: Any,
+                  top_share: float = 0.1) -> dict:
+    """Per-group price spread for (group, price, quantity, sold_at) items: median, where the
+    top `top_share` of sales starts, the average and max above it, and when those top sales
+    happened relative to the event."""
+    event_t = _parse_ts(occurs_at)
+    groups: dict[str, list[tuple[float, int, Any]]] = {}
+    for g, p, q, t in items:
+        groups.setdefault(g, []).append((p, q, t))
+    groups["(all)"] = [(p, q, t) for _, p, q, t in items]
+
+    def stats(name: str, xs: list[tuple[float, int, Any]]) -> dict:
+        prices = sorted(p for p, _, _ in xs)
+        cut = _lin_pctl(prices, 1 - top_share)
+        top = [(p, t) for p, _, t in xs if p >= cut]
+        timing: dict[str, int] = {}
+        for _, t in top:
+            st = _parse_ts(t)
+            key = _when_bucket((event_t - st).total_seconds() / 86400 if event_t and st else None)
+            timing[key] = timing.get(key, 0) + 1
+        return {"group": name, "sales": len(xs), "tickets": sum(q for _, q, _ in xs),
+                "median": round(_lin_pctl(prices, 0.5), 2), "top_from": round(cut, 2),
+                "top_avg": round(sum(p for p, _ in top) / len(top), 2), "max": prices[-1],
+                "top_timing": timing, "thin": len(xs) < 10}
+
+    out = [stats(g, xs) for g, xs in groups.items()]
+    overall = next(o for o in out if o["group"] == "(all)")
+    rest = sorted((o for o in out if o["group"] != "(all)"), key=lambda o: -o["median"])
+    return {"all": overall, "groups": rest[:60]}
+
+
+def _event_occurs_at(db, event_id: int) -> Any:
+    ev = db.table("events").select("occurs_at_local").eq("id", event_id).limit(1).execute().data or []
+    return ev[0].get("occurs_at_local") if ev else None
+
+
+TOP_SHARE = 0.1
+BREAKDOWN_NOTE = ("price = per ticket before fees. top_from = price where the top 10% of sales "
+                  "starts (90th percentile); top_timing = when those top sales happened before the "
+                  "event (4mo_plus, 2wk_to_4mo, 3d_to_2wk, last_3d). thin = fewer than 10 sales.")
+
+
+def sales_breakdown(db, event_id: int) -> dict:
+    """Every SeatGeek sale of one event, grouped by seating area (a named stand without its
+    section number, e.g. "club level" or "turn 12", or a bowl level such as "200s"): sales, tickets,
+    median price, where the top 10% of sales starts and their average, the highest sale, and
+    when the top sales happened (months out vs the final days). Use it to see which areas
+    command premiums and when buyers paid most. Event ids are TEvo ids."""
+    rows, pulled = _sales_rows(db, event_id)
+    items = _market_items(rows)
+    out: dict[str, Any] = {"event_id": event_id, "source": "seatgeek_market"}
+    if not items:
+        return {**out, "all": None, "groups": [], "freshness": _as_of(pulled),
+                "note": "no SeatGeek sales stored for this event"}
+    return {**out, **_price_groups(items, _event_occurs_at(db, event_id), TOP_SHARE),
+            "freshness": _as_of(pulled), "note": BREAKDOWN_NOTE}
 
 
 def zone_prices(db, event_id: int) -> dict:
@@ -1091,6 +1222,37 @@ def event_orders(db, event_id: int, days: int = 30) -> dict:
                                               "p_days": _clamp(days, 1, 365, 30)}) or {}
 
 
+def _market_items(rows: list[dict]) -> list[tuple[str, float, int, Any]]:
+    return [(_sale_area(r.get("section")), float(r["broadcast_price"]), int(r.get("quantity") or 0),
+             r.get("sale_at_utc")) for r in rows if r.get("broadcast_price") is not None]
+
+
+def crm_sales_breakdown(db, event_id: int) -> dict:
+    """`sales_breakdown` for one event with our own CRM orders beside the SeatGeek market:
+    `market`, `ours` (every book in the CRM, parking excluded) and `combined`, each grouped by
+    seating area with median, top-10% start and average, max and top-sale timing. Our
+    SeatGeek sales can appear in the market feed too, so `combined` may count a few twice;
+    CRM section codes (e.g. "t124") can differ from marketplace names."""
+    rows, pulled = _sales_rows(db, event_id)
+    mkt = _market_items(rows)
+    orders = db.table("v_s4kcs_orders") \
+        .select("event_name,section,quantity,price_per_ticket,purchase_date") \
+        .eq("tevo_event_id", event_id).limit(5000).execute().data or []
+    ours = [(_sale_area(o.get("section")), float(o["price_per_ticket"]), int(o.get("quantity") or 0),
+             o.get("purchase_date")) for o in orders
+            if (o.get("price_per_ticket") or 0) > 0
+            and "parking" not in str(o.get("event_name") or "").lower()]
+    occurs = _event_occurs_at(db, event_id)
+    empty = {"all": None, "groups": []}
+
+    def grouped(items):
+        return _price_groups(items, occurs, TOP_SHARE) if items else empty
+
+    return {"event_id": event_id, "market": grouped(mkt), "ours": grouped(ours),
+            "combined": grouped(mkt + ours), "freshness": _as_of(pulled),
+            "note": BREAKDOWN_NOTE + " Undated CRM orders show as 'undated'."}
+
+
 def event_source_links(db, event_id: int) -> dict:
     """Marketplace URLs/ids for one event (SeatGeek, StubHub, Gametime, Vivid, ...)."""
     return _rpc(db, "get_event_source_links", {"p_event_id": event_id}) or {}
@@ -1172,10 +1334,11 @@ def query_view(db, view: str, columns: list[str] | None = None,
 EXTERNAL_TOOLS: tuple[Callable, ...] = (
     search, search_events, event_market, event_prices, top_market_events, performer_trend,
     price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
-    price_forecast, team_report, event_sales, zone_prices, zone_trend, game_context,
-    model_price_prediction, seat_map, data_freshness, query_public_view, get_started)
+    price_forecast, team_report, event_sales, sales_breakdown, zone_prices, zone_trend,
+    game_context, model_price_prediction, seat_map, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
-    pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
+    pickups, event_orders, crm_sales_breakdown, event_source_links, home_stats, market_chart,
+    owned_events, team_book,
     polling_coverage, query_view)
 
 INSTRUCTIONS = (
@@ -1192,7 +1355,8 @@ INSTRUCTIONS = (
     "(per section; omit section for the best sellers) and read `expected_clearing` with its "
     "`lo`-`hi` band, `confidence` and any `warning`; for Knicks home games also "
     "`model_price_prediction` (learned per-zone model). Drill down with `event_sales` "
-    "(every sale), `zone_prices` (live market by seating zone), `zone_trend` (daily zone "
+    "(every sale), `sales_breakdown` (median and top-10% price by seating area, and when the "
+    "top sales happened), `zone_prices` (live market by seating zone), `zone_trend` (daily zone "
     "history) and `game_context` (records, line, injuries, buzz, weather). `seat_map` returns the "
     "venue map coloured by price per section as an HTML page — show it as an artifact. Read-only.")
 

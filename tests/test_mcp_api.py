@@ -220,12 +220,13 @@ def test_tier_tool_sets():
     assert ext == {"search", "search_events", "event_market", "event_prices", "top_market_events",
                    "performer_trend", "price_movers", "competing_events", "prediction_markets",
                    "sports_context", "news", "event_weather", "price_forecast", "team_report",
-                   "event_sales", "zone_prices", "zone_trend", "game_context",
+                   "event_sales", "sales_breakdown", "zone_prices", "zone_trend", "game_context",
                    "model_price_prediction", "seat_map", "data_freshness", "query_public_view", "get_started"}
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
-                      "event_source_links", "home_stats", "team_book", "polling_coverage"}
+                      "event_source_links", "home_stats", "team_book", "polling_coverage",
+                      "crm_sales_breakdown"}
     # ...and no owned/order column leaks through the public view whitelist.
     for cols in m.EXTERNAL_QUERY_VIEWS.values():
         assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c
@@ -719,6 +720,117 @@ def test_event_sales_dedupes_and_summarises():
     # min_quantity drops the single
     out2 = m.event_sales(db, 42, min_quantity=2)
     assert out2["summary"]["sales"] == 2
+
+
+class _PagingDB(FakeDB):
+    """FakeDB whose queries honour .range(start, end), like PostgREST paging."""
+
+    def table(self, name):
+        q = _Query(self, name)
+        db = self
+
+        def execute():
+            db.queries.append(q)
+            rows = db.tables.get(name) or []
+            rng = next((a for n, a, _ in q.calls if n == "range"), None)
+            return type("R", (), {"data": rows[rng[0]:rng[1] + 1] if rng else rows})()
+        q.execute = execute
+        return q
+
+
+def test_sales_rows_pages_past_one_read(monkeypatch):
+    monkeypatch.setattr(m, "SALES_PAGE", 3)
+    rows = [{"sg_sale_id": str(i // 2), "sale_at_utc": f"2026-10-{20 - i // 2:02d}T20:00:00Z",
+             "broadcast_price": 100 + i, "quantity": 2, "section": "226", "row": "1",
+             "pulled_at": _iso(i)} for i in range(8)]   # 4 sales, each stored twice
+    db = _PagingDB(tables={"seatgeek_sales_snapshots": rows})
+    sales, pulled = m._sales_rows(db, 7)
+    assert [s["sg_sale_id"] for s in sales] == ["0", "1", "2", "3"]
+    assert "pulled_at" not in sales[0] and pulled == max(r["pulled_at"] for r in rows)
+    assert len(db.queries) == 3                       # 3 + 3 + 2 rows
+    assert ("range", (6, 8), {}) in db.queries[2].calls
+    assert m._sales_rows(_PagingDB(tables={}), 7) == ([], None)
+    # the row cap ends the read even when every page is full
+    monkeypatch.setattr(m, "SALES_MAX_ROWS", 6)
+    capped, _ = m._sales_rows(_PagingDB(tables={"seatgeek_sales_snapshots": rows}), 7)
+    assert [s["sg_sale_id"] for s in capped] == ["0", "1", "2"]
+
+
+def test_sale_area_groups_sections():
+    assert m._sale_area("Turn 12 Bleachers 8") == "turn 12" == m._sale_area("t12-8")
+    assert m._sale_area("Main Grandstand Club Level 210") == "main grandstand club level"
+    assert m._sale_area("GA Grounds Pass") == "ga grounds pass"
+    assert m._sale_area("226") == "200s" and m._sale_area("12") == "section 12"
+    assert m._sale_area("  ") == "unknown" and m._sale_area(None) == "unknown"
+    assert m._sale_area("Sec. 4") == "section 4" and m._sale_area("Section 226") == "200s"
+    assert m._sale_area("Turn 4") == "turn 4" and m._sale_area("Turn Fifteen") == "turn fifteen"
+    assert m._sale_area("Club 5") == "club 5"          # a one-word name keeps its number
+    assert m._sale_area("MG122") == "mg 100s" and m._sale_area("t124") == "t124"
+
+
+def test_when_bucket_and_parse_ts():
+    assert [m._when_bucket(d) for d in (None, 200, 30, 5, 1)] == \
+        ["undated", "4mo_plus", "2wk_to_4mo", "3d_to_2wk", "last_3d"]
+    assert m._parse_ts(None) is None and m._parse_ts("not a date") is None
+    assert m._parse_ts("2026-10-25T12:00:00").tzinfo is not None
+    assert m._parse_ts("2026-10-25T12:00:00Z").hour == 12
+
+
+def _bd_rows():
+    rows = []
+    for i in range(20):   # turn 12: $500..$690, the top two sold 1 and 200 days out
+        rows.append({"sg_sale_id": f"t{i}", "sale_at_utc": "2026-10-10T00:00:00Z", "broadcast_price": 500 + 10 * i,
+                     "quantity": 2, "section": f"Turn 12 Bleachers {i % 5}", "row": "1", "pulled_at": _iso(2)})
+    rows[18]["sale_at_utc"] = "2026-10-24T00:00:00Z"
+    rows[19]["sale_at_utc"] = "2026-04-08T00:00:00Z"
+    rows.append({"sg_sale_id": "g1", "sale_at_utc": "2026-10-20T00:00:00Z", "broadcast_price": 300,
+                 "quantity": 1, "section": "GA Grounds Pass", "row": "", "pulled_at": _iso(2)})
+    rows.append({"sg_sale_id": "x", "sale_at_utc": "2026-10-20T00:00:00Z", "broadcast_price": None,
+                 "quantity": 1, "section": "GA Grounds Pass", "row": "", "pulled_at": _iso(2)})
+    return rows
+
+
+def test_sales_breakdown_groups_and_top_decile():
+    db = FakeDB(tables={"seatgeek_sales_snapshots": _bd_rows(),
+                        "events": [{"occurs_at_local": "2026-10-25T12:00:00"}]})
+    out = m.sales_breakdown(db, 3017609)
+    assert out["all"]["sales"] == 21 and out["all"]["group"] == "(all)"
+    t12, ga = out["groups"]                            # sorted by median, highest first
+    assert t12["group"] == "turn 12" and ga["group"] == "ga grounds pass"
+    assert t12["sales"] == 20 and t12["tickets"] == 40 and t12["median"] == 595.0
+    assert t12["top_from"] == 671.0 and t12["top_avg"] == 685.0 and t12["max"] == 690.0
+    assert t12["top_timing"] == {"last_3d": 1, "4mo_plus": 1} and t12["thin"] is False
+    assert ga["thin"] is True and ga["top_timing"] == {"3d_to_2wk": 1}
+    assert out["freshness"]["stale"] is False and "top_from" in out["note"]
+    # no event row: timing is undated
+    db2 = FakeDB(tables={"seatgeek_sales_snapshots": _bd_rows()})
+    assert m.sales_breakdown(db2, 1)["groups"][0]["top_timing"] == {"undated": 2}
+    empty = m.sales_breakdown(FakeDB(), 1)
+    assert empty["groups"] == [] and empty["all"] is None and "no SeatGeek sales" in empty["note"]
+
+
+def test_crm_sales_breakdown_splits_and_combines():
+    orders = [{"event_name": "USGP Sunday", "section": "Turn 12 Bleachers 3", "quantity": 2,
+               "price_per_ticket": 800, "purchase_date": "2026-10-23T00:00:00Z"},
+              {"event_name": "USGP Sunday", "section": "t124", "quantity": 2,
+               "price_per_ticket": 600, "purchase_date": None},
+              {"event_name": "USGP Sunday Parking", "section": "Lot A", "quantity": 1,
+               "price_per_ticket": 90, "purchase_date": None},
+              {"event_name": "USGP Sunday", "section": "GA", "quantity": 1,
+               "price_per_ticket": 0, "purchase_date": None}]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": _bd_rows(), "v_s4kcs_orders": orders,
+                        "events": [{"occurs_at_local": "2026-10-25T12:00:00"}]})
+    out = m.crm_sales_breakdown(db, 3017609)
+    assert out["market"]["all"]["sales"] == 21 and out["ours"]["all"]["sales"] == 2
+    assert {g["group"] for g in out["ours"]["groups"]} == {"turn 12", "t124"}
+    assert out["combined"]["all"]["sales"] == 23
+    t12 = next(g for g in out["combined"]["groups"] if g["group"] == "turn 12")
+    assert t12["sales"] == 21 and t12["max"] == 800.0 and t12["top_timing"]["last_3d"] >= 1
+    assert "undated" in out["note"]
+    orders_q = next(q for q in db.queries if q.table == "v_s4kcs_orders")
+    assert ("eq", ("tevo_event_id", 3017609), {}) in orders_q.calls
+    none = m.crm_sales_breakdown(FakeDB(), 1)
+    assert none["market"] == {"all": None, "groups": []} == none["ours"] == none["combined"]
 
 
 def test_zone_prices_latest_and_24h_change():
