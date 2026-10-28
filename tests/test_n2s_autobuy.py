@@ -38,7 +38,7 @@ def test_gotickets_cover_full_plan():
     assert p["go"] is True and p["dry_run"] is True and p["sent"] is False and p["profit"] == 662.5
     s = {x["step"]: x for x in p["steps"]}
     assert s[1]["request"]["url"] == "https://sc.gotickets.com/rest/sales/7596791"
-    # GoTickets has no owned flag: decided live by a Seller Central read (404 = not ours).
+    # GoTickets has no owned flag: decided live by a Seller Central read (empty 200 / 404 = not ours).
     assert s[3]["ok"] is None and s[3]["request"]["url"].endswith("/rest/listings/7792279723")
     assert s[4]["request"] == {"method": "POST", "url": "https://gotickets.com/rest/pro/api/orders",
                                "verified": True, "doc": a.BUY_SIDE["gotickets"]["buy"]["doc"]}

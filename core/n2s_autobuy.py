@@ -108,9 +108,10 @@ SELL_SIDE: dict[str, dict] = {
 }
 
 # GoTickets has no "owned" flag on the listings we pull; Seller Central only returns a listing
-# that belongs to the authenticated broker, so a 404 here means the sub is NOT ours.
+# that belongs to the authenticated broker. Checked 2026-10-28: another broker's listing returns
+# 200 with an EMPTY body (not a 404), so empty body / 404 = not ours; a listing body = ours.
 GT_OWNERSHIP_READ = {"method": "GET", "url": "https://sc.gotickets.com/rest/listings/{listing_id}",
-                     "verified": True, "doc": "Seller Central — GET /rest/listings/{id}: 404 = not ours"}
+                     "verified": True, "doc": "Seller Central — GET /rest/listings/{id}: empty 200 or 404 = not ours"}
 
 
 def sell_market_key(s4k_source: Any) -> str | None:
@@ -162,7 +163,7 @@ def not_ours(order: dict, owned: bool | None) -> dict:
     """The sub must not be our own inventory. `owned` comes from the caller's lookup of the
     sub's listing in our pulled inventory (`n2s_evo_current.is_owned` for TEvo,
     `n2s_sg_current.is_broker_owned` for SeatGeek); None = no flag for this source, so the
-    live executor must make the ownership read (GoTickets: a 404 from Seller Central)."""
+    live executor must make the ownership read (GoTickets: an empty 200 / 404 from Seller Central)."""
     if owned:
         return {"not_ours": False, "reasons": ["our_own_listing"], "read": None}
     if owned is None:
