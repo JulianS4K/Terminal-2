@@ -143,7 +143,10 @@ def order_active(order: dict, now: datetime | None = None) -> dict:
         reasons.append("timer_closed")
     if order.get("event_live") is False:
         reasons.append("event_over")
-    if order.get("n2s_status") not in (None, "n2s", "n2b"):
+    # Non-PED only (operator 2026-10-28): PED / Need2Buy rows are n2s_status 'n2b' or a negative id.
+    if order.get("n2s_status") == "n2b" or (order.get("n2s_id") or 0) < 0:
+        reasons.append("ped_order")
+    elif order.get("n2s_status") not in (None, "n2s"):
         reasons.append(f"status_{order.get('n2s_status')}")
     return {"active": not reasons, "reasons": reasons,
             "seconds_left": None if exp is None else max(0, int((exp - now).total_seconds()))}
