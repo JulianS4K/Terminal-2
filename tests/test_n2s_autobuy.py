@@ -98,6 +98,9 @@ def test_not_ours_and_other_markets():
     tp = a.plan_cover(_order(sub_source="tickpick", s4k_source="TickPick"), owned=False, now=NOW)
     s = {x["step"]: x for x in tp["steps"]}
     assert s[4]["body"]["external_id"] == "7596791" and s[6]["body"] == {"broker_id": None, "seat_numbers": None}
+    # TickPick's token is not working: neither buying there nor accepting a TickPick sale goes.
+    assert tp["go"] is False and s[4]["detail"]["reason"] == "TickPick API token not working"
+    assert s[6]["detail"]["reason"] == "TickPick API token not working"
     # SeatGeek sub: no buy API → manual; sold on SeatGeek: SellerDirect PATCH /order.
     sg = a.plan_cover(_order(sub_source="seatgeek", s4k_source="Seatgeek"), owned=False, now=NOW)
     s = {x["step"]: x for x in sg["steps"]}

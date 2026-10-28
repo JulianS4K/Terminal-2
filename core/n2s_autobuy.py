@@ -60,6 +60,12 @@ BUY_SIDE: dict[str, dict] = {
     },
 }
 
+# Marketplaces whose API token was checked working (read-only, 2026-10-28). TickPick's token
+# returns 401 and StubHub's credentials are invalid; Gametime/Viagogo/Ticketmaster have none.
+# Re-add a market here when its token is fixed (mirror 20261028213000's capture filter).
+SELL_TOKEN_OK = frozenset({"evo", "gotickets", "seatgeek", "vivid"})
+BUY_TOKEN_OK = frozenset({"gotickets", "tevo"})
+
 # The market that SOLD the ticket (n2s s4k_source) — where we accept the order.
 SELL_SIDE: dict[str, dict] = {
     "gotickets": {
@@ -259,21 +265,26 @@ def plan_cover(order: dict, *, gt_event_id: Any = None, owned: bool | None = Non
         {"step": 3, "name": "sub is not ours", "kind": "check" if ours["read"] is None else "read",
          "ok": ours["not_ours"], "detail": ours, "request": ours["read"]},
         {"step": 4, "name": f"buy sub on {buy_spec['market'] if buy_spec else src}", "kind": "write",
-         "ok": bool(buy_spec and buy_spec.get("buy")), "sent": False,
+         "ok": bool(buy_spec and buy_spec.get("buy")) and src in BUY_TOKEN_OK, "sent": False,
          "request": _req((buy_spec or {}).get("buy")),
          "body": _buy_body(src or "", order, gt_event_id) if buy_spec and buy_spec.get("buy") else None,
-         "detail": None if buy_spec and buy_spec.get("buy") else
-         {"reason": "no buy API for this source — buy by hand" if buy_spec else f"unsupported source {src}"}},
+         "detail": None if buy_spec and buy_spec.get("buy") and src in BUY_TOKEN_OK else
+         {"reason": ("no buy API for this source — buy by hand" if not buy_spec.get("buy")
+                     else f"{buy_spec['market']} API token not working") if buy_spec
+          else f"unsupported source {src}"}},
         {"step": 5, "name": "market accepted our purchase (confirmation code)", "kind": "read",
          "ok": None if buy_spec and buy_spec.get("confirm") else False,
          "request": _req((buy_spec or {}).get("confirm"), purchase_id=None),
          "detail": {"confirmed_when": "status confirmed/accepted on the returned purchase id"}},
         {"step": 6, "name": f"accept sale on {order.get('s4k_source')}", "kind": "write",
-         "ok": bool(sell_spec and sell_spec["accept"].get("verified")), "sent": False,
+         "ok": bool(sell_spec and sell_spec["accept"].get("verified")) and market in SELL_TOKEN_OK,
+         "sent": False,
          "request": _req((sell_spec or {}).get("accept"), order_id=sale_id),
          "body": _accept_body(market or "", order),
-         "detail": None if sell_spec and sell_spec["accept"].get("verified") else
-         {"reason": (sell_spec or {}).get("accept", {}).get("doc") or f"unknown market {order.get('s4k_source')}"}},
+         "detail": None if sell_spec and sell_spec["accept"].get("verified") and market in SELL_TOKEN_OK else
+         {"reason": (f"{order.get('s4k_source')} API token not working"
+                     if sell_spec and sell_spec["accept"].get("verified") else
+                     (sell_spec or {}).get("accept", {}).get("doc") or f"unknown market {order.get('s4k_source')}")}},
     ]
     go = all(s["ok"] is not False for s in steps)
     return {"order_number": order.get("order_number"), "selling_market": order.get("s4k_source"),
