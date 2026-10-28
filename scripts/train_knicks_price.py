@@ -13,11 +13,14 @@ Model : ridge regression on log(price), numpy only (no sklearn in this repo, sam
         game weekday, game type, quantity bucket (levels seen < MIN_LEVEL_COUNT times fold
         into "__other__"). Numeric: log of the zone / event / Knicks-home market at sale
         time, log hours-to-tip, zone owned share; missing values impute to the training
-        mean with a missing flag. Numerics are z-scored.
+        mean with a missing flag. Numerics are z-scored. A second ridge with the same
+        features predicts log(price / market anchor) (the game's SeatGeek median ask, else
+        TEvo's, else the Knicks home median); the two are averaged in log space.
 Eval  : the most recent TEST_SHARE of games (by tip-off) are held out. Reported errors:
-        median absolute % error of the model vs two baselines (the zone's median ask at
-        sale time, and the zone's median training price). The final model is refit on all
-        games; p10/p90 bands come from the held-out log residuals.
+        median absolute % error of the model, the plain ridge alone, and two baselines (the
+        zone's median ask at sale time, and the zone's median training price), plus a rolling
+        backtest (train on the first k games, score the next 3). The final model is refit on
+        all games; p10/p90 bands come from the held-out log residuals.
 Output: one ml_model_runs row (status ok | skipped | failed) and, when ok, one
         ml_price_predictions row per upcoming game × zone: the expected sale price for a
         pair sold now. Nothing upstream is called.
@@ -51,6 +54,15 @@ TEST_SHARE = 0.2
 LAMBDA = 3.0
 # zones that are a catch-all, not a seating area: never priced
 UNPRICED_ZONES = frozenset({"unmapped"})
+# market anchor: the game's SeatGeek median ask, else TEvo's, else the Knicks home median.
+# A second ridge predicts log(price / anchor); the two are averaged in log space. The anchored
+# fit carries a game's price level through 1:1 where the plain fit shrinks it (held-out games
+# priced ~10% under). Rolling backtest 2026-10-28, 5 windows: plain 15.4% mean / 18.7% worst
+# MdAPE, anchored alone 15.0% / 27.3%, blend 13.0% / 14.5%.
+ANCHOR_COLS = ("ctx_sg_median", "ctx_evo_median", "ctx_perf_home_median")
+ANCHOR_WEIGHT = 0.5
+ROLLING_MIN_GAMES = 8
+ROLLING_STEP = 3
 
 CATEGORICAL = ("zone", "level", "row_band", "opponent", "horizon_bucket", "game_dow", "game_type", "qty_bucket")
 # feature name → (column, transform)
@@ -193,17 +205,36 @@ def clean_rows(rows: list[dict]) -> list[dict]:
     return [r for r, v in zip(rows, lp) if abs(v - med) <= 5 * 1.4826 * mad]
 
 
-def split_by_game(rows: list[dict]) -> tuple[list[dict], list[dict], list, list]:
-    first_tip: dict[Any, str] = {}
-    for r in rows:
-        g = r["sg_event_id"]
-        first_tip[g] = min(first_tip.get(g, r.get("occurs_at") or ""), r.get("occurs_at") or "")
-    games = sorted(first_tip, key=lambda g: (first_tip[g], g))
-    n_test = max(1, round(len(games) * TEST_SHARE))
-    test_games = set(games[-n_test:])
-    train = [r for r in rows if r["sg_event_id"] not in test_games]
-    test = [r for r in rows if r["sg_event_id"] in test_games]
-    return train, test, games[:-n_test], games[-n_test:]
+def _anchor(row: dict) -> float:
+    """log of the row's market anchor (ANCHOR_COLS, first positive), nan when none."""
+    for c in ANCHOR_COLS:
+        v = _num(row.get(c))
+        if v is not None and v > 0:
+            return math.log(v)
+    return math.nan
+
+
+def fit_model(rows: list[dict]) -> tuple[FeatureSpec, np.ndarray, np.ndarray | None]:
+    """The plain ridge on log(price) and, from rows with an anchor, the ridge on
+    log(price / anchor)."""
+    spec = FeatureSpec.fit(rows)
+    X, y = spec.matrix(rows), np.log([float(r["price"]) for r in rows])
+    a = np.array([_anchor(r) for r in rows])
+    ok = np.isfinite(a)
+    return spec, fit_ridge(X, y), (fit_ridge(X[ok], y[ok] - a[ok]) if ok.any() else None)
+
+
+def predict_model(model: tuple[FeatureSpec, np.ndarray, np.ndarray | None], rows: list[dict]) -> np.ndarray:
+    """log price: the plain and anchored fits blended where the row has an anchor."""
+    spec, plain, anchored = model
+    X = spec.matrix(rows)
+    lp = predict_log(X, plain)
+    if anchored is None:
+        return lp
+    a = np.array([_anchor(r) for r in rows])
+    ok = np.isfinite(a)
+    la = predict_log(X, anchored) + np.where(ok, a, 0.0)
+    return np.where(ok, (1 - ANCHOR_WEIGHT) * lp + ANCHOR_WEIGHT * la, lp)
 
 
 def mdape(actual: np.ndarray, pred: np.ndarray) -> float | None:
@@ -213,11 +244,47 @@ def mdape(actual: np.ndarray, pred: np.ndarray) -> float | None:
     return round(float(np.median(np.abs(pred[ok] - actual[ok]) / actual[ok])) * 100, 2)
 
 
+def game_order(rows: list[dict]) -> list:
+    first_tip: dict[Any, str] = {}
+    for r in rows:
+        g = r["sg_event_id"]
+        first_tip[g] = min(first_tip.get(g, r.get("occurs_at") or ""), r.get("occurs_at") or "")
+    return sorted(first_tip, key=lambda g: (first_tip[g], g))
+
+
+def split_by_game(rows: list[dict]) -> tuple[list[dict], list[dict], list, list]:
+    games = game_order(rows)
+    n_test = max(1, round(len(games) * TEST_SHARE))
+    test_games = set(games[-n_test:])
+    train = [r for r in rows if r["sg_event_id"] not in test_games]
+    test = [r for r in rows if r["sg_event_id"] in test_games]
+    return train, test, games[:-n_test], games[-n_test:]
+
+
+def rolling_backtest(rows: list[dict]) -> list[dict]:
+    """Train on the first k games (by tip-off), score the next ROLLING_STEP; k steps by
+    ROLLING_STEP from ROLLING_MIN_GAMES. Windows with fewer than 20 test sales are skipped."""
+    games, out = game_order(rows), []
+    for k in range(ROLLING_MIN_GAMES, len(games), ROLLING_STEP):
+        train_g, test_g = set(games[:k]), set(games[k:k + ROLLING_STEP])
+        train = [r for r in rows if r["sg_event_id"] in train_g]
+        test = [r for r in rows if r["sg_event_id"] in test_g]
+        if len(test) < 20:
+            continue
+        model = fit_model(train)
+        y = np.array([float(r["price"]) for r in test])
+        plain = np.exp(predict_log(model[0].matrix(test), model[1]))
+        out.append({"train_games": k, "test_sales": len(test),
+                    "mdape_model": mdape(y, np.exp(predict_model(model, test))),
+                    "mdape_plain_ridge": mdape(y, plain)})
+    return out
+
+
 def evaluate(train: list[dict], test: list[dict]) -> tuple[dict, np.ndarray]:
-    spec = FeatureSpec.fit(train)
-    beta = fit_ridge(spec.matrix(train), np.log([float(r["price"]) for r in train]))
+    model = fit_model(train)
     y_test = np.array([float(r["price"]) for r in test])
-    p_test = np.exp(predict_log(spec.matrix(test), beta))
+    p_test = np.exp(predict_model(model, test))
+    p_plain = np.exp(predict_log(model[0].matrix(test), model[1]))
     resid = np.log(y_test) - np.log(p_test)
 
     zone_ask = np.array([_num(r.get("ctx_zone_median")) or np.nan for r in test])
@@ -230,10 +297,12 @@ def evaluate(train: list[dict], test: list[dict]) -> tuple[dict, np.ndarray]:
     covered = np.isfinite(zone_ask)
     metrics = {
         "mdape_model": mdape(y_test, p_test),
+        "mdape_plain_ridge": mdape(y_test, p_plain),
         "mdape_baseline_zone_ask_median": mdape(y_test, zone_ask),
         "mdape_baseline_zone_train_median": mdape(y_test, zone_hist),
         "mdape_model_where_zone_ask": mdape(y_test[covered], p_test[covered]) if covered.any() else None,
         "test_rows_with_zone_ask": int(covered.sum()),
+        "median_bias_pct": round(float(np.median((p_test - y_test) / y_test)) * 100, 2),
         "log_resid_sd": round(float(np.std(resid)), 4),
         "within_band_p10_p90": None,
     }
@@ -253,9 +322,13 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
     metrics["within_band_p10_p90"] = round(float(np.mean((resid >= lo) & (resid <= hi))), 3) if len(resid) else None
     metrics["band_log"] = [round(lo, 4), round(hi, 4)]
 
+    rolling = rolling_backtest(sales)
+    metrics["rolling"] = rolling
+    metrics["rolling_mean_mdape"] = round(float(np.mean([w["mdape_model"] for w in rolling])), 2) if rolling else None
+
     # final model on every game
-    spec = FeatureSpec.fit(sales)
-    beta = fit_ridge(spec.matrix(sales), np.log([float(r["price"]) for r in sales]))
+    model = fit_model(sales)
+    spec, beta, beta_anchored = model
 
     # predictions: a pair sold now, at the zone's most common level / row band
     mode: dict[str, dict[str, str]] = {}
@@ -281,7 +354,7 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
         row["horizon_bucket"] = horizon_bucket(_num(u.get("hours_to_event")))
         row["level"] = mode["level"].get(z)
         row["row_band"] = mode["row_band"].get(z)
-        lp = float(predict_log(spec.vector(row)[None, :], beta)[0])
+        lp = float(predict_model(model, [row])[0])
         preds.append({
             "sg_event_id": u["sg_event_id"], "tevo_event_id": u.get("tevo_event_id"), "zone": u["zone"],
             "occurs_at": u.get("occurs_at"), "hours_to_event": _num(u.get("hours_to_event")),
@@ -293,9 +366,12 @@ def train_and_predict(sales: list[dict], upcoming: list[dict]) -> dict:
     return {
         "status": "ok", "n_train": len(train), "n_test": len(test),
         "games_train": len(g_train), "games_test": len(g_test), "metrics": metrics,
-        "feature_spec": spec.to_json(),
+        "feature_spec": {**spec.to_json(), "anchor": list(ANCHOR_COLS), "anchor_weight": ANCHOR_WEIGHT},
         "coef": {"(intercept)": round(float(beta[0]), 6),
-                 **{n: round(float(b), 6) for n, b in zip(spec.names, beta[1:])}},
+                 **{n: round(float(b), 6) for n, b in zip(spec.names, beta[1:])},
+                 **({"anchored": {"(intercept)": round(float(beta_anchored[0]), 6),
+                                  **{n: round(float(b), 6) for n, b in zip(spec.names, beta_anchored[1:])}}}
+                    if beta_anchored is not None else {})},
         "predictions": preds,
         "note": (f"not priced (fewer than {MIN_LEVEL_COUNT} training sales): "
                  + ", ".join(f"{z} ({zone_sales[z]})" for z in sorted(unpriced))) if unpriced else None,

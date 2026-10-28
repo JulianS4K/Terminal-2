@@ -86,3 +86,48 @@ def test_unknown_levels_fold_into_other():
     v = spec.vector({"zone": "Nowhere", "opponent": "ZZZ", "quantity": 9, "hours_to_event": None})
     assert v.shape == (len(spec.names),)
     assert np.isfinite(v).all()
+
+
+def test_anchor_takes_first_positive_market_column():
+    assert tkp._anchor({"ctx_sg_median": 200, "ctx_evo_median": 300}) == pytest.approx(math.log(200))
+    assert tkp._anchor({"ctx_sg_median": 0, "ctx_evo_median": None, "ctx_perf_home_median": 250}) \
+        == pytest.approx(math.log(250))
+    assert math.isnan(tkp._anchor({}))
+
+
+def test_blend_carries_game_price_level_and_falls_back_without_anchor():
+    rows = _synthetic(games=6, per_game=80)
+    for r in rows:   # the game's SeatGeek median ask tracks its demand level
+        r["ctx_sg_median"] = 400.0 * OPP[r["opponent"]]
+    model = tkp.fit_model(rows)
+    assert model[2] is not None
+    hot = dict(rows[0], ctx_sg_median=400.0 * 2.0)          # an ask level never seen in training
+    plain = float(tkp.predict_log(model[0].matrix([hot]), model[1])[0])
+    blended = float(tkp.predict_model(model, [hot])[0])
+    assert blended > plain                                   # the anchor lifts the price
+    no_anchor = {k: v for k, v in hot.items() if not k.startswith("ctx_")}
+    assert float(tkp.predict_model(model, [no_anchor])[0]) == pytest.approx(
+        float(tkp.predict_log(model[0].matrix([no_anchor]), model[1])[0]))
+    # nothing to anchor on anywhere: the plain ridge alone
+    bare = [{k: v for k, v in r.items() if k not in tkp.ANCHOR_COLS} for r in rows]
+    spec, plain_beta, anchored = tkp.fit_model(bare)
+    assert anchored is None
+    assert np.allclose(tkp.predict_model((spec, plain_beta, None), bare[:5]),
+                       tkp.predict_log(spec.matrix(bare[:5]), plain_beta))
+
+
+def test_rolling_backtest_windows_and_metrics():
+    rows = _synthetic(games=14, per_game=40)
+    windows = tkp.rolling_backtest(rows)
+    assert [w["train_games"] for w in windows] == [8, 11]
+    assert windows[0]["test_sales"] == 120 and windows[1]["test_sales"] == 120
+    assert all(w["mdape_model"] < 20 and w["mdape_plain_ridge"] < 20 for w in windows)
+    # a window with fewer than 20 test sales is skipped
+    assert tkp.rolling_backtest(_synthetic(games=10, per_game=8)) == []
+    res = tkp.train_and_predict(rows, [])
+    m = res["metrics"]
+    assert m["rolling"] == windows and m["rolling_mean_mdape"] == pytest.approx(
+        np.mean([w["mdape_model"] for w in windows]), abs=0.01)
+    assert "mdape_plain_ridge" in m and "median_bias_pct" in m
+    assert res["feature_spec"]["anchor"] == list(tkp.ANCHOR_COLS) and "anchored" in res["coef"]
+    assert tkp.train_and_predict(_synthetic(games=6, per_game=60), [])["metrics"]["rolling_mean_mdape"] is None
