@@ -33,6 +33,7 @@ import contextlib
 import hashlib
 import inspect
 import json
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -680,6 +681,114 @@ def owned_events(db, days: int = 30) -> dict:
     return {"events": _rpc(db, "get_owned_events_upcoming", {"p_days": _clamp(days, 1, 365, 30)}) or []}
 
 
+_GT_DRYRUN_COLS = (
+    "dryrun_id,captured_at,n2s_id,order_number,s4k_source,event_name,event_date,"
+    "sold_section,sold_row,sold_qty,sold_ea,sub_section,sub_row,sub_qty,quoted_ea,quoted_total,"
+    "cover_cost,cover_gate,cover_label,live_price_ea,live_qty,sub_view,decision,skip_reasons,payload")
+
+
+def _level_word(s: Any) -> str:
+    return re.sub(r"[^a-z]", "", str(s or "").lower())
+
+
+def _gt_dryrun_row(r: dict) -> dict:
+    """One dry-run row for a caller: profit sign flipped to read naturally, PED and the
+    Floor-vs-Loge level check made explicit, and the would-be order body kept."""
+    a, b = _level_word(r.get("sold_section")), _level_word(r.get("sub_section"))
+    cost = r.get("cover_cost")
+    out = {k: r.get(k) for k in (
+        "dryrun_id", "captured_at", "order_number", "s4k_source", "event_name", "event_date",
+        "sold_section", "sold_row", "sold_qty", "sold_ea", "sub_section", "sub_row", "sub_qty",
+        "quoted_ea", "quoted_total", "cover_gate", "cover_label", "decision", "skip_reasons",
+        "sub_view")}
+    out["profit"] = None if cost is None else round(-float(cost), 2)
+    out["ped"] = (r.get("n2s_id") or 0) < 0
+    out["level_mismatch"] = r.get("cover_gate") == 1 and bool(a) and bool(b) and a != b
+    payload = r.get("payload") or {}
+    out["gt_event_id"] = payload.get("eventId")
+    out["gt_listing_id"] = payload.get("listingId")
+    out["would_send"] = payload
+    return out
+
+
+def gt_dryrun(db, decision: str | None = None, gate: int | None = None, ped_only: bool = False,
+              since: str | None = None, limit: int = 50) -> dict:
+    """GoTickets auto-buy DRY RUN rows (internal), newest first: what an auto-buyer WOULD have
+    ordered for each new GoTickets cover, and why it would or would not. Nothing was ever sent.
+    `decision` would_buy|skip; `gate` 1-6 (1 = Index, same section, the only gate that buys);
+    `ped_only` = Gmail peddled (Need2Buy) orders; `since` YYYY-MM-DD. Each row has `profit`
+    (+ = cover cheaper than the sale), `level_mismatch` (gate-1 match whose named level differs,
+    e.g. sold Floor 6 vs listing Loge 6 — check by hand) and `would_send` (the order body)."""
+    q = db.table("n2s_gt_order_dryrun").select(_GT_DRYRUN_COLS)
+    if decision in ("would_buy", "skip"):
+        q = q.eq("decision", decision)
+    if gate is not None:
+        q = q.eq("cover_gate", _clamp(gate, 1, 6, 1))
+    if ped_only:
+        q = q.lt("n2s_id", 0)
+    if since:
+        try:
+            q = q.gte("captured_at", datetime.strptime(str(since)[:10], "%Y-%m-%d").date().isoformat())
+        except ValueError:
+            return {"error": "since must be YYYY-MM-DD"}
+    rows = q.order("dryrun_id", desc=True).limit(_clamp(limit, 1, 500, 50)).execute().data or []
+    return {"rows": [_gt_dryrun_row(r) for r in rows], "count": len(rows),
+            "note": "Dry run only: no order was sent to GoTickets."}
+
+
+def gt_dryrun_summary(db, days: int = 7) -> dict:
+    """GoTickets auto-buy DRY RUN summary (internal) over the last `days`: totals, would-buy
+    spend and profit, results per gate (how many covers were profitable and how much profit the
+    gate-only-1 rule left on the table), skip reasons, every would-buy with its level check,
+    the most profitable skips, and GoTickets listings offered to more than one order (the dry
+    run has no cross-order listing lock). Nothing was ever sent."""
+    since = (datetime.now(timezone.utc) - timedelta(days=_clamp(days, 1, 90, 7))).isoformat()
+    rows = (db.table("n2s_gt_order_dryrun").select(_GT_DRYRUN_COLS).gte("captured_at", since)
+            .order("dryrun_id", desc=True).limit(5000).execute().data) or []
+    items = [_gt_dryrun_row(r) for r in rows]
+    buys = [r for r in items if r["decision"] == "would_buy"]
+    gates: dict[int, dict] = {}
+    reasons: dict[str, int] = {}
+    listings: dict[str, set] = {}
+    for r, raw in zip(items, rows):
+        g = gates.setdefault(r["cover_gate"] or 0, {"rows": 0, "would_buy": 0, "profitable": 0,
+                                                    "profit_available": 0.0, "loss": 0.0})
+        g["rows"] += 1
+        g["would_buy"] += r["decision"] == "would_buy"
+        p = r["profit"]
+        if p is not None and p > 0:
+            g["profitable"] += 1
+            g["profit_available"] = round(g["profit_available"] + p, 2)
+        elif p is not None and p < 0:
+            g["loss"] = round(g["loss"] + p, 2)
+        for why in r["skip_reasons"] or []:
+            reasons[why] = reasons.get(why, 0) + 1
+        if r["gt_listing_id"]:
+            listings.setdefault(str(r["gt_listing_id"]), set()).add(raw.get("n2s_id"))
+    shared = sorted(((lid, len(ids)) for lid, ids in listings.items() if len(ids) > 1),
+                    key=lambda x: -x[1])[:10]
+    skips = sorted((r for r in items if r["decision"] == "skip" and (r["profit"] or 0) > 0),
+                   key=lambda r: -r["profit"])[:10]
+    slim = ("dryrun_id", "captured_at", "s4k_source", "event_name", "event_date", "sold_section",
+            "sold_row", "sold_qty", "sold_ea", "sub_section", "sub_row", "quoted_total", "profit",
+            "cover_gate", "cover_label", "skip_reasons", "ped", "level_mismatch")
+    return {
+        "days": _clamp(days, 1, 90, 7),
+        "rows": len(items), "would_buy": len(buys), "skip": len(items) - len(buys),
+        "ped_rows": sum(r["ped"] for r in items),
+        "would_buy_spend": round(sum(float(r["quoted_total"] or 0) for r in buys), 2),
+        "would_buy_profit": round(sum(r["profit"] or 0 for r in buys), 2),
+        "level_mismatches": sum(r["level_mismatch"] for r in buys),
+        "by_gate": {str(k): v for k, v in sorted(gates.items())},
+        "skip_reasons": reasons,
+        "would_buys": [{k: r[k] for k in slim} for r in buys],
+        "top_profitable_skips": [{k: r[k] for k in slim} for r in skips],
+        "listings_on_multiple_orders": [{"gt_listing_id": lid, "orders": n} for lid, n in shared],
+        "note": "Dry run only: no order was sent to GoTickets. Gates 2-6 are skipped by rule "
+                "(gate_moves_buyer); profit is sale minus listing total.",
+    }
+
+
 def query_view(db, view: str, columns: list[str] | None = None,
                filters: list[dict] | None = None, order_by: str | None = None,
                descending: bool = False, limit: int = 100) -> dict:
@@ -695,7 +804,7 @@ EXTERNAL_TOOLS: tuple[Callable, ...] = (
     price_forecast, team_report, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
     pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
-    query_view)
+    gt_dryrun, gt_dryrun_summary, query_view)
 
 INSTRUCTIONS = (
     "S4K live-event market data (concerts, sports, theater). First time here? Call "
