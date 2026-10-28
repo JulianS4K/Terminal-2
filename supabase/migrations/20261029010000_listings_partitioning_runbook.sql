@@ -1,4 +1,4 @@
--- Migration 20261029010000 · level:ops · lane:A1 (data plane — retention) · writes:partition_prepare()(new),partition_ensure_days()(new),partition_cutover()(new),partition_shrink_old()(new),partition_maintain()(new) · reads:pg_catalog,retention_policy · pre:20261027210000
+-- Migration 20261029010000 · level:ops · lane:A1 (data plane — retention) · writes:_partition_lock_down()(new),partition_prepare()(new),partition_ensure_days()(new),partition_cutover()(new),partition_shrink_old()(new),partition_maintain()(new) · reads:pg_catalog,retention_policy · pre:20261027210000
 --
 -- ============================================================================
 -- Daily range partitions for the two listing firehoses — the functions only.
@@ -65,6 +65,17 @@ BEGIN
   RETURN format('%s: rows before %s validated; run partition_cutover before then', p_table, p_cutover);
 END $$;
 
+-- partition lock-down -------------------------------------------------------
+-- Supabase's default privileges grant anon/authenticated ALL on every new public table, and
+-- PostgREST exposes partitions as tables of their own. Reads through the parent never check a
+-- partition's grants, so every partition gets RLS on and no API-role grants.
+CREATE OR REPLACE FUNCTION public._partition_lock_down(p_name text)
+RETURNS void LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+BEGIN
+  EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', p_name);
+  EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated', p_name);
+END $$;
+
 -- day partitions ------------------------------------------------------------
 -- Creates the missing UTC-day partitions from p_from up to p_days after today. A day already
 -- covered (by name, or shrunk to <name>_k) is skipped; a day the DEFAULT partition already holds
@@ -85,6 +96,7 @@ BEGIN
       BEGIN
         EXECUTE format('CREATE TABLE public.%I PARTITION OF public.%I FOR VALUES FROM (%L) TO (%L)',
                        v_name, p_table, v_lo, v_hi);
+        PERFORM public._partition_lock_down(v_name);
         v_n := v_n + 1;
       EXCEPTION WHEN invalid_object_definition OR check_violation THEN
         RAISE WARNING 'partition_ensure_days: % not created: %', v_name, SQLERRM;
@@ -191,12 +203,14 @@ BEGIN
     -- the captured text says "CREATE INDEX <name> ON public.<t> USING ...": ONLY the parent
     EXECUTE regexp_replace(r.i->>'def', ' ON public\.', ' ON ONLY public.');
   END LOOP;
+  PERFORM public._partition_lock_down(v_legacy);
   EXECUTE format('ALTER TABLE public.%I ATTACH PARTITION public.%I FOR VALUES FROM (MINVALUE) TO (%L)',
                  p_table, v_legacy, p_cutover);
   FOR r IN SELECT e.f FROM jsonb_array_elements(v_fks) e(f) LOOP
     EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I %s', p_table, r.f->>'name', r.f->>'def');
   END LOOP;
   EXECUTE format('CREATE TABLE public.%I PARTITION OF public.%I DEFAULT', p_table || '_default', p_table);
+  PERFORM public._partition_lock_down(p_table || '_default');
   v_days := public.partition_ensure_days(p_table, p_cutover, p_days_ahead);
   EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', p_table);
   FOR r IN SELECT e.a FROM jsonb_array_elements(v_acl) e(a) LOOP
@@ -269,6 +283,7 @@ BEGIN
     END IF;
     v_k := left(r.relname, 61) || '_k';
     EXECUTE format('CREATE TABLE public.%I (LIKE public.%I INCLUDING DEFAULTS INCLUDING GENERATED)', v_k, p_table);
+    PERFORM public._partition_lock_down(v_k);
     EXECUTE format('INSERT INTO public.%I SELECT * FROM public.%I t WHERE %s', v_k, r.relname, v_keep);
     GET DIAGNOSTICS v_kept = ROW_COUNT;
     EXECUTE format('ALTER TABLE public.%I DETACH PARTITION public.%I', p_table, r.relname);
@@ -295,7 +310,8 @@ BEGIN
                             'shrunk', public.partition_shrink_old(p_table, false));
 END $$;
 
-REVOKE ALL ON FUNCTION public.partition_prepare(text, timestamptz),
+REVOKE ALL ON FUNCTION public._partition_lock_down(text),
+                       public.partition_prepare(text, timestamptz),
                        public.partition_ensure_days(text, timestamptz, integer),
                        public.partition_cutover(text, timestamptz, integer),
                        public.partition_shrink_old(text, boolean),
