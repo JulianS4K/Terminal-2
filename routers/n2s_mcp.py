@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from core.n2s_autobuy import plan_cover
 from routers.mcp_api import INTERNAL, MCPApp, _clamp, _make_server
 
 N2S_INSTRUCTIONS = (
@@ -35,7 +36,7 @@ N2S_INSTRUCTIONS = (
 
 _BOOK_COLS = (
     "n2s_id,order_number,n2s_order_key,s4k_source,n2s_status,status_label,fail_reason,alert_at,"
-    "timer_expires_at,in_window,event_name,event_date,event_dt,venue,tevo_event_id,gt_event_id,"
+    "timer_expires_at,timer_expired,event_live,in_window,event_name,event_date,event_dt,venue,tevo_event_id,gt_event_id,"
     "section,order_row,quantity,sold_ea,sold_total,has_cover,no_cover_reason,sub_source,"
     "sub_listing_id,sub_section,sub_row,sub_qty,sub_avail,sub_ea,sub_total,cover_cost,cover_gate,"
     "cover_label,sub_view,buy_url,refreshed_at,last_sub_source,last_sub_section,last_sub_row,"
@@ -308,9 +309,47 @@ def tm_primary(db, event_url: str, sections: list[str] | None = None) -> dict:
                                                                     d["min_total_each"] or 0))}
 
 
+def _owned(db, r: dict) -> bool | None:
+    """Is the cover's listing our own inventory, per the flags on what N2S pulled? None when
+    the source carries no flag (GoTickets) or the listing is no longer in the pull."""
+    lid, src = str(r.get("sub_listing_id") or ""), r.get("sub_source")
+    if not lid.isdigit():
+        return None
+    if src == "tevo":
+        hit = (db.table("n2s_evo_current").select("is_owned").eq("tevo_ticket_group_id", int(lid))
+               .limit(1).execute().data) or []
+        return bool(hit[0]["is_owned"]) if hit else None
+    if src == "seatgeek":
+        hit = (db.table("n2s_sg_current").select("is_broker_owned")
+               .or_(f"display_id.eq.{lid},sglid.eq.{lid}").limit(1).execute().data) or []
+        return bool(hit[0]["is_broker_owned"]) if hit else None
+    return None
+
+
+def autobuy_plan(db, order_number: str | None = None, limit: int = 20) -> dict:
+    """DRY RUN of the auto-cover flow (nothing is ever sent): for one open order, or for every
+    open order whose cover is a profitable gate-1 match, the plan an executor would follow —
+    1 sale still active, 2 1-1 Index sub (incl. the Floor/Loge level guard), 3 sub is not ours,
+    4 the BUY request it would send (method/URL/body), 5 the read that confirms the market
+    accepted our purchase, 6 the ACCEPT request on the selling market. `go` says whether every
+    step passes with a verified endpoint; `blocked_by` names the steps that stop it."""
+    q = db.table("v_n2s_orders").select(_BOOK_COLS)
+    if order_number:
+        num = str(order_number).strip()[:64]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", num):
+            return {"error": "order_number may only contain letters, digits, '-', '_' and '.'"}
+        q = q.or_(f"order_number.eq.{num},n2s_order_key.eq.{num}")
+    else:
+        q = q.eq("cover_gate", 1).lt("cover_cost", 0)
+    rows = q.order("cover_cost").limit(_clamp(limit, 1, 100, 20)).execute().data or []
+    plans = [plan_cover(r, gt_event_id=r.get("gt_event_id"), owned=_owned(db, r)) for r in rows]
+    return {"count": len(plans), "go": sum(p["go"] for p in plans), "plans": plans,
+            "note": "Dry run only: nothing was sent to any market."}
+
+
 N2S_TOOLS: tuple[Callable, ...] = (
     n2s_health, n2s_book, n2s_order, n2s_cover_history, ped_orders, gt_dryrun, gt_dryrun_summary,
-    tm_primary)
+    tm_primary, autobuy_plan)
 
 
 def make_n2s_app(get_db: Callable[[], Any], limiter: Any | None = None) -> MCPApp:

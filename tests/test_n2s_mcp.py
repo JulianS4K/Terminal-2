@@ -209,3 +209,32 @@ def test_defaults_edges_and_errors(monkeypatch):
     monkeypatch.setattr(ticketsdata_client, "TicketsDataClient", Boom)
     assert n.tm_primary(FakeDB(), "https://www.ticketmaster.com/x/event/0A0064") == {
         "error": "HTTP 402 — plan quota exhausted"}
+
+
+def test_autobuy_plan_tool_dry_run_only():
+    db = FakeDB(tables={
+        "v_n2s_orders": [{"order_number": "X1", "s4k_source": "EVO", "sub_source": "tevo",
+                          "sub_listing_id": "555", "cover_gate": 1, "cover_cost": -10, "quantity": 2,
+                          "sub_qty": 2, "in_window": True, "event_live": True, "n2s_status": "n2s"}],
+        "n2s_evo_current": [{"is_owned": False}]})
+    out = n.autobuy_plan(db, limit=999)
+    q = next(x for x in db.queries if x.table == "v_n2s_orders")
+    assert ("eq", ("cover_gate", 1), {}) in q.calls and ("lt", ("cover_cost", 0), {}) in q.calls
+    assert ("limit", (100,), {}) in q.calls
+    assert out["count"] == 1 and out["go"] == 1 and "Dry run only" in out["note"]
+    assert all(s.get("sent") in (None, False) for s in out["plans"][0]["steps"])
+    assert n.autobuy_plan(db, order_number="1,x")["error"].startswith("order_number")
+    n.autobuy_plan(db, order_number="X1")
+    q = [x for x in db.queries if x.table == "v_n2s_orders"][-1]
+    assert ("or_", ("order_number.eq.X1,n2s_order_key.eq.X1",), {}) in q.calls
+
+
+def test_owned_lookup_per_source():
+    db = FakeDB(tables={"n2s_evo_current": [{"is_owned": True}], "n2s_sg_current": [{"is_broker_owned": False}]})
+    assert n._owned(db, {"sub_source": "tevo", "sub_listing_id": "123"}) is True
+    assert n._owned(db, {"sub_source": "seatgeek", "sub_listing_id": "456"}) is False
+    assert n._owned(db, {"sub_source": "gotickets", "sub_listing_id": "789"}) is None
+    assert n._owned(db, {"sub_source": "tevo", "sub_listing_id": "abc"}) is None
+    empty = FakeDB(tables={"n2s_evo_current": [], "n2s_sg_current": []})
+    assert n._owned(empty, {"sub_source": "tevo", "sub_listing_id": "1"}) is None
+    assert n._owned(empty, {"sub_source": "seatgeek", "sub_listing_id": "1"}) is None
