@@ -84,8 +84,10 @@ SELL_SIDE: dict[str, dict] = {
                    "verified": True},
     },
     "vivid": {
-        "accept": {"method": "POST", "url": None, "verified": False,
-                   "doc": "Vivid broker portal docs (stoplight) render client-side; accept endpoint not yet read"},
+        "accept": {"method": "POST", "url": "https://brokers.vividseats.com/webservices/v1/confirmOrder",
+                   "verified": True,
+                   "doc": "Vivid Broker Portal — POST /v1/confirmOrder; must land within minutes of the order "
+                          "notification or a financial penalty applies (reject: POST /v1/rejectOrder)"},
         "status": {"method": "GET", "url": "https://brokers.vividseats.com/webservices/v1/getOrder?orderId={order_id}",
                    "verified": True},
     },
@@ -217,6 +219,8 @@ def _accept_body(market: str, order: dict) -> dict | None:
         return {"order_id": oid, "status": "confirmed"}
     if market == "gotickets":
         return {}
+    if market == "vivid":
+        return {"orderId": oid, "shipNow": False}
     return None
 
 
