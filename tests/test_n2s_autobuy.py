@@ -74,8 +74,11 @@ def test_gt_expected_total_formula():
 
 def test_order_active_timer_and_ped():
     assert a.order_active({"timer_expires_at": "2026-10-28T16:53:45+00:00"}, NOW)["reasons"] == ["timer_closed"]
+    # PED (Need2Buy) orders are never covered — non-PED only.
     ped = a.order_active({"n2s_status": "n2b", "timer_expires_at": None})
-    assert ped == {"active": True, "reasons": [], "seconds_left": None}
+    assert ped == {"active": False, "reasons": ["ped_order"], "seconds_left": None}
+    assert a.order_active({"n2s_id": -8814259}, NOW)["reasons"] == ["ped_order"]
+    assert a.order_active({"n2s_id": 5932, "n2s_status": "n2s"}, NOW)["active"] is True
     # A naive timestamp is read as UTC; garbage is ignored.
     assert a.order_active({"timer_expires_at": "2026-10-28T17:05:00"}, NOW)["seconds_left"] == 300
     assert a.order_active({"timer_expires_at": "soon"}, NOW)["active"] is True
