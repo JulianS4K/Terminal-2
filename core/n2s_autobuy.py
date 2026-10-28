@@ -33,6 +33,10 @@ BUY_SIDE: dict[str, dict] = {
                 "doc": "GoTickets Pro API — POST /orders (expectedTotal guards the price; 475 = price changed)"},
         "confirm": {"method": "GET", "url": "https://sc.gotickets.com/rest/purchases/{purchase_id}",
                     "verified": True, "doc": "Seller Central — GET /rest/purchases/{id}"},
+        # Read before the buy: per-listing tax + transactionRatePercentage feed expectedTotal.
+        "pricing": {"method": "GET",
+                    "url": "https://gotickets.com/rest/pro/api/events/{event_id}/listings?paymentMethodCategory=CREDIT_CARD",
+                    "verified": True, "doc": "GoTickets Pro API — GET /events/{eventId}/listings"},
     },
     "tevo": {
         "market": "EVO (Ticket Evolution)",
@@ -176,11 +180,20 @@ def index_match(order: dict) -> dict:
     return {"index_1_1": not reasons, "reasons": reasons}
 
 
+def gt_expected_total(price_ea: Any, qty: Any, tax: Any = 0, rate_pct: Any = 0) -> float | None:
+    """GoTickets Pro: (displayPrice + tax) * quantity * (1 + transactionRatePercentage/100).
+    The order fails (475) if the real total exceeds this, so it is the price guard."""
+    if price_ea is None or not qty:
+        return None
+    return round((float(price_ea) + float(tax or 0)) * int(qty) * (1 + float(rate_pct or 0) / 100), 2)
+
+
 def _buy_body(src: str, order: dict, gt_event_id: Any) -> dict | None:
     qty = order.get("sub_qty")
     if src == "gotickets":
         return {"eventId": gt_event_id, "listingId": order.get("sub_listing_id"), "quantity": qty,
-                "expectedTotal": order.get("sub_total"),
+                "expectedTotal": gt_expected_total(order.get("sub_ea"), qty, order.get("sub_tax"),
+                                                   order.get("gt_rate_pct")),
                 "buyerNotes": f"N2S cover for {order.get('s4k_source')} order {order.get('order_number')}",
                 "emailAddress": None, "phoneNumber": None, "deliveryMethodId": None,
                 "billingAddress": None, "paymentMethodToken": None}

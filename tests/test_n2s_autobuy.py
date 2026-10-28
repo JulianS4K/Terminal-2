@@ -62,6 +62,16 @@ def test_blocks_level_mismatch_loss_short_obstructed_and_inactive():
     assert p["blocked_by"] == ["sale order still active", "1-1 Index sub"]
 
 
+def test_gt_expected_total_formula():
+    # (displayPrice + tax) * quantity * (1 + transactionRatePercentage/100)
+    assert a.gt_expected_total(100, 2, tax=8, rate_pct=3) == 222.48
+    assert a.gt_expected_total(884.05, 2) == 1768.1
+    assert a.gt_expected_total(None, 2) is None and a.gt_expected_total(10, 0) is None
+    p = a.plan_cover(_order(sub_tax=10, gt_rate_pct=2.5), gt_event_id=1, owned=None, now=NOW)
+    assert {x["step"]: x for x in p["steps"]}[4]["body"]["expectedTotal"] == 1832.8
+    assert a.BUY_SIDE["gotickets"]["pricing"]["method"] == "GET"
+
+
 def test_order_active_timer_and_ped():
     assert a.order_active({"timer_expires_at": "2026-10-28T16:53:45+00:00"}, NOW)["reasons"] == ["timer_closed"]
     ped = a.order_active({"n2s_status": "n2b", "timer_expires_at": None})
