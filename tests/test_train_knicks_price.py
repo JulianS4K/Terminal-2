@@ -2,6 +2,7 @@
 beats the naive zone baseline on held-out games, and skips cleanly on too little data."""
 from __future__ import annotations
 
+import json
 import math
 import os
 import sys
@@ -174,3 +175,95 @@ def test_forward_backtest_scores_the_next_two_weeks():
     res = tkp.train_and_predict(rows, [])
     assert res["metrics"]["forward"] == windows
     assert res["feature_spec"]["recency_half_life_days"] == tkp.RECENCY_HALF_LIFE_DAYS
+
+
+def test_form_features_switch_and_attach(monkeypatch):
+    for v, on in (("1", True), ("on", True), ("TRUE", True), ("", False), ("0", False)):
+        monkeypatch.setenv("ML_FORM_FEATURES", v)
+        assert tkp.form_features_enabled() is on
+    monkeypatch.delenv("ML_FORM_FEATURES")
+    assert tkp.form_features_enabled() is False
+    rows = [{"source": "seatgeek", "sale_key": "a", "price": 100}, {"source": "seatgeek", "sale_key": "b", "price": 90}]
+    form = [{"source": "seatgeek", "sale_key": "a", "knicks_win_pct": 0.6, "knicks_games": 10, "knicks_streak": -2,
+             "knicks_out": 1, "opp_win_pct": 0.4, "opp_games": 10, "opp_streak": 3, "opp_out": 0, "extra": "x"}]
+    out = tkp.attach_form(rows, form, ("source", "sale_key"))
+    assert out[0]["knicks_win_pct"] == 0.6 and out[0]["opp_streak"] == 3 and "extra" not in out[0]
+    assert out[1] == rows[1]                                  # no form row: left as it was
+    numeric = dict(tkp.NUMERIC)
+    monkeypatch.setattr(tkp, "NUMERIC", numeric)
+    tkp.enable_form_features()
+    tkp.enable_form_features()
+    assert set(tkp.FORM_NUMERIC) <= set(numeric) and len(numeric) == len(tkp.FORM_NUMERIC) + 8
+
+
+def test_form_features_feed_the_model(monkeypatch):
+    rows = _synthetic(games=8, per_game=60)
+    for r in rows:   # a winning streak lifts prices 20%
+        r["knicks_streak"] = 4 if r["sg_event_id"] % 2 else -4
+        r["price"] = r["price"] * (1.2 if r["sg_event_id"] % 2 else 1.0)
+    monkeypatch.setattr(tkp, "NUMERIC", dict(tkp.NUMERIC))
+    tkp.enable_form_features()
+    spec = tkp.FeatureSpec.fit(rows)
+    assert "knicks_streak" in spec.names and "opp_win_pct" in spec.names
+    hot, cold = dict(rows[0], knicks_streak=4), dict(rows[0], knicks_streak=-4)
+    model = tkp.fit_model(rows)
+    assert float(tkp.predict_model(model, [hot])[0]) > float(tkp.predict_model(model, [cold])[0]) + 0.1
+
+
+def test_game_zone_mdape_scores_group_medians():
+    test = [{"sg_event_id": 1, "zone": "A", "price": p} for p in (100, 100, 100, 100, 100)] \
+        + [{"sg_event_id": 1, "zone": "B", "price": p} for p in (50, 60)]          # too few: ignored
+    pred = np.array([110.0] * 5 + [1.0, 1.0])
+    assert tkp.game_zone_mdape(test, pred) == (10.0, 1)
+    assert tkp.game_zone_mdape(test[5:], pred[5:]) == (None, 0)
+    res = tkp.train_and_predict(_synthetic(games=10, per_game=60), [])
+    assert res["metrics"]["game_zone_groups"] >= 4 and res["metrics"]["mdape_game_zone"] < 15
+
+
+class _FakeRest:
+    """Stands in for the PostgREST client: serves the views, records writes."""
+    instances: list = []
+
+    def __init__(self, url, key):
+        self.reads, self.inserts = [], []
+        rows = _synthetic(games=8, per_game=60)
+        for i, r in enumerate(rows):
+            r["source"], r["sale_key"] = "seatgeek", str(i)
+        self.views = {
+            tkp.TRAIN_VIEW: rows,
+            tkp.PREDICT_VIEW: [{"sg_event_id": 9999, "zone": "Lower Center", "occurs_at": "2026-12-25T17:00:00+00:00",
+                                "hours_to_event": 200.0, "opponent": "BOS", "game_dow": 5, "game_type": "regular",
+                                "ctx_zone_median": 800.0, "ctx_perf_home_median": 250.0}],
+            tkp.FORM_TRAIN_VIEW: [{"source": "seatgeek", "sale_key": r["sale_key"], "knicks_win_pct": 0.5,
+                                   "knicks_streak": 1} for r in rows],
+            tkp.FORM_PREDICT_VIEW: [{"sg_event_id": 9999, "knicks_win_pct": 0.5, "knicks_streak": 2}],
+        }
+        _FakeRest.instances.append(self)
+
+    def read_all(self, view, columns=None, order=None):
+        self.reads.append(view)
+        return [dict(r) for r in self.views[view]]
+
+    def insert(self, table, rows, returning=False):
+        self.inserts.append((table, rows))
+        return [{"run_id": 7}] if returning else []
+
+
+def test_main_reads_form_views_only_when_switched_on(monkeypatch, capsys):
+    monkeypatch.setenv("SUPABASE_URL", "https://x.invalid")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
+    monkeypatch.setattr(tkp, "Rest", _FakeRest)
+    monkeypatch.setattr(tkp, "NUMERIC", dict(tkp.NUMERIC))
+    monkeypatch.delenv("ML_FORM_FEATURES", raising=False)
+    assert tkp.main([]) == 0
+    off = _FakeRest.instances[-1]
+    assert tkp.FORM_TRAIN_VIEW not in off.reads and "knicks_streak" not in tkp.NUMERIC
+    run = off.inserts[0][1]
+    assert run["status"] == "ok" and "form features on" not in (run.get("note") or "")
+    monkeypatch.setenv("ML_FORM_FEATURES", "1")
+    assert tkp.main(["--dry-run"]) == 0
+    on = _FakeRest.instances[-1]
+    assert on.reads == [tkp.TRAIN_VIEW, tkp.PREDICT_VIEW, tkp.FORM_TRAIN_VIEW, tkp.FORM_PREDICT_VIEW]
+    assert on.inserts == [] and "knicks_streak" in tkp.NUMERIC
+    printed = capsys.readouterr().out
+    assert "form features on" in printed and '"predictions": 1' in printed

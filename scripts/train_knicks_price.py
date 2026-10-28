@@ -31,6 +31,7 @@ Usage:
     SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... python3 scripts/train_knicks_price.py
     python3 scripts/train_knicks_price.py --dry-run          # fit + report, write nothing
     python3 scripts/train_knicks_price.py --from-file sales.json --dry-run
+    ML_FORM_FEATURES=1 ...                                   # add team form + injuries (off by default)
 """
 from __future__ import annotations
 
@@ -85,8 +86,47 @@ NUMERIC: dict[str, tuple[str, str]] = {
     "log_hours_to_event": ("hours_to_event", "log1p_pos"),
     "zone_owned_share": ("ctx_zone_owned_share", "raw"),
 }
-TRAIN_COLUMNS = sorted({"sg_event_id", "occurs_at", "sale_at", "price", "quantity", "level", "row_band", "zone",
-                        "opponent", "horizon_bucket", "game_dow", "game_type"} | {c for c, _ in NUMERIC.values()})
+TRAIN_COLUMNS = sorted({"source", "sale_key", "sg_event_id", "occurs_at", "sale_at", "price", "quantity", "level",
+                        "row_band", "zone", "opponent", "horizon_bucket", "game_dow", "game_type"}
+                       | {c for c, _ in NUMERIC.values()})
+# Team form + injuries (mig 20261028210000), OFF until ML_FORM_FEATURES=1: as of each sale (now()
+# for predictions), both teams' win %, games played, streak (+W / -L) and players out. Off by
+# default because every sale so far sits in the first weeks of the season (0-0 to 1-3), where
+# these barely vary; switch it on once the record has moved (~mid-November 2026).
+FORM_TRAIN_VIEW = "v_ml_knicks_form_train"
+FORM_PREDICT_VIEW = "v_ml_knicks_form_predict"
+FORM_NUMERIC: dict[str, tuple[str, str]] = {
+    "knicks_win_pct": ("knicks_win_pct", "raw"),
+    "log_knicks_games": ("knicks_games", "log1p_pos"),
+    "knicks_streak": ("knicks_streak", "raw"),
+    "knicks_out": ("knicks_out", "raw"),
+    "opp_win_pct": ("opp_win_pct", "raw"),
+    "log_opp_games": ("opp_games", "log1p_pos"),
+    "opp_streak": ("opp_streak", "raw"),
+    "opp_out": ("opp_out", "raw"),
+}
+GAME_ZONE_MIN_SALES = 5
+
+
+def form_features_enabled() -> bool:
+    return os.environ.get("ML_FORM_FEATURES", "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def enable_form_features() -> None:
+    """Add the form columns to the model's numeric features (idempotent)."""
+    NUMERIC.update(FORM_NUMERIC)
+
+
+def attach_form(rows: list[dict], form_rows: list[dict], keys: tuple[str, ...]) -> list[dict]:
+    """Copy the form columns onto each row from the form row with the same `keys`; rows with no
+    match keep their own values (a missing feature imputes to the training mean)."""
+    by_key = {tuple(f.get(k) for k in keys): f for f in form_rows}
+    cols = [c for c, _ in FORM_NUMERIC.values()]
+    out = []
+    for r in rows:
+        f = by_key.get(tuple(r.get(k) for k in keys))
+        out.append({**r, **{c: f.get(c) for c in cols}} if f else r)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +354,21 @@ def rolling_backtest(rows: list[dict]) -> list[dict]:
     return out
 
 
+def game_zone_mdape(test: list[dict], pred: np.ndarray) -> tuple[float | None, int]:
+    """Error on the level that pricing uses: per (game, zone) with >= GAME_ZONE_MIN_SALES test
+    sales, the median prediction against the median sale. Returns (MdAPE %, groups)."""
+    groups: dict[tuple, tuple[list[float], list[float]]] = defaultdict(lambda: ([], []))
+    for r, p in zip(test, pred):
+        g = groups[(r.get("sg_event_id"), r.get("zone"))]
+        g[0].append(float(r["price"]))
+        g[1].append(float(p))
+    ok = [(float(np.median(a)), float(np.median(p))) for a, p in groups.values() if len(a) >= GAME_ZONE_MIN_SALES]
+    if not ok:
+        return None, 0
+    act, prd = np.array([a for a, _ in ok]), np.array([p for _, p in ok])
+    return mdape(act, prd), len(ok)
+
+
 def forward_backtest(rows: list[dict]) -> list[dict]:
     """The realistic test: train on every sale before a cut-off, score the next
     FORWARD_WINDOW_DAYS of sales on every game. The last FORWARD_WINDOWS windows before the
@@ -331,9 +386,10 @@ def forward_backtest(rows: list[dict]) -> list[dict]:
             continue
         y = np.array([float(r["price"]) for r in test])
         p = np.exp(predict_model(fit_model(train), test))
+        gz, n_gz = game_zone_mdape(test, p)
         out.append({"from": datetime.fromtimestamp(cut, timezone.utc).date().isoformat(),
                     "days": FORWARD_WINDOW_DAYS, "train_sales": len(train), "test_sales": len(test),
-                    "mdape_model": mdape(y, p),
+                    "mdape_model": mdape(y, p), "mdape_game_zone": gz, "game_zone_groups": n_gz,
                     "median_bias_pct": round(float(np.median((p - y) / y)) * 100, 2)})
     return out
 
@@ -353,8 +409,11 @@ def evaluate(train: list[dict], test: list[dict]) -> tuple[dict, np.ndarray]:
     zone_hist = np.array([zone_train_med.get(_cat(r, "zone"), np.nan) for r in test])
 
     covered = np.isfinite(zone_ask)
+    gz, n_gz = game_zone_mdape(test, p_test)
     metrics = {
         "mdape_model": mdape(y_test, p_test),
+        "mdape_game_zone": gz,
+        "game_zone_groups": n_gz,
         "mdape_plain_ridge": mdape(y_test, p_plain),
         "mdape_baseline_zone_ask_median": mdape(y_test, zone_ask),
         "mdape_baseline_zone_train_median": mdape(y_test, zone_hist),
@@ -498,6 +557,11 @@ def main(argv: list[str] | None = None) -> int:
         api = Rest(url, key)
         sales = api.read_all(TRAIN_VIEW, TRAIN_COLUMNS, order="sale_key.asc,source.asc")
         upcoming = api.read_all(PREDICT_VIEW)
+        if form_features_enabled():
+            sales = attach_form(sales, api.read_all(FORM_TRAIN_VIEW), ("source", "sale_key"))
+            upcoming = attach_form(upcoming, api.read_all(FORM_PREDICT_VIEW), ("sg_event_id",))
+    if form_features_enabled():
+        enable_form_features()
 
     try:
         result = train_and_predict(sales, upcoming)
@@ -507,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
             write_run(api, result)
         raise
 
+    if form_features_enabled() and result.get("status") == "ok":
+        result["note"] = "; ".join(filter(None, [result.get("note"), "form features on"]))
     summary = {k: result.get(k) for k in ("status", "note", "n_train", "n_test", "games_train", "games_test", "metrics")}
     summary["predictions"] = len(result.get("predictions") or [])
     if api and not args.dry_run:
