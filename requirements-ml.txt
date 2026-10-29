@@ -3,3 +3,4 @@
 # next major as the ceiling.
 numpy>=2.0,<3.0
 requests>=2.34.2,<3.0
+psycopg[binary]>=3.2,<4.0  # ML_TRAINER_DATABASE_URL path (mig 20261029120000)

@@ -2,7 +2,9 @@
 """Train the Knicks home-game sale-price model and score upcoming games.
 
 Runs daily as the Render cron job `ml-knicks-price-train` (render.yaml); also runnable
-by hand. Reads and writes Supabase over PostgREST with the service-role key.
+by hand. Connects as the least-privilege `ml_trainer` role when ML_TRAINER_DATABASE_URL is
+set (mig 20261029120000: it can only call the ml_io read / save functions), else over
+PostgREST with the service-role key.
 
 Input : v_ml_knicks_sales_train   one row per SeatGeek / SeatData sale of a Knicks home
                                   game (regular season + Cup only; mig 20261027010830)
@@ -28,6 +30,7 @@ Output: one ml_model_runs row (status ok | skipped | failed) and, when ok, one
         pair sold now. Nothing upstream is called.
 
 Usage:
+    ML_TRAINER_DATABASE_URL=postgresql://ml_trainer.<ref>:...@<pooler>:5432/postgres python3 scripts/train_knicks_price.py
     SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... python3 scripts/train_knicks_price.py
     python3 scripts/train_knicks_price.py --dry-run          # fit + report, write nothing
     python3 scripts/train_knicks_price.py --from-file sales.json --dry-run
@@ -526,16 +529,54 @@ class Rest:
         r.raise_for_status()
         return r.json() if returning else []
 
+    def save_run(self, run: dict, preds: list[dict]) -> int:
+        run_id = self.insert("ml_model_runs", run, returning=True)[0]["run_id"]
+        preds = [{**p, "run_id": run_id} for p in preds]
+        for i in range(0, len(preds), 500):
+            self.insert("ml_price_predictions", preds[i:i + 500])
+        return run_id
 
-def write_run(api: Rest, result: dict) -> int:
+
+# ---------------------------------------------------------------------------
+# Direct Postgres as ml_trainer — the ml_io functions are its only grants
+# ---------------------------------------------------------------------------
+ML_IO_FUNCS = {TRAIN_VIEW: "ml_io.sales_train", PREDICT_VIEW: "ml_io.predict_input",
+               FORM_TRAIN_VIEW: "ml_io.form_train", FORM_PREDICT_VIEW: "ml_io.form_predict"}
+
+
+class Pg:
+    def __init__(self, dsn: str, connect=None):
+        if connect is None:
+            import psycopg  # imported lazily, like requests above
+            connect = psycopg.connect
+        # no server-side prepared statements: the Supabase pooler may not keep them
+        self.conn = connect(dsn, prepare_threshold=None)
+
+    def read_all(self, view: str, columns: Iterable[str] | None = None, order: str | None = None) -> list[dict]:
+        # the function fixes the order (sales_train sorts like the PostgREST call did)
+        with self.conn.cursor() as cur:
+            cur.execute(f"SELECT * FROM {ML_IO_FUNCS[view]}()")
+            rows = [r[0] for r in cur.fetchall()]
+        self.conn.commit()
+        if columns:
+            cols = list(columns)
+            rows = [{c: r.get(c) for c in cols} for r in rows]
+        return rows
+
+    def save_run(self, run: dict, preds: list[dict]) -> int:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT ml_io.save_run(%s::jsonb, %s::jsonb)",
+                        (json.dumps(run, default=str), json.dumps(preds, default=str)))
+            run_id = cur.fetchone()[0]
+        self.conn.commit()
+        return run_id
+
+
+def write_run(api: Rest | Pg, result: dict) -> int:
     run = {k: result.get(k) for k in ("n_train", "n_test", "games_train", "games_test",
                                       "metrics", "feature_spec", "coef", "note")}
     run.update({"model": MODEL, "status": result["status"]})
-    run_id = api.insert("ml_model_runs", run, returning=True)[0]["run_id"]
-    preds = [{**p, "run_id": run_id} for p in result.get("predictions") or []]
-    for i in range(0, len(preds), 500):
-        api.insert("ml_price_predictions", preds[i:i + 500])
-    return run_id
+    return api.save_run(run, result.get("predictions") or [])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -550,11 +591,16 @@ def main(argv: list[str] | None = None) -> int:
             data = json.load(fh)
         sales, upcoming = data.get("sales", []), data.get("upcoming", [])
     else:
+        dsn = os.environ.get("ML_TRAINER_DATABASE_URL")
         url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-        if not url or not key:
-            print("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required", file=sys.stderr)
+        if dsn:
+            api = Pg(dsn)
+        elif url and key:
+            api = Rest(url, key)
+        else:
+            print("ML_TRAINER_DATABASE_URL (or SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) is required",
+                  file=sys.stderr)
             return 2
-        api = Rest(url, key)
         sales = api.read_all(TRAIN_VIEW, TRAIN_COLUMNS, order="sale_key.asc,source.asc")
         upcoming = api.read_all(PREDICT_VIEW)
         if form_features_enabled():
