@@ -248,6 +248,12 @@ class _FakeRest:
         self.inserts.append((table, rows))
         return [{"run_id": 7}] if returning else []
 
+    def save_run(self, run, preds):
+        self.inserts.append(("ml_model_runs", run))
+        if preds:
+            self.inserts.append(("ml_price_predictions", preds))
+        return 7
+
 
 def test_main_reads_form_views_only_when_switched_on(monkeypatch, capsys):
     monkeypatch.setenv("SUPABASE_URL", "https://x.invalid")
@@ -267,3 +273,79 @@ def test_main_reads_form_views_only_when_switched_on(monkeypatch, capsys):
     assert on.inserts == [] and "knicks_streak" in tkp.NUMERIC
     printed = capsys.readouterr().out
     assert "form features on" in printed and '"predictions": 1' in printed
+
+
+class _FakeCursor:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.conn.executed.append((sql, params))
+        self.sql = sql
+
+    def fetchall(self):
+        return [(dict(r),) for r in self.conn.rows]
+
+    def fetchone(self):
+        return (42,)
+
+
+class _FakeConn:
+    def __init__(self, rows):
+        self.rows, self.executed, self.commits = rows, [], 0
+
+    def cursor(self):
+        return _FakeCursor(self)
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_pg_reads_through_ml_io_and_saves_in_one_call():
+    conn = _FakeConn([{"source": "seatgeek", "sale_key": "1", "price": 250.0, "extra": "x"}])
+    seen = {}
+
+    def connect(dsn, **kw):
+        seen.update(dsn=dsn, **kw)
+        return conn
+
+    pg = tkp.Pg("postgresql://ml_trainer.x:pw@pooler:5432/postgres", connect=connect)
+    assert seen["prepare_threshold"] is None
+    rows = pg.read_all(tkp.TRAIN_VIEW, ["source", "sale_key", "price"])
+    assert conn.executed[-1][0] == "SELECT * FROM ml_io.sales_train()"
+    assert rows == [{"source": "seatgeek", "sale_key": "1", "price": 250.0}]
+    assert pg.read_all(tkp.FORM_PREDICT_VIEW)[0]["extra"] == "x"
+    assert conn.executed[-1][0] == "SELECT * FROM ml_io.form_predict()"
+    run_id = pg.save_run({"model": tkp.MODEL, "status": "ok"}, [{"sg_event_id": 1, "zone": "z"}])
+    sql, (run_json, preds_json) = conn.executed[-1]
+    assert run_id == 42 and sql.startswith("SELECT ml_io.save_run(")
+    assert json.loads(run_json)["status"] == "ok" and json.loads(preds_json) == [{"sg_event_id": 1, "zone": "z"}]
+    assert conn.commits == 3
+
+
+def test_main_prefers_the_ml_trainer_login(monkeypatch):
+    made = []
+
+    class _FakePg(_FakeRest):
+        def __init__(self, dsn):
+            made.append(dsn)
+            super().__init__(None, None)
+
+    monkeypatch.setattr(tkp, "Pg", _FakePg)
+    monkeypatch.setattr(tkp, "Rest", _FakeRest)
+    monkeypatch.setattr(tkp, "NUMERIC", dict(tkp.NUMERIC))
+    monkeypatch.delenv("ML_FORM_FEATURES", raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://x.invalid")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
+    monkeypatch.setenv("ML_TRAINER_DATABASE_URL", "postgresql://ml_trainer.x@h/postgres")
+    assert tkp.main(["--dry-run"]) == 0
+    assert made == ["postgresql://ml_trainer.x@h/postgres"]
+    for var in ("ML_TRAINER_DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
+        monkeypatch.delenv(var)
+    assert tkp.main([]) == 2
