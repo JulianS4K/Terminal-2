@@ -8,11 +8,14 @@ The key is hashed (sha256) and resolved by ``mcp_verify_key`` (migs
   event/performer/venue search, SeatGeek market sales pace, price history +
   zone prices + forecast, the daily top-selling chart, performer trends,
   multi-source price movers, competing events, prediction markets, sports
-  state, news, weather, a per-feed freshness report, and read-only queries
-  over a whitelist of public views.
+  state, news, weather, every SeatGeek sale per event, the market by seating
+  zone (live + daily history), per-game demand context from the feature store,
+  the learned price model's predictions, a per-feed freshness report, and
+  read-only queries over a whitelist of public views.
 - ``internal`` (our team): everything external gets, plus our book — pickups,
   per-event orders across every source, home stats, the market chart with our
-  positions excluded, owned events, and the wider ``query_view`` whitelist.
+  positions excluded, owned events, what we poll, and the wider ``query_view``
+  whitelist (owned / wholesale zone columns).
 
 Each tier is its own MCP server, so an external caller never even sees the
 internal tool list, and every external column list is explicit — no owned
@@ -31,8 +34,11 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import html
 import inspect
 import json
+import re
+import statistics
 import threading
 import time
 from collections.abc import Callable
@@ -44,7 +50,9 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import EmbeddedResource, TextContent, TextResourceContents, ToolAnnotations
+
+from routers import seatmap as _seatmap  # the same read-only TEvo map fetch as /api/store/seatmap
 
 INTERNAL, EXTERNAL = "internal", "external"
 DEFAULT_RATE_PER_MIN, DEFAULT_DAILY_QUOTA = 60, 2000
@@ -81,6 +89,34 @@ EXTERNAL_QUERY_VIEWS: dict[str, tuple[str, ...]] = {
                            "last_price", "volume", "url", "status", "updated_at"),
     "v_reddit_news_ticker": ("reddit_post_id", "subreddit", "league", "title", "permalink",
                              "link_url", "link_flair_text", "created_utc"),
+    # per-zone market captures (TEvo) — wholesale and owned columns stay internal
+    "zone_metrics": ("event_id", "captured_at", "zone", "zone_source", "tickets_count",
+                     "groups_count", "sections_count", "retail_min", "retail_p25", "retail_median",
+                     "retail_mean", "retail_p75", "retail_p90", "retail_max", "getin_price"),
+    # the daily feature store (one row per event × zone × day) — public market + context only
+    "zone_price_observations": (
+        "event_id", "zone", "zone_source", "capture_date", "captured_at", "performer_id",
+        "performer_name", "venue_id", "venue_capacity", "venue_is_indoor", "opponent_performer_id",
+        "opponent_name", "espn_event_id", "espn_league", "home_away", "event_local_ts", "event_date",
+        "event_dow", "event_is_weekend", "event_start_bucket", "days_to_event", "event_month",
+        "season_year", "holiday_name", "tickets_count", "groups_count", "sections_count",
+        "retail_min", "retail_p25", "retail_median", "retail_mean", "retail_p75", "retail_p90",
+        "retail_max", "getin_price", "fill_rate", "home_wins", "home_losses", "home_win_pct",
+        "home_games_back", "home_playoff_seed", "home_streak", "opp_wins", "opp_losses",
+        "opp_win_pct", "opp_games_back", "opp_playoff_seed", "opp_streak", "mkt_spread",
+        "mkt_over_under", "mkt_home_ml", "mkt_away_ml", "mkt_home_win_prob", "game_attendance",
+        "star_athlete_name", "star_out", "star_injury_status", "home_injured_count",
+        "star_athlete_pv", "roster_wiki_pv_sum", "perf_popularity", "perf_daily_price_median",
+        "perf_daily_getin_median", "market_competing_events", "is_rivalry", "rivalry_name",
+        "rivalry_intensity", "wx_temp_f", "wx_precip_pct", "wx_wind_mph", "wx_summary",
+        "wx_has_alert", "primary_getin", "primary_median", "primary_listings",
+        "primary_flip_margin_pct", "primary_signal", "vel_prev_capture_date", "vel_tickets_sold",
+        "vel_getin_delta_pct", "vel_median_delta_pct", "buzz_home_news_7d", "is_national_tv",
+        "broadcast_networks"),
+    # latest learned price-model predictions (Knicks home games; scripts/train_knicks_price.py)
+    "v_ml_knicks_price_latest": ("run_id", "model", "trained_at", "sg_event_id", "tevo_event_id",
+                                 "opponent", "occurs_at", "zone", "predicted_price", "p10", "p90",
+                                 "ctx_zone_getin", "ctx_zone_median", "predicted_vs_zone_getin"),
 }
 QUERY_VIEWS: dict[str, tuple[str, ...]] = {
     **EXTERNAL_QUERY_VIEWS,
@@ -93,6 +129,9 @@ QUERY_VIEWS: dict[str, tuple[str, ...]] = {
     "seatgeek_orders": ("sg_order_id", "status", "created_at_sg", "sg_event_id", "sg_event_name",
                         "sale_price", "sale_section", "sale_row", "sale_quantity",
                         "payment_total", "tevo_event_id"),
+    "zone_metrics": EXTERNAL_QUERY_VIEWS["zone_metrics"]
+    + ("wholesale_min", "wholesale_median", "owned_groups_count", "owned_tickets_count",
+       "owned_share", "owned_median_retail"),
 }
 FILTER_OPS = ("eq", "neq", "gt", "gte", "lt", "lte", "ilike", "in")
 MAX_ROWS = 500
@@ -114,6 +153,35 @@ WEATHER_COLS = ("tevo_event_id,event_name,occurs_at_local,venue_name,is_indoor,d
 MOVER_SOURCES = {"ev": "tevo", "sg": "seatgeek", "sh": "stubhub", "gt": "gametime", "vd": "vivid"}
 MOVER_COLS = "event_id,window_days,computed_at,days_to_event," + ",".join(
     f"{p}_price_recent,{p}_price_prior,{p}_cur_price" for p in MOVER_SOURCES)
+ZONE_COLS = ",".join(EXTERNAL_QUERY_VIEWS["zone_metrics"])
+THIN_ZONE_TICKETS = 10          # zone_prices: below this, flag the zone `thin`
+INJURY_MAX_AGE_DAYS = 7         # team_report: injury notes not re-seen since are dropped
+ZONE_TREND_COLS = ("zone,capture_date,days_to_event,tickets_count,getin_price,retail_p25,"
+                   "retail_median,retail_p75,vel_tickets_sold,vel_getin_delta_pct,vel_median_delta_pct")
+# event-level context in the feature store (same on every zone row of a day)
+GAME_CONTEXT_COLS = (
+    "capture_date", "performer_id", "performer_name", "opponent_name", "home_away", "espn_league",
+    "event_local_ts", "event_dow", "event_is_weekend", "days_to_event", "holiday_name",
+    "venue_capacity", "venue_is_indoor", "home_wins", "home_losses", "home_win_pct",
+    "home_games_back", "home_playoff_seed", "home_streak", "opp_wins", "opp_losses", "opp_win_pct",
+    "opp_games_back", "opp_playoff_seed", "opp_streak", "mkt_spread", "mkt_over_under",
+    "mkt_home_ml", "mkt_away_ml", "mkt_home_win_prob", "game_attendance", "star_athlete_name",
+    "star_out", "star_injury_status", "home_injured_count", "star_athlete_pv", "roster_wiki_pv_sum",
+    "perf_popularity", "perf_daily_price_median", "perf_daily_getin_median",
+    "market_competing_events", "is_rivalry", "rivalry_name", "rivalry_intensity", "wx_temp_f",
+    "wx_precip_pct", "wx_wind_mph", "wx_summary", "wx_has_alert", "primary_getin",
+    "primary_median", "primary_listings", "primary_flip_margin_pct", "primary_signal",
+    "buzz_home_news_7d", "is_national_tv", "broadcast_networks")
+ML_MODEL = "knicks_price_ridge_v1"
+ML_PRED_COLS = ",".join(EXTERNAL_QUERY_VIEWS["v_ml_knicks_price_latest"])
+ML_RUN_COLS = "run_id,model,trained_at,n_train,n_test,games_train,games_test,metrics,status"
+
+
+def _pctl(xs: list[float], q: float) -> float | None:
+    """Nearest-rank percentile of an already sorted list (None when empty)."""
+    if not xs:
+        return None
+    return xs[min(len(xs) - 1, max(0, int(round(q * (len(xs) - 1)))))]
 
 
 def hash_key(key: str) -> str:
@@ -413,6 +481,503 @@ def event_weather(db, event_id: int) -> dict:
     return rows[0] if rows else {"error": f"event {event_id} not found"}
 
 
+SALES_PAGE = 5000
+SALES_MAX_ROWS = 60000      # snapshot rows; each sale is re-stored on every pull (~15 rows per sale)
+_TURN = re.compile(r"^(?:turn (\d{1,2})\b|t(\d{1,2})-\d+$)")
+_SECTION_CODE = re.compile(r"^([a-z]{2,3})(\d{3})$")
+_TRAILING_NUMBER = re.compile(r"^(.*[a-z].*?)[\s\-#]+(?:sec(?:tion)?\.?\s*)?\d+[a-z]?$")
+
+
+def _sales_rows(db, event_id: int, since: str | None = None,
+                section: str | None = None) -> tuple[list[dict], str | None]:
+    """Every distinct SeatGeek sale of an event, newest first, and the newest pull time.
+    The snapshot table repeats each sale on every pull, so it is read in pages until the
+    last page comes back short (a single 5,000-row read dropped older sales on busy events)."""
+    seen: dict[Any, dict] = {}
+    pulled = None
+    for start in range(0, SALES_MAX_ROWS, SALES_PAGE):
+        q = db.table("seatgeek_sales_snapshots") \
+            .select("sg_sale_id,sale_at_utc,broadcast_price,quantity,section,row,pulled_at") \
+            .eq("tevo_event_id", event_id)
+        if since:
+            q = q.gte("sale_at_utc", since)
+        if section:
+            q = q.ilike("section", f"%{section}%")
+        page = q.order("sale_at_utc", desc=True).order("sg_sale_id") \
+            .range(start, start + SALES_PAGE - 1).execute().data or []
+        for r in page:
+            pulled = max(pulled or "", str(r.get("pulled_at") or ""))
+            seen.setdefault(r.get("sg_sale_id"), r)
+        if len(page) < SALES_PAGE:
+            break
+    return [{k: v for k, v in r.items() if k != "pulled_at"} for r in seen.values()], pulled or None
+
+
+def event_sales(db, event_id: int, days: int = 30, section: str | None = None,
+                min_quantity: int = 1, limit: int = 200) -> dict:
+    """Individual SeatGeek sales for one event (all sellers): sale time (UTC), price per
+    ticket, quantity, section, row — newest first — plus a summary (count, tickets,
+    min / p25 / median / p75 / max price). `section` narrows to one section (case-insensitive
+    fragment, e.g. "226" or "floor"). Covers every game we poll: sales are pulled daily, every
+    6 h inside 48 h of the event and once after it. Event ids are TEvo ids."""
+    days = _clamp(days, 1, 365, 30)
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    frag = str(section).strip()[:40] if section and str(section).strip() else None
+    rows, pulled = _sales_rows(db, event_id, since, frag)
+    min_q = _clamp(min_quantity, 1, 100, 1)
+    sales = [r for r in rows if (r.get("quantity") or 0) >= min_q]
+    prices = sorted(float(s["broadcast_price"]) for s in sales if s.get("broadcast_price") is not None)
+    summary = {"sales": len(sales), "tickets": sum(int(s.get("quantity") or 0) for s in sales),
+               "price_min": prices[0] if prices else None, "price_p25": _pctl(prices, 0.25),
+               "price_median": _pctl(prices, 0.5), "price_p75": _pctl(prices, 0.75),
+               "price_max": prices[-1] if prices else None,
+               "last_sale_at": sales[0]["sale_at_utc"] if sales else None}
+    return {"event_id": event_id, "days": days, "section": section, "summary": summary,
+            "sales": sales[:_clamp(limit, 1, MAX_ROWS, 200)], "freshness": _as_of(pulled),
+            "note": "price = seller's price per ticket before fees (SeatGeek broadcast_price)"}
+
+
+def _sale_area(section: Any) -> str:
+    """A seating area from a section name: the trailing section number dropped from a named
+    stand ("Club Level 210" → "club level"), a circuit's turn as "turn N" for both marketplace
+    names and broker shorthand ("Turn 12 Bleachers 8", "t12-8"), a numbered bowl
+    section grouped by level ("226" → "200s", "mg122" → "mg 100s"), anything else as written
+    (lower-cased)."""
+    s = re.sub(r"\s+", " ", str(section or "").strip().lower())
+    s = re.sub(r"^(section|sec)\.?\s+", "", s)
+    if not s:
+        return "unknown"
+    if s.isdigit():
+        n = int(s)
+        return f"{n // 100 * 100}s" if n >= 100 else f"section {n}"
+    turn = _TURN.match(s)                      # racing circuits: "turn 15 grandstand 8", "t15-8"
+    if turn:
+        return f"turn {int(turn.group(1) or turn.group(2))}"
+    code = _SECTION_CODE.match(s)              # broker shorthand, e.g. "mg122" → "mg 100s"
+    if code:
+        return f"{code.group(1)} {int(code.group(2)) // 100 * 100}s"
+    m = _TRAILING_NUMBER.match(s)
+    return m.group(1).strip() if m and " " in m.group(1).strip() else s
+
+
+def _lin_pctl(xs: list[float], q: float) -> float:
+    """Linear-interpolated percentile of a sorted, non-empty list (SQL percentile_cont)."""
+    pos = (len(xs) - 1) * q
+    lo, hi = int(pos), min(int(pos) + 1, len(xs) - 1)
+    return xs[lo] + (xs[hi] - xs[lo]) * (pos - lo)
+
+
+def _when_bucket(days_out: float | None) -> str:
+    if days_out is None:
+        return "undated"
+    if days_out > 120:
+        return "4mo_plus"
+    if days_out > 14:
+        return "2wk_to_4mo"
+    return "3d_to_2wk" if days_out > 3 else "last_3d"
+
+
+def _parse_ts(v: Any) -> datetime | None:
+    if not v:
+        return None
+    try:
+        t = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _price_groups(items: list[tuple[str, float, int, Any]], occurs_at: Any,
+                  top_share: float = 0.1) -> dict:
+    """Per-group price spread for (group, price, quantity, sold_at) items: median, where the
+    top `top_share` of sales starts, the average and max above it, and when those top sales
+    happened relative to the event."""
+    event_t = _parse_ts(occurs_at)
+    groups: dict[str, list[tuple[float, int, Any]]] = {}
+    for g, p, q, t in items:
+        groups.setdefault(g, []).append((p, q, t))
+    groups["(all)"] = [(p, q, t) for _, p, q, t in items]
+
+    def stats(name: str, xs: list[tuple[float, int, Any]]) -> dict:
+        prices = sorted(p for p, _, _ in xs)
+        cut = _lin_pctl(prices, 1 - top_share)
+        top = [(p, t) for p, _, t in xs if p >= cut]
+        timing: dict[str, int] = {}
+        for _, t in top:
+            st = _parse_ts(t)
+            key = _when_bucket((event_t - st).total_seconds() / 86400 if event_t and st else None)
+            timing[key] = timing.get(key, 0) + 1
+        return {"group": name, "sales": len(xs), "tickets": sum(q for _, q, _ in xs),
+                "median": round(_lin_pctl(prices, 0.5), 2), "top_from": round(cut, 2),
+                "top_avg": round(sum(p for p, _ in top) / len(top), 2), "max": prices[-1],
+                "top_timing": timing, "thin": len(xs) < 10}
+
+    out = [stats(g, xs) for g, xs in groups.items()]
+    overall = next(o for o in out if o["group"] == "(all)")
+    rest = sorted((o for o in out if o["group"] != "(all)"), key=lambda o: -o["median"])
+    return {"all": overall, "groups": rest[:60]}
+
+
+def _event_occurs_at(db, event_id: int) -> Any:
+    ev = db.table("events").select("occurs_at_local").eq("id", event_id).limit(1).execute().data or []
+    return ev[0].get("occurs_at_local") if ev else None
+
+
+TOP_SHARE = 0.1
+BREAKDOWN_NOTE = ("price = per ticket before fees. top_from = price where the top 10% of sales "
+                  "starts (90th percentile); top_timing = when those top sales happened before the "
+                  "event (4mo_plus, 2wk_to_4mo, 3d_to_2wk, last_3d). thin = fewer than 10 sales.")
+
+
+def sales_breakdown(db, event_id: int) -> dict:
+    """Every SeatGeek sale of one event, grouped by seating area (a named stand without its
+    section number, e.g. "club level" or "turn 12", or a bowl level such as "200s"): sales, tickets,
+    median price, where the top 10% of sales starts and their average, the highest sale, and
+    when the top sales happened (months out vs the final days). Use it to see which areas
+    command premiums and when buyers paid most. Event ids are TEvo ids."""
+    rows, pulled = _sales_rows(db, event_id)
+    items = _market_items(rows)
+    out: dict[str, Any] = {"event_id": event_id, "source": "seatgeek_market"}
+    if not items:
+        return {**out, "all": None, "groups": [], "freshness": _as_of(pulled),
+                "note": "no SeatGeek sales stored for this event"}
+    return {**out, **_price_groups(items, _event_occurs_at(db, event_id), TOP_SHARE),
+            "freshness": _as_of(pulled), "note": BREAKDOWN_NOTE}
+
+
+def zone_prices(db, event_id: int) -> dict:
+    """The market for an event by seating zone right now (e.g. "Lower Center", "Upper
+    Corner"): tickets, listings, sections, get-in, p25 / median / p75 / p90 asks per zone from
+    the latest capture, and each zone's change vs ~24 h earlier. Zones are curated per venue
+    where we have a map, otherwise generic (lower / club / upper / floor). Event ids are TEvo ids."""
+    since = (datetime.now(timezone.utc) - timedelta(hours=36)).isoformat()
+    rows = db.table("zone_metrics").select(ZONE_COLS).eq("event_id", event_id) \
+        .gte("captured_at", since).order("captured_at", desc=True).limit(3000).execute().data or []
+    if not rows:
+        return {"event_id": event_id, "zones": [], "freshness": _as_of(None),
+                "note": "no zone capture in the last 36 h — the event may not be polled"}
+    latest: dict[str, dict] = {}
+    day_ago: dict[str, dict] = {}
+    for r in rows:  # newest first
+        z = r.get("zone")
+        if z not in latest:
+            latest[z] = r
+        try:
+            t = datetime.fromisoformat(str(r["captured_at"]).replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+        if datetime.now(timezone.utc) - t >= timedelta(hours=24) and z not in day_ago:
+            day_ago[z] = r
+
+    def _chg(now, then):
+        return round((float(now) - float(then)) / float(then) * 100, 1) if now and then else None
+
+    zones = []
+    for z, r in latest.items():
+        prev = day_ago.get(z) or {}
+        zones.append({**{k: v for k, v in r.items() if k != "event_id"},
+                      "getin_change_24h_pct": _chg(r.get("getin_price"), prev.get("getin_price")),
+                      "median_change_24h_pct": _chg(r.get("retail_median"), prev.get("retail_median")),
+                      "tickets_change_24h": (r.get("tickets_count") or 0) - prev["tickets_count"]
+                      if prev.get("tickets_count") is not None else None})
+    for z in zones:  # few tickets → one listing moves the "median"; say so instead of hiding it
+        z["thin"] = (z.get("tickets_count") or 0) < THIN_ZONE_TICKETS
+    zones.sort(key=lambda x: -(float(x.get("retail_median") or 0)))
+    out = {"event_id": event_id, "zones": zones, "count": len(zones),
+           "freshness": _as_of(rows[0].get("captured_at"))}
+    thin = [z["zone"] for z in zones if z["thin"]]
+    if thin:
+        out["note"] = (f"{len(thin)} of {len(zones)} zones have fewer than {THIN_ZONE_TICKETS} tickets on "
+                       "TEvo (`thin`: true) — their medians rest on a listing or two; check "
+                       "`event_sales` (what actually sold) and `team_report` (SeatGeek depth)")
+    return out
+
+
+def zone_trend(db, event_id: int, zone: str | None = None, days: int = 60) -> dict:
+    """Daily history per seating zone for an event from the feature store: tickets listed,
+    get-in, p25 / median / p75 ask, and the day-over-day change (tickets sold, get-in and
+    median move). `zone` narrows to one zone (exact name from `zone_prices`). Built nightly."""
+    days = _clamp(days, 1, 365, 60)
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    q = db.table("zone_price_observations").select(ZONE_TREND_COLS).eq("event_id", event_id) \
+        .gte("capture_date", since)
+    if zone and str(zone).strip():
+        q = q.eq("zone", str(zone).strip()[:60])
+    rows = q.order("capture_date").limit(2000).execute().data or []
+    series: dict[str, list] = {}
+    for r in rows:
+        series.setdefault(r.pop("zone", None), []).append(r)
+    last = rows[-1]["capture_date"] if rows else None
+    return {"event_id": event_id, "days": days, "zones": series, "count": len(rows),
+            "freshness": _as_of(last)}
+
+
+def form_mult(ctx: dict | None) -> float:
+    """Team-form price factor — mirrors SQL `_price_form_mult` (mig 20261027190000):
+    1 + 0.30·(home win% − .5)·g/(g+15) + 0.15·(away win% − .5)·g/(g+15), clamped 0.85–1.15,
+    g = games played, so the first weeks of a season barely move it."""
+    adj = 0.0
+    for side, coef in (("home", 0.30), ("away", 0.15)):
+        rec = str(((ctx or {}).get(side) or {}).get("record") or "")
+        parts = rec.split("-")
+        if len(parts) < 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+            continue
+        w, losses = int(parts[0]), int(parts[1])
+        g = w + losses
+        if g:
+            adj += coef * (w / g - 0.5) * g / (g + 15)
+    return round(max(0.85, min(1.15, 1 + adj)), 4)
+
+
+def game_context(db, event_id: int, capture_date: str | None = None) -> dict:
+    """What drives demand for one game, live: both teams' records, streaks and seeds, the
+    team-form price factor (`form_mult`), players out per side, Reddit / X buzz, attendance
+    rank, weather alert, and the prediction-market win odds per team (Kalshi / Polymarket).
+    Plus the nightly feature-store row (`feature_store`: betting line, star player and
+    injury status, rivalry, national TV, primary vs resale, holiday, competing events) for
+    the latest day or `capture_date` (YYYY-MM-DD) — marked stale when it is behind.
+    Event ids are TEvo ids."""
+    live = _strip_book(_rpc(db, "get_event_demand_context", {"p_event_id": event_id}) or {})
+    live.pop("note", None)  # internal explainer for the forecaster
+    odds = prediction_markets(db, event_id=event_id, limit=10)
+    q = db.table("zone_price_observations").select(",".join(GAME_CONTEXT_COLS)).eq("event_id", event_id)
+    if capture_date:
+        q = q.eq("capture_date", str(capture_date)[:10])
+    rows = q.order("capture_date", desc=True).limit(1).execute().data or []
+    fs = rows[0] if rows else None
+    notes = []
+    if not live:
+        notes.append("no live demand context — the event may not be a team game we track")
+    if fs is None:
+        notes.append("no feature-store row yet (built nightly for polled events)")
+    elif fs.get("opponent_name") is None and fs.get("mkt_spread") is None:
+        notes.append("feature store has no ESPN link for this game yet (no opponent / betting line); "
+                     "records and win odds above come from the live context and prediction markets")
+    out = {"event_id": event_id, "live": live or None, "form_mult": form_mult(live or {}),
+           "win_odds": [{"team": m.get("team_name"), "yes_price": m.get("yes_price"),
+                         "source": m.get("source"), "volume": m.get("volume"),
+                         "updated_at": m.get("updated_at")} for m in odds.get("markets", [])],
+           "feature_store": fs, "capture_date": fs["capture_date"] if fs else None,
+           "freshness": {"live": _as_of(((live or {}).get("home") or {}).get("as_of")),
+                         "win_odds": odds.get("freshness"),
+                         "feature_store": _as_of(fs["capture_date"] if fs else None)}}
+    if notes:
+        out["data_notes"] = notes
+    return out
+
+
+def model_price_prediction(db, event_id: int | None = None, limit: int = 200) -> dict:
+    """The learned price model's expected sale price per zone for upcoming games, with a
+    p10–p90 band and the zone's current get-in / median for comparison, plus the model's
+    held-out accuracy (median absolute % error vs simple baselines). Retrained daily on
+    every catalogued sale. Coverage today: New York Knicks home games. Pass `event_id`
+    (TEvo id) for one game, or omit it for all of them."""
+    q = db.table("v_ml_knicks_price_latest").select(ML_PRED_COLS)
+    if event_id is not None:
+        q = q.eq("tevo_event_id", event_id)
+    rows = q.order("occurs_at").order("zone").limit(_clamp(limit, 1, MAX_ROWS, 200)).execute().data or []
+    run = db.table("ml_model_runs").select(ML_RUN_COLS).eq("model", ML_MODEL).eq("status", "ok") \
+        .order("run_id", desc=True).limit(1).execute().data or []
+    out = {"model": ML_MODEL, "predictions": rows, "count": len(rows),
+           "run": run[0] if run else None,
+           "freshness": _as_of(run[0]["trained_at"] if run else None),
+           "method": "ridge regression on log price over catalogued sales (zone, level, row band, "
+                     "opponent, time to tip, weekday, quantity) and the zone/event market at sale "
+                     "time; band = held-out residual p10-p90. Price = pair sold now, before fees."}
+    if not run:
+        out["note"] = "the model has not completed a training run yet"
+    return out
+
+
+# --------------------------------------------------------------------------
+# Seat map — the venue map coloured by price, returned as an artifact
+# --------------------------------------------------------------------------
+SEATMAP_TTL_S = 86400.0                    # maps are immutable per venue/configuration
+_svg_cache = _TTLCache(SEATMAP_TTL_S, max_items=32)
+SEATMAP_COLORS = ("#d6eaf8", "#85c1e9", "#3498db", "#21618c", "#0b2e4a")   # cheap → expensive
+SEATMAP_NODATA = "#d5d8dc"
+CONTENT_TOOLS = frozenset({"seat_map"})   # return MCP content blocks, not a JSON object
+_SECTION_TAG = re.compile(
+    r"<(polygon|path|rect|ellipse|circle|polyline)\b([^>]*?)\bdata-section-id=\"([^\"]+)\"([^>]*?)(/?)>", re.I)
+_SVG_UNSAFE = (re.compile(r"<script\b.*?</script\s*>", re.I | re.S),
+               re.compile(r"<foreignObject\b.*?</foreignObject\s*>", re.I | re.S),
+               re.compile(r"\son[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*')", re.I))
+
+
+def _seatmap_svg(venue_id: int, configuration_id: int) -> str | None:
+    """The TEvo map SVG for a venue configuration (public read host, GET only — same
+    fetch as routers/seatmap.py), scripts and event handlers stripped, cached for a day."""
+    key = ("svg", venue_id, configuration_id)
+    hit = _svg_cache.get(key)
+    if hit is not None:
+        return hit or None
+    try:
+        r = _seatmap._fetch_tevo_seatmap_file(venue_id, configuration_id, "map.svg", "image/svg+xml")
+        svg = r.text
+    except Exception:
+        svg = ""
+    for pat in _SVG_UNSAFE:
+        svg = pat.sub("", svg)
+    _svg_cache.put(key, svg)
+    return svg or None
+
+
+def _norm_section(s: Any) -> str:
+    return " ".join(str(s or "").lower().split())
+
+
+def _seatmap_values(db, event_id: int, metric: str, days: int) -> tuple[dict[str, list], Any]:
+    """Per marketplace section: the values to colour by, and the as-of time.
+    sold → every distinct SeatGeek sale price in `days`; ask → the latest TEvo capture's
+    median ask per section, weighted by tickets (each section's value repeated per ticket
+    would be heavy, so (value, weight) pairs)."""
+    out: dict[str, list] = {}
+    if metric == "ask":
+        rows = db.table("section_metrics").select("section,tickets_count,retail_median,captured_at") \
+            .eq("event_id", event_id).order("captured_at", desc=True).limit(600).execute().data or []
+        latest = rows[0]["captured_at"] if rows else None
+        for r in rows:
+            if r.get("captured_at") == latest and r.get("retail_median") is not None:
+                out.setdefault(_norm_section(r.get("section")), []).append(
+                    (float(r["retail_median"]), int(r.get("tickets_count") or 1)))
+        return out, latest
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = db.table("seatgeek_sales_snapshots").select("sg_sale_id,section,broadcast_price,pulled_at") \
+        .eq("tevo_event_id", event_id).gte("sale_at_utc", since).limit(5000).execute().data or []
+    seen: dict[Any, dict] = {}
+    pulled = None
+    for r in rows:
+        pulled = max(pulled or "", str(r.get("pulled_at") or ""))
+        seen.setdefault(r.get("sg_sale_id"), r)
+    for r in seen.values():
+        if r.get("broadcast_price") is not None:
+            out.setdefault(_norm_section(r.get("section")), []).append((float(r["broadcast_price"]), 1))
+    return out, pulled or None
+
+
+def _weighted_median(pairs: list[tuple[float, int]]) -> float:
+    pts = sorted(pairs)
+    half, run = sum(w for _, w in pts) / 2, 0
+    for v, w in pts:
+        run += w
+        if run >= half:
+            return v
+    return pts[-1][0]  # pragma: no cover — unreachable for non-empty input
+
+
+def seat_map(db, event_id: int, metric: str = "sold", days: int = 30) -> list[TextContent | EmbeddedResource]:
+    """The event's seat map coloured by price per section — an artifact you can show the
+    user. metric = sold (median SeatGeek sale price per section over `days`, default) or ask
+    (median TEvo asking price per section right now). Returns a JSON summary (legend, the
+    priced sections, sections we could not place), the coloured map as an SVG resource and a
+    self-contained HTML page (map + legend + section table) — render the HTML resource as an
+    artifact. Sections without data are grey. Event ids are TEvo ids."""
+    metric = "ask" if str(metric).lower() == "ask" else "sold"
+    days = _clamp(days, 1, 180, 30)
+
+    def _text(obj: dict) -> list:
+        return [TextContent(type="text", text=json.dumps(obj, default=str))]
+
+    ev = (db.table("events").select("id,name,occurs_at_local,venue_id,venue_name,configuration_id,configuration_name")
+          .eq("id", event_id).limit(1).execute().data or [])
+    if not ev:
+        return _text({"error": f"event {event_id} not found"})
+    ev = ev[0]
+    venue, cfg = ev.get("venue_id"), ev.get("configuration_id")
+    svg = _seatmap_svg(int(venue), int(cfg)) if venue and cfg else None
+    if not svg:
+        return _text({"error": "no seat map for this event's venue configuration", "event": ev})
+
+    svg_keys = {_norm_section(m[2]): m[2] for m in _SECTION_TAG.findall(svg)}  # normalized → as drawn
+    by_last: dict[str, list[str]] = {}
+    for k in svg_keys:
+        by_last.setdefault(k.split()[-1], []).append(k)
+    platform = "evo" if metric == "ask" else "sg"
+    cw_rows = db.table("venue_section_map").select("section_raw,seatmap_key,configuration_id") \
+        .eq("tevo_venue_id", venue).eq("platform", platform).in_("configuration_id", [cfg, 0]) \
+        .limit(2000).execute().data or []
+    crosswalk: dict[str, str] = {}
+    for r in sorted(cw_rows, key=lambda r: r.get("configuration_id") != cfg):  # this configuration first
+        crosswalk.setdefault(_norm_section(r.get("section_raw")), _norm_section(r.get("seatmap_key")))
+
+    values, as_of = _seatmap_values(db, event_id, metric, days)
+    placed: dict[str, list] = {}
+    unplaced: dict[str, int] = {}
+    for sec, pairs in values.items():
+        key = crosswalk.get(sec)
+        if key not in svg_keys:
+            cands = by_last.get(sec.split()[-1] if sec else "", [])
+            key = cands[0] if len(cands) == 1 else None
+        if key:
+            placed.setdefault(key, []).extend(pairs)
+        else:
+            unplaced[sec] = sum(w for _, w in pairs)
+
+    priced = {k: (_weighted_median(p), sum(w for _, w in p)) for k, p in placed.items()}
+    vals = sorted(v for v, _ in priced.values())
+    breaks = [vals[min(len(vals) - 1, int(len(vals) * q / 5))] for q in range(1, 5)] if vals else []
+
+    def _color(v: float) -> str:
+        return SEATMAP_COLORS[sum(1 for b in breaks if v >= b)]
+
+    unit = "median sale" if metric == "sold" else "median ask"
+
+    def _paint(m: re.Match) -> str:
+        tag, pre, sec_id, post, close = m.groups()
+        attrs = re.sub(r'\sfill="[^"]*"', "", f"{pre}{post}")
+        hit = priced.get(_norm_section(sec_id))
+        fill = _color(hit[0]) if hit else SEATMAP_NODATA
+        title = (f"{sec_id}: ${hit[0]:,.0f} {unit} ({hit[1]} {'sales' if metric == 'sold' else 'tickets'})"
+                 if hit else f"{sec_id}: no data")
+        open_tag = f'<{tag}{attrs} data-section-id="{html.escape(sec_id)}" fill="{fill}">'
+        return f"{open_tag}<title>{html.escape(title)}</title></{tag}>" if close else f"{open_tag}<title>{html.escape(title)}</title>"
+
+    painted = _SECTION_TAG.sub(_paint, svg)
+    edges = [vals[0]] + breaks + [vals[-1]] if vals else []
+    legend = [{"color": SEATMAP_COLORS[i], "from": round(edges[i]), "to": round(edges[i + 1])}
+              for i in range(len(edges) - 1)] if edges else []
+    top = sorted(({"section": svg_keys[k], "price": round(v), ("sales" if metric == "sold" else "tickets"): n}
+                  for k, (v, n) in priced.items()), key=lambda r: -r["price"])
+    summary = {
+        "event": {k: ev.get(k) for k in ("id", "name", "occurs_at_local", "venue_name", "configuration_name")},
+        "metric": metric, "days": days if metric == "sold" else None,
+        "sections_on_map": len(svg_keys), "sections_priced": len(priced),
+        "sections_unplaced": dict(sorted(unplaced.items(), key=lambda kv: -kv[1])[:20]),
+        "legend": legend, "sections": top[:60],
+        "median_overall": round(statistics.median(vals)) if vals else None,
+        "freshness": _as_of(as_of),
+        "artifact": "the text/html resource is a self-contained page (map, legend, table) — show it "
+                    "to the user as an artifact; the image/svg+xml resource is the map alone",
+    }
+    title = f"{ev.get('name')} — {'sold prices' if metric == 'sold' else 'asking prices'} by section"
+    legend_html = "".join(f'<span class="sw" style="background:{x["color"]}"></span>${x["from"]:,}–${x["to"]:,} '
+                          for x in legend) + f'<span class="sw" style="background:{SEATMAP_NODATA}"></span>no data'
+    rows_html = "".join(f"<tr><td>{html.escape(r['section'])}</td><td>${r['price']:,}</td>"
+                        f"<td>{r.get('sales', r.get('tickets'))}</td></tr>" for r in top[:40])
+    page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>
+<style>:root{{color-scheme:light dark;--bg:#fff;--fg:#1b1f24;--mut:#5f6b7a;--line:#e3e7ec}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#111418;--fg:#e8ebef;--mut:#9aa5b1;--line:#2a3038}}}}
+body{{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}}
+h1{{font-size:18px;margin:0 0 4px}}p{{margin:0 0 12px;color:var(--mut)}}
+.map svg{{width:100%;height:auto;max-width:900px;display:block}}
+.legend{{margin:8px 0 12px}}.sw{{display:inline-block;width:14px;height:14px;border-radius:3px;margin:0 4px 0 10px;vertical-align:-2px}}
+table{{border-collapse:collapse;margin-top:16px;min-width:280px}}td,th{{padding:4px 10px;border-bottom:1px solid var(--line);text-align:left}}
+</style></head><body><h1>{html.escape(str(ev.get('name')))}</h1>
+<p>{html.escape(str(ev.get('venue_name') or ''))} · {html.escape(str(ev.get('occurs_at_local') or '')[:16].replace('T', ' '))} ·
+{'median sale price per section, last ' + str(days) + ' days (SeatGeek, before fees)' if metric == 'sold' else 'median asking price per section now (TEvo)'}
+· {len(priced)} of {len(svg_keys)} sections priced · as of {html.escape(str(as_of or 'n/a'))[:16]}</p>
+<div class="legend">{legend_html}</div><div class="map">{painted}</div>
+<table><tr><th>Section</th><th>{'Median sale' if metric == 'sold' else 'Median ask'}</th><th>{'Sales' if metric == 'sold' else 'Tickets'}</th></tr>{rows_html}</table>
+</body></html>"""
+    base = f"s4k://seatmap/{event_id}/{metric}"
+    return [TextContent(type="text", text=json.dumps(summary, default=str)),
+            EmbeddedResource(type="resource", resource=TextResourceContents(
+                uri=f"{base}.svg", mime_type="image/svg+xml", text=painted)),
+            EmbeddedResource(type="resource", resource=TextResourceContents(
+                uri=f"{base}.html", mime_type="text/html", text=page))]
+
+
 FORECAST_MAX_SECTIONS = 5
 # Keys of predict_event_clearing_price's answer that describe OUR book — never external.
 _BOOK_KEYS = ("own_book_gap",)
@@ -471,8 +1036,9 @@ def price_forecast(db, event_id: int, section: str | None = None, max_sections: 
     """Predicted clearing price for an event section: `expected_clearing` with a
     `lo`–`hi` band, `price_heading_24h`, the chance of a sale above ask, and the
     signals behind it (recent SeatGeek sales in the section, current asks x the
-    category's sold-to-ask ratio, section and opponent priors, demand context:
-    chart rank, injuries, attendance, weather). Every forecast carries
+    category's sold-to-ask ratio, section and opponent priors capped at 2x the live ask,
+    demand context: chart rank, injuries, attendance, weather, and team form —
+    `form_mult` from both teams' win/loss records). Every forecast carries
     `confidence` (high/medium/low by realized sales used) and a `warning` when it
     rests on priors alone. Pass `section` as it appears on the marketplace
     (e.g. "226", "floor a"); omit it to forecast the best-selling sections from the
@@ -507,8 +1073,10 @@ def price_forecast(db, event_id: int, section: str | None = None, max_sections: 
             out.append(_guard_forecast(_strip_book(f)))
     return {"event_id": event_id, "forecasts": out, "count": len(out), "sections_picked_by": picked_by,
             "method": "weighted blend of realized section sales, current asks x sold-to-ask ratio "
-                      "and section/opponent priors, scaled by demand; band = calibrated p25-p75 "
-                      "drift. Each signal carries its weight; realized_sample_n = sales used."}
+                      "and section/opponent priors (each prior capped at 2x the live ask), scaled by "
+                      "demand and team form (form_mult: both teams' win/loss records, shrunk early "
+                      "in the season); band = calibrated p25-p75 drift. Each signal carries its "
+                      "weight; realized_sample_n = sales used."}
 
 
 _LIST_KEYS = ("games", "roster", "injuries", "transactions", "player_value", "espn_news", "reddit",
@@ -543,6 +1111,19 @@ def team_report(db, team: str, since: str | None = None, home_only: bool = True,
         if k in out and out[k] is None:
             out[k] = []
     notes = []
+    # the injury feed keeps a player's last note after they drop off the report — e.g. preseason
+    # "rest" notes; keep only notes seen in the last INJURY_MAX_AGE_DAYS
+    fresh, dropped = [], 0
+    for inj in out.get("injuries") or []:
+        age = _as_of(inj.get("as_of"))["age_hours"] if inj.get("as_of") else None
+        if age is None or age <= INJURY_MAX_AGE_DAYS * 24:
+            fresh.append(inj)
+        else:
+            dropped += 1
+    if "injuries" in out:
+        out["injuries"] = fresh
+    if dropped:
+        notes.append(f"{dropped} injury note(s) older than {INJURY_MAX_AGE_DAYS} days left out (not on the current report)")
     if out.get("games") is not None and not out.get("reddit"):
         notes.append("no Reddit posts stored for this team in the last 7 days")
     thin = [g["event_id"] for g in out.get("games", []) if g.get("data_quality") != "live"]
@@ -609,7 +1190,8 @@ def query_public_view(db, view: str, columns: list[str] | None = None,
                       descending: bool = False, limit: int = 100) -> dict:
     """Read-only query over a whitelisted PUBLIC view (events, SeatGeek sales,
     daily listing ladder, competitors, market chart, performer metrics,
-    prediction markets, news). filters: [{column, op, value}], op in
+    prediction markets, news, zone captures, the daily feature store, the price
+    model's predictions). filters: [{column, op, value}], op in
     eq|neq|gt|gte|lt|lte|ilike|in (value is a list for `in`). Call with an
     unknown view to list views + columns."""
     return _query_view(db, EXTERNAL_QUERY_VIEWS, view, columns, filters, order_by, descending, limit)
@@ -638,6 +1220,37 @@ def event_orders(db, event_id: int, days: int = 30) -> dict:
     per-day pace next to the SeatGeek market."""
     return _rpc(db, "get_event_orders_daily", {"p_event_id": event_id,
                                               "p_days": _clamp(days, 1, 365, 30)}) or {}
+
+
+def _market_items(rows: list[dict]) -> list[tuple[str, float, int, Any]]:
+    return [(_sale_area(r.get("section")), float(r["broadcast_price"]), int(r.get("quantity") or 0),
+             r.get("sale_at_utc")) for r in rows if r.get("broadcast_price") is not None]
+
+
+def crm_sales_breakdown(db, event_id: int) -> dict:
+    """`sales_breakdown` for one event with our own CRM orders beside the SeatGeek market:
+    `market`, `ours` (every book in the CRM, parking excluded) and `combined`, each grouped by
+    seating area with median, top-10% start and average, max and top-sale timing. Our
+    SeatGeek sales can appear in the market feed too, so `combined` may count a few twice;
+    CRM section codes (e.g. "t124") can differ from marketplace names."""
+    rows, pulled = _sales_rows(db, event_id)
+    mkt = _market_items(rows)
+    orders = db.table("v_s4kcs_orders") \
+        .select("event_name,section,quantity,price_per_ticket,purchase_date") \
+        .eq("tevo_event_id", event_id).limit(5000).execute().data or []
+    ours = [(_sale_area(o.get("section")), float(o["price_per_ticket"]), int(o.get("quantity") or 0),
+             o.get("purchase_date")) for o in orders
+            if (o.get("price_per_ticket") or 0) > 0
+            and "parking" not in str(o.get("event_name") or "").lower()]
+    occurs = _event_occurs_at(db, event_id)
+    empty = {"all": None, "groups": []}
+
+    def grouped(items):
+        return _price_groups(items, occurs, TOP_SHARE) if items else empty
+
+    return {"event_id": event_id, "market": grouped(mkt), "ours": grouped(ours),
+            "combined": grouped(mkt + ours), "freshness": _as_of(pulled),
+            "note": BREAKDOWN_NOTE + " Undated CRM orders show as 'undated'."}
 
 
 def event_source_links(db, event_id: int) -> dict:
@@ -680,6 +1293,35 @@ def owned_events(db, days: int = 30) -> dict:
     return {"events": _rpc(db, "get_owned_events_upcoming", {"p_days": _clamp(days, 1, 365, 30)}) or []}
 
 
+def polling_coverage(db) -> dict:
+    """What we poll (internal): the team and league pins, how many upcoming games each
+    covers and on which sources (evo / gt / sg), and the last 24 h of SeatGeek sales pulls
+    (ok / rate-limited / failed, new sales stored)."""
+    pins = db.table("listings_poll_pins").select("pin_key,performer_id,venue_name,sources,enabled") \
+        .limit(500).execute().data or []
+    leagues = db.table("listings_poll_league_pins").select("league,sources,enabled") \
+        .limit(100).execute().data or []
+    games = db.table("v_listings_poll_pinned_events").select("tevo_event_id,pin_key,sources,hours_to_event") \
+        .limit(20000).execute().data or []
+    per_pin: dict[str, dict] = {}
+    for g in games:
+        p = per_pin.setdefault(g.get("pin_key"), {"games": 0, "next_48h": 0, "sources": {}})
+        p["games"] += 1
+        if (g.get("hours_to_event") or 1e9) <= 48:
+            p["next_48h"] += 1
+        for s in g.get("sources") or []:
+            p["sources"][s] = p["sources"].get(s, 0) + 1
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    pulls = db.table("sg_broker_pending").select("rows_persisted").eq("scope", "sales") \
+        .gte("fired_at", since).limit(20000).execute().data or []
+    rp = [r.get("rows_persisted") for r in pulls]
+    return {"pins": pins, "league_pins": leagues, "games_by_pin": per_pin, "games_total": len(games),
+            "sg_sales_pulls_24h": {"pulls": len(rp), "ok": sum(1 for x in rp if x is not None and x >= 0),
+                                   "rate_limited": rp.count(-429), "failed": rp.count(-1),
+                                   "pending": rp.count(None),
+                                   "new_sales": sum(x for x in rp if x and x > 0)}}
+
+
 def query_view(db, view: str, columns: list[str] | None = None,
                filters: list[dict] | None = None, order_by: str | None = None,
                descending: bool = False, limit: int = 100) -> dict:
@@ -692,10 +1334,12 @@ def query_view(db, view: str, columns: list[str] | None = None,
 EXTERNAL_TOOLS: tuple[Callable, ...] = (
     search, search_events, event_market, event_prices, top_market_events, performer_trend,
     price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
-    price_forecast, team_report, data_freshness, query_public_view, get_started)
+    price_forecast, team_report, event_sales, sales_breakdown, zone_prices, zone_trend,
+    game_context, model_price_prediction, seat_map, data_freshness, query_public_view, get_started)
 INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
-    pickups, event_orders, event_source_links, home_stats, market_chart, owned_events, team_book,
-    query_view)
+    pickups, event_orders, crm_sales_breakdown, event_source_links, home_stats, market_chart,
+    owned_events, team_book,
+    polling_coverage, query_view)
 
 INSTRUCTIONS = (
     "S4K live-event market data (concerts, sports, theater). First time here? Call "
@@ -709,13 +1353,20 @@ INSTRUCTIONS = (
     "`team_report` — live inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one "
     "answer. To predict a price, call `price_forecast` "
     "(per section; omit section for the best sellers) and read `expected_clearing` with its "
-    "`lo`-`hi` band, `confidence` and any `warning`. Read-only.")
+    "`lo`-`hi` band, `confidence` and any `warning`; for Knicks home games also "
+    "`model_price_prediction` (learned per-zone model). Drill down with `event_sales` "
+    "(every sale), `sales_breakdown` (median and top-10% price by seating area, and when the "
+    "top sales happened), `zone_prices` (live market by seating zone), `zone_trend` (daily zone "
+    "history) and `game_context` (records, line, injuries, buzz, weather). `seat_map` returns the "
+    "venue map coloured by price per section as an HTML page — show it as an artifact. Read-only.")
 
 QUICK_START = [
     "search('knicks') → performer + event ids",
     "team_report('New York Knicks') → every home game: live get-in/median/tickets on TEvo, "
     "SeatGeek and GoTickets, daily trend, Kalshi odds, injuries, roster, news",
     "price_forecast(event_id) → expected clearing price per section with a band and confidence",
+    "zone_prices(event_id) / event_sales(event_id) → live asks by zone / every sale, newest first",
+    "seat_map(event_id) → the venue map coloured by sale price per section (HTML artifact)",
     "data_freshness() → how old each feed is before you trust a number",
 ]
 
@@ -746,8 +1397,11 @@ def _make_server(name: str, tools: tuple[Callable, ...], get_db: Callable[[], An
         sig = inspect.signature(getattr(fn, "__wrapped__", fn))
         bound.__signature__ = sig.replace(parameters=list(sig.parameters.values())[1:])
         bound.__annotations__ = {k: v for k, v in fn.__annotations__.items() if k != "db"}
+        # tools that return MCP content blocks (seat_map: text + SVG + HTML) are unstructured;
+        # the rest return JSON objects
         srv.add_tool(bound, name=fn.__name__, description=fn.__doc__,
-                     annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+                     annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+                     structured_output=False if fn.__name__ in CONTENT_TOOLS else None)
 
     if not onboarding:
         return srv
