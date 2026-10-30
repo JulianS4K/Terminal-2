@@ -72,6 +72,15 @@ def test_gt_expected_total_formula():
     assert a.BUY_SIDE["gotickets"]["pricing"]["method"] == "GET"
 
 
+def test_level_names_only():
+    assert a._level("Floor 6") == "floor" and a._level("Loge 6") == "loge"
+    assert a._level("Section 205") == "" and a._level("135") == ""
+    assert a._level("Mezzanine C") == a._level("Mezz C") == "mezz"
+    # A named level on one side only is not a mismatch; two different named levels are.
+    assert a.index_match(_order(section="135", sub_section="Lower 135"))["index_1_1"] is True
+    assert "level_mismatch" not in a.index_match(_order(section="Section 205", sub_section="Upper 205"))["reasons"]
+
+
 def test_order_active_timer_and_ped():
     assert a.order_active({"timer_expires_at": "2026-10-28T16:53:45+00:00"}, NOW)["reasons"] == ["timer_closed"]
     # PED (Need2Buy) orders are never covered — non-PED only.
@@ -80,7 +89,9 @@ def test_order_active_timer_and_ped():
     assert a.order_active({"n2s_id": -8814259}, NOW)["reasons"] == ["ped_order"]
     assert a.order_active({"n2s_id": 5932, "n2s_status": "n2s"}, NOW)["active"] is True
     # A naive timestamp is read as UTC; garbage is ignored.
-    assert a.order_active({"timer_expires_at": "2026-10-28T17:05:00"}, NOW)["seconds_left"] == 300
+    five = a.order_active({"timer_expires_at": "2026-10-28T17:05:00"}, NOW)
+    assert five["seconds_left"] == 300 and five["reasons"] == ["not_enough_time"]  # < 6 min for the seller
+    assert a.order_active({"timer_expires_at": "2026-10-28T17:06:00"}, NOW)["active"] is True
     assert a.order_active({"timer_expires_at": "soon"}, NOW)["active"] is True
 
 

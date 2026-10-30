@@ -124,8 +124,21 @@ def sell_market_key(s4k_source: Any) -> str | None:
     return None
 
 
+# Named seating levels (mirrors SQL n2s_section_level, 20261029170000). Bare numbers and
+# "Section 205" carry no level, so only two NAMED levels can disagree (Floor 6 vs Loge 6).
+_LEVEL_RE = re.compile(r"\b(floor|field|court|loge|lower|upper|mezzanine|mezz|balcony|club|terrace|plaza|"
+                       r"suite|box|orchestra|pavilion|bleachers|bleacher|grandstand|main)\b")
+_LEVEL_ALIAS = {"mezzanine": "mezz", "bleachers": "bleacher"}
+
+# Our buy must be accepted by the selling broker before we accept the sale. EVO sellers either
+# accept in seconds or let it sit until EVO auto-rejects at ~25 min (our 90-day purchases), so
+# keep 5 min for the seller + 1 for our accept on the sale timer.
+MIN_SECONDS_LEFT = 360
+
+
 def _level(s: Any) -> str:
-    return re.sub(r"[^a-z]", "", str(s or "").lower())
+    m = _LEVEL_RE.search(str(s or "").lower())
+    return _LEVEL_ALIAS.get(m.group(1), m.group(1)) if m else ""
 
 
 def _parse_ts(v: Any) -> datetime | None:
@@ -148,6 +161,8 @@ def order_active(order: dict, now: datetime | None = None) -> dict:
     exp = _parse_ts(order.get("timer_expires_at"))
     if order.get("in_window") is False or order.get("timer_expired") or (exp is not None and exp <= now):
         reasons.append("timer_closed")
+    elif exp is not None and (exp - now).total_seconds() < MIN_SECONDS_LEFT:
+        reasons.append("not_enough_time")
     if order.get("event_live") is False:
         reasons.append("event_over")
     # Non-PED only (operator 2026-10-28): PED / Need2Buy rows are n2s_status 'n2b' or a negative id.
