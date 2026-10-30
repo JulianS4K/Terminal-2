@@ -223,7 +223,7 @@ def test_tier_tool_sets():
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
-                      "event_source_links", "home_stats", "team_book"}
+                      "event_source_links", "home_stats", "team_book", "auto_pricer_setup"}
     # ...and no owned/order column leaks through the public view whitelist.
     for cols in m.EXTERNAL_QUERY_VIEWS.values():
         assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c]
@@ -554,6 +554,27 @@ def test_team_book_internal_only():
     assert m.team_book(db, "16303", since="soon") == {"error": "since must be YYYY-MM-DD"}
     assert m.team_book(FakeDB(rpc_data={}), "x") == {"error": "no report"}
     assert m.team_book in m.INTERNAL_TOOLS and m.team_book not in m.EXTERNAL_TOOLS
+
+
+def test_auto_pricer_setup_internal_only():
+    rep = {"levels": [{"level": "100s", "suggest": {"engine": "smart"}}]}
+    db = FakeDB(rpc_data={"mcp_auto_pricer_setup": rep})
+    assert m.auto_pricer_setup(db, 3465614, hours=999) == rep
+    assert db.rpcs == [("mcp_auto_pricer_setup", {"p_event_id": 3465614, "p_hours": 168})]
+    assert m.auto_pricer_setup(FakeDB(rpc_data={}), 1) == {"error": "no data"}
+    assert m.auto_pricer_setup in m.INTERNAL_TOOLS and m.auto_pricer_setup not in m.EXTERNAL_TOOLS
+
+
+def test_internal_server_serves_auto_pricer_guide(monkeypatch, tmp_path):
+    srv = m._make_server("t", m.INTERNAL_TOOLS, lambda: FakeDB())
+    assert sorted(str(r.uri) for r in anyio.run(srv.list_resources)) == [
+        "s4k://auto-pricer-guide", "s4k://onboarding"]
+    assert "Smart Pricing" in str(anyio.run(srv.read_resource, "s4k://auto-pricer-guide"))
+    assert sorted(p.name for p in anyio.run(srv.list_prompts)) == ["auto_pricer_advice", "get_started"]
+    msg = anyio.run(srv.get_prompt, "auto_pricer_advice", {"event": "Magic at Knicks"})
+    assert "Magic at Knicks" in str(msg) and "auto_pricer_setup" in str(msg)
+    monkeypatch.setattr(m, "AUTO_PRICER_GUIDE_PATH", tmp_path / "missing.md")
+    assert "Smart Pricing" not in str(anyio.run(srv.read_resource, "s4k://auto-pricer-guide"))
 
 
 def test_get_started_and_onboarding(monkeypatch, tmp_path):
