@@ -1,0 +1,28 @@
+# Render blueprint — A1 ML jobs (data plane). OWNER: A1.
+#
+# ml-knicks-price-train: daily retrain of the Knicks home-game sale-price model
+# (scripts/train_knicks_price.py). Reads v_ml_knicks_sales_train + v_ml_knicks_predict_input,
+# writes ml_model_runs + ml_price_predictions (mig 20261027050000) over PostgREST with the
+# service-role key. 12:30 UTC = 8:30 AM ET, after the off-peak catalogue window
+# (ml_knicks_catalog_offpeak, 06–13 UTC) has caught up. No upstream API is called.
+#
+# Secrets come from the same Render environment group the Terminal-2 web services use
+# (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) — link it in the dashboard; never bake values here.
+
+services:
+  - type: cron
+    name: ml-knicks-price-train
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    schedule: "30 12 * * *"
+    buildCommand: pip install -r requirements-ml.txt
+    startCommand: python scripts/train_knicks_price.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
