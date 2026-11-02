@@ -4,17 +4,25 @@
 -- Tag events as AXS-primary and keep the list current (operator 2026-11-02: "use that AXS to tag
 -- events as AXS primary, then create a list that self-updates").
 --
--- event_axs_primary — one row per UPCOMING TEvo event with any AXS evidence (or a contrary seller):
---   status 'confirmed'  we hold its AXS event id (aq_event_map, axs_events, axs_catalog, /match
---                       primary link), OR SeatGeek's primary-ticketer field says AXS, OR >= 30 % of
---                       its last-hour GoTickets/EVO listings are AXS-transfer (>= 50 rows)
---          'probable'   at a venue axs_venue_catalog scores 'axs' (operator-confirmed list, AXS's own
---                       venue record, AXS artist tours, delivery share) and nothing contradicts it
---          'not_axs'    SeatGeek names another primary seller (Ticketmaster, SeatGeek Open,
---                       Paciolan, TDC …) and we hold no AXS id
+-- An AXS event id alone does NOT make an event AXS-primary: AXS also lists events it only resells
+-- (AXS marketplace, the primary sold elsewhere — operator 2026-11-02). Primary needs proof.
+-- event_axs_primary — one row per UPCOMING TEvo event with any AXS evidence (or a contrary seller),
+-- first rule that fires wins:
+--   'confirmed'  AXS is the primary seller: SeatGeek's primary-ticketer field says AXS; OR our AXS
+--                pull shows primary inventory (primary seats, or GA admission price levels); OR the
+--                AXS artist feed flags it axs_ticketed; OR TicketsData /match returns an axs.com link
+--                in its primary slot; OR >= 30 % of its last-hour GoTickets/EVO listings are
+--                AXS-transfer (>= 50 rows)
+--   'axs_resale' our AXS pull shows resale seats only — AXS is reselling, not the primary seller
+--   'not_axs'    SeatGeek names another primary seller (Ticketmaster, SeatGeek Open, Paciolan, TDC …)
+--                — an AXS id we hold for it is then an AXS resale page
+--   'probable'   at a venue axs_venue_catalog scores 'axs' (with or without an AXS id) and nothing
+--                contradicts it
+--   'axs_listed' we hold an AXS id, but the venue is not an AXS venue and nothing proves primary —
+--                most likely AXS resale
 --   An event at a 'mixed' venue is only tagged on its own evidence. basis says which rule fired.
 -- v_axs_primary_events — the list: upcoming confirmed + probable, soonest first, with AXS id / URL
---   and AQ id.
+--   and AQ id (axs_listed / axs_resale / not_axs stay in the table, out of the list).
 -- axs_primary_tag_refresh() — hourly at :27, just after axs_aq_link_tick (:21) has filled new AXS
 --   ids, so a newly found id upgrades its event within the hour; past events leave the table.
 -- Reads stored data only. The tag lives in its own table; events is not altered.
@@ -24,7 +32,7 @@
 
 CREATE TABLE IF NOT EXISTS public.event_axs_primary (
   tevo_event_id     bigint      PRIMARY KEY,
-  status            text        NOT NULL CHECK (status IN ('confirmed', 'probable', 'not_axs')),
+  status            text        NOT NULL CHECK (status IN ('confirmed', 'probable', 'axs_listed', 'axs_resale', 'not_axs')),
   basis             text        NOT NULL,
   axs_event_id      text,
   event_url         text,
@@ -99,7 +107,18 @@ BEGIN
       FROM public.sg_events_canonical g
      WHERE g.tevo_event_id IS NOT NULL AND g.raw_event_jsonb->'integrated'->>'provider_name' IS NOT NULL
      ORDER BY g.tevo_event_id, (g.raw_event_jsonb->'integrated'->>'provider_name' = 'AXS') DESC, g.updated_at DESC)
+  pull AS (   -- latest AXS pull per event: primary inventory vs resale only
+    SELECT DISTINCT ON (s.tevo_event_id) s.tevo_event_id,
+           (coalesce(s.seats_primary, 0) > 0 OR s.ga_price_levels IS NOT NULL) AS pull_primary,
+           (coalesce(s.seats_primary, 0) = 0 AND s.ga_price_levels IS NULL AND coalesce(s.seats_resale, 0) > 0) AS pull_resale_only
+      FROM public.axs_event_snapshots s
+     WHERE s.tevo_event_id IS NOT NULL
+     ORDER BY s.tevo_event_id, s.id DESC)
   SELECT ev.*, i.axs_event_id AS known_id, i.src, sg.seller, sg.sg_axs_id,
+         coalesce(pull.pull_primary, false) AS pull_primary, coalesce(pull.pull_resale_only, false) AS pull_resale_only,
+         EXISTS (SELECT 1 FROM public.axs_catalog c WHERE c.tevo_event_id = ev.id AND c.axs_ticketed) AS axs_ticketed,
+         EXISTS (SELECT 1 FROM public.td_match_results r WHERE r.tevo_event_id = ev.id
+                    AND (coalesce(r.tm_url, '') || ' ' || coalesce(r.matches_raw::text, '')) ~ 'axs\.com/events/\d+') AS td_primary,
          v.verdict AS venue_verdict, v.verdict_basis,
          p.axs_share, p.gt_rows + p.evo_rows AS signal_rows,
          (SELECT min(m.aq_short_event_id) FROM public.aq_event_map m WHERE m.tevo_event_id = ev.id) AS aq_id
@@ -107,7 +126,8 @@ BEGIN
     LEFT JOIN _axs_ids i ON i.tevo_event_id = ev.id
     LEFT JOIN sg ON sg.tevo_event_id = ev.id
     LEFT JOIN public.axs_venue_catalog v ON v.tevo_venue_id = ev.venue_id
-    LEFT JOIN public.axs_primary_signal p ON p.tevo_event_id = ev.id;
+    LEFT JOIN public.axs_primary_signal p ON p.tevo_event_id = ev.id
+    LEFT JOIN pull ON pull.tevo_event_id = ev.id;
 
   INSERT INTO public.event_axs_primary AS t
          (tevo_event_id, status, basis, axs_event_id, event_url, aq_short_event_id, event_name, venue_id,
@@ -120,18 +140,26 @@ BEGIN
       SELECT t.*,
              coalesce(t.known_id, CASE WHEN t.seller = 'AXS' THEN t.sg_axs_id END) AS axs_id,
              CASE
-               WHEN t.known_id IS NOT NULL OR t.seller = 'AXS' THEN 'confirmed'
+               WHEN t.seller = 'AXS' OR t.pull_primary OR t.axs_ticketed OR t.td_primary THEN 'confirmed'
                WHEN t.axs_share >= 0.30 AND t.signal_rows >= 50 THEN 'confirmed'
-               WHEN t.seller IS NOT NULL AND t.seller <> 'AXS' THEN 'not_axs'
+               WHEN t.pull_resale_only THEN 'axs_resale'
+               WHEN t.seller IS NOT NULL THEN 'not_axs'
                WHEN t.venue_verdict = 'axs' THEN 'probable'
+               WHEN t.known_id IS NOT NULL THEN 'axs_listed'
              END AS status,
              CASE
-               WHEN t.known_id IS NOT NULL THEN 'axs_id:' || t.src
                WHEN t.seller = 'AXS' THEN 'seatgeek_seller:AXS'
+               WHEN t.pull_primary THEN 'axs_pull:primary_inventory'
+               WHEN t.axs_ticketed THEN 'axs_artist:axs_ticketed'
+               WHEN t.td_primary THEN 'td_match:primary_link'
                WHEN t.axs_share >= 0.30 AND t.signal_rows >= 50
                  THEN format('delivery %s%% of %s rows', round(100 * t.axs_share), t.signal_rows)
-               WHEN t.seller IS NOT NULL THEN 'seatgeek_seller:' || t.seller
-               WHEN t.venue_verdict = 'axs' THEN 'axs_venue:' || coalesce(t.verdict_basis, 'axs')
+               WHEN t.pull_resale_only THEN 'axs_pull:resale_only'
+               WHEN t.seller IS NOT NULL
+                 THEN 'seatgeek_seller:' || t.seller || CASE WHEN t.known_id IS NOT NULL THEN ' (AXS id is a resale page)' ELSE '' END
+               WHEN t.venue_verdict = 'axs'
+                 THEN 'axs_venue:' || coalesce(t.verdict_basis, 'axs') || CASE WHEN t.known_id IS NOT NULL THEN ' +axs_id:' || t.src ELSE '' END
+               WHEN t.known_id IS NOT NULL THEN 'axs_id:' || t.src || ' (primary unproven)'
              END AS basis
         FROM _axs_tag t) x
    WHERE x.status IS NOT NULL
