@@ -100,13 +100,15 @@ BEGIN
        AND public.axs_is_us_location(e.venue_location)
        AND (EXISTS (SELECT 1 FROM public.axs_venue_catalog v WHERE v.tevo_venue_id = e.venue_id AND v.verdict IN ('axs', 'mixed'))
             OR EXISTS (SELECT 1 FROM _axs_ids i WHERE i.tevo_event_id = e.id)
-            OR EXISTS (SELECT 1 FROM public.axs_primary_signal p WHERE p.tevo_event_id = e.id AND p.axs_share >= 0.30))),
+            OR EXISTS (SELECT 1 FROM public.axs_primary_signal p WHERE p.tevo_event_id = e.id AND p.axs_share >= 0.30)
+            OR EXISTS (SELECT 1 FROM public.sg_events_canonical g WHERE g.tevo_event_id = e.id
+                          AND g.raw_event_jsonb->'integrated'->>'provider_name' = 'AXS'))),
   sg AS (
     SELECT DISTINCT ON (g.tevo_event_id) g.tevo_event_id, g.raw_event_jsonb->'integrated'->>'provider_name' AS seller,
            substring(g.raw_event_jsonb->'integrated'->>'provider_id' FROM '(\d+)$') AS sg_axs_id
       FROM public.sg_events_canonical g
      WHERE g.tevo_event_id IS NOT NULL AND g.raw_event_jsonb->'integrated'->>'provider_name' IS NOT NULL
-     ORDER BY g.tevo_event_id, (g.raw_event_jsonb->'integrated'->>'provider_name' = 'AXS') DESC, g.updated_at DESC)
+     ORDER BY g.tevo_event_id, (g.raw_event_jsonb->'integrated'->>'provider_name' = 'AXS') DESC, g.updated_at DESC),
   pull AS (   -- latest AXS pull per event: primary inventory vs resale only
     SELECT DISTINCT ON (s.tevo_event_id) s.tevo_event_id,
            (coalesce(s.seats_primary, 0) > 0 OR s.ga_price_levels IS NOT NULL) AS pull_primary,
