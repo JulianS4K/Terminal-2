@@ -17,7 +17,8 @@
 --   otherwise, no id:
 --     not_axs_venue        the venue is not in v_axs_venues (no AXS evidence) — likely not AXS-sold
 --     queued_artist_crawl  the performer is a known AXS artist: moved to the front of the crawl
---                          (axs_artist_discover, hourly); call again after the next drain (:57)
+--                          (axs_artist_discover, hourly; at most once a day per artist); call
+--                          again after the next drain (:57)
 --     no_axs_artist        AXS venue, but no AXS artist id for the performer — needs the
 --                          TicketsData Event Radar export or one hand-entered URL for the artist
 -- Wrappers: axs_resolve_aq_event(aq_short_event_id), axs_resolve_gt_event(gt_event_id) (GoTickets
@@ -114,7 +115,8 @@ BEGIN
   UPDATE public.axs_performers p
      SET last_discovered_at = NULL, updated_at = now()
    WHERE public.axs_slugify(p.performer) = public.axs_slugify(e.primary_performer_name)
-     AND p.pending_request_id IS NULL;
+     AND p.pending_request_id IS NULL
+     AND (p.last_discovered_at IS NULL OR p.last_discovered_at < now() - interval '1 day');
   GET DIAGNOSTICS v_n = ROW_COUNT;
   IF v_n > 0 OR EXISTS (SELECT 1 FROM public.axs_performers p
                          WHERE public.axs_slugify(p.performer) = public.axs_slugify(e.primary_performer_name)) THEN
