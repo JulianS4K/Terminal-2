@@ -1,11 +1,15 @@
--- Migration 20261102190000 · level:data-collection · lane:A1 (AXS ingest) · writes:axs_venue_catalog(new),axs_venue_catalog_refresh()(new),v_axs_venue_catalog(new),td_sg_performers(INSERT on refresh),cron axs_venue_catalog_refresh_daily(new),cron td_sg_discover_hourly(new),cron td_sg_discover_drain_hourly(new) · reads:axs_venues,axs_events,axs_event_snapshots,sg_events_canonical,events,gotickets_listings_snapshots,listings_snapshots · pre:20261102180000
+-- Migration 20261102190000 · level:data-collection · lane:A1 (AXS ingest) · writes:axs_venue_catalog(new),axs_confirmed_venues(new),axs_venue_catalog_refresh()(new),v_axs_venue_catalog(new),td_sg_performers(INSERT on refresh),cron axs_venue_catalog_refresh_daily(new),cron td_sg_discover_hourly(new),cron td_sg_discover_drain_hourly(new) · reads:axs_venues,axs_events,axs_event_snapshots,sg_events_canonical,events,gotickets_listings_snapshots,listings_snapshots · pre:20261102180000
 --
 -- ============================================================================
 -- AXS VENUE catalogue + the loop that keeps the AXS EVENT catalogue (mig 20261102180000) growing.
 -- Operator 2026-11-02: "build the venue catalogue, check the venue names against existing AXS data,
 -- then build a self-updating AXS event catalogue."
 --
--- WHICH VENUES ARE AXS — three kinds of evidence, strongest first:
+-- WHICH VENUES ARE AXS — four kinds of evidence, strongest first:
+--   0. The operator's confirmed list (axs_confirmed_venues, 128 names, 2026-11-02): 98 names resolve
+--      to 87 TEvo venues (60 exact name, 38 reviewed aliases / former names, e.g. STAPLES Center →
+--      Crypto.com Arena, Microsoft Theater → Peacock Theater); the other 30 (The O2, Tokyo Dome,
+--      golf courses, parking lots…) are kept and re-tried by exact name on every refresh.
 --   1. AXS's own venue record. Every AXS event we pulled carries the venue object with
 --      `axs_ticketed` (20 venues; 17 true). Names checked 2026-11-02: 20/20 match the AXS.com
 --      directory scrape (axs_venues) exactly after normalisation, and 20/20 have a same-name,
@@ -19,11 +23,14 @@
 --   of the 2,417 venues whose name is in the AXS.com directory — seed paste, not in git), then
 --   kept current from sg_events_canonical, matched by SeatGeek venue id (sg_venue_ids).
 --
--- VERDICT (axs_venue_catalog.verdict)
---   axs           AXS's venue record says axs_ticketed, OR delivery share >= 30 % over >= 500 rows,
---                 OR >= 60 % of the SeatGeek events that name a seller name AXS
---   ticketmaster / seatgeek / other   >= 60 % of named-seller events name that seller
---   mixed         sellers named but no one >= 60 %
+-- VERDICT (axs_venue_catalog.verdict) — AXS sells per EVENT, not per building: on the operator's
+-- list, Crypto.com Arena shows 10 Ticketmaster vs 5 AXS events on SeatGeek (the Lakers sell via
+-- Ticketmaster), Rocket Arena's Cavaliers via SeatGeek. So any AXS evidence keeps a venue in.
+--   axs           on the confirmed list, OR AXS's venue record says axs_ticketed, OR delivery share
+--                 >= 30 % over >= 500 rows, OR >= 60 % of named-seller SeatGeek events name AXS
+--   mixed         some SeatGeek events name AXS, others another seller
+--   ticketmaster / seatgeek / other   no AXS event; >= 60 % of named-seller events name that seller
+--   mixed (no AXS) sellers named, none >= 60 % — left out of the AXS list
 --   unknown       no evidence yet
 --
 -- SELF-UPDATING EVENT CATALOGUE
@@ -35,9 +42,10 @@
 --   axs_catalog_refresh (hourly, mig 20261102180000) turns every AXS-sold one into an AXS URL.
 --   Cost ceiling: 15 credits/hour = 360/day; td_budget_ok() stops it below 10,000 credits left.
 --   Nothing here calls AXS. All three crons are GET-only reads of TicketsData / local SQL.
+-- (axs_confirmed_venues is dropped with the rest.)
 -- Rollback: SELECT cron.unschedule(j) FROM unnest(ARRAY['axs_venue_catalog_refresh_daily',
 --   'td_sg_discover_hourly','td_sg_discover_drain_hourly']) j; DROP VIEW v_axs_venue_catalog;
---   DROP FUNCTION axs_venue_catalog_refresh(); DROP TABLE axs_venue_catalog;
+--   DROP FUNCTION axs_venue_catalog_refresh(); DROP TABLE axs_venue_catalog, axs_confirmed_venues;
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.axs_venue_catalog (
@@ -75,6 +83,149 @@ ALTER TABLE public.axs_venue_catalog ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.axs_venue_catalog FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.axs_venue_catalog TO service_role;
 
+CREATE TABLE IF NOT EXISTS public.axs_confirmed_venues (
+  venue_name     text        PRIMARY KEY,
+  tevo_venue_ids bigint[]    NOT NULL DEFAULT '{}',
+  source         text        NOT NULL DEFAULT 'operator 2026-11-02',
+  added_at       timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE public.axs_confirmed_venues IS
+  'Operator-confirmed AXS venues (names as AXS shows them). tevo_venue_ids: reviewed matches; empty = not in our events yet, re-tried by exact normalised name in axs_venue_catalog_refresh() (mig 20261102190000).';
+ALTER TABLE public.axs_confirmed_venues ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.axs_confirmed_venues FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.axs_confirmed_venues TO service_role;
+INSERT INTO public.axs_confirmed_venues (venue_name, tevo_venue_ids) VALUES
+  ('Crypto.com Arena', '{1480}'),
+  ('The Greek Theatre', '{603}'),
+  ('Red Rocks Amphitheatre', '{1290}'),
+  ('Peacock Theater', '{4930}'),
+  ('Dignity Health Sports Park Main Stadium', '{2566}'),
+  ('West Hall at LACC', '{}'),
+  ('Galaxy Park at Dignity Health Sports Park', '{}'),
+  ('T-Mobile Arena', '{32725}'),
+  ('Vegas Golden Knights', '{32725}'),
+  ('The Country Club', '{}'),
+  ('RODEOHOUSTON - NRG Stadium', '{2223}'),
+  ('Toyota Stadium', '{3640}'),
+  ('Target Center', '{1534}'),
+  ('City National Arena', '{}'),
+  ('Michelob ULTRA Arena at Mandalay Bay Resort & Casino', '{3571}'),
+  ('Fair Grounds Race Course & Slots', '{}'),
+  ('Dignity Health Sports Park', '{2566}'),
+  ('TPC Scottsdale', '{1901}'),
+  ('Rocket Arena', '{614}'),
+  ('Tokyo Dome', '{}'),
+  ('The O2', '{}'),
+  ('T-Mobile Center', '{4603}'),
+  ('College Park Center', '{18876}'),
+  ('Toyota Center', '{2786}'),
+  ('Blue Federal Credit Union Arena', '{2847}'),
+  ('RODEOHOUSTON - Reliant Stadium', '{2223}'),
+  ('The Roxy', '{1352}'),
+  ('The Novo', '{5835}'),
+  ('Greek Theatre', '{603}'),
+  ('Mission Ballroom', '{34177}'),
+  ('The United Theater on Broadway', '{31629}'),
+  ('Santa Barbara Bowl', '{1388}'),
+  ('The Theater at Virgin Hotels Las Vegas', '{633}'),
+  ('Microsoft Theater', '{4930}'),
+  ('The Mountain Winery', '{1956}'),
+  ('Fonda Theatre', '{651}'),
+  ('Gas South Arena', '{617}'),
+  ('Showbox SoDo', '{5085}'),
+  ('First Avenue', '{496}'),
+  ('The National', '{5177}'),
+  ('Michelob ULTRA Arena', '{3571}'),
+  ('MGM Grand Garden Arena', '{996}'),
+  ('The Theatre at Ace Hotel', '{}'),
+  ('Rock & Brews', '{}'),
+  ('Roadrunner', '{41454}'),
+  ('Westville Music Bowl', '{2363}'),
+  ('Royal Oak Music Theatre', '{1357}'),
+  ('The HALL at Live!', '{35102}'),
+  ('Under the K Bridge Park', '{48392}'),
+  ('Masonic Temple Theatre', '{939}'),
+  ('Ryman Auditorium', '{1366}'),
+  ('Oxnard Performing Arts Center', '{}'),
+  ('Mechanics Bank Theater', '{}'),
+  ('Pechanga Arena San Diego', '{8000}'),
+  ('St. Augustine Amphitheatre', '{5369}'),
+  ('Keswick Theatre', '{780}'),
+  ('Saban Theatre', '{1751}'),
+  ('Forest Hills Stadium', '{520}'),
+  ('The Orion Amphitheater', '{42016}'),
+  ('Mechanics Bank Arena', '{}'),
+  ('Empire Polo Club', '{1949}'),
+  ('Empire Polo Club, Coachella Music Festival', '{1949}'),
+  ('Miller High Life Theatre', '{2840}'),
+  ('PeoplesBank Arena', '{640}'),
+  ('Brookside at the Rose Bowl', '{}'),
+  ('Webster Hall', '{2791}'),
+  ('Utilita Arena Birmingham', '{}'),
+  ('Rose Bowl Stadium', '{1342}'),
+  ('Shrine Auditorium', '{1422}'),
+  ('South Hall at LACC & Gilbert Lindsay Plaza', '{}'),
+  ('Opry House', '{596}'),
+  ('1STBANK Center', '{}'),
+  ('Maverik Center', '{426}'),
+  ('Broadmoor World Arena', '{33334}'),
+  ('Xcite Center at Parx Casino', '{47933}'),
+  ('Texas Trust CU Theatre', '{2119}'),
+  ('Resorts World Theatre', '{2326}'),
+  ('Flushing Meadows Corona Park', '{33317}'),
+  ('Park West', '{1199}'),
+  ('Dignity Health Theater', '{45502}'),
+  ('Gothic Theatre', '{2040}'),
+  ('Masonic Cathedral Theatre', '{}'),
+  ('Gersten Pavilion', '{7572}'),
+  ('Smith Field', '{}'),
+  ('Pinehurst Resort & Country Club', '{}'),
+  ('The Canyon at OPAC', '{31263}'),
+  ('The Midland Theatre', '{1005}'),
+  ('U.S. Bank Stadium', '{32930}'),
+  ('Grand Garden Arena', '{996}'),
+  ('Bellco Theatre', '{}'),
+  ('El Rey Theatre', '{442}'),
+  ('The Shed', '{}'),
+  ('Turner Hall Ballroom', '{5039}'),
+  ('Vivarium', '{46361}'),
+  ('Terminal West', '{28994}'),
+  ('Music Hall of Williamsburg', '{4853}'),
+  ('Clemson Memorial Stadium', '{}'),
+  ('Soldier Field', '{1444}'),
+  ('The Riverside Theater', '{1322}'),
+  ('Fiddler''s Green Amphitheatre', '{3039}'),
+  ('San Jose Civic', '{31465}'),
+  ('Toyota Arena', '{5575}'),
+  ('VGK Event Parking', '{32725}'),
+  ('Indian Wells Tennis Garden', '{67555,3751}'),
+  ('Indian Wells Tennis Garden Parking', '{}'),
+  ('Indian Wells Tennis Garden - Parking', '{}'),
+  ('Players Era', '{}'),
+  ('Rocket Mortgage FieldHouse', '{614}'),
+  ('STAPLES Center', '{1480}'),
+  ('John Paul Jones Arena', '{4054}'),
+  ('Knoxville Civic Coliseum', '{33438}'),
+  ('Terminal 5', '{4954}'),
+  ('Jacobs Pavilion', '{2640}'),
+  ('Devon Park', '{5542}'),
+  ('USA Softball Hall of Fame Stadium', '{}'),
+  ('The Rooftop at Pier 17', '{33710}'),
+  ('Desert Diamond Arena', '{2763}'),
+  ('Georgia Theatre', '{1842}'),
+  ('Oakmont Country Club', '{}'),
+  ('The Los Angeles Country Club', '{}'),
+  ('Erin Hills', '{}'),
+  ('The Thunderdome', '{}'),
+  ('Pompano Beach Amphitheater', '{1247}'),
+  ('Michigan Stadium', '{1002}'),
+  ('Joan C. Edwards Stadium', '{932}'),
+  ('BOK Center', '{5118}'),
+  ('NRG Stadium', '{2223}'),
+  ('Arlington Theatre', '{64}')
+ON CONFLICT (venue_name) DO UPDATE SET tevo_venue_ids = EXCLUDED.tevo_venue_ids
+  WHERE cardinality(public.axs_confirmed_venues.tevo_venue_ids) = 0;
+
 CREATE OR REPLACE FUNCTION public.axs_venue_catalog_refresh(p_delivery_window interval DEFAULT interval '3 hours')
 RETURNS jsonb LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE
@@ -82,6 +233,26 @@ DECLARE
   v_enrolled int;
   v_counts   jsonb;
 BEGIN
+  -- 0. confirmed list: re-try unmatched names by exact normalised name, then make sure every
+  --    confirmed venue has a catalogue row
+  UPDATE public.axs_confirmed_venues cv
+     SET tevo_venue_ids = m.ids
+    FROM (SELECT cv2.venue_name, array_agg(DISTINCT e.venue_id) AS ids
+            FROM public.axs_confirmed_venues cv2
+            JOIN public.events e
+              ON regexp_replace(regexp_replace(lower(e.venue_name), '^the ', ''), '[^a-z0-9]+', '', 'g')
+               = regexp_replace(regexp_replace(lower(cv2.venue_name), '^the ', ''), '[^a-z0-9]+', '', 'g')
+           WHERE cardinality(cv2.tevo_venue_ids) = 0
+           GROUP BY 1) m
+   WHERE m.venue_name = cv.venue_name;
+  INSERT INTO public.axs_venue_catalog (tevo_venue_id, venue_name, venue_location)
+  SELECT DISTINCT ON (e.venue_id) e.venue_id, e.venue_name, e.venue_location
+    FROM public.axs_confirmed_venues cv
+    CROSS JOIN LATERAL unnest(cv.tevo_venue_ids) AS v(id)
+    JOIN public.events e ON e.venue_id = v.id
+   ORDER BY e.venue_id, e.occurs_at_local DESC
+  ON CONFLICT (tevo_venue_id) DO NOTHING;
+
   -- 1. AXS's own venue record, from the latest pull of each tracked AXS event
   WITH rec AS (
     SELECT DISTINCT ON (ev.venue_id)
@@ -155,15 +326,18 @@ BEGIN
   UPDATE public.axs_venue_catalog c
      SET (verdict, verdict_basis, refreshed_at) = (
        SELECT CASE
+                WHEN x.confirmed THEN 'axs'
                 WHEN c.axs_ticketed THEN 'axs'
                 WHEN c.delivery_rows >= 500 AND c.delivery_axs_rows >= 0.30 * c.delivery_rows THEN 'axs'
                 WHEN x.named = 0 THEN 'unknown'
                 WHEN x.a >= 0.6 * x.named THEN 'axs'
+                WHEN x.a > 0 THEN 'mixed'
                 WHEN x.t >= 0.6 * x.named THEN 'ticketmaster'
                 WHEN x.s >= 0.6 * x.named THEN 'seatgeek'
                 WHEN x.o >= 0.6 * x.named THEN 'other'
                 ELSE 'mixed' END,
               CASE
+                WHEN x.confirmed THEN 'operator_confirmed'
                 WHEN c.axs_ticketed THEN 'axs_venue_record'
                 WHEN c.delivery_rows >= 500 AND c.delivery_axs_rows >= 0.30 * c.delivery_rows
                   THEN format('delivery %s%% of %s rows', round(100.0 * c.delivery_axs_rows / c.delivery_rows), c.delivery_rows)
@@ -174,7 +348,9 @@ BEGIN
                       c.seed_seatgeek + c.sg_seatgeek AS s, c.seed_other + c.sg_other AS o,
                       c.seed_none + c.sg_none AS n,
                       c.seed_axs + c.sg_axs + c.seed_ticketmaster + c.sg_ticketmaster
-                        + c.seed_seatgeek + c.sg_seatgeek + c.seed_other + c.sg_other AS named) x);
+                        + c.seed_seatgeek + c.sg_seatgeek + c.seed_other + c.sg_other AS named,
+                      EXISTS (SELECT 1 FROM public.axs_confirmed_venues cv
+                               WHERE c.tevo_venue_id = ANY (cv.tevo_venue_ids)) AS confirmed) x);
 
   -- 5. keep the event catalogue growing: performers of upcoming events at AXS / mixed venues
   WITH perf AS (
