@@ -5,6 +5,7 @@
 -- Operator 2026-11-02: "build the venue catalogue, check the venue names against existing AXS data,
 -- then build a self-updating AXS event catalogue."
 --
+-- US venues only (axs_is_us_location, mig 20261102180000): the catalogue never adds a venue outside the US.
 -- WHICH VENUES ARE AXS — four kinds of evidence, strongest first:
 --   0. The operator's confirmed list (axs_confirmed_venues, 128 names, 2026-11-02): 98 names resolve
 --      to 87 TEvo venues (60 exact name, 38 reviewed aliases / former names, e.g. STAPLES Center →
@@ -250,6 +251,7 @@ BEGIN
     FROM public.axs_confirmed_venues cv
     CROSS JOIN LATERAL unnest(cv.tevo_venue_ids) AS v(id)
     JOIN public.events e ON e.venue_id = v.id
+   WHERE public.axs_is_us_location(e.venue_location)
    ORDER BY e.venue_id, e.occurs_at_local DESC
   ON CONFLICT (tevo_venue_id) DO NOTHING;
 
@@ -264,6 +266,7 @@ BEGIN
       JOIN public.axs_event_snapshots s ON s.id = a.last_snapshot_id
       JOIN public.events ev ON ev.id = a.tevo_event_id
      WHERE s.raw->'event'->'venue' ? 'venue_id'
+       AND public.axs_is_us_location(ev.venue_location)
      ORDER BY ev.venue_id, s.id DESC)
   INSERT INTO public.axs_venue_catalog AS c (tevo_venue_id, venue_name, venue_location, axs_venue_id, axs_page, axs_ticketed)
   SELECT venue_id, venue_name, venue_location, axs_venue_id, axs_page, axs_ticketed FROM rec

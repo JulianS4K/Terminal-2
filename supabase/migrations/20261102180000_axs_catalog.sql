@@ -1,4 +1,4 @@
--- Migration 20261102180000 · level:data-collection · lane:A1 (AXS ingest) · writes:axs_catalog(new),axs_primary_signal(new),axs_catalog_refresh()(new),v_axs_catalog(new),v_axs_signal_unmatched(new),axs_events(INSERT on refresh),cron axs_catalog_refresh_hourly(new) · reads:sg_events_canonical,axs_events,gotickets_listings_snapshots,listings_snapshots,events · pre:none
+-- Migration 20261102180000 · level:data-collection · lane:A1 (AXS ingest) · writes:axs_is_us_location()(new),axs_catalog(new),axs_primary_signal(new),axs_catalog_refresh()(new),v_axs_catalog(new),v_axs_signal_unmatched(new),axs_events(INSERT on refresh),cron axs_catalog_refresh_hourly(new) · reads:sg_events_canonical,axs_events,gotickets_listings_snapshots,listings_snapshots,events · pre:none
 --
 -- ============================================================================
 -- AXS event catalogue (operator 2026-11-02: "we need to find an AXS event catalogue").
@@ -33,11 +33,19 @@
 --   * v_axs_catalog      catalogue + signal + whether the event is already tracked.
 --   * v_axs_signal_unmatched  AXS-sold by delivery type (share >= 0.30, >= 20 rows) with no AXS id yet.
 --   * cron axs_catalog_refresh_hourly at :37 (gated by cron_should_fire).
+-- US venues only (axs_is_us_location / SeatGeek venue.country = 'US'), operator 2026-11-02.
 -- Nothing calls AXS, SeatGeek or TicketsData: this only reads what is already stored.
 -- Rollback: SELECT cron.unschedule('axs_catalog_refresh_hourly'); DROP VIEW v_axs_signal_unmatched, v_axs_catalog;
 --   DROP FUNCTION axs_catalog_refresh(); DROP TABLE axs_primary_signal, axs_catalog;
 --   DELETE FROM axs_events WHERE source_sheets = 'catalog:seatgeek' AND last_pulled_at IS NULL;
 -- ============================================================================
+
+-- US only (operator 2026-11-02: "restrict to USA"). TEvo venue_location is "City, ST" (sometimes
+-- "Area, City, ST"); a location is US when its last part is a US state / DC code.
+CREATE OR REPLACE FUNCTION public.axs_is_us_location(p_location text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, pg_temp AS $$
+  SELECT upper(btrim(reverse(split_part(reverse(coalesce(p_location, '')), ',', 1)))) IN ('AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC')
+$$;
 
 CREATE TABLE IF NOT EXISTS public.axs_catalog (
   axs_event_id   text        PRIMARY KEY,
@@ -91,7 +99,8 @@ BEGIN
     FROM (SELECT substring(g.raw_event_jsonb->'integrated'->>'provider_id' FROM '(\d+)$') AS axs_id,
                  g.sg_event_id, g.tevo_event_id, g.sg_event_name, g.sg_venue_name, g.sg_event_date, g.updated_at
             FROM public.sg_events_canonical g
-           WHERE g.raw_event_jsonb->'integrated'->>'provider_name' = 'AXS') s
+           WHERE g.raw_event_jsonb->'integrated'->>'provider_name' = 'AXS'
+             AND coalesce(g.raw_event_jsonb->'venue'->>'country', 'US') = 'US') s
    WHERE s.axs_id IS NOT NULL
    ORDER BY s.axs_id, s.updated_at DESC NULLS LAST
   ON CONFLICT (axs_event_id) DO UPDATE
@@ -110,6 +119,7 @@ BEGIN
          a.created_at
     FROM public.axs_events a
     LEFT JOIN public.events e ON e.id = a.tevo_event_id
+   WHERE e.id IS NULL OR public.axs_is_us_location(e.venue_location)
   ON CONFLICT (axs_event_id) DO UPDATE
      SET tevo_event_id = coalesce(c.tevo_event_id, EXCLUDED.tevo_event_id),
          enrolled_at   = coalesce(c.enrolled_at, EXCLUDED.enrolled_at),

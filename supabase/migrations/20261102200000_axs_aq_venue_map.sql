@@ -56,10 +56,11 @@ BEGIN
   DROP TABLE IF EXISTS _axs_v, _axs_m;
   CREATE TEMP TABLE _axs_v ON COMMIT DROP AS
   SELECT c.tevo_venue_id, c.venue_name, c.verdict, c.axs_venue_id, c.axs_page, c.axs_directory_name, c.sg_venue_ids,
-         nullif(btrim(split_part(c.venue_location, ',', 1)), '') AS city,
-         nullif(upper(btrim(split_part(c.venue_location, ',', 2))), '') AS state
+         nullif(btrim(reverse(split_part(reverse(c.venue_location), ',', 2))), '') AS city,
+         nullif(upper(btrim(reverse(split_part(reverse(c.venue_location), ',', 1)))), '') AS state
     FROM public.axs_venue_catalog c
-   WHERE c.verdict IN ('axs', 'mixed') AND c.venue_name IS NOT NULL;
+   WHERE c.verdict IN ('axs', 'mixed') AND c.venue_name IS NOT NULL
+     AND public.axs_is_us_location(c.venue_location);
 
   CREATE TEMP TABLE _axs_m ON COMMIT DROP AS
   SELECT v.*,
@@ -79,7 +80,7 @@ BEGIN
   -- 4. mint system_seed AQ venues for the rest (same id scheme as the existing system_seed rows)
   INSERT INTO public.aq_venue_map (venue_short_id, venue_name, city, state, country, tevo_venue_id, aq_source, imported_at)
   SELECT public.aq_venue_short_id(m.venue_name, m.city, m.state), m.venue_name, m.city, m.state,
-         CASE WHEN m.state ~ '^[A-Z]{2}$' THEN 'US' END, m.tevo_venue_id, 'system_seed', now()
+         'US', m.tevo_venue_id, 'system_seed', now()
     FROM _axs_m m
    WHERE m.venue_short_id IS NULL
   ON CONFLICT DO NOTHING;
