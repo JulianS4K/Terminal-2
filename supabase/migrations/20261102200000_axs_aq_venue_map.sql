@@ -132,8 +132,8 @@ GRANT SELECT ON public.v_axs_venues TO service_role;
 DO $patch$
 DECLARE
   v_def text := pg_get_functiondef('public.axs_venue_catalog_refresh(interval)'::regprocedure);
-  v_old text := $o$  RETURN jsonb_build_object('axs_venue_records', v_axs_rec, 'performers_enrolled', v_enrolled, 'verdicts', v_counts);$o$;
-  v_new text := $n$  RETURN jsonb_build_object('axs_venue_records', v_axs_rec, 'performers_enrolled', v_enrolled, 'verdicts', v_counts,
+  v_old text := $o$  RETURN jsonb_build_object('axs_venue_records', v_axs_rec, 'verdicts', v_counts);$o$;
+  v_new text := $n$  RETURN jsonb_build_object('axs_venue_records', v_axs_rec, 'verdicts', v_counts,
                             'aq_map', public.axs_aq_venue_map_refresh());$n$;
 BEGIN
   IF position('axs_aq_venue_map_refresh' IN v_def) > 0 THEN

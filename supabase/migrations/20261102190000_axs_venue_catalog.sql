@@ -1,4 +1,4 @@
--- Migration 20261102190000 · level:data-collection · lane:A1 (AXS ingest) · writes:axs_venue_catalog(new),axs_confirmed_venues(new),axs_venue_catalog_refresh()(new),v_axs_venue_catalog(new),td_sg_performers(INSERT on refresh),cron axs_venue_catalog_refresh_daily(new),cron td_sg_discover_hourly(new),cron td_sg_discover_drain_hourly(new) · reads:axs_venues,axs_events,axs_event_snapshots,sg_events_canonical,events,gotickets_listings_snapshots,listings_snapshots · pre:20261102180000
+-- Migration 20261102190000 · level:data-collection · lane:A1 (AXS ingest) · writes:axs_venue_catalog(new),axs_confirmed_venues(new),axs_venue_catalog_refresh()(new),v_axs_venue_catalog(new),cron axs_venue_catalog_refresh_daily(new) · reads:axs_venues,axs_events,axs_event_snapshots,sg_events_canonical,events,gotickets_listings_snapshots,listings_snapshots · pre:20261102180000
 --
 -- ============================================================================
 -- AXS VENUE catalogue + the loop that keeps the AXS EVENT catalogue (mig 20261102180000) growing.
@@ -34,18 +34,10 @@
 --   mixed (no AXS) sellers named, none >= 60 % — left out of the AXS list
 --   unknown       no evidence yet
 --
--- SELF-UPDATING EVENT CATALOGUE
---   axs_venue_catalog_refresh() (daily) re-scores venues, then enrols the performers of upcoming
---   events at 'axs' / 'mixed' venues into td_sg_performers. td_sg_discover (hourly, 15 performers,
---   budget-gated by td_budget_ok, each performer re-checked weekly — existing pipeline, never
---   scheduled until now) fetches their SeatGeek events through TicketsData /events (1 credit each),
---   and td_sg_discover_drain writes them, seller field included, into sg_events_canonical.
---   axs_catalog_refresh (hourly, mig 20261102180000) turns every AXS-sold one into an AXS URL.
---   Cost ceiling: 15 credits/hour = 360/day; td_budget_ok() stops it below 10,000 credits left.
---   Nothing here calls AXS. All three crons are GET-only reads of TicketsData / local SQL.
--- (axs_confirmed_venues is dropped with the rest.)
--- Rollback: SELECT cron.unschedule(j) FROM unnest(ARRAY['axs_venue_catalog_refresh_daily',
---   'td_sg_discover_hourly','td_sg_discover_drain_hourly']) j; DROP VIEW v_axs_venue_catalog;
+-- SELF-UPDATING: the AXS artist crawl (mig 20261102210000) feeds this catalogue from AXS itself
+--   (operator 2026-11-02: "poll AXS instead of SeatGeek"); SeatGeek seller counts already stored
+--   in sg_events_canonical still count, read for free. Nothing here calls any API.
+-- Rollback: SELECT cron.unschedule('axs_venue_catalog_refresh_daily'); DROP VIEW v_axs_venue_catalog;
 --   DROP FUNCTION axs_venue_catalog_refresh(); DROP TABLE axs_venue_catalog, axs_confirmed_venues;
 -- ============================================================================
 
@@ -232,7 +224,6 @@ CREATE OR REPLACE FUNCTION public.axs_venue_catalog_refresh(p_delivery_window in
 RETURNS jsonb LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE
   v_axs_rec  int;
-  v_enrolled int;
   v_counts   jsonb;
 BEGIN
   -- 0. confirmed list: re-try unmatched names by exact normalised name, then make sure every
@@ -356,24 +347,9 @@ BEGIN
                       EXISTS (SELECT 1 FROM public.axs_confirmed_venues cv
                                WHERE c.tevo_venue_id = ANY (cv.tevo_venue_ids)) AS confirmed) x);
 
-  -- 5. keep the event catalogue growing: performers of upcoming events at AXS / mixed venues
-  WITH perf AS (
-    SELECT DISTINCT ON (e.primary_performer_id) e.primary_performer_id, e.primary_performer_name
-      FROM public.events e
-      JOIN public.axs_venue_catalog c ON c.tevo_venue_id = e.venue_id AND c.verdict IN ('axs', 'mixed')
-     WHERE e.primary_performer_id IS NOT NULL AND e.primary_performer_name IS NOT NULL
-       AND e.occurs_at_local ~ '^\d{4}-\d\d-\d\dT' AND e.occurs_at_local::timestamptz > now()
-       AND coalesce(e.state, 'shown') <> 'ignored')
-  INSERT INTO public.td_sg_performers (tevo_performer_id, performer_name, performer_url)
-  SELECT primary_performer_id, primary_performer_name,
-         'https://seatgeek.com/' || trim(both '-' FROM regexp_replace(lower(primary_performer_name), '[^a-z0-9]+', '-', 'g')) || '-tickets'
-    FROM perf
-  ON CONFLICT (tevo_performer_id) DO NOTHING;
-  GET DIAGNOSTICS v_enrolled = ROW_COUNT;
-
   SELECT jsonb_object_agg(verdict, n) INTO v_counts
     FROM (SELECT verdict, count(*) n FROM public.axs_venue_catalog GROUP BY 1) x;
-  RETURN jsonb_build_object('axs_venue_records', v_axs_rec, 'performers_enrolled', v_enrolled, 'verdicts', v_counts);
+  RETURN jsonb_build_object('axs_venue_records', v_axs_rec, 'verdicts', v_counts);
 END $$;
 REVOKE ALL ON FUNCTION public.axs_venue_catalog_refresh(interval) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.axs_venue_catalog_refresh(interval) TO service_role;
@@ -397,19 +373,5 @@ SELECT cron.schedule('axs_venue_catalog_refresh_daily', '41 6 * * *', $c$
 DO $body$ BEGIN
   IF NOT public.cron_should_fire('axs_venue_catalog_refresh_daily') THEN RETURN; END IF;
   PERFORM public.axs_venue_catalog_refresh();
-END $body$;
-$c$);
-
-SELECT cron.schedule('td_sg_discover_hourly', '13 * * * *', $c$
-DO $body$ BEGIN
-  IF NOT public.cron_should_fire('td_sg_discover_hourly') THEN RETURN; END IF;
-  PERFORM public.td_sg_discover(15);
-END $body$;
-$c$);
-
-SELECT cron.schedule('td_sg_discover_drain_hourly', '29 * * * *', $c$
-DO $body$ BEGIN
-  IF NOT public.cron_should_fire('td_sg_discover_drain_hourly') THEN RETURN; END IF;
-  PERFORM public.td_sg_discover_drain();
 END $body$;
 $c$);
