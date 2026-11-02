@@ -7,8 +7,8 @@
 --
 -- US venues only (axs_is_us_location, mig 20261102180000): the catalogue never adds a venue outside the US.
 -- WHICH VENUES ARE AXS — four kinds of evidence, strongest first:
---   0. The operator's confirmed list (axs_confirmed_venues, 128 names, 2026-11-02): 98 names resolve
---      to 87 TEvo venues (60 exact name, 38 reviewed aliases / former names, e.g. STAPLES Center →
+--   0. The operator's confirmed list (axs_confirmed_venues, 129 names, 2026-11-02): 99 names resolve
+--      to 88 TEvo venues (60 exact name, 38 reviewed aliases / former names, e.g. STAPLES Center →
 --      Crypto.com Arena, Microsoft Theater → Peacock Theater); the other 30 (The O2, Tokyo Dome,
 --      golf courses, parking lots…) are kept and re-tried by exact name on every refresh.
 --   1. AXS's own venue record. Every AXS event we pulled carries the venue object with
@@ -223,7 +223,8 @@ INSERT INTO public.axs_confirmed_venues (venue_name, tevo_venue_ids) VALUES
   ('Joan C. Edwards Stadium', '{932}'),
   ('BOK Center', '{5118}'),
   ('NRG Stadium', '{2223}'),
-  ('Arlington Theatre', '{64}')
+  ('Arlington Theatre', '{64}'),
+  ('Knockdown Center', '{32953}')
 ON CONFLICT (venue_name) DO UPDATE SET tevo_venue_ids = EXCLUDED.tevo_venue_ids
   WHERE cardinality(public.axs_confirmed_venues.tevo_venue_ids) = 0;
 
