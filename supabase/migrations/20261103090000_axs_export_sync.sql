@@ -1,4 +1,4 @@
--- Migration 20261103090000 · level:data-collection · lane:A1 (AXS ingest) · writes:aq_event_map(axs_event_id fill-only, direct match),axs_export_event(new),axs_export_sync(new),axs_export_fire()(new),axs_export_tick()(new),axs_export_match()(new),v_axs_export(new),axs_venue_directory(+cols, upserts),axs_catalog(source axs_export, upserts),axs_primary_tag_refresh()(replaced: other_ticketer rule),cron axs_export_tick_1m(new),cron axs_export_match_15m(new),cron axs_artist_discover_hourly(paused) · reads:net._http_response,venue_assets,aq_venue_map,events,vault (TicketsData creds) · pre:20261102270000
+-- Migration 20261103090000 · level:data-collection · lane:A1 (AXS ingest) · writes:aq_event_map(axs_event_id: direct pairing, fill-only / pinned / withdrawn on date move),axs_aq_event_xref(new),v_axs_aq_events(new),axs_aq_link_tick()+axs_resolve_event()(patched: skip export rows),axs_export_event(new),axs_export_sync(new),axs_export_fire()(new),axs_export_tick()(new),axs_export_match()(new),v_axs_export(new),axs_venue_directory(+cols, upserts),axs_catalog(source axs_export, upserts),axs_primary_tag_refresh()(replaced: other_ticketer rule),cron axs_export_tick_1m(new),cron axs_export_match_15m(new),cron axs_artist_discover_hourly(paused) · reads:net._http_response,venue_assets,aq_venue_map,aq_event_map,events,vault (TicketsData creds) · pre:20261102270000
 --
 -- ============================================================================
 -- AXS catalogue from TicketsData's AXS export (operator 2026-11-03; TicketsData enabled
@@ -29,15 +29,25 @@
 --          mapped venue on the same local date. One candidate → venue_date; several → closest start
 --          time, then title similarity → venue_date_time. Each TEvo event takes one AXS id
 --          (best title similarity wins).
---   aq     direct AXS → AQ for AQ events the TEvo path cannot reach (no TEvo event, or a TEvo
---          event no AXS event matched):
---            AXS venue → AQ venue_short_id (axs_venue_directory.aq_venue_short_id): via the mapped
---            TEvo venue (aq_venue_map.tevo_venue_id), else aq_venue_map lat/lon within 1 km + name
---            similarity >= 0.35 (or within 150 m), else same normalised name in the same state;
---            AXS event → aq_event_map row at that AQ venue on the same local date (event_date is
---            local; 00:00 = time unknown), closest start time then name similarity.
---          Fill-only: aq_event_map.axs_event_id is written only when empty and when no other AQ
---          row holds that AXS id; one AQ row per AXS id.
+--   aq     AXS → AQ DIRECTLY, never through TEvo (operator 2026-11-03: "map AXS directly to AQ,
+--          bypass EVO", modelled on the Paciolan desk API where every event carries its AQ id):
+--            pairing table axs_aq_event_xref (AXS event id → aq_short_event_id, one-to-one), like
+--            paciolan_event_xref. A row with pinned = true is a hand pairing the matcher never
+--            touches (and that overrides what aq_event_map holds).
+--            AXS venue → AQ venue (axs_venue_directory.aq_venue_short_id): aq_venue_map lat/lon
+--            within 1 km + name similarity >= 0.35 (or within 150 m); else same normalised name +
+--            state; else name similarity >= 0.6 in the same city + state.
+--            AXS event → aq_event_map row on the same local date (event_date is local; 00:00 = time
+--            unknown) at that AQ venue — or, for AQ rows with no venue id, the same normalised
+--            venue name + state. Closest start time, then name similarity (performer / event name
+--            vs AXS title / headliner) break ties.
+--            aq_event_map.axs_event_id is filled when empty and the id is not held by another AQ
+--            row; a different id already there is recorded as conflict_axs_event_id, not
+--            overwritten. When an AXS event moves off the AQ date (or leaves AXS before it is
+--            played), the unpinned pairing and the id it wrote are withdrawn.
+--          The TEvo route no longer writes export-sourced ids to AQ: axs_aq_link_tick and
+--          axs_resolve_event skip axs_catalog rows with source 'axs_export' (patched below).
+--          v_axs_aq_events is the Paciolan-desk-shaped list: event_id (AXS), internal_id (AQ), …
 --   feed   axs_catalog gets every live US export event (rows whose event left AXS are removed;
 --          an export row's TEvo link follows the latest match) (source 'axs_export', axs_ticketed from the
 --          export, tevo_event_id when matched). axs_aq_link_tick (:21) then fills
@@ -51,7 +61,8 @@
 --   Re-enable: SELECT cron.alter_job(jobid, active := true) FROM cron.job WHERE jobname = 'axs_artist_discover_hourly';
 --
 -- Rollback: SELECT cron.unschedule('axs_export_tick_1m'); SELECT cron.unschedule('axs_export_match_15m');
---   DROP VIEW v_axs_export; DROP FUNCTION axs_export_match(int), axs_export_tick(), axs_export_fire(int);
+--   DROP VIEW v_axs_aq_events, v_axs_export; DROP TABLE axs_aq_event_xref; re-create axs_aq_link_tick from mig 20261102240000
+--   and axs_resolve_event from 20261102230000 (+ the 240000 patch); DROP FUNCTION axs_export_match(int), axs_export_tick(), axs_export_fire(int);
 --   DELETE FROM axs_catalog WHERE source = 'axs_export'; DROP TABLE axs_export_event, axs_export_sync;
 --   re-run the axs_primary_tag_refresh() body from mig 20261102260000; re-enable the artist crawl.
 -- ============================================================================
@@ -99,8 +110,6 @@ CREATE TABLE IF NOT EXISTS public.axs_export_event (
   match_method       text,
   matched_date       text,                       -- event_date_local the match was made on
   matched_at         timestamptz,
-  aq_short_event_id  text,                       -- set when the AQ event was matched directly (not via TEvo)
-  aq_matched_at      timestamptz,
   first_synced_at    timestamptz NOT NULL DEFAULT now(),
   last_synced_at     timestamptz NOT NULL DEFAULT now(),
   gone_at            timestamptz
@@ -137,6 +146,26 @@ INSERT INTO public.axs_export_sync (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 ALTER TABLE public.axs_export_sync ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.axs_export_sync FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.axs_export_sync TO service_role;
+
+CREATE TABLE IF NOT EXISTS public.axs_aq_event_xref (
+  axs_event_id          bigint      PRIMARY KEY,
+  aq_short_event_id     text        NOT NULL,
+  method                text        NOT NULL,   -- venue_date | venue_date_time | manual
+  venue_how             text,                   -- aq_venue | venue_name | manual
+  time_diff_min         integer,
+  name_sim              numeric,
+  n_candidates          integer,
+  pinned                boolean     NOT NULL DEFAULT false,
+  conflict_axs_event_id text,                   -- aq_event_map already held another AXS id
+  axs_id_held_by        text,                   -- another AQ event already holds this AXS id
+  matched_at            timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS axs_aq_event_xref_aq_uidx ON public.axs_aq_event_xref (aq_short_event_id);
+COMMENT ON TABLE public.axs_aq_event_xref IS
+  'AXS event id → AQ event, paired directly on AQ venue + local date (no TEvo). pinned = hand pairing, never changed by axs_export_match() (mig 20261103090000).';
+ALTER TABLE public.axs_aq_event_xref ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.axs_aq_event_xref FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.axs_aq_event_xref TO service_role;
 
 ALTER TABLE public.axs_venue_directory
   ADD COLUMN IF NOT EXISTS venue_lat         numeric,
@@ -325,8 +354,10 @@ DECLARE
   v_events  int := 0;
   v_reset   int := 0;
   v_catalog int := 0;
-  v_aq_venues int := 0;
-  v_aq_events int := 0;
+  v_aq_venues    int := 0;
+  v_aq_events    int := 0;
+  v_aq_written   int := 0;
+  v_aq_withdrawn int := 0;
 BEGIN
   -- 1. AXS venues seen in the export
   INSERT INTO public.axs_venue_directory AS d
@@ -433,17 +464,27 @@ BEGIN
     FROM best_per_tevo b WHERE x.axs_event_id = b.axs_event_id;
   GET DIAGNOSTICS v_events = ROW_COUNT;
 
-  -- 4b. direct AXS → AQ, for AQ events the TEvo path cannot reach
-  --     AXS venue → AQ venue
+  -- 4b. AXS → AQ directly (no TEvo)
+  --   (i) withdraw unpinned pairings whose AXS event moved off the AQ date or left AXS unplayed
+  WITH moved AS (
+    DELETE FROM public.axs_aq_event_xref p
+     USING public.axs_export_event x, public.aq_event_map m
+     WHERE p.axs_event_id = x.axs_event_id AND m.aq_short_event_id = p.aq_short_event_id
+       AND NOT p.pinned
+       AND (m.event_date::date IS DISTINCT FROM left(x.event_date_local, 10)::date
+            OR (x.gone_at IS NOT NULL AND x.event_date_local >= to_char(now(), 'YYYY-MM-DD')))
+    RETURNING p.axs_event_id, p.aq_short_event_id)
+  UPDATE public.aq_event_map m SET axs_event_id = NULL
+    FROM moved v
+   WHERE m.aq_short_event_id = v.aq_short_event_id AND m.axs_event_id = v.axs_event_id::text;
+  GET DIAGNOSTICS v_aq_withdrawn = ROW_COUNT;
+
+  --   (ii) AXS venue → AQ venue
   WITH todo AS (
-    SELECT d.axs_venue_id, d.venue_name, d.state, d.venue_lat, d.venue_lon, d.tevo_venue_id,
+    SELECT d.axs_venue_id, d.venue_name, d.city, d.state, d.venue_lat, d.venue_lon,
            regexp_replace(regexp_replace(lower(d.venue_name), '^the ', ''), '[^a-z0-9]+', '', 'g') AS norm
       FROM public.axs_venue_directory d
      WHERE d.aq_venue_short_id IS NULL AND d.country = 'US'),
-  via_tevo AS (
-    SELECT t.axs_venue_id, min(a.venue_short_id) AS venue_short_id
-      FROM todo t JOIN public.aq_venue_map a ON a.tevo_venue_id = t.tevo_venue_id
-     GROUP BY t.axs_venue_id HAVING count(DISTINCT a.venue_short_id) = 1),
   geo AS (
     SELECT DISTINCT ON (t.axs_venue_id) t.axs_venue_id, a.venue_short_id,
            round(111320 * sqrt(power(a.latitude - t.venue_lat, 2)
@@ -454,7 +495,6 @@ BEGIN
         ON t.venue_lat IS NOT NULL AND a.latitude IS NOT NULL
        AND a.latitude  BETWEEN t.venue_lat - 0.01 AND t.venue_lat + 0.01
        AND a.longitude BETWEEN t.venue_lon - 0.013 AND t.venue_lon + 0.013
-     WHERE NOT EXISTS (SELECT 1 FROM via_tevo v WHERE v.axs_venue_id = t.axs_venue_id)
      ORDER BY t.axs_venue_id,
               (similarity(lower(a.venue_name), lower(t.venue_name)) >= 0.35) DESC,
               111320 * sqrt(power(a.latitude - t.venue_lat, 2)
@@ -467,55 +507,94 @@ BEGIN
       JOIN public.aq_venue_map a
         ON regexp_replace(regexp_replace(lower(a.venue_name), '^the ', ''), '[^a-z0-9]+', '', 'g') = t.norm
        AND upper(a.state) = upper(t.state)
-     WHERE NOT EXISTS (SELECT 1 FROM via_tevo v WHERE v.axs_venue_id = t.axs_venue_id)
-       AND NOT EXISTS (SELECT 1 FROM geo_ok g WHERE g.axs_venue_id = t.axs_venue_id)
+     WHERE NOT EXISTS (SELECT 1 FROM geo_ok g WHERE g.axs_venue_id = t.axs_venue_id)
      GROUP BY t.axs_venue_id HAVING count(DISTINCT a.venue_short_id) = 1),
+  bycity AS (
+    SELECT DISTINCT ON (t.axs_venue_id) t.axs_venue_id, a.venue_short_id
+      FROM todo t
+      JOIN public.aq_venue_map a
+        ON upper(a.state) = upper(t.state) AND lower(a.city) = lower(t.city)
+       AND similarity(lower(a.venue_name), lower(t.venue_name)) >= 0.6
+     WHERE NOT EXISTS (SELECT 1 FROM geo_ok g WHERE g.axs_venue_id = t.axs_venue_id)
+       AND NOT EXISTS (SELECT 1 FROM byname n WHERE n.axs_venue_id = t.axs_venue_id)
+     ORDER BY t.axs_venue_id, similarity(lower(a.venue_name), lower(t.venue_name)) DESC),
   pick AS (
-    SELECT axs_venue_id, venue_short_id, 'via_tevo_venue' AS method FROM via_tevo
-    UNION ALL SELECT axs_venue_id, venue_short_id, 'geo' FROM geo_ok
-    UNION ALL SELECT axs_venue_id, venue_short_id, 'name_state' FROM byname)
+    SELECT axs_venue_id, venue_short_id, 'geo' AS method FROM geo_ok
+    UNION ALL SELECT axs_venue_id, venue_short_id, 'name_state' FROM byname
+    UNION ALL SELECT axs_venue_id, venue_short_id, 'name_city' FROM bycity)
   UPDATE public.axs_venue_directory d
      SET aq_venue_short_id = p.venue_short_id, aq_match_method = p.method
     FROM pick p WHERE d.axs_venue_id = p.axs_venue_id;
   GET DIAGNOSTICS v_aq_venues = ROW_COUNT;
 
-  --     AXS event → AQ event (AQ rows with no TEvo event, or whose TEvo event no AXS event matched)
+  --   (iii) AXS event → AQ event: AQ venue (or AQ venue name + state) + local date
   WITH todo AS (
     SELECT x.axs_event_id, x.event_date_local, x.is_tba,
-           coalesce(x.event_title_clean, x.event_title) AS title, d.aq_venue_short_id
+           lower(coalesce(x.event_title_clean, x.event_title, '')) AS title,
+           lower(coalesce(x.headliner, x.event_title_clean, x.event_title, '')) AS headliner,
+           d.aq_venue_short_id,
+           regexp_replace(regexp_replace(lower(x.venue_name), '^the ', ''), '[^a-z0-9]+', '', 'g') AS vnorm,
+           upper(x.venue_state) AS vstate
       FROM public.axs_export_event x
-      JOIN public.axs_venue_directory d ON d.axs_venue_id = x.venue_id::text AND d.aq_venue_short_id IS NOT NULL
-     WHERE x.aq_short_event_id IS NULL AND x.gone_at IS NULL AND x.venue_country = 'US'
-       AND x.event_date_local >= to_char(now(), 'YYYY-MM-DD')
-       AND NOT EXISTS (SELECT 1 FROM public.aq_event_map o WHERE o.axs_event_id = x.axs_event_id::text)),
+      LEFT JOIN public.axs_venue_directory d ON d.axs_venue_id = x.venue_id::text
+     WHERE x.gone_at IS NULL AND x.venue_country = 'US'
+       AND x.event_date_local ~ '^\d{4}-\d\d-\d\d' AND x.event_date_local >= to_char(now(), 'YYYY-MM-DD')
+       AND NOT EXISTS (SELECT 1 FROM public.axs_aq_event_xref p WHERE p.axs_event_id = x.axs_event_id)
+     ORDER BY x.event_date_local
+     LIMIT greatest(p_limit, 0)),
   cand AS (
     SELECT t.axs_event_id, m.aq_short_event_id,
+           CASE WHEN t.aq_venue_short_id IS NOT NULL AND m.venue_short_id = t.aq_venue_short_id
+                THEN 'aq_venue' ELSE 'venue_name' END AS venue_how,
            count(*) OVER (PARTITION BY t.axs_event_id) AS n_same_day,
-           CASE WHEN t.is_tba OR to_char(m.event_date, 'HH24:MI') = '00:00' THEN 0
-                ELSE abs(extract(epoch FROM (m.event_date::time - substr(t.event_date_local, 12, 5)::time)) / 60) END AS dmin,
-           similarity(lower(coalesce(m.performer, '') || ' ' || coalesce(m.event_name, '')), lower(t.title)) AS sim
+           (m.axs_event_id IS NOT NULL) AS already_held,
+           CASE WHEN t.is_tba OR to_char(m.event_date, 'HH24:MI') = '00:00'
+                  OR substr(t.event_date_local, 12, 5) !~ '^\d\d:\d\d$' THEN 0
+                ELSE abs(extract(epoch FROM (m.event_date::time - substr(t.event_date_local, 12, 5)::time)) / 60)::int END AS dmin,
+           greatest(similarity(lower(coalesce(m.performer, '') || ' ' || coalesce(m.event_name, '')), t.title),
+                    similarity(lower(coalesce(m.performer, m.event_name, '')), t.headliner)) AS sim
       FROM todo t
       JOIN public.aq_event_map m
-        ON m.venue_short_id = t.aq_venue_short_id
-       AND m.event_date::date = left(t.event_date_local, 10)::date
-     WHERE m.axs_event_id IS NULL
-       AND (m.tevo_event_id IS NULL
-            OR NOT EXISTS (SELECT 1 FROM public.axs_export_event y WHERE y.tevo_event_id = m.tevo_event_id))),
+        ON m.event_date::date = left(t.event_date_local, 10)::date
+       AND ((t.aq_venue_short_id IS NOT NULL AND m.venue_short_id = t.aq_venue_short_id)
+            OR (regexp_replace(regexp_replace(lower(coalesce(m.venue_name, '')), '^the ', ''), '[^a-z0-9]+', '', 'g') = t.vnorm
+                AND upper(m.state) = t.vstate))
+     WHERE (m.axs_event_id IS NULL OR m.axs_event_id = t.axs_event_id::text)
+       AND NOT EXISTS (SELECT 1 FROM public.axs_aq_event_xref q WHERE q.aq_short_event_id = m.aq_short_event_id)),
   best_per_axs AS (
     SELECT DISTINCT ON (axs_event_id) * FROM cand
-     WHERE n_same_day = 1 OR dmin <= 90 OR sim >= 0.3
-     ORDER BY axs_event_id, dmin, sim DESC),
+     WHERE n_same_day = 1 OR dmin <= 90 OR sim >= 0.3 OR already_held
+     ORDER BY axs_event_id, already_held DESC, dmin, sim DESC),
   best_per_aq AS (
     SELECT DISTINCT ON (aq_short_event_id) * FROM best_per_axs
-     ORDER BY aq_short_event_id, sim DESC, dmin, axs_event_id),
-  upd AS (
-    UPDATE public.aq_event_map m SET axs_event_id = b.axs_event_id::text
-      FROM best_per_aq b
-     WHERE m.aq_short_event_id = b.aq_short_event_id AND m.axs_event_id IS NULL
-    RETURNING b.axs_event_id, b.aq_short_event_id)
-  UPDATE public.axs_export_event x SET aq_short_event_id = u.aq_short_event_id, aq_matched_at = now()
-    FROM upd u WHERE x.axs_event_id = u.axs_event_id;
+     ORDER BY aq_short_event_id, sim DESC, dmin, axs_event_id)
+  INSERT INTO public.axs_aq_event_xref (axs_event_id, aq_short_event_id, method, venue_how,
+                                        time_diff_min, name_sim, n_candidates)
+  SELECT axs_event_id, aq_short_event_id,
+         CASE WHEN n_same_day = 1 THEN 'venue_date' ELSE 'venue_date_time' END,
+         venue_how, dmin, round(sim::numeric, 3), n_same_day
+    FROM best_per_aq
+  ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_aq_events = ROW_COUNT;
+
+  --   (iv) write to aq_event_map: fill when empty (pinned pairings override); record conflicts
+  UPDATE public.axs_aq_event_xref p SET conflict_axs_event_id = m.axs_event_id
+    FROM public.aq_event_map m
+   WHERE m.aq_short_event_id = p.aq_short_event_id AND NOT p.pinned
+     AND m.axs_event_id IS NOT NULL AND m.axs_event_id <> p.axs_event_id::text
+     AND p.conflict_axs_event_id IS DISTINCT FROM m.axs_event_id;
+  UPDATE public.axs_aq_event_xref p SET axs_id_held_by = o.aq_short_event_id
+    FROM public.aq_event_map o
+   WHERE o.axs_event_id = p.axs_event_id::text AND o.aq_short_event_id <> p.aq_short_event_id
+     AND NOT p.pinned AND p.axs_id_held_by IS DISTINCT FROM o.aq_short_event_id;
+  UPDATE public.aq_event_map m SET axs_event_id = p.axs_event_id::text
+    FROM public.axs_aq_event_xref p
+   WHERE m.aq_short_event_id = p.aq_short_event_id
+     AND m.axs_event_id IS DISTINCT FROM p.axs_event_id::text
+     AND (m.axs_event_id IS NULL OR p.pinned)
+     AND NOT EXISTS (SELECT 1 FROM public.aq_event_map o
+                      WHERE o.axs_event_id = p.axs_event_id::text AND o.aq_short_event_id <> m.aq_short_event_id);
+  GET DIAGNOSTICS v_aq_written = ROW_COUNT;
 
   -- 5. catalogue feed (every live US upcoming export event)
   INSERT INTO public.axs_catalog AS c
@@ -546,7 +625,8 @@ BEGIN
 
   RETURN jsonb_build_object('venues_seen', v_venues, 'venues_mapped_now', v_vmatch,
                             'events_rematched', v_reset, 'events_matched_now', v_events,
-                            'aq_venues_mapped_now', v_aq_venues, 'aq_events_filled_direct', v_aq_events,
+                            'aq_venues_mapped_now', v_aq_venues, 'aq_pairs_new', v_aq_events,
+                            'aq_ids_written', v_aq_written, 'aq_pairs_withdrawn', v_aq_withdrawn,
                             'catalog_rows', v_catalog);
 END $$;
 REVOKE ALL ON FUNCTION public.axs_export_match(int) FROM PUBLIC, anon, authenticated;
@@ -556,18 +636,60 @@ CREATE OR REPLACE VIEW public.v_axs_export WITH (security_invoker = true) AS
 SELECT x.axs_event_id, x.type, x.status, x.event_title, x.headliner, x.event_date_local,
        x.venue_name, x.venue_city, x.venue_state, x.onsale_utc, x.presale_utc,
        x.tevo_event_id, x.match_method,
-       coalesce(x.aq_short_event_id,
-                (SELECT min(m.aq_short_event_id) FROM public.aq_event_map m WHERE m.tevo_event_id = x.tevo_event_id)) AS aq_short_event_id,
-       CASE WHEN x.aq_short_event_id IS NOT NULL THEN 'direct'
-            WHEN EXISTS (SELECT 1 FROM public.aq_event_map m WHERE m.tevo_event_id = x.tevo_event_id) THEN 'via_tevo' END AS aq_path,
+       p.aq_short_event_id, p.method AS aq_match_method,
        d.tevo_venue_id AS tevo_venue_id_mapped, d.match_method AS venue_match_method, x.event_url,
        x.first_seen_utc, x.last_synced_at
   FROM public.axs_export_event x
   LEFT JOIN public.axs_venue_directory d ON d.axs_venue_id = x.venue_id::text
+  LEFT JOIN public.axs_aq_event_xref p ON p.axs_event_id = x.axs_event_id
  WHERE x.gone_at IS NULL AND x.venue_country = 'US'
    AND x.event_date_local >= to_char(now(), 'YYYY-MM-DD');
 REVOKE ALL ON public.v_axs_export FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.v_axs_export TO service_role;
+
+-- the Paciolan-desk-shaped list: every live US AXS event with its AQ id (internal_id)
+CREATE OR REPLACE VIEW public.v_axs_aq_events WITH (security_invoker = true) AS
+SELECT x.axs_event_id::text AS event_id, p.aq_short_event_id AS internal_id,
+       x.event_title AS name, x.headliner, x.venue_name AS venue, x.venue_city AS city,
+       x.venue_state AS state, left(x.event_date_local, 10) AS date,
+       nullif(substr(x.event_date_local, 12, 5), '') AS time, x.event_url,
+       x.type, x.axs_ticketed, x.status, x.onsale_utc, x.presale_utc,
+       p.method AS match_method, p.venue_how, p.pinned, p.conflict_axs_event_id, p.axs_id_held_by,
+       x.venue_id AS axs_venue_id, x.last_synced_at AS updated_at
+  FROM public.axs_export_event x
+  LEFT JOIN public.axs_aq_event_xref p ON p.axs_event_id = x.axs_event_id
+ WHERE x.gone_at IS NULL AND x.venue_country = 'US'
+   AND x.event_date_local >= to_char(now(), 'YYYY-MM-DD');
+REVOKE ALL ON public.v_axs_aq_events FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.v_axs_aq_events TO service_role;
+
+-- the TEvo route stops writing export-sourced AXS ids to AQ (AQ is paired directly above)
+DO $patch$
+DECLARE
+  v_def text;
+BEGIN
+  v_def := pg_get_functiondef('public.axs_aq_link_tick(integer)'::regprocedure);
+  IF position('source <> ''axs_export''' IN v_def) = 0 THEN
+    IF position('FROM public.axs_catalog WHERE tevo_event_id IS NOT NULL' IN v_def) = 0 THEN
+      RAISE EXCEPTION 'axs_aq_link_tick: catalogue anchor not found';
+    END IF;
+    EXECUTE replace(v_def, 'FROM public.axs_catalog WHERE tevo_event_id IS NOT NULL',
+                           'FROM public.axs_catalog WHERE tevo_event_id IS NOT NULL AND source <> ''axs_export''');
+  END IF;
+
+  v_def := pg_get_functiondef('public.axs_resolve_event(bigint)'::regprocedure);
+  IF position('source <> ''axs_export''' IN v_def) = 0 THEN
+    IF position('WHERE c.tevo_event_id = p_tevo_event_id LIMIT 1;' IN v_def) = 0
+       OR position('WHERE c.event_date = left(e.occurs_at_local, 10)::date' IN v_def) = 0 THEN
+      RAISE EXCEPTION 'axs_resolve_event: catalogue anchors not found';
+    END IF;
+    v_def := replace(v_def, 'WHERE c.tevo_event_id = p_tevo_event_id LIMIT 1;',
+                            'WHERE c.tevo_event_id = p_tevo_event_id AND c.source <> ''axs_export'' LIMIT 1;');
+    v_def := replace(v_def, 'WHERE c.event_date = left(e.occurs_at_local, 10)::date',
+                            'WHERE c.event_date = left(e.occurs_at_local, 10)::date AND c.source <> ''axs_export''');
+    EXECUTE v_def;
+  END IF;
+END $patch$;
 
 -- ---------------------------------------------------------------------------
 -- tagger: an event AXS lists but another ticketer sells → not_axs
