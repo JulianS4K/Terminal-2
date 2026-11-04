@@ -1,0 +1,5 @@
+# Render cron job `ml-knicks-price-train` (scripts/train_knicks_price.py) only — the web
+# services keep using requirements.txt. Same pinning convention: known-good lower bound,
+# next major as the ceiling.
+numpy>=2.0,<3.0
+requests>=2.34.2,<3.0
