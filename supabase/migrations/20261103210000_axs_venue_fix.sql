@@ -34,7 +34,9 @@
 --     venue and the AQ event's venue: EVO's tier4 takes any venue near the point, which pairs a show
 --     in a side room with the main-hall event (Infosys Theater vs a Knicks game at MSG).
 --   * Venues file 13 minted only because their real AQ venue was wrongly taken (or because they are
---     a duplicate AXS id) are re-queued; unused minted rows left behind are deleted.
+--     a duplicate AXS id) are re-queued; minted rows left unused are marked aq_source
+--     'system_seed_unused' (deleting them would scan listings_snapshots once per row through its
+--     unindexed foreign key).
 --   * Cost: axs_venue_same costs ~0.7 ms a call on prod (60k same-city pairs = 44 s), so it is
 --     declared COST 1000 and every candidate join first applies a raw trigram similarity >= 0.2
 --     (all 436 pairs it accepted on the 549 real pairs score >= 0.30). The first editor run of this
@@ -664,9 +666,14 @@ UPDATE public.axs_venue_directory d SET aq_venue_short_id = NULL, aq_match_metho
 -- (c) re-place every unplaced venue under the new rules
 CREATE TEMP TABLE _sync AS SELECT public.axs_aq_venue_sync(true) AS r;
 
--- (c2) AQ venues minted today that no AXS venue holds and nothing references any more go
-DELETE FROM public.aq_venue_map a
- USING _re_minted r
+-- (c2) AQ venues minted on 2026-11-03 that no AXS venue holds any more are MARKED, not deleted:
+--      listings_snapshots (~117M rows) and aq_event_map reference aq_venue_map(venue_short_id) by
+--      foreign key with no index on the referencing column, so every DELETE here scans
+--      listings_snapshots in full (the second editor run of this file never finished because of it).
+--      Changing aq_source is not a key change, so no foreign-key check runs. Remove them later in
+--      one statement once listings_snapshots(venue_short_id) is indexed or the rows are confirmed unused.
+UPDATE public.aq_venue_map a SET aq_source = 'system_seed_unused'
+  FROM _re_minted r
  WHERE a.venue_short_id = r.venue_short_id AND a.axs_venue_id IS NULL
    AND NOT EXISTS (SELECT 1 FROM public.axs_venue_directory d WHERE d.aq_venue_short_id = a.venue_short_id)
    AND NOT EXISTS (SELECT 1 FROM public.aq_event_map m WHERE m.venue_short_id = a.venue_short_id);
@@ -698,7 +705,7 @@ DELETE FROM public.axs_aq_event_xref p USING _bad_pair b WHERE p.axs_event_id = 
 SELECT r || jsonb_build_object('tevo_links_cleared', (SELECT count(*) FROM _bad_tevo),
                                'aq_claims_cleared', (SELECT count(*) FROM _bad_claim),
                                'minted_requeued', (SELECT count(*) FROM _re_minted),
-                               'minted_removed', (SELECT count(*) FROM _re_minted r
-                                                   WHERE NOT EXISTS (SELECT 1 FROM public.aq_venue_map a WHERE a.venue_short_id = r.venue_short_id)),
+                               'minted_marked_unused', (SELECT count(*) FROM _re_minted r JOIN public.aq_venue_map a
+                                                         ON a.venue_short_id = r.venue_short_id AND a.aq_source = 'system_seed_unused'),
                                'event_pairs_reset', (SELECT count(*) FROM _bad_pair)) AS result
   FROM _sync;
