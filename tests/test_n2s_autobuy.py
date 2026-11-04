@@ -81,6 +81,13 @@ def test_level_names_only():
     assert "level_mismatch" not in a.index_match(_order(section="Section 205", sub_section="Upper 205"))["reasons"]
 
 
+def test_row_letter_mismatch():
+    assert "row_letter_mismatch" in a.index_match(_order(order_row="AA", sub_row="H"))["reasons"]
+    assert "row_letter_mismatch" in a.index_match(_order(order_row="b", sub_row="CC"))["reasons"]
+    for sold, sub in (("H", "B"), ("AA", "BB"), ("14", "12"), ("AA", "3"), (None, "H")):
+        assert "row_letter_mismatch" not in a.index_match(_order(order_row=sold, sub_row=sub))["reasons"]
+
+
 def test_order_active_timer_and_ped():
     assert a.order_active({"timer_expires_at": "2026-10-28T16:53:45+00:00"}, NOW)["reasons"] == ["timer_closed"]
     # PED (Need2Buy) orders are never covered — non-PED only.
