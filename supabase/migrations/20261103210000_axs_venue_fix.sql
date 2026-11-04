@@ -35,6 +35,10 @@
 --     in a side room with the main-hall event (Infosys Theater vs a Knicks game at MSG).
 --   * Venues file 13 minted only because their real AQ venue was wrongly taken (or because they are
 --     a duplicate AXS id) are re-queued; unused minted rows left behind are deleted.
+--   * Cost: axs_venue_same costs ~0.7 ms a call on prod (60k same-city pairs = 44 s), so it is
+--     declared COST 1000 and every candidate join first applies a raw trigram similarity >= 0.2
+--     (all 436 pairs it accepted on the 549 real pairs score >= 0.30). The first editor run of this
+--     file hit the role's 15-minute statement_timeout and rolled back, hence SET statement_timeout = 0.
 --   * Clean-up, run here: TEvo links and AQ venue claims that fail axs_venue_same are cleared (with
 --     the TEvo event matches and tier1_5 event pairings made through them; AQ ids those pairings
 --     wrote are cleared only when no other source knows the id); then the venue sync re-places them.
@@ -42,6 +46,9 @@
 -- Rollback: re-create axs_aq_venue_sync / axs_export_match / axs_aq_tier_match from mig 20261103190000;
 --   DROP FUNCTION axs_venue_same(text,text,text,numeric), axs_venue_norm(text,text).
 -- ============================================================================
+
+-- The first run places ~3,500 venues; the SQL editor's role has statement_timeout = 15 min.
+SET statement_timeout = 0;
 
 -- normalised venue name: case, the/&/spelling variants, punctuation, and a trailing city / state tag
 CREATE OR REPLACE FUNCTION public.axs_venue_norm(p_name text, p_city text DEFAULT NULL)
@@ -59,7 +66,7 @@ $$;
 
 -- same venue? (not a room / area of the other, not a sibling room, names close enough)
 CREATE OR REPLACE FUNCTION public.axs_venue_same(p_a text, p_b text, p_city text DEFAULT NULL, p_min numeric DEFAULT 0.5)
-RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path = public, extensions, pg_temp AS $$
+RETURNS boolean LANGUAGE sql IMMUTABLE COST 1000 SET search_path = public, extensions, pg_temp AS $$
   WITH c AS (SELECT lower(coalesce(p_city, '')) AS city),
   n AS (
     SELECT x.k, x.v,
@@ -161,7 +168,8 @@ BEGIN
         ON v.venue_lat IS NOT NULL AND f.latitude IS NOT NULL
        AND f.latitude  BETWEEN v.venue_lat - 0.01 AND v.venue_lat + 0.01
        AND f.longitude BETWEEN v.venue_lon - 0.013 AND v.venue_lon + 0.013
-     WHERE public.axs_venue_same(v.venue_name, f.venue_name, v.city)),
+     WHERE similarity(lower(f.venue_name), lower(v.venue_name)) >= 0.2
+       AND public.axs_venue_same(v.venue_name, f.venue_name, v.city)),
   r3 AS (
     SELECT v.axs_venue_id, min(f.venue_short_id) AS venue_short_id, 3 AS rk, NULL::int AS dist_m, 'name_state' AS method
       FROM _v v JOIN public.aq_venue_map f
@@ -172,7 +180,8 @@ BEGIN
     SELECT DISTINCT ON (v.axs_venue_id) v.axs_venue_id, f.venue_short_id, 4 AS rk, NULL::int AS dist_m, 'name_city' AS method
       FROM _v v JOIN public.aq_venue_map f
         ON upper(f.state) = upper(v.state) AND lower(f.city) = lower(v.city)
-     WHERE public.axs_venue_same(v.venue_name, f.venue_name, v.city, 0.6)
+     WHERE similarity(lower(f.venue_name), lower(v.venue_name)) >= 0.2
+       AND public.axs_venue_same(v.venue_name, f.venue_name, v.city, 0.6)
      ORDER BY v.axs_venue_id, similarity(lower(f.venue_name), lower(v.venue_name)) DESC),
   allp AS (SELECT * FROM r1 UNION ALL SELECT * FROM r2 WHERE dist_m <= 1000 UNION ALL SELECT * FROM r3 UNION ALL SELECT * FROM r4)
   SELECT DISTINCT ON (axs_venue_id) * FROM allp ORDER BY axs_venue_id, rk, dist_m NULLS LAST, venue_short_id;
@@ -302,7 +311,8 @@ BEGIN
         ON t.venue_lat IS NOT NULL AND a.latitude IS NOT NULL
        AND a.latitude  BETWEEN t.venue_lat - 0.01 AND t.venue_lat + 0.01
        AND a.longitude BETWEEN t.venue_lon - 0.013 AND t.venue_lon + 0.013
-     WHERE public.axs_venue_same(t.venue_name, a.venue_name, t.city)
+     WHERE similarity(lower(a.venue_name), lower(t.venue_name)) >= 0.2
+       AND public.axs_venue_same(t.venue_name, a.venue_name, t.city)
      ORDER BY t.axs_venue_id,
               111320 * sqrt(power(a.latitude - t.venue_lat, 2)
                  + power((a.longitude - t.venue_lon) * cos(radians(t.venue_lat)), 2))),
@@ -571,6 +581,7 @@ BEGIN
        AND va.latitude  BETWEEN a.venue_lat - 0.01 AND a.venue_lat + 0.01
        AND va.longitude BETWEEN a.venue_lon - 0.02 AND a.venue_lon + 0.02
      WHERE a.venue_lat IS NOT NULL AND q.axs_event_id IS NULL
+       AND similarity(coalesce(q.vlow, ''), coalesce(a.vlow, '')) >= 0.2
        AND public.axs_venue_same(a.venue_name, q.vlow, a.venue_city)),
   b1 AS (SELECT DISTINCT ON (axs_event_id) * FROM c ORDER BY axs_event_id, dist_m, dmin NULLS LAST, aq_short_event_id),
   b2 AS (SELECT DISTINCT ON (aq_short_event_id) * FROM b1 ORDER BY aq_short_event_id, dist_m, dmin NULLS LAST, axs_event_id)
