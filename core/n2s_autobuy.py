@@ -200,6 +200,10 @@ def index_match(order: dict) -> dict:
     a, b = _level(order.get("section")), _level(order.get("sub_section"))
     if a and b and a != b:
         reasons.append("level_mismatch")
+    # Single-letter vs double-letter rows (H vs AA) are ambiguous: AA can be the back or the front.
+    r1, r2 = str(order.get("order_row") or "").strip(), str(order.get("sub_row") or "").strip()
+    if r1.isalpha() and r2.isalpha() and (len(r1) == 1) != (len(r2) == 1):
+        reasons.append("row_letter_mismatch")
     if (order.get("sub_qty") or 0) < (order.get("quantity") or 0):
         reasons.append("short_quantity")
     if order.get("sub_view") == "obstructed":
