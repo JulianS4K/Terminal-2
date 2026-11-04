@@ -8,6 +8,7 @@ rows per table / RPC.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -219,14 +220,17 @@ def test_tier_tool_sets():
     assert ext == {"search", "search_events", "event_market", "event_prices", "top_market_events",
                    "performer_trend", "price_movers", "competing_events", "prediction_markets",
                    "sports_context", "news", "event_weather", "price_forecast", "team_report",
-                   "data_freshness", "query_public_view", "get_started"}
+                   "event_sales", "sales_breakdown", "zone_prices", "zone_trend", "game_context",
+                   "model_price_prediction", "seat_map", "data_freshness", "query_public_view", "get_started"}
     assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
-                      "event_source_links", "home_stats", "team_book"}
+                      "event_source_links", "home_stats", "team_book", "polling_coverage",
+                      "crm_sales_breakdown"}
     # ...and no owned/order column leaks through the public view whitelist.
     for cols in m.EXTERNAL_QUERY_VIEWS.values():
-        assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c]
+        assert not [c for c in cols if "owned" in c or "order" in c or "email" in c or "phone" in c
+                    or "wholesale" in c]
     assert "v_s4kcs_orders" not in m.EXTERNAL_QUERY_VIEWS and "v_s4kcs_orders" in m.QUERY_VIEWS
 
 
@@ -683,3 +687,385 @@ def test_asgi_get_passthrough_and_post_replay():
     assert mgr.calls[-1] == ("POST", body)
     assert ("mcp_count_call", {"p_key_id": 1, "p_tool": "news"}) in db.rpcs
     assert sent[0]["status"] == 200
+
+
+# ---------------------------------------------------------------- market depth tools (2026-10-27)
+
+def _iso(hours_ago: float) -> str:
+    from datetime import timedelta
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+
+
+def test_event_sales_dedupes_and_summarises():
+    rows = [  # newest first, sale 1 stored twice (older pulls re-stored every sale)
+        {"sg_sale_id": "1", "sale_at_utc": "2026-10-26T20:00:00Z", "broadcast_price": 300, "quantity": 2,
+         "section": "226", "row": "5", "pulled_at": _iso(1)},
+        {"sg_sale_id": "1", "sale_at_utc": "2026-10-26T20:00:00Z", "broadcast_price": 300, "quantity": 2,
+         "section": "226", "row": "5", "pulled_at": _iso(30)},
+        {"sg_sale_id": "2", "sale_at_utc": "2026-10-25T20:00:00Z", "broadcast_price": 100, "quantity": 1,
+         "section": "226", "row": "9", "pulled_at": _iso(30)},
+        {"sg_sale_id": "3", "sale_at_utc": "2026-10-24T20:00:00Z", "broadcast_price": 200, "quantity": 4,
+         "section": "227", "row": "1", "pulled_at": _iso(30)},
+    ]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": rows})
+    out = m.event_sales(db, 42, days=999, section=" 22 ", limit=2)
+    assert out["summary"]["sales"] == 3 and out["summary"]["tickets"] == 7
+    assert out["summary"]["price_median"] == 200 and out["summary"]["price_min"] == 100
+    assert [s["sg_sale_id"] for s in out["sales"]] == ["1", "2"]
+    assert "pulled_at" not in out["sales"][0]
+    assert out["freshness"]["stale"] is False
+    calls = db.queries[0].calls
+    assert ("eq", ("tevo_event_id", 42), {}) in calls
+    assert ("ilike", ("section", "%22%"), {}) in calls
+    # min_quantity drops the single
+    out2 = m.event_sales(db, 42, min_quantity=2)
+    assert out2["summary"]["sales"] == 2
+
+
+class _PagingDB(FakeDB):
+    """FakeDB whose queries honour .range(start, end), like PostgREST paging."""
+
+    def table(self, name):
+        q = _Query(self, name)
+        db = self
+
+        def execute():
+            db.queries.append(q)
+            rows = db.tables.get(name) or []
+            rng = next((a for n, a, _ in q.calls if n == "range"), None)
+            return type("R", (), {"data": rows[rng[0]:rng[1] + 1] if rng else rows})()
+        q.execute = execute
+        return q
+
+
+def test_sales_rows_pages_past_one_read(monkeypatch):
+    monkeypatch.setattr(m, "SALES_PAGE", 3)
+    rows = [{"sg_sale_id": str(i // 2), "sale_at_utc": f"2026-10-{20 - i // 2:02d}T20:00:00Z",
+             "broadcast_price": 100 + i, "quantity": 2, "section": "226", "row": "1",
+             "pulled_at": _iso(i)} for i in range(8)]   # 4 sales, each stored twice
+    db = _PagingDB(tables={"seatgeek_sales_snapshots": rows})
+    sales, pulled = m._sales_rows(db, 7)
+    assert [s["sg_sale_id"] for s in sales] == ["0", "1", "2", "3"]
+    assert "pulled_at" not in sales[0] and pulled == max(r["pulled_at"] for r in rows)
+    assert len(db.queries) == 3                       # 3 + 3 + 2 rows
+    assert ("range", (6, 8), {}) in db.queries[2].calls
+    assert m._sales_rows(_PagingDB(tables={}), 7) == ([], None)
+    # the row cap ends the read even when every page is full
+    monkeypatch.setattr(m, "SALES_MAX_ROWS", 6)
+    capped, _ = m._sales_rows(_PagingDB(tables={"seatgeek_sales_snapshots": rows}), 7)
+    assert [s["sg_sale_id"] for s in capped] == ["0", "1", "2"]
+
+
+def test_sale_area_groups_sections():
+    assert m._sale_area("Turn 12 Bleachers 8") == "turn 12" == m._sale_area("t12-8")
+    assert m._sale_area("Main Grandstand Club Level 210") == "main grandstand club level"
+    assert m._sale_area("GA Grounds Pass") == "ga grounds pass"
+    assert m._sale_area("226") == "200s" and m._sale_area("12") == "section 12"
+    assert m._sale_area("  ") == "unknown" and m._sale_area(None) == "unknown"
+    assert m._sale_area("Sec. 4") == "section 4" and m._sale_area("Section 226") == "200s"
+    assert m._sale_area("Turn 4") == "turn 4" and m._sale_area("Turn Fifteen") == "turn fifteen"
+    assert m._sale_area("Club 5") == "club 5"          # a one-word name keeps its number
+    assert m._sale_area("MG122") == "mg 100s" and m._sale_area("t124") == "t124"
+
+
+def test_when_bucket_and_parse_ts():
+    assert [m._when_bucket(d) for d in (None, 200, 30, 5, 1)] == \
+        ["undated", "4mo_plus", "2wk_to_4mo", "3d_to_2wk", "last_3d"]
+    assert m._parse_ts(None) is None and m._parse_ts("not a date") is None
+    assert m._parse_ts("2026-10-25T12:00:00").tzinfo is not None
+    assert m._parse_ts("2026-10-25T12:00:00Z").hour == 12
+
+
+def _bd_rows():
+    rows = []
+    for i in range(20):   # turn 12: $500..$690, the top two sold 1 and 200 days out
+        rows.append({"sg_sale_id": f"t{i}", "sale_at_utc": "2026-10-10T00:00:00Z", "broadcast_price": 500 + 10 * i,
+                     "quantity": 2, "section": f"Turn 12 Bleachers {i % 5}", "row": "1", "pulled_at": _iso(2)})
+    rows[18]["sale_at_utc"] = "2026-10-24T00:00:00Z"
+    rows[19]["sale_at_utc"] = "2026-04-08T00:00:00Z"
+    rows.append({"sg_sale_id": "g1", "sale_at_utc": "2026-10-20T00:00:00Z", "broadcast_price": 300,
+                 "quantity": 1, "section": "GA Grounds Pass", "row": "", "pulled_at": _iso(2)})
+    rows.append({"sg_sale_id": "x", "sale_at_utc": "2026-10-20T00:00:00Z", "broadcast_price": None,
+                 "quantity": 1, "section": "GA Grounds Pass", "row": "", "pulled_at": _iso(2)})
+    return rows
+
+
+def test_sales_breakdown_groups_and_top_decile():
+    db = FakeDB(tables={"seatgeek_sales_snapshots": _bd_rows(),
+                        "events": [{"occurs_at_local": "2026-10-25T12:00:00"}]})
+    out = m.sales_breakdown(db, 3017609)
+    assert out["all"]["sales"] == 21 and out["all"]["group"] == "(all)"
+    t12, ga = out["groups"]                            # sorted by median, highest first
+    assert t12["group"] == "turn 12" and ga["group"] == "ga grounds pass"
+    assert t12["sales"] == 20 and t12["tickets"] == 40 and t12["median"] == 595.0
+    assert t12["top_from"] == 671.0 and t12["top_avg"] == 685.0 and t12["max"] == 690.0
+    assert t12["top_timing"] == {"last_3d": 1, "4mo_plus": 1} and t12["thin"] is False
+    assert ga["thin"] is True and ga["top_timing"] == {"3d_to_2wk": 1}
+    assert out["freshness"]["stale"] is False and "top_from" in out["note"]
+    # no event row: timing is undated
+    db2 = FakeDB(tables={"seatgeek_sales_snapshots": _bd_rows()})
+    assert m.sales_breakdown(db2, 1)["groups"][0]["top_timing"] == {"undated": 2}
+    empty = m.sales_breakdown(FakeDB(), 1)
+    assert empty["groups"] == [] and empty["all"] is None and "no SeatGeek sales" in empty["note"]
+
+
+def test_crm_sales_breakdown_splits_and_combines():
+    orders = [{"event_name": "USGP Sunday", "section": "Turn 12 Bleachers 3", "quantity": 2,
+               "price_per_ticket": 800, "purchase_date": "2026-10-23T00:00:00Z"},
+              {"event_name": "USGP Sunday", "section": "t124", "quantity": 2,
+               "price_per_ticket": 600, "purchase_date": None},
+              {"event_name": "USGP Sunday Parking", "section": "Lot A", "quantity": 1,
+               "price_per_ticket": 90, "purchase_date": None},
+              {"event_name": "USGP Sunday", "section": "GA", "quantity": 1,
+               "price_per_ticket": 0, "purchase_date": None}]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": _bd_rows(), "v_s4kcs_orders": orders,
+                        "events": [{"occurs_at_local": "2026-10-25T12:00:00"}]})
+    out = m.crm_sales_breakdown(db, 3017609)
+    assert out["market"]["all"]["sales"] == 21 and out["ours"]["all"]["sales"] == 2
+    assert {g["group"] for g in out["ours"]["groups"]} == {"turn 12", "t124"}
+    assert out["combined"]["all"]["sales"] == 23
+    t12 = next(g for g in out["combined"]["groups"] if g["group"] == "turn 12")
+    assert t12["sales"] == 21 and t12["max"] == 800.0 and t12["top_timing"]["last_3d"] >= 1
+    assert "undated" in out["note"]
+    orders_q = next(q for q in db.queries if q.table == "v_s4kcs_orders")
+    assert ("eq", ("tevo_event_id", 3017609), {}) in orders_q.calls
+    none = m.crm_sales_breakdown(FakeDB(), 1)
+    assert none["market"] == {"all": None, "groups": []} == none["ours"] == none["combined"]
+
+
+def test_zone_prices_latest_and_24h_change():
+    rows = [
+        {"event_id": 7, "captured_at": _iso(0.5), "zone": "Lower", "getin_price": 220, "retail_median": 400,
+         "tickets_count": 90},
+        {"event_id": 7, "captured_at": _iso(0.5), "zone": "Upper", "getin_price": 90, "retail_median": 150,
+         "tickets_count": 300},
+        {"event_id": 7, "captured_at": _iso(12), "zone": "Lower", "getin_price": 210, "retail_median": 390,
+         "tickets_count": 95},
+        {"event_id": 7, "captured_at": _iso(25), "zone": "Lower", "getin_price": 200, "retail_median": 380,
+         "tickets_count": 100},
+    ]
+    db = FakeDB(tables={"zone_metrics": rows})
+    out = m.zone_prices(db, 7)
+    z = {r["zone"]: r for r in out["zones"]}
+    assert [r["zone"] for r in out["zones"]] == ["Lower", "Upper"]   # by median, high first
+    assert z["Lower"]["getin_change_24h_pct"] == 10.0 and z["Lower"]["tickets_change_24h"] == -10
+    assert z["Upper"]["getin_change_24h_pct"] is None
+    assert "event_id" not in z["Lower"]
+    sel = db.queries[0].calls[0]
+    assert sel == ("select", (m.ZONE_COLS,), {}) and "owned" not in m.ZONE_COLS and "wholesale" not in m.ZONE_COLS
+    assert m.zone_prices(FakeDB(), 7)["zones"] == []
+
+
+def test_zone_trend_groups_by_zone():
+    rows = [{"zone": "Lower", "capture_date": "2026-10-25", "getin_price": 200},
+            {"zone": "Upper", "capture_date": "2026-10-25", "getin_price": 90},
+            {"zone": "Lower", "capture_date": "2026-10-26", "getin_price": 210}]
+    db = FakeDB(tables={"zone_price_observations": rows})
+    out = m.zone_trend(db, 7, zone="Lower", days=5000)
+    assert set(out["zones"]) == {"Lower", "Upper"} and len(out["zones"]["Lower"]) == 2
+    assert out["days"] == 365
+    assert ("eq", ("zone", "Lower"), {}) in db.queries[0].calls
+
+
+def test_game_context_live_odds_and_feature_store():
+    ctx = {"home": {"record": "0-3", "as_of": _iso(3)}, "away": {"record": "3-0"}, "note": "x",
+           "own_book_gap": {"ours": 1}, "demand_mult": 0.9}
+    db = FakeDB(rpc_data={"get_event_demand_context": ctx},
+                tables={"zone_price_observations": [{"capture_date": "2026-10-26", "mkt_spread": -4.5}],
+                        "prediction_market_xref": [{"market_id": "K1"}],
+                        "prediction_markets": [{"team_name": "New York", "yes_price": 0.61, "source": "kalshi",
+                                                "updated_at": _iso(1)}]})
+    out = m.game_context(db, 7, capture_date="2026-10-26T00:00")
+    assert out["live"]["home"]["record"] == "0-3" and "own_book_gap" not in out["live"] and "note" not in out["live"]
+    assert out["form_mult"] == m.form_mult(ctx) and out["form_mult"] < 1
+    assert out["win_odds"][0]["yes_price"] == 0.61
+    assert out["capture_date"] == "2026-10-26" and out["feature_store"]["mkt_spread"] == -4.5
+    assert "data_notes" not in out and out["freshness"]["live"]["stale"] is False
+    fs_q = next(q for q in db.queries if q.table == "zone_price_observations")
+    assert ("eq", ("capture_date", "2026-10-26"), {}) in fs_q.calls
+    assert not [c for c in m.GAME_CONTEXT_COLS if "owned" in c or "wholesale" in c]
+    assert set(m.GAME_CONTEXT_COLS) <= set(m.EXTERNAL_QUERY_VIEWS["zone_price_observations"])
+    empty = m.game_context(FakeDB(), 7)
+    assert empty["live"] is None and empty["feature_store"] is None and len(empty["data_notes"]) == 2
+    unlinked = m.game_context(FakeDB(rpc_data={"get_event_demand_context": ctx},
+                                     tables={"zone_price_observations": [{"capture_date": "2026-10-25",
+                                                                          "opponent_name": None}]}), 7)
+    assert any("ESPN link" in n for n in unlinked["data_notes"])
+
+
+def test_form_mult_mirrors_sql():
+    assert m.form_mult({"home": {"record": "0-3"}, "away": {"record": "3-0"}}) == 0.9875
+    assert m.form_mult({"home": {"record": "30-10"}, "away": {"record": "10-30"}}) == 1.0273
+    assert m.form_mult({"home": {"record": "60-5"}, "away": {"record": "60-5"}}) == 1.15
+    assert m.form_mult({}) == 1.0 and m.form_mult(None) == 1.0
+    assert m.form_mult({"home": {"record": "0-0"}, "away": {"record": "n/a"}}) == 1.0
+
+
+def test_team_report_drops_stale_injury_notes():
+    rep = {"games": [{"event_id": 1, "data_quality": "live"}], "reddit": [{"t": 1}],
+           "injuries": [{"name": "old", "as_of": _iso(24 * 13)}, {"name": "new", "as_of": _iso(20)},
+                        {"name": "undated"}]}
+    out = m.team_report(FakeDB(rpc_data={"mcp_team_report": rep}), "16303")
+    assert [i["name"] for i in out["injuries"]] == ["new", "undated"]
+    assert any("1 injury note" in n for n in out["data_notes"])
+
+
+def test_zone_prices_flags_thin_zones():
+    rows = [{"event_id": 7, "captured_at": _iso(1), "zone": "Courtside", "tickets_count": 2, "retail_median": 3000},
+            {"event_id": 7, "captured_at": _iso(1), "zone": "U4", "tickets_count": 270, "retail_median": 270}]
+    out = m.zone_prices(FakeDB(tables={"zone_metrics": rows}), 7)
+    z = {r["zone"]: r for r in out["zones"]}
+    assert z["Courtside"]["thin"] is True and z["U4"]["thin"] is False
+    assert "1 of 2 zones" in out["note"]
+    assert "note" not in m.zone_prices(FakeDB(tables={"zone_metrics": rows[1:]}), 7)
+
+
+def test_model_price_prediction_with_and_without_run():
+    db = FakeDB(tables={"v_ml_knicks_price_latest": [{"zone": "Lower", "predicted_price": 410}],
+                        "ml_model_runs": [{"run_id": 3, "trained_at": _iso(2), "metrics": {"mdape_model": 18}}]})
+    out = m.model_price_prediction(db, event_id=99)
+    assert out["count"] == 1 and out["run"]["run_id"] == 3 and "note" not in out
+    assert ("eq", ("tevo_event_id", 99), {}) in db.queries[0].calls
+    assert ("eq", ("status", "ok"), {}) in db.queries[1].calls
+    empty = m.model_price_prediction(FakeDB())
+    assert empty["run"] is None and "note" in empty
+
+
+def test_polling_coverage_internal_summary():
+    db = FakeDB(tables={
+        "listings_poll_pins": [{"pin_key": "knicks_home"}],
+        "listings_poll_league_pins": [{"league": "NBA"}],
+        "v_listings_poll_pinned_events": [
+            {"tevo_event_id": 1, "pin_key": "knicks_home", "sources": ["evo", "sg"], "hours_to_event": 20},
+            {"tevo_event_id": 2, "pin_key": "league:NBA", "sources": ["sg"], "hours_to_event": 200}],
+        "sg_broker_pending": [{"rows_persisted": 5}, {"rows_persisted": 0}, {"rows_persisted": -429},
+                              {"rows_persisted": -1}, {"rows_persisted": None}],
+    })
+    out = m.polling_coverage(db)
+    assert out["games_total"] == 2 and out["games_by_pin"]["knicks_home"]["next_48h"] == 1
+    assert out["games_by_pin"]["knicks_home"]["sources"] == {"evo": 1, "sg": 1}
+    assert out["sg_sales_pulls_24h"] == {"pulls": 5, "ok": 2, "rate_limited": 1, "failed": 1,
+                                         "pending": 1, "new_sales": 5}
+
+
+def test_market_depth_edges():
+    assert m._pctl([], 0.5) is None
+    # a capture with an unparseable timestamp still counts as the zone's latest, never as "24 h ago"
+    db = FakeDB(tables={"zone_metrics": [{"event_id": 7, "captured_at": "not-a-time", "zone": "Pit",
+                                          "getin_price": 50, "retail_median": 80, "tickets_count": 4}]})
+    z = m.zone_prices(db, 7)["zones"][0]
+    assert z["zone"] == "Pit" and z["getin_change_24h_pct"] is None and z["tickets_change_24h"] is None
+    db2 = FakeDB()
+    assert m.zone_trend(db2, 7)["zones"] == {}
+    assert not [c for c in db2.queries[0].calls if c[0] == "eq" and c[1][0] == "zone"]
+
+
+# ---------------------------------------------------------------- seat map artifact
+
+_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+        '<script>alert(1)</script>'
+        '<polygon fill="#999999" points="0,0 1,1" data-section-id="Lower Level Sideline 107" onclick="x()"/>'
+        '<polygon fill="#999999" points="0,0 1,1" data-section-id="Upper Level 419" class="mapnode"/>'
+        '<path fill="#999999" d="M0 0" data-section-id="Floor 1"></path>'
+        '<polygon fill="#999999" points="0,0" data-section-id="Middle Level Corner 222"/></svg>')
+
+
+def _seat_db(sales=None, sections=None, events=None):
+    return FakeDB(tables={
+        "events": [{"id": 9, "name": "Nets at Knicks", "venue_id": 896, "configuration_id": 3845,
+                    "venue_name": "MSG", "occurs_at_local": "2026-11-02T19:30:00-05:00"}] if events is None else events,
+        "venue_section_map": [{"section_raw": "107", "seatmap_key": "lower level sideline 107", "configuration_id": 3845},
+                              {"section_raw": "107", "seatmap_key": "stale key 107", "configuration_id": 0}],
+        "seatgeek_sales_snapshots": sales if sales is not None else [
+            {"sg_sale_id": "a", "section": "107", "broadcast_price": 500, "pulled_at": _iso(2)},
+            {"sg_sale_id": "a", "section": "107", "broadcast_price": 500, "pulled_at": _iso(30)},
+            {"sg_sale_id": "b", "section": "107", "broadcast_price": 700, "pulled_at": _iso(2)},
+            {"sg_sale_id": "c", "section": "419", "broadcast_price": 150, "pulled_at": _iso(2)},
+            {"sg_sale_id": "d", "section": "VIP East", "broadcast_price": 900, "pulled_at": _iso(2)},
+            {"sg_sale_id": "e", "section": "1", "broadcast_price": None, "pulled_at": _iso(2)}],
+        "section_metrics": sections or [],
+    })
+
+
+def test_seat_map_sold_paints_sections_and_returns_artifacts(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    out = m.seat_map(_seat_db(), 9, metric="sold", days=999)
+    assert [type(c).__name__ for c in out] == ["TextContent", "EmbeddedResource", "EmbeddedResource"]
+    s = json.loads(out[0].text)
+    assert s["sections_on_map"] == 4 and s["sections_priced"] == 2 and s["days"] == 180
+    assert s["sections_unplaced"] == {"vip east": 1}
+    top = {r["section"]: r for r in s["sections"]}
+    assert top["Lower Level Sideline 107"]["price"] == 500 and top["Lower Level Sideline 107"]["sales"] == 2
+    assert top["Upper Level 419"]["price"] == 150          # placed by the trailing section number
+    svg, page = out[1].resource, out[2].resource
+    assert svg.mime_type == "image/svg+xml" and page.mime_type == "text/html"
+    assert str(page.uri) == "s4k://seatmap/9/sold.html"
+    assert 'fill="#999999"' not in svg.text and m.SEATMAP_NODATA in svg.text   # Floor 1 / 222: no data
+    assert "<title>Lower Level Sideline 107: $500 median sale (2 sales)</title>" in svg.text
+    assert "</polygon>" in svg.text                                   # self-closing → opened to hold <title>
+    assert "<title>Floor 1: no data</title></path>" in svg.text and svg.text.count("</path>") == 1
+    assert "Nets at Knicks" in page.text and "Median sale" in page.text and s["legend"]
+
+
+def test_seat_map_ask_metric_and_errors(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    t = _iso(1)
+    secs = [{"section": "107", "tickets_count": 4, "retail_median": 410, "captured_at": t},
+            {"section": "107 ", "tickets_count": 1, "retail_median": 900, "captured_at": t},
+            {"section": "222", "tickets_count": 10, "retail_median": None, "captured_at": t},
+            {"section": "419", "tickets_count": 6, "retail_median": 120, "captured_at": _iso(30)}]
+    db = _seat_db(sections=secs)
+    s = json.loads(m.seat_map(db, 9, metric="ASK")[0].text)
+    assert s["metric"] == "ask" and s["days"] is None and s["sections_priced"] == 1
+    assert s["sections"][0] == {"section": "Lower Level Sideline 107", "price": 410, "tickets": 5}
+    vsm = next(q for q in db.queries if q.table == "venue_section_map")
+    assert ("eq", ("platform", "evo"), {}) in vsm.calls
+    assert json.loads(m.seat_map(_seat_db(events=[]), 9)[0].text)["error"] == "event 9 not found"
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: None)
+    assert "no seat map" in json.loads(m.seat_map(_seat_db(), 9)[0].text)["error"]
+    empty = json.loads(m.seat_map(FakeDB(tables={"events": [{"id": 9, "venue_id": None}]}), 9)[0].text)
+    assert "no seat map" in empty["error"]
+
+
+def test_seat_map_no_sales_is_all_grey(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    out = m.seat_map(_seat_db(sales=[]), 9)
+    s = json.loads(out[0].text)
+    assert s["sections_priced"] == 0 and s["legend"] == [] and s["median_overall"] is None
+    assert out[1].resource.text.count(m.SEATMAP_NODATA) == 4
+
+
+def test_seatmap_svg_fetch_sanitizes_and_caches(monkeypatch):
+    m._svg_cache._d.clear()
+    calls = []
+
+    class R:
+        text = '<svg><script>x</script><foreignObject><b/></foreignObject><g onload="y()"/></svg>'
+
+    def fetch(v, c, f, a):
+        calls.append((v, c, f))
+        return R()
+    monkeypatch.setattr(m._seatmap, "_fetch_tevo_seatmap_file", fetch)
+    svg = m._seatmap_svg(896, 3845)
+    assert svg == "<svg><g/></svg>" and m._seatmap_svg(896, 3845) == svg and len(calls) == 1
+
+    def boom(*a):
+        raise RuntimeError("down")
+    monkeypatch.setattr(m._seatmap, "_fetch_tevo_seatmap_file", boom)
+    assert m._seatmap_svg(1, 2) is None and m._seatmap_svg(1, 2) is None   # failure cached too
+    m._svg_cache._d.clear()
+
+
+def test_weighted_median():
+    assert m._weighted_median([(100, 1), (300, 5), (200, 1)]) == 300
+    assert m._weighted_median([(5, 1)]) == 5
+
+
+def test_seat_map_over_mcp_returns_content_blocks(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    srv = m._make_server("t", m.EXTERNAL_TOOLS, lambda: _seat_db())
+    tool = next(t for t in anyio.run(srv.list_tools) if t.name == "seat_map")
+    assert tool.output_schema is None and set(tool.input_schema["properties"]) == {"event_id", "metric", "days"}
+    res = anyio.run(srv.call_tool, "seat_map", {"event_id": 9})
+    assert not res.is_error and [c.type for c in res.content] == ["text", "resource", "resource"]
+    assert res.content[2].resource.mime_type == "text/html"
