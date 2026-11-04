@@ -1,3 +1,4 @@
+-- Migration 20261104181342 · level:security · lane:B1 · writes:pg_proc(acl) · reads:none · pre:20260705171533,20260709221500
 -- Lane: B1 (git/code security) · cross-lane: A1 functions, operator-directed fix (Julian, 2026-11-04)
 -- Touches: W pg_proc ACLs of public.aq_reschedule_sync_from_tevo(), public.td_gt_tm_enroll_from_match()
 -- Already applied to prod · via MCP 2026-11-04 (verified: authenticated/anon EXECUTE false, service_role/postgres true)
