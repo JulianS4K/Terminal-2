@@ -85,3 +85,8 @@ tests/fixtures/checkout_sections_six.html:generic-api-key:18
 # public by design (the same value ships in static/terminal/auth.js); removed from
 # source in f0c2126 (the page now reads it from /api/public/config). History only.
 5e59e73c60fe12020478d5c38dbaf16fb1f04832:static/developers/developers.js:generic-api-key:12
+# false positives: the order-timer migration joins two order-id COLUMNS on line 96 (no
+# credential; the timer reads market tokens from vault.decrypted_secrets at run time), and
+# commit 7fffec4 quoted that join in an earlier version of this comment.
+a7dd99490b3cc1b7120c3960e8240543bb0cb36e:supabase/migrations/20261104190000_n2s_order_timer.sql:generic-api-key:96
+7fffec4a701ba29a219c663f65955fb791a61637:.gitleaksignore:generic-api-key:88
