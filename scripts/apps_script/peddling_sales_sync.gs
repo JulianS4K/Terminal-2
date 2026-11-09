@@ -4,73 +4,63 @@
  * ============================================================================
  *
  * Install in ANY mailbox that receives "[PACIOLAN] PEDDLING SALE RECEIVED"
- * emails (orders@, support@, a buyer's inbox, ...). It is standalone — it
- * does not need n2b_sync.gs — and several inboxes can run it at once against
- * the SAME sheet + Supabase:
- *   - the sheet is deduped on Invoice # (a sale lands once, whichever inbox
- *     sees it first; a row two inboxes append in the same instant is removed
- *     again by the inbox that wrote it second),
- *   - Supabase upserts on the order number, and records which inbox saw the
- *     sale first (mailbox).
- * If an inbox gets the emails forwarded (so the sender is not orders@), the
- * default query still matches — it keys on the subject only. Override it per
- * inbox with the PEDDLE_QUERY script property if needed.
+ * emails (orders@, support@, a buyer's inbox, ...). It is standalone, and
+ * several inboxes can run it at once against the SAME sheet + Supabase: the
+ * sheet is deduped on Invoice #, Supabase upserts on the order number.
+ * The default Gmail query keys on the subject only (forwarded copies match);
+ * override it per inbox with the PEDDLE_QUERY script property.
  *
  * Every 5 minutes, syncPeddlingSales():
- *   1. finds the recent PEDDLING SALE RECEIVED emails (PEDDLE.LOOKBACK),
- *   2. parses each one,
- *   3. appends a row to the Google Sheet for any sale whose Invoice # is not
- *      already in the sheet (so a sale is written once, ever), and
- *   4. tags the Gmail thread of every sale that is in the sheet (written now,
- *      written earlier, or typed in by hand — matched on Invoice #) with the
- *      label PEDDLE_LABEL (default "Peddling/In Sheet"), and
- *   5. upserts every parsed sale into Supabase via the RPC
- *      public.peddling_sales_ingest_from_apps_script (mig 20261109172023).
- *      The upsert is keyed on the order number, so re-sending is harmless.
+ *   1. finds the recent PEDDLING SALE RECEIVED emails (PEDDLE.LOOKBACK) and
+ *      parses each one;
+ *   2. upserts them into Supabase (public.peddling_sales_ingest_from_apps_script,
+ *      migs 20261109172023 + 20261109174437). The reply carries what our
+ *      marketplace order books add for each sale: customer name + email
+ *      (Vivid Seats), the event's city + state, and the marketplace status;
+ *   3. writes each new sale into the first EMPTY row of the sheet (a row with
+ *      nothing in any cell). Rows with anything in them are never touched;
+ *   4. for every sale already in the sheet (matched on Invoice #), fills only
+ *      the cells of our columns that are still EMPTY — it never overwrites a
+ *      value someone typed or a formula;
+ *   5. tags the Gmail thread of every sale in the sheet "Peddling/In Sheet".
  *
- * The sheet and Supabase are independent: if one fails, the other still runs,
- * and the next run retries (the sheet skips sales it already has; Supabase
- * upserts).
+ * Columns are found BY HEADER NAME in row 1, so the order can change. Used:
+ *   Event, Venue, Section, Row, Start Seat, End Seat, Quantity,
+ *   Price per Ticket, GrandTotal Amount, Profit (formula, only if empty),
+ *   Customer Name, Customer Email, Invoice # (required), Site Order#, Site,
+ *   City / State (Event)  — the SECOND "City" column, and "State (Event)",
+ *   Status, Sale Date, TU Ticket #, TNOW Ticket #,
+ *   Event date — a header containing "Event Date", else column A when A1 is
+ *   blank.
+ * Left for people: Account Name, First/Last Name, Email, Password, Last 4,
+ * Confirmation, URL, Address, the first City / State, Zip Code, Total Cost.
  *
  * Gmail: the ONLY change this script makes is adding the "In Sheet" label.
- * It never removes a label, marks, moves or deletes a thread. A thread that
- * already carries the label is never appended to the sheet again, so
- * deleting a row by hand keeps it deleted. (Safe to run in the same project
- * as n2b_sync.gs — every name here is prefixed "peddle"/"Peddling".)
- *
- * Sheet columns (A → AC), written by position because City/State appear
- * twice and B–D have no header:
- *   Event Date & Time | | | | Email | Password | URL | Address | City | State |
- *   Zip Code | Event | Venue | Section | Row | Start Seat | End Seat | Quantity |
- *   Price per Ticket | GrandTotal Amount | Total Cost | Profit | Customer Name |
- *   Customer Email | Invoice # | Site Order# | Site | City | State
- * Filled from the email: Event Date & Time, Event, Venue, Section, Row,
- * Start/End Seat, Quantity, Price per Ticket, GrandTotal Amount, Invoice #
- * (our Paciolan order #), Site Order#, Site. Profit is a formula
- * (GrandTotal − Total Cost) that fills in once Total Cost is entered.
- * Everything else is left blank for the buyer to fill in.
+ * A thread that already carries it is never written to the sheet again, so a
+ * row deleted by hand stays deleted.
  *
  * Setup (once):
- *   1. setPeddlingConfig()  — fill the literals first, run, then blank them.
- *   2. peddlingPreview()    — parses and logs, writes nothing.
- *   3. setupPeddlingSheet() — writes the header row if the tab is empty
- *      (the sheet must have "Invoice #" in column Y, or nothing is written).
+ *   1. setPeddlingConfig()  — stores the sheet settings. Paste the anon key /
+ *      secret only if this project doesn't have them yet (left as PASTE_…
+ *      the stored value is kept). peddlingShowConfig() shows what's set.
+ *   2. peddlingCheckSheet() — logs which column each field maps to and how
+ *      many empty rows there are. Writes nothing.
+ *   3. peddlingPreview()    — parses the emails and logs them. Writes nothing.
  *   4. installPeddlingTrigger() — every 5 minutes.
- *   Optional: backfillPeddlingSales() — same as a sync over 60 days.
+ *   5. backfillPeddlingSales() — once, to fill this sheet with the last 60 days
+ *      (it also writes sales already tagged for an earlier sheet).
  *   One-off: repairPeddlingSeats() — fixes Vivid Seats rows written before
  *   the parser fix (Start/End Seat held "Site Order # … Seats 23-25").
  *
  * Script properties:
  *   PEDDLE_SHEET_ID          — spreadsheet id (default: PEDDLE.SHEET_ID)
- *   PEDDLE_SHEET_TAB         — tab name (default: the first tab, gid=0)
+ *   PEDDLE_SHEET_GID         — tab id, the "gid=" in its URL (default: PEDDLE.SHEET_GID)
+ *   PEDDLE_SHEET_TAB         — tab NAME; overrides the gid when set
  *   PEDDLE_LABEL             — Gmail label for sales in the sheet
- *                              (default "Peddling/In Sheet")
  *   PEDDLE_QUERY             — optional Gmail search override for this inbox
- *                              (default: subject:"PEDDLING SALE RECEIVED")
  *   SUPABASE_PROJECT_URL     — https://hzrizjeaxlqcxfrtczpq.supabase.co
  *   SUPABASE_ANON_KEY        — public anon key (PostgREST)
  *   APPSCRIPT_INGEST_SECRET  — shared secret checked by the RPC (vault)
- * (The last three are the same ones n2b_sync.gs / tickpick_sync.gs use.)
  * ============================================================================
  */
 
@@ -80,19 +70,21 @@ const PEDDLE = {
   BACKFILL: '60d',         // backfillPeddlingSales() window
   PAGE: 100,
   MAX_THREADS: 2000,
-  SHEET_ID: '1FqRTKj5Dn1cUqEwqUptUamWm266GPPCTSrMqWeDmzE0',
+  SHEET_ID: '15BPX6ZLB0uCGfzVYVPm63tvnG_1HbH37OVfaMPHIlHU',
+  SHEET_GID: 1691718237,
   LABEL: 'Peddling/In Sheet',
   RPC: 'peddling_sales_ingest_from_apps_script',
+  DATE_FMT: 'm/d/yyyy h:mm AM/PM',
+  // written only when the tab is completely empty
   HEADER: [
-    'Event Date & Time', '', '', '', 'Email', 'Password', 'URL', 'Address',
-    'City', 'State', 'Zip Code', 'Event', 'Venue', 'Section', 'Row',
-    'Start Seat', 'End Seat', 'Quantity', 'Price per Ticket',
-    'GrandTotal Amount', 'Total Cost', 'Profit', 'Customer Name',
-    'Customer Email', 'Invoice #', 'Site Order#', 'Site', 'City', 'State',
+    'Event Date & Time', 'Account Name', 'First Name', 'Last Name', 'Email',
+    'Password', 'Last 4', 'Confirmation', 'URL', 'Address', 'City', 'State',
+    'Zip Code', 'Event', 'Venue', 'Section', 'Row', 'Start Seat', 'End Seat',
+    'Quantity', 'Price per Ticket', 'GrandTotal Amount', 'Total Cost', 'Profit',
+    'Customer Name', 'Customer Email', 'Invoice #', 'Site Order#', 'Site',
+    'City', 'State (Event)', 'Status', 'Sale Date', 'TU Ticket #', 'TNOW Ticket #',
   ],
 };
-// 1-based column numbers used below
-const PEDDLE_COL = { EVENT_DT: 1, START_SEAT: 16, GRAND_TOTAL: 20, TOTAL_COST: 21, PROFIT: 22, INVOICE: 25 };
 
 /* ─────────────────────────────────────────────────────────────────────────
  * CONFIG — run ONCE, then blank the literal values so they don't sit in source.
@@ -100,17 +92,41 @@ const PEDDLE_COL = { EVENT_DT: 1, START_SEAT: 16, GRAND_TOTAL: 20, TOTAL_COST: 2
 
 function setPeddlingConfig() {
   const literals = {
-    'PEDDLE_SHEET_ID'         : '1FqRTKj5Dn1cUqEwqUptUamWm266GPPCTSrMqWeDmzE0',
+    'PEDDLE_SHEET_ID'         : '15BPX6ZLB0uCGfzVYVPm63tvnG_1HbH37OVfaMPHIlHU',
+    'PEDDLE_SHEET_GID'        : '1691718237',
     'PEDDLE_LABEL'            : 'Peddling/In Sheet',
     'PEDDLE_QUERY'            : 'subject:"PEDDLING SALE RECEIVED"',
     'SUPABASE_PROJECT_URL'    : 'https://hzrizjeaxlqcxfrtczpq.supabase.co',
     'SUPABASE_ANON_KEY'       : 'PASTE_SUPABASE_ANON_KEY_HERE',
     'APPSCRIPT_INGEST_SECRET' : 'PASTE_APPSCRIPT_INGEST_SECRET_HERE',
   };
-  const unresolved = Object.keys(literals).filter(k => /^PASTE_/.test(literals[k]));
-  if (unresolved.length) throw new Error('Replace placeholders before running: ' + unresolved.join(', '));
-  PropertiesService.getScriptProperties().setProperties(literals, false);
-  console.log('Config stored. Next: peddlingPreview(), setupPeddlingSheet(), installPeddlingTrigger().');
+  // A placeholder left as PASTE_… keeps the value already stored, so moving to
+  // a new sheet needs no keys re-pasted. (Projects with 50+ properties can't
+  // edit them in Project Settings — this is the way to change them.)
+  const props = PropertiesService.getScriptProperties();
+  const set = {};
+  const missing = [];
+  Object.keys(literals).forEach(k => {
+    if (!/^PASTE_/.test(literals[k])) set[k] = literals[k];
+    else if (!(props.getProperty(k) || '').trim()) missing.push(k);
+  });
+  if (missing.length) throw new Error('Not stored yet — replace these placeholders and run again: ' + missing.join(', '));
+  props.setProperties(set, false);
+  props.deleteProperty('PEDDLE_SHEET_TAB');   // the gid picks the tab now
+  console.log('Stored: ' + Object.keys(set).join(', ') + '. Kept existing: ' +
+              Object.keys(literals).filter(k => !set[k]).join(', ') + '.');
+  peddlingShowConfig();
+}
+
+/** Logs this script's peddling settings (keys masked). Writes nothing. */
+function peddlingShowConfig() {
+  const props = PropertiesService.getScriptProperties();
+  ['PEDDLE_SHEET_ID', 'PEDDLE_SHEET_GID', 'PEDDLE_SHEET_TAB', 'PEDDLE_LABEL', 'PEDDLE_QUERY',
+   'SUPABASE_PROJECT_URL', 'SUPABASE_ANON_KEY', 'APPSCRIPT_INGEST_SECRET'].forEach(k => {
+    let v = props.getProperty(k);
+    if (v && /KEY|SECRET/.test(k)) v = v.slice(0, 4) + '… (' + v.length + ' chars)';
+    console.log(`  ${k.padEnd(24)} ${v == null ? '(not set)' : v}`);
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -119,7 +135,13 @@ function setPeddlingConfig() {
 
 function syncPeddlingSales() { peddleRun_(PEDDLE.LOOKBACK); }
 
-function backfillPeddlingSales() { peddleRun_(PEDDLE.BACKFILL); }
+/**
+ * Same as a sync over 60 days, except it also writes sales whose thread is
+ * already tagged: use it to fill a NEW sheet (every thread tagged for the old
+ * one would otherwise be skipped). Still only empty rows / empty cells, and
+ * still never a second row for an Invoice # the sheet already has.
+ */
+function backfillPeddlingSales() { peddleRun_(PEDDLE.BACKFILL, { ignoreTag: true }); }
 
 /** Parse recent emails and log them. Writes nothing anywhere. */
 function peddlingPreview() {
@@ -130,7 +152,20 @@ function peddlingPreview() {
   if (got.unparsed.length) console.log('Unparsed message ids: ' + got.unparsed.join(', '));
 }
 
-/** Write the header row if the tab is empty (creates the tab if missing). */
+/** Log the tab, the column each field maps to, and the empty-row count. Writes nothing. */
+function peddlingCheckSheet() {
+  const sh = peddleSheet_();
+  const ctx = peddleSheetCtx_(sh);
+  console.log(`Tab "${sh.getName()}" (gid ${sh.getSheetId()}), ${ctx.width} header column(s), ` +
+              `${ctx.rows.length} data row(s) read, ${ctx.rows.filter(r => r.empty).length} empty.`);
+  Object.keys(PEDDLE_FIELDS).forEach(k => {
+    const c = ctx.cols[k];
+    console.log(`  ${k.padEnd(10)} → ${c ? peddleColLetter_(c) + ' "' + ctx.header[c - 1] + '"' : '(no column — not written)'}`);
+  });
+  if (!ctx.cols.invoice) console.error('No "Invoice #" column: the sync will not write to this tab.');
+}
+
+/** Write the header row if the tab is completely empty. */
 function setupPeddlingSheet() {
   const sh = peddleSheet_();
   if (sh.getLastRow() === 0) {
@@ -150,26 +185,25 @@ function setupPeddlingSheet() {
  */
 function repairPeddlingSeats() {
   const sh = peddleSheet_();
-  const last = sh.getLastRow();
-  if (last < 2) return;
-  const rng = sh.getRange(2, PEDDLE_COL.START_SEAT, last - 1, 2);
-  const vals = rng.getValues();
+  const ctx = peddleSheetCtx_(sh);
+  const cs = ctx.cols.startSeat, ce = ctx.cols.endSeat;
+  if (!cs || !ce) { console.error('No Start Seat / End Seat column.'); return; }
   let fixed = 0;
-  const out = vals.map(([a, b]) => {
-    const bad = /Seats\s/i.test(String(a)) || /Seats\s/i.test(String(b));
-    if (!bad) return [a, b];
-    const src = /Seats\s/i.test(String(a)) ? String(a) : String(b);
-    const m = src.match(/Seats\s+([A-Za-z]*\d+)(?:\s*-\s*([A-Za-z]*\d+))?\s*$/i);
-    if (!m) return [a, b];
-    fixed++;
+  ctx.rows.forEach(r => {
+    const a = String(r.values[cs - 1]), b = String(r.values[ce - 1]);
+    if (!/Seats\s/i.test(a) && !/Seats\s/i.test(b)) return;
+    const m = (/Seats\s/i.test(a) ? a : b).match(/Seats\s+([A-Za-z]*\d+)(?:\s*-\s*([A-Za-z]*\d+))?\s*$/i);
+    if (!m) return;
     const n = v => (/^\d+$/.test(v) ? Number(v) : v);
-    return [n(m[1]), n(m[2] || m[1])];
+    sh.getRange(r.row, cs).setValue(n(m[1]));
+    sh.getRange(r.row, ce).setValue(n(m[2] || m[1]));
+    fixed++;
   });
-  if (fixed) rng.setValues(out);
   console.log(`repairPeddlingSeats: fixed ${fixed} row(s).`);
 }
 
-function peddleRun_(window) {
+function peddleRun_(window, opts) {
+  opts = opts || {};
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30 * 1000)) { console.warn('Another run is in progress; skipping.'); return; }
   try {
@@ -178,13 +212,15 @@ function peddleRun_(window) {
                 (got.unparsed.length ? `; unparsed: ${got.unparsed.join(', ')}` : ''));
     if (!got.items.length) return;
 
+    // Supabase first: its reply carries customer / event city / status.
+    let extra = {};
+    try { extra = peddleSendSupabase_(got.items) || {}; }
+    catch (e) { console.error('Supabase send failed: ' + (e && e.stack || e)); }
+
     try {
-      const inSheet = peddleWriteSheet_(got.items);
+      const inSheet = peddleWriteSheet_(got.items, extra, opts);
       peddleTag_(got, inSheet);
     } catch (e) { console.error('Sheet write / tagging failed: ' + (e && e.stack || e)); }
-
-    try { peddleSendSupabase_(got.items); }
-    catch (e) { console.error('Supabase send failed: ' + (e && e.stack || e)); }
   } finally {
     lock.releaseLock();
   }
@@ -312,49 +348,237 @@ function peddleLocalIso_(s) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
- * GOOGLE SHEET
+ * GOOGLE SHEET — columns by header name, only empty rows / empty cells
  * ───────────────────────────────────────────────────────────────────────── */
+
+// field → header names it answers to (compared lower-case, letters/digits/#/() only)
+const PEDDLE_FIELDS = {
+  eventDt:    ['eventdatetime', 'eventdate', 'eventdateandtime'],
+  event:      ['event'],
+  venue:      ['venue'],
+  section:    ['section'],
+  row:        ['row'],
+  startSeat:  ['startseat'],
+  endSeat:    ['endseat'],
+  qty:        ['quantity', 'qty'],
+  price:      ['priceperticket'],
+  total:      ['grandtotalamount', 'grandtotal'],
+  totalCost:  ['totalcost'],
+  profit:     ['profit'],
+  custName:   ['customername'],
+  custEmail:  ['customeremail'],
+  invoice:    ['invoice#', 'invoice'],
+  siteOrder:  ['siteorder#', 'siteorder'],
+  site:       ['site'],
+  eventCity:  ['city(event)', 'eventcity'],
+  eventState: ['state(event)', 'eventstate'],
+  status:     ['status'],
+  saleDate:   ['saledate'],
+  tu:         ['tuticket#', 'tuticket'],
+  tnow:       ['tnowticket#', 'tnowticket'],
+};
+// a row counts as already-used if any of these has something in it
+const PEDDLE_KEYS = ['event', 'invoice', 'siteOrder', 'site', 'venue'];
 
 function peddleSheet_() {
   const props = PropertiesService.getScriptProperties();
   const ss = SpreadsheetApp.openById(props.getProperty('PEDDLE_SHEET_ID') || PEDDLE.SHEET_ID);
   const tab = props.getProperty('PEDDLE_SHEET_TAB');
-  if (tab) return ss.getSheetByName(tab) || ss.insertSheet(tab);
-  return ss.getSheets().find(sh => sh.getSheetId() === 0) || ss.getSheets()[0];
+  if (tab) {
+    const byName = ss.getSheetByName(tab);
+    if (!byName) throw new Error(`No tab named "${tab}".`);
+    return byName;
+  }
+  const gid = Number(props.getProperty('PEDDLE_SHEET_GID') || PEDDLE.SHEET_GID);
+  const byGid = ss.getSheets().find(sh => sh.getSheetId() === gid);
+  if (!byGid) throw new Error(`No tab with gid ${gid}. Set PEDDLE_SHEET_GID or PEDDLE_SHEET_TAB.`);
+  return byGid;
 }
 
-/** Appends new sales; returns the set of Invoice #s now in the sheet. */
-function peddleWriteSheet_(items) {
+function peddleNorm_(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9#()]/g, ''); }
+
+/** Header map + every data row's values/formulas. */
+function peddleSheetCtx_(sh) {
+  const lastCol = Math.max(sh.getLastColumn(), 1);
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v).trim());
+  // trailing blank headers are not columns of ours
+  let width = header.length;
+  while (width > 1 && !header[width - 1]) width--;
+
+  const at = {};                                   // normalised name → [col, col, …]
+  header.slice(0, width).forEach((h, i) => { const k = peddleNorm_(h); if (k) (at[k] = at[k] || []).push(i + 1); });
+  const cols = {};
+  Object.keys(PEDDLE_FIELDS).forEach(f => {
+    for (const name of PEDDLE_FIELDS[f]) if (at[name]) { cols[f] = at[name][0]; break; }
+  });
+  // the SECOND City / State column is the event's (the first is the buyer's address)
+  if (!cols.eventCity  && at.city  && at.city.length  > 1) cols.eventCity  = at.city[1];
+  if (!cols.eventState && at.state && at.state.length > 1) cols.eventState = at.state[1];
+  // event date: column A when its header is blank
+  if (!cols.eventDt && !header[0]) cols.eventDt = 1;
+
+  const last = sh.getLastRow();
+  const rows = [];
+  if (last >= 2) {
+    const rng = sh.getRange(2, 1, last - 1, width);
+    const vals = rng.getValues(), fx = rng.getFormulas();
+    vals.forEach((v, i) => {
+      // empty = no value in any column (a formula that shows "" counts as empty)
+      const empty = v.every(x => x === '' || x === null);
+      rows.push({ row: i + 2, values: v, formulas: fx[i], empty });
+    });
+  }
+  return { header, width, cols, rows };
+}
+
+/**
+ * Writes new sales into empty rows and fills empty cells of rows already in
+ * the sheet. Returns the set of Invoice #s now in the sheet.
+ */
+function peddleWriteSheet_(items, extra, opts) {
+  opts = opts || {};
   const sh = peddleSheet_();
   if (sh.getLastRow() === 0) setupPeddlingSheet();
-  const head = String(sh.getRange(1, PEDDLE_COL.INVOICE).getValue()).trim();
-  if (!/^Invoice\s*#?$/i.test(head)) {
-    throw new Error(`Column ${peddleColLetter_(PEDDLE_COL.INVOICE)} header is "${head}", expected ` +
-                    '"Invoice #". Nothing written — fix the sheet layout or PEDDLE_SHEET_TAB.');
+  const ctx = peddleSheetCtx_(sh);
+  if (!ctx.cols.invoice) {
+    throw new Error('No "Invoice #" column in row 1 of this tab. Nothing written — run peddlingCheckSheet().');
   }
+  const ic = ctx.cols.invoice;
+  const byInvoice = {};
+  ctx.rows.forEach(r => { const v = String(r.values[ic - 1]).trim(); if (v && !byInvoice[v]) byInvoice[v] = r; });
 
-  // Invoice #s already in the sheet → never write a sale twice.
-  const last = sh.getLastRow();
-  const have = {};
-  if (last > 1) {
-    sh.getRange(2, PEDDLE_COL.INVOICE, last - 1, 1).getValues()
-      .forEach(r => { const v = String(r[0]).trim(); if (v) have[v] = true; });
-  }
+  // 1. fill the empty cells of sales already in the sheet
+  let filled = 0;
+  items.forEach(it => {
+    const r = byInvoice[it.pos_order];
+    if (r) filled += peddleFillRow_(sh, ctx, r, it, extra[it.pos_order]);
+  });
 
-  // already tagged = it went to the sheet before; if the row is gone now,
-  // someone deleted it on purpose, so don't put it back
-  const fresh = items.filter(it => !have[it.pos_order] && !it.cancelled && !it.in_sheet_tag);
-  if (!fresh.length) { console.log('Sheet: nothing new.'); return have; }
-
-  const first = sh.getLastRow() + 1;
-  const rows = fresh.map((it, i) => peddleRow_(it, first + i));
-  sh.getRange(first, 1, rows.length, PEDDLE.HEADER.length).setValues(rows);
-  sh.getRange(first, PEDDLE_COL.EVENT_DT, rows.length, 1).setNumberFormat('m/d/yyyy h:mm AM/PM');
+  // 2. new sales → first empty rows (never a row with anything in it).
+  //    Already tagged = it went to the sheet before; if its row is gone now,
+  //    someone deleted it on purpose, so don't put it back.
+  const fresh = items.filter(it => !byInvoice[it.pos_order] && !it.cancelled && (opts.ignoreTag || !it.in_sheet_tag));
+  const free = ctx.rows.filter(r => r.empty);
+  let nextRow = Math.max(sh.getLastRow(), 1) + 1;
+  const written = [];
+  fresh.forEach(it => {
+    let r = free.shift();
+    // another inbox may have used it since we read the sheet: re-check
+    while (r && !peddleRowStillEmpty_(sh, ctx, r.row)) r = free.shift();
+    if (!r) {
+      if (nextRow > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 50);
+      r = { row: nextRow++, values: new Array(ctx.width).fill(''), formulas: new Array(ctx.width).fill(''), empty: true };
+    }
+    peddleFillRow_(sh, ctx, r, it, extra[it.pos_order]);
+    byInvoice[it.pos_order] = r;
+    written.push(it.pos_order + '→row ' + r.row);
+  });
   SpreadsheetApp.flush();
-  console.log(`Sheet: appended ${rows.length} row(s): ${fresh.map(it => it.pos_order).join(', ')}`);
-  peddleDropRaceDupes_(sh, fresh.map(it => String(it.pos_order)));
-  fresh.forEach(it => { have[it.pos_order] = true; });
+  console.log(`Sheet: ${written.length} new sale(s)${written.length ? ': ' + written.join(', ') : ''}; ` +
+              `${filled} empty cell(s) filled on existing rows.`);
+  if (written.length) peddleUndoRaceDupes_(sh, ctx, fresh.map(it => it.pos_order));
+
+  const have = {};
+  Object.keys(byInvoice).forEach(k => { have[k] = true; });
   return have;
+}
+
+/** The value each of our fields gets for a sale (undefined = leave alone). */
+function peddleFieldValues_(ctx, it, ex, rowNum) {
+  const num = v => (v === '' || v == null || isNaN(Number(v))) ? (v || '') : Number(v);
+  const L = f => ctx.cols[f] ? peddleColLetter_(ctx.cols[f]) : null;
+  ex = ex || {};
+  const out = {
+    eventDt:    peddleDate_(it.event_dt) || '',
+    event:      it.event_name,
+    venue:      it.venue,
+    section:    num(it.section),
+    row:        num(it.row),
+    startSeat:  num(it.seat_start),
+    endSeat:    num(it.seat_end),
+    qty:        num(it.qty),
+    price:      num(it.price_each),
+    total:      num(it.total),
+    custName:   ex.customer_name || '',
+    custEmail:  ex.customer_email || '',
+    invoice:    String(it.pos_order),
+    siteOrder:  String(it.site_order || ''),
+    site:       it.site,
+    eventCity:  ex.event_city || '',
+    eventState: ex.event_state || '',
+    status:     ex.status || (it.cancelled ? 'Cancelled' : ''),
+    saleDate:   peddleDate_(it.sale_dt) || '',
+    tu:         String(it.tu_ticket || ''),
+    tnow:       String(it.tnow_ticket || ''),
+  };
+  if (L('total') && L('totalCost')) {
+    out.profit = `=IF(${L('totalCost')}${rowNum}="","",${L('total')}${rowNum}-${L('totalCost')}${rowNum})`;
+  }
+  return out;
+}
+
+/** Writes our fields into the EMPTY cells of one row. Returns cells written. */
+function peddleFillRow_(sh, ctx, r, it, ex) {
+  const want = peddleFieldValues_(ctx, it, ex, r.row);
+  const put = {};                                  // col → value
+  Object.keys(want).forEach(f => {
+    const c = ctx.cols[f], v = want[f];
+    if (!c || v === '' || v == null) return;
+    const cur = r.values[c - 1], fx = r.formulas[c - 1];
+    if ((cur !== '' && cur !== null) || fx) return; // only empty cells, never a formula
+    put[c] = v;
+  });
+  const cs = Object.keys(put).map(Number).sort((a, b) => a - b);
+  // one write per run of adjacent columns
+  for (let i = 0; i < cs.length;) {
+    let j = i;
+    while (j + 1 < cs.length && cs[j + 1] === cs[j] + 1) j++;
+    sh.getRange(r.row, cs[i], 1, j - i + 1).setValues([cs.slice(i, j + 1).map(c => put[c])]);
+    i = j + 1;
+  }
+  ['eventDt', 'saleDate'].forEach(f => {
+    const c = ctx.cols[f];
+    if (c && put[c] instanceof Date) sh.getRange(r.row, c).setNumberFormat(PEDDLE.DATE_FMT);
+  });
+  cs.forEach(c => { r.values[c - 1] = put[c]; });
+  return cs.length;
+}
+
+function peddleRowStillEmpty_(sh, ctx, row) {
+  return sh.getRange(row, 1, 1, ctx.width).getValues()[0].every(x => x === '' || x === null);
+}
+
+/**
+ * Two inboxes can write the same sale in the same instant (each has its own
+ * script lock). If an invoice this run just wrote now sits in an EARLIER row
+ * too, clear the cells of our (later) row again. Only cells that still hold
+ * exactly what we wrote are cleared; no row is ever deleted.
+ */
+function peddleUndoRaceDupes_(sh, ctx, mine) {
+  const now = peddleSheetCtx_(sh);
+  const ic = now.cols.invoice;
+  const seen = {};
+  let undone = 0;
+  now.rows.forEach(r => {
+    const v = String(r.values[ic - 1]).trim();
+    if (!v || mine.indexOf(v) < 0) return;
+    if (!seen[v]) { seen[v] = true; return; }
+    sh.getRange(r.row, 1, 1, now.width).clearContent();
+    undone++;
+  });
+  if (undone) console.log(`Sheet: cleared ${undone} duplicate row(s) written at the same moment by another inbox.`);
+}
+
+/** "2026-11-28T23:59:00" -> Date shown as that wall-clock time in the sheet. */
+function peddleDate_(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+}
+
+function peddleColLetter_(n) {
+  let s = '';
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -388,78 +612,11 @@ function peddleTag_(got, inSheet) {
   console.log(`Tagged "${label.getName()}" on ${todo.length} thread(s): ${todo.map(it => it.pos_order).join(', ')}`);
 }
 
-/**
- * Two inboxes can append the same sale in the same instant (each has its own
- * script lock). Re-read Invoice # and delete any row for a sale THIS run wrote
- * that is not the first row for that invoice. Only ever touches invoices this
- * run just appended, never a row someone typed.
- */
-function peddleDropRaceDupes_(sh, mine) {
-  const want = {};
-  mine.forEach(v => { want[v] = true; });
-  const last = sh.getLastRow();
-  if (last < 2) return;
-  const vals = sh.getRange(2, PEDDLE_COL.INVOICE, last - 1, 1).getValues();
-  const firstAt = {};
-  const drop = [];
-  vals.forEach((r, i) => {
-    const v = String(r[0]).trim();
-    if (!want[v]) return;
-    if (firstAt[v] === undefined) firstAt[v] = i; else drop.push([i + 2, v]);
-  });
-  // bottom-up, and re-check each cell right before deleting it in case the
-  // other inbox already removed a row and shifted everything up
-  drop.reverse().forEach(([row, v]) => {
-    if (String(sh.getRange(row, PEDDLE_COL.INVOICE).getValue()).trim() === v) sh.deleteRow(row);
-  });
-  if (drop.length) console.log(`Sheet: removed ${drop.length} duplicate row(s) written by another inbox.`);
-}
-
-function peddleRow_(it, r) {
-  const num = v => (v === '' || v == null || isNaN(Number(v))) ? (v || '') : Number(v);
-  const colL = c => peddleColLetter_(c);
-  const profit = `=IF(${colL(PEDDLE_COL.TOTAL_COST)}${r}="","",` +
-                 `${colL(PEDDLE_COL.GRAND_TOTAL)}${r}-${colL(PEDDLE_COL.TOTAL_COST)}${r})`;
-  return [
-    peddleDate_(it.event_dt) || '',   // A  Event Date & Time
-    '', '', '',                       // B–D
-    '', '', '',                       // E Email, F Password, G URL
-    '', '', '', '',                   // H Address, I City, J State, K Zip Code
-    it.event_name,                    // L  Event
-    it.venue,                         // M  Venue
-    num(it.section),                  // N  Section
-    num(it.row),                      // O  Row
-    num(it.seat_start),               // P  Start Seat
-    num(it.seat_end),                 // Q  End Seat
-    num(it.qty),                      // R  Quantity
-    num(it.price_each),               // S  Price per Ticket
-    num(it.total),                    // T  GrandTotal Amount
-    '',                               // U  Total Cost
-    profit,                           // V  Profit
-    '', '',                           // W Customer Name, X Customer Email
-    String(it.pos_order),             // Y  Invoice #
-    String(it.site_order),            // Z  Site Order#
-    it.site,                          // AA Site
-    '', '',                           // AB City, AC State
-  ];
-}
-
-/** "2026-11-28T23:59:00" -> Date shown as that wall-clock time in the sheet. */
-function peddleDate_(iso) {
-  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
-}
-
-function peddleColLetter_(n) {
-  let s = '';
-  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
-  return s;
-}
-
 /* ─────────────────────────────────────────────────────────────────────────
  * SUPABASE
  * ───────────────────────────────────────────────────────────────────────── */
 
+/** Upserts the sales; returns { pos_order: {customer_name, …} } from the reply. */
 function peddleSendSupabase_(items) {
   const props = PropertiesService.getScriptProperties();
   const url    = props.getProperty('SUPABASE_PROJECT_URL');
@@ -467,7 +624,7 @@ function peddleSendSupabase_(items) {
   const secret = props.getProperty('APPSCRIPT_INGEST_SECRET');
   if (!url || !anon || !secret) {
     console.error('Missing Supabase config. Run setPeddlingConfig() first.');
-    return;
+    return {};
   }
   const res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/rest/v1/rpc/' + PEDDLE.RPC, {
     method: 'post',
@@ -479,9 +636,15 @@ function peddleSendSupabase_(items) {
   const code = res.getResponseCode();
   if (code < 200 || code >= 300) {
     console.error(`Supabase ingest failed: HTTP ${code} ${res.getContentText().slice(0, 500)}`);
-    return;
+    return {};
   }
-  console.log('Supabase ingest: ' + res.getContentText());
+  const body = JSON.parse(res.getContentText() || '{}');
+  const extra = {};
+  (body.rows || []).forEach(r => { extra[String(r.pos_order)] = r; });
+  const withCust = (body.rows || []).filter(r => r.customer_email || r.customer_name).length;
+  console.log(`Supabase ingest: received ${body.received}, inserted ${body.inserted}, updated ${body.updated}; ` +
+              `customer found for ${withCust}, status for ${(body.rows || []).filter(r => r.status).length}.`);
+  return extra;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
