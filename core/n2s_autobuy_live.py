@@ -23,7 +23,9 @@ from typing import Any
 
 import requests
 
-from core.n2s_autobuy_exec import _ts, buy_guards, next_action
+import time
+
+from core.n2s_autobuy_exec import SUB_REJECTED, _ts, buy_guards, next_action
 from sale_accept_client import PENDING, SaleAcceptClient
 from evo_buy_client import (
     SHIPMENT_FOR_FORMAT,
@@ -34,6 +36,7 @@ from evo_buy_client import (
 )
 
 OUR_BROKERAGE_ID = 1768  # S4K Entertainment
+VERIFY_DELAY_S = 3.0      # pause before re-reading the sale after an accept (operator 2026-11-10)
 
 Rpc = Callable[[str, dict], Any]
 
@@ -157,7 +160,20 @@ def _poll(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: d
     except EvoWriteUnknown as e:
         return _record(rpc, job, phase="accept_unknown", sale_state=sale, reasons=["accept_unknown"],
                        live_error=str(e))
-    return _record(rpc, job, phase="accepted", sale_state=out.get("state") or "accepted")
+    # Re-read the sale (operator 2026-11-10): an accept counts only when the market itself shows
+    # the sale has left pending and was not rejected or cancelled.
+    time.sleep(VERIFY_DELAY_S)
+    try:
+        after, still_pending = _sale_state(client, sales, market, row["sale_order_key"])
+    except Exception as e:  # noqa: BLE001 - an unreadable re-read is unverified, never "accepted"
+        return _record(rpc, job, phase="accept_failed", sale_state=sale, reasons=["accept_unverified"],
+                       live_error=f"accept returned OK ({out.get('state')}); re-read failed: {type(e).__name__}")
+    if still_pending:
+        return _record(rpc, job, phase="accept_failed", sale_state=after, reasons=["accept_unverified"],
+                       live_error="accept returned OK but the market still shows the sale pending")
+    if str(after or "").strip().lower() in SUB_REJECTED:
+        return _record(rpc, job, phase="accept_failed", sale_state=after, reasons=["sale_rejected_after_accept"])
+    return _record(rpc, job, phase="accepted", sale_state=after)
 
 
 def tick(rpc: Rpc, client: EvoBuyClient, now: datetime | None = None,

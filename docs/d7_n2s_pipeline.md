@@ -444,7 +444,10 @@ Since 2026-11-04 (`20261104170000`) they also skip a **single-letter vs double-l
   when the selling market's token is missing. The GoTickets and Vivid confirm request formats were
   never exercised by the dry run (their specs could not be fetched), so the first live accept on
   each is its first real test; a failure is `accept_failed` and emails the operator, who can
-  still confirm by hand. Go live:
+  still confirm by hand. **Every accept is verified** (operator 2026-11-10): ~3 s after a 2xx
+  accept the worker re-reads the sale with the same status read; it is `accepted` only if the
+  market shows it has left pending and is not rejected/cancelled — else `accept_failed` with reason
+  `accept_unverified` (still pending, or the re-read failed) or `sale_rejected_after_accept`. Go live:
   `N2S_AUTOBUY_LIVE=1` on the web service, then `UPDATE n2s_autobuy_config SET mode = 'live'`;
   stop: `kill_switch = true` or `mode = 'shadow'`; another run: raise `live_runs_allowed`. The
   `POST /v9/orders` body follows Office 3's own purchase orders; TEvo's Orders/Create page could
