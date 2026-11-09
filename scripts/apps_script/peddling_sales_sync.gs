@@ -143,12 +143,13 @@ function peddlingShowConfig() {
 function syncPeddlingSales() { peddleRun_(PEDDLE.LOOKBACK); }
 
 /**
- * Same as a sync over 60 days, except it also writes sales whose thread is
- * already tagged: use it to fill a NEW sheet (every thread tagged for the old
- * one would otherwise be skipped). Still only empty rows / empty cells, and
- * still never a second row for an Invoice # the sheet already has.
+ * Adds the last 60 days of sales that are NOT in the sheet yet. An order is
+ * already there when its Invoice # or its Site Order # is on a row; those rows
+ * are left completely alone (no empty cells filled). Also writes sales whose
+ * thread is already tagged, so it can fill a NEW sheet. New sales still go
+ * into empty rows only. (Status refresh + tab rename run as on every run.)
  */
-function backfillPeddlingSales() { peddleRun_(PEDDLE.BACKFILL, { ignoreTag: true }); }
+function backfillPeddlingSales() { peddleRun_(PEDDLE.BACKFILL, { ignoreTag: true, addOnly: true }); }
 
 /** Parse recent emails and log them. Writes nothing anywhere. */
 function peddlingPreview() {
@@ -463,21 +464,34 @@ function peddleWriteSheet_(items, extra, opts) {
   if (!ctx.cols.invoice) {
     throw new Error('No "Invoice #" column in row 1 of this tab. Nothing written — run peddlingCheckSheet().');
   }
-  const ic = ctx.cols.invoice;
-  const byInvoice = {};
-  ctx.rows.forEach(r => { const v = String(r.values[ic - 1]).trim(); if (v && !byInvoice[v]) byInvoice[v] = r; });
-
-  // 1. fill the empty cells of sales already in the sheet
-  let filled = 0;
-  items.forEach(it => {
-    const r = byInvoice[it.pos_order];
-    if (r) filled += peddleFillRow_(sh, ctx, r, it, extra[it.pos_order]);
+  const ic = ctx.cols.invoice, oc = ctx.cols.siteOrder;
+  const byInvoice = {}, bySiteOrder = {};
+  ctx.rows.forEach(r => {
+    const v = String(r.values[ic - 1]).trim();
+    if (v && !byInvoice[v]) byInvoice[v] = r;
+    const o = oc ? String(r.values[oc - 1]).trim() : '';
+    if (o && !bySiteOrder[o]) bySiteOrder[o] = r;
   });
+  // A sale is already in the sheet when its Invoice # (our order number) OR its
+  // Site Order # (the marketplace's) is on a row — the latter catches rows
+  // typed in by hand without an Invoice #.
+  const rowOf = it => byInvoice[it.pos_order] || (it.site_order ? bySiteOrder[String(it.site_order).trim()] : null);
+
+  // 1. fill the empty cells of sales already in the sheet — not on a backfill,
+  //    which only ever adds orders the sheet doesn't have yet
+  let filled = 0;
+  if (!opts.addOnly) {
+    items.forEach(it => {
+      const r = rowOf(it);
+      if (r) filled += peddleFillRow_(sh, ctx, r, it, extra[it.pos_order]);
+    });
+  }
 
   // 2. new sales → first empty rows (never a row with anything in it).
   //    Already tagged = it went to the sheet before; if its row is gone now,
   //    someone deleted it on purpose, so don't put it back.
-  const fresh = items.filter(it => !byInvoice[it.pos_order] && !it.cancelled && (opts.ignoreTag || !it.in_sheet_tag));
+  const present = items.filter(it => rowOf(it));
+  const fresh = items.filter(it => !rowOf(it) && !it.cancelled && (opts.ignoreTag || !it.in_sheet_tag));
   const free = ctx.rows.filter(r => r.empty);
   let nextRow = Math.max(sh.getLastRow(), 1) + 1;
   const written = [];
@@ -495,11 +509,13 @@ function peddleWriteSheet_(items, extra, opts) {
   });
   SpreadsheetApp.flush();
   console.log(`Sheet: ${written.length} new sale(s)${written.length ? ': ' + written.join(', ') : ''}; ` +
-              `${filled} empty cell(s) filled on existing rows.`);
+              `${present.length} already in the sheet` +
+              (opts.addOnly ? ' (left untouched — backfill)' : `, ${filled} empty cell(s) filled on them`) + '.');
   if (written.length) peddleUndoRaceDupes_(sh, ctx, fresh.map(it => it.pos_order));
 
   const have = {};
   Object.keys(byInvoice).forEach(k => { have[k] = true; });
+  present.forEach(it => { have[it.pos_order] = true; });
   return have;
 }
 
