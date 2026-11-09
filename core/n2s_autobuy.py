@@ -60,6 +60,10 @@ BUY_SIDE: dict[str, dict] = {
     },
 }
 
+# The EVO user who accepts our EVO sales (operator 2026-11-09: tu3@s4kent.com, user 53658, in
+# Office 3 — the office that is the seller on our N2S EVO orders).
+EVO_REVIEWER_ID = 53658
+
 # Marketplaces whose API token was checked working (read-only, 2026-10-28). TickPick's token
 # returns 401 and StubHub's credentials are invalid; Gametime/Viagogo/Ticketmaster have none.
 # Re-add a market here when its token is fixed (mirror 20261028213000's capture filter).
@@ -241,7 +245,7 @@ def _buy_body(src: str, order: dict, gt_event_id: Any) -> dict | None:
 def _accept_body(market: str, order: dict) -> dict | None:
     oid = order.get("n2s_order_key") or order.get("order_number")
     if market == "evo":
-        return {"reviewer_id": None}
+        return {"reviewer_id": EVO_REVIEWER_ID}
     if market == "tickpick":
         return {"broker_id": None, "seat_numbers": None}
     if market == "seatgeek":
