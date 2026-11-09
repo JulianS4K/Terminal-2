@@ -40,7 +40,9 @@
  * row deleted by hand stays deleted.
  *
  * Setup (once):
- *   1. setPeddlingConfig()  — fill the literals first, run, then blank them.
+ *   1. setPeddlingConfig()  — stores the sheet settings. Paste the anon key /
+ *      secret only if this project doesn't have them yet (left as PASTE_…
+ *      the stored value is kept). peddlingShowConfig() shows what's set.
  *   2. peddlingCheckSheet() — logs which column each field maps to and how
  *      many empty rows there are. Writes nothing.
  *   3. peddlingPreview()    — parses the emails and logs them. Writes nothing.
@@ -98,12 +100,33 @@ function setPeddlingConfig() {
     'SUPABASE_ANON_KEY'       : 'PASTE_SUPABASE_ANON_KEY_HERE',
     'APPSCRIPT_INGEST_SECRET' : 'PASTE_APPSCRIPT_INGEST_SECRET_HERE',
   };
-  const unresolved = Object.keys(literals).filter(k => /^PASTE_/.test(literals[k]));
-  if (unresolved.length) throw new Error('Replace placeholders before running: ' + unresolved.join(', '));
+  // A placeholder left as PASTE_… keeps the value already stored, so moving to
+  // a new sheet needs no keys re-pasted. (Projects with 50+ properties can't
+  // edit them in Project Settings — this is the way to change them.)
   const props = PropertiesService.getScriptProperties();
-  props.setProperties(literals, false);
+  const set = {};
+  const missing = [];
+  Object.keys(literals).forEach(k => {
+    if (!/^PASTE_/.test(literals[k])) set[k] = literals[k];
+    else if (!(props.getProperty(k) || '').trim()) missing.push(k);
+  });
+  if (missing.length) throw new Error('Not stored yet — replace these placeholders and run again: ' + missing.join(', '));
+  props.setProperties(set, false);
   props.deleteProperty('PEDDLE_SHEET_TAB');   // the gid picks the tab now
-  console.log('Config stored. Next: peddlingCheckSheet(), peddlingPreview(), installPeddlingTrigger().');
+  console.log('Stored: ' + Object.keys(set).join(', ') + '. Kept existing: ' +
+              Object.keys(literals).filter(k => !set[k]).join(', ') + '.');
+  peddlingShowConfig();
+}
+
+/** Logs this script's peddling settings (keys masked). Writes nothing. */
+function peddlingShowConfig() {
+  const props = PropertiesService.getScriptProperties();
+  ['PEDDLE_SHEET_ID', 'PEDDLE_SHEET_GID', 'PEDDLE_SHEET_TAB', 'PEDDLE_LABEL', 'PEDDLE_QUERY',
+   'SUPABASE_PROJECT_URL', 'SUPABASE_ANON_KEY', 'APPSCRIPT_INGEST_SECRET'].forEach(k => {
+    let v = props.getProperty(k);
+    if (v && /KEY|SECRET/.test(k)) v = v.slice(0, 4) + '… (' + v.length + ' chars)';
+    console.log(`  ${k.padEnd(24)} ${v == null ? '(not set)' : v}`);
+  });
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
