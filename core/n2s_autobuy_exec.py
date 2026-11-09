@@ -32,6 +32,8 @@ DEFAULTS: dict[str, Any] = {
     "min_confirm_window_s": 90,
     # Operator 2026-11-09: $500 cap on the whole project (every market); auto-stop at the cap.
     "project_cap_usd": 500.0,
+    # Operator 2026-11-09: "evo only for soft launch" — the sub sources the executor may buy from.
+    "buy_sources": ("tevo",),
 }
 
 # Purchase states on the market we bought the sub from.
@@ -78,6 +80,8 @@ def buy_guards(row: dict, *, now: datetime, spend_today: float, buys_today: int,
             reasons.append("over_project_cap")
     if stopped:
         reasons.append("stopped_pending_review")
+    if row.get("sub_source") not in c["buy_sources"]:
+        reasons.append("sub_source_disabled")
     if buys_today >= c["max_buys_per_day"]:
         reasons.append("max_buys_today")
     if failures_today >= c["max_failures_per_day"]:

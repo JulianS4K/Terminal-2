@@ -9,7 +9,7 @@ NOW = datetime(2026, 11, 9, 20, 0, tzinfo=timezone.utc)
 
 
 def _row(**kw):
-    base = {"state": "shadow_buy", "sub_total_usd": 120.0, "sold_total_usd": 160.0,
+    base = {"state": "shadow_buy", "sub_source": "tevo", "sub_total_usd": 120.0, "sold_total_usd": 160.0,
             "event_start_utc": (NOW + timedelta(days=3)).isoformat(),
             "sub_confirm_by": NOW + timedelta(minutes=8)}
     base.update(kw)
@@ -33,11 +33,18 @@ def test_spend_limits():
 
 
 def test_project_cap_500_on_every_market_and_stop():
+    both = {"buy_sources": ("tevo", "gotickets")}
     for src in ("tevo", "gotickets"):
         row = _row(sub_source=src)
-        assert _guards(row, project_spent=380) == []                      # 380 + 120 = 500 is allowed
-        assert _guards(row, project_spent=381) == ["over_project_cap"]
-        assert _guards(row, stopped=True) == ["stopped_pending_review"]
+        assert _guards(row, project_spent=380, cfg=both) == []            # 380 + 120 = 500 is allowed
+        assert _guards(row, project_spent=381, cfg=both) == ["over_project_cap"]
+        assert _guards(row, stopped=True, cfg=both) == ["stopped_pending_review"]
+
+
+def test_soft_launch_buys_evo_subs_only():
+    assert _guards(_row(sub_source="tevo")) == []
+    assert _guards(_row(sub_source="gotickets")) == ["sub_source_disabled"]
+    assert _guards(_row(sub_source="gotickets"), cfg={"buy_sources": ("tevo", "gotickets")}) == []
 
 
 def test_approval_only_over_1000():
