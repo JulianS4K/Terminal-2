@@ -24,15 +24,15 @@
 --   profit > 0 (no minimum) · live price not above the quote · live read ≤ 120 s old ·
 --   enough time to get the sub confirmed before the market's cutoff · circuit breaker
 --   (failures today < max_failures_per_day).
--- EVO project cap (operator 2026-11-09: "put strict spend cap on evo for full project at 500,
--- autostop when it hits that cap, until i review"): every EVO-sub buy ever committed in the
--- current mode (shadow_buy / awaiting_approval / approved) counts against evo_project_cap_usd
--- ($500). A buy that would otherwise go through but would cross it is blocked
--- (over_evo_project_cap) and EVO buying STOPS (evo_stopped); reaching the cap exactly stops it
--- too. (A sub already blocked by another guard is tagged over_evo_project_cap but does not stop.) While stopped every EVO sub is blocked
--- (evo_stopped_pending_review). Only n2s_autobuy_evo_resume() — the operator's review —
--- clears it. Shadow and a future live mode each count their own spend, so the stop is
--- exercised now and live money starts its own $500.
+-- Project cap (operator 2026-11-09: "put strict spend cap on evo for full project at 500,
+-- autostop when it hits that cap, until i review", then "for now 500 cap on entire project
+-- after that soft launch is 250 an order"): every buy ever committed in the current mode, on any
+-- market, counts against project_cap_usd ($500). A buy that would otherwise go through but
+-- would cross it is blocked (over_project_cap) and ALL buying stops (project_stopped); reaching
+-- the cap exactly stops it too. A sub already blocked by another guard is tagged
+-- over_project_cap but does not stop. While stopped every buy is blocked
+-- (stopped_pending_review) until n2s_autobuy_resume([new_cap]) — the operator's review.
+-- Shadow and a future live mode count separately. The $250 per-order cap stays.
 -- Allotted time per selling market = the MEDIAN time from the CRM alert to the market's own
 -- auto-reject, from our order timer (v_n2s_market_cutoff, ≥ 3 samples, manual rejects under
 -- 5 min excluded); otherwise the CRM's 15-minute timer. The sub must be CONFIRMED by
@@ -45,7 +45,7 @@
 -- Buy email (operator 2026-11-09: "send an email to me containing both the evo buy id and sale
 -- it bought for id"): n2s_autobuy_notify_tick() emails email_to through Resend for every buy
 -- that has a buy_order_id (live), naming the purchase id and the sale order it covers — and for
--- shadow buys too when email_shadow is on. It also emails once when the EVO cap auto-stops.
+-- shadow buys too when email_shadow is on. It also emails once when the project cap auto-stops buying.
 --
 -- The approval text goes to Twilio (SMS, or WhatsApp when notify_channel = 'whatsapp') from
 -- n2s_autobuy_notify_tick(); it is inert until notify_to / notify_from are set in
@@ -54,7 +54,7 @@
 -- rollback: SELECT cron.unschedule('n2s_autobuy_notify_1min');
 --           DROP TRIGGER n2s_autobuy_enqueue_trg ON n2s_gt_order_dryrun;
 --           DROP FUNCTION n2s_autobuy_enqueue_trg(), n2s_autobuy_notify_tick(),
---                         n2s_autobuy_approve(bigint, boolean), n2s_autobuy_evo_resume(numeric);
+--                         n2s_autobuy_approve(bigint, boolean), n2s_autobuy_resume(numeric);
 --           DROP VIEW v_n2s_market_cutoff; DROP TABLE n2s_autobuy_exec, n2s_autobuy_config;
 
 CREATE TABLE IF NOT EXISTS public.n2s_autobuy_config (
@@ -74,13 +74,14 @@ CREATE TABLE IF NOT EXISTS public.n2s_autobuy_config (
   notify_channel        text        NOT NULL DEFAULT 'sms' CHECK (notify_channel IN ('sms', 'whatsapp')),
   notify_to             text,       -- E.164, e.g. +15551234567 (unset = no text is sent)
   notify_from           text,       -- the Twilio number / WhatsApp sender (unset = no text is sent)
-  evo_project_cap_usd   numeric     NOT NULL DEFAULT 500  CHECK (evo_project_cap_usd > 0),
+  project_cap_usd   numeric     NOT NULL DEFAULT 500  CHECK (project_cap_usd > 0),
   evo_reviewer_id       integer     NOT NULL DEFAULT 53658,  -- operator 2026-11-09: tu3 (Office 3, the N2S EVO seller)
-  evo_stopped           boolean     NOT NULL DEFAULT false,
-  evo_stopped_at        timestamptz,
-  evo_stopped_reason    text,
-  evo_stop_emailed_at   timestamptz,
-  email_to              text        DEFAULT 'julian@s4kent.com',  -- operator 2026-11-09: buy emails
+  evo_buyer_office_id   integer     NOT NULL DEFAULT 42029,  -- operator 2026-11-09: EVO buys from Office 3
+  project_stopped           boolean     NOT NULL DEFAULT false,
+  project_stopped_at        timestamptz,
+  project_stopped_reason    text,
+  stop_emailed_at   timestamptz,
+  email_to              text[]      DEFAULT ARRAY['julian@s4kent.com', 'aljuinc@gmail.com'],  -- operator 2026-11-09
   email_from            text        DEFAULT 'N2S Auto-buy <onboarding@resend.dev>',
   email_shadow          boolean     NOT NULL DEFAULT false,      -- also email shadow buys (to test)
   updated_at            timestamptz NOT NULL DEFAULT now()
@@ -112,7 +113,7 @@ CREATE TABLE IF NOT EXISTS public.n2s_autobuy_exec (
   sub_confirm_by   timestamptz,
   sale_deadline    timestamptz,
   spend_today_before numeric,
-  evo_spent_before numeric,
+  project_spent_before numeric,
   notified_at      timestamptz,
   notify_http      integer,
   buy_order_id     text,        -- our purchase id on the sub's market (set by the live worker)
@@ -169,12 +170,12 @@ DECLARE
   v_spend    numeric;
   v_buys     int;
   v_fail     int;
-  v_evo      numeric;
+  v_proj      numeric;
   v_tz_today date := (now() AT TIME ZONE 'America/New_York')::date;
   v_state    text;
 BEGIN
   -- FOR UPDATE serializes enqueues: concurrent would_buys queue here, so each sees the spend
-  -- the others committed and two buys can never both pass the daily / EVO project cap.
+  -- the others committed and two buys can never both pass the daily / project cap.
   SELECT * INTO c FROM public.n2s_autobuy_config WHERE id FOR UPDATE;
   SELECT * INTO i FROM public.n2s_items WHERE n2s_id = NEW.n2s_id;
   IF EXISTS (SELECT 1 FROM public.n2s_autobuy_exec WHERE n2s_id = NEW.n2s_id) THEN
@@ -204,10 +205,10 @@ BEGIN
     FROM public.n2s_autobuy_exec
    WHERE mode = c.mode AND (created_at AT TIME ZONE 'America/New_York')::date = v_tz_today;
 
-  -- EVO project spend: every EVO-sub buy ever committed in this mode.
-  SELECT COALESCE(sum(sub_total_usd), 0) INTO v_evo
+  -- Project spend: every buy ever committed in this mode, any market.
+  SELECT COALESCE(sum(sub_total_usd), 0) INTO v_proj
     FROM public.n2s_autobuy_exec
-   WHERE mode = c.mode AND sub_source = 'tevo' AND state IN ('shadow_buy', 'awaiting_approval', 'approved');
+   WHERE mode = c.mode AND state IN ('shadow_buy', 'awaiting_approval', 'approved');
 
   IF c.mode = 'off' OR c.kill_switch THEN
     v_state := 'off';
@@ -247,20 +248,18 @@ BEGIN
     IF i.alert_at IS NULL OR v_confirm - now() < make_interval(secs => c.min_confirm_window_s) THEN
       r := r || 'not_enough_time_for_market'::text;
     END IF;
-    IF NEW.sub_source = 'tevo' THEN
-      IF c.evo_stopped THEN
-        r := r || 'evo_stopped_pending_review'::text;
-      ELSIF v_sub IS NOT NULL AND v_evo + v_sub > c.evo_project_cap_usd THEN
-        -- Stop EVO only when the cap is what blocks a buy that would otherwise go through; a sub
-        -- already blocked by another guard (e.g. a $1,800 one over the order cap) must not freeze EVO.
-        IF cardinality(r) = 0 THEN
-          UPDATE public.n2s_autobuy_config SET evo_stopped = true, evo_stopped_at = now(), updated_at = now(),
-                 evo_stopped_reason = format('dryrun %s: $%s would take EVO spend from $%s past the $%s cap',
-                                             NEW.dryrun_id, v_sub, v_evo, c.evo_project_cap_usd)
-           WHERE id;
-        END IF;
-        r := r || 'over_evo_project_cap'::text;
+    IF c.project_stopped THEN
+      r := r || 'stopped_pending_review'::text;
+    ELSIF v_sub IS NOT NULL AND v_proj + v_sub > c.project_cap_usd THEN
+      -- Stop only when the cap is what blocks a buy that would otherwise go through; a sub
+      -- already blocked by another guard (e.g. a $1,800 one over the order cap) must not freeze buying.
+      IF cardinality(r) = 0 THEN
+        UPDATE public.n2s_autobuy_config SET project_stopped = true, project_stopped_at = now(), updated_at = now(),
+               project_stopped_reason = format('dryrun %s: $%s would take project spend from $%s past the $%s cap',
+                                           NEW.dryrun_id, v_sub, v_proj, c.project_cap_usd)
+         WHERE id;
       END IF;
+      r := r || 'over_project_cap'::text;
     END IF;
     v_state := CASE WHEN cardinality(r) > 0 THEN 'blocked'
                     WHEN v_sub > c.approval_over_usd THEN 'awaiting_approval'
@@ -270,18 +269,18 @@ BEGIN
   INSERT INTO public.n2s_autobuy_exec
          (n2s_id, dryrun_id, mode, state, reasons, sell_market, order_number, sub_source, sub_listing_id,
           tevo_event_id, event_name, event_dt_local, qty, sub_total_usd, sold_total_usd, margin_usd, alert_at,
-          cutoff_s, cutoff_source, sub_confirm_by, sale_deadline, spend_today_before, evo_spent_before)
+          cutoff_s, cutoff_source, sub_confirm_by, sale_deadline, spend_today_before, project_spent_before)
   VALUES (NEW.n2s_id, NEW.dryrun_id, c.mode, v_state, r, v_market, NEW.order_number, NEW.sub_source,
           NEW.sub_listing_id, NEW.tevo_event_id, NEW.event_name, i.event_dt, v_qty, v_sub, v_sold,
           v_sold - v_sub, i.alert_at, v_cut, v_cut_src, v_confirm,
-          i.alert_at + make_interval(secs => v_cut), v_spend, v_evo)
+          i.alert_at + make_interval(secs => v_cut), v_spend, v_proj)
   ON CONFLICT DO NOTHING;
-  -- reaching the EVO cap exactly also stops EVO buying until the operator reviews
-  IF NEW.sub_source = 'tevo' AND v_state IN ('shadow_buy', 'awaiting_approval')
-     AND v_evo + v_sub >= c.evo_project_cap_usd THEN
-    UPDATE public.n2s_autobuy_config SET evo_stopped = true, evo_stopped_at = now(), updated_at = now(),
-           evo_stopped_reason = format('EVO spend reached $%s of the $%s cap (dryrun %s)',
-                                       v_evo + v_sub, c.evo_project_cap_usd, NEW.dryrun_id)
+  -- reaching the project cap exactly also stops buying until the operator reviews
+  IF v_state IN ('shadow_buy', 'awaiting_approval')
+     AND v_proj + v_sub >= c.project_cap_usd THEN
+    UPDATE public.n2s_autobuy_config SET project_stopped = true, project_stopped_at = now(), updated_at = now(),
+           project_stopped_reason = format('Project spend reached $%s of the $%s cap (dryrun %s)',
+                                       v_proj + v_sub, c.project_cap_usd, NEW.dryrun_id)
      WHERE id;
   END IF;
   RETURN NULL;
@@ -314,9 +313,9 @@ BEGIN
   -- an unanswered request lapses when the sub can no longer be confirmed in time
   UPDATE public.n2s_autobuy_exec SET state = 'approval_expired', decided_at = now()
    WHERE state = 'awaiting_approval' AND sub_confirm_by - now() < make_interval(secs => c.min_confirm_window_s);
-  -- Buy emails: the purchase id and the sale it covers (Resend). Then the EVO auto-stop email.
+  -- Buy emails: the purchase id and the sale it covers (Resend). Then the cap auto-stop email.
   SELECT max(decrypted_secret) FILTER (WHERE name = 'RESEND_API_KEY') INTO rk FROM vault.decrypted_secrets;
-  IF rk IS NOT NULL AND c.email_to IS NOT NULL AND c.email_from IS NOT NULL THEN
+  IF rk IS NOT NULL AND cardinality(c.email_to) > 0 AND c.email_from IS NOT NULL THEN
     PERFORM set_config('http.timeout_msec', '5000', true);
     FOR e IN SELECT * FROM public.n2s_autobuy_exec
               WHERE emailed_at IS NULL
@@ -336,7 +335,7 @@ BEGIN
       BEGIN
         resp := extensions.http(('POST', 'https://api.resend.com/emails',
                   ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
-                  jsonb_build_object('from', c.email_from, 'to', jsonb_build_array(c.email_to),
+                  jsonb_build_object('from', c.email_from, 'to', to_jsonb(c.email_to),
                     'subject', format('N2S %s buy: %s purchase %s for sale %s',
                                       CASE WHEN e.buy_order_id IS NULL THEN 'SHADOW' ELSE 'LIVE' END,
                                       CASE e.sub_source WHEN 'tevo' THEN 'EVO' ELSE 'GoTickets' END,
@@ -347,18 +346,18 @@ BEGIN
         UPDATE public.n2s_autobuy_exec SET emailed_at = now(), email_http = -1 WHERE exec_id = e.exec_id;
       END;
     END LOOP;
-    IF c.evo_stopped AND c.evo_stop_emailed_at IS NULL THEN
+    IF c.project_stopped AND c.stop_emailed_at IS NULL THEN
       BEGIN
         resp := extensions.http(('POST', 'https://api.resend.com/emails',
                   ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
-                  jsonb_build_object('from', c.email_from, 'to', jsonb_build_array(c.email_to),
-                    'subject', 'N2S auto-buy: EVO buying STOPPED at the project cap',
-                    'text', format(E'%s\n\nEVO subs stay blocked until you review and run '
-                                   || 'n2s_autobuy_evo_resume() (or n2s_autobuy_evo_resume(<new cap>)).',
-                                   c.evo_stopped_reason))::text)::extensions.http_request);
+                  jsonb_build_object('from', c.email_from, 'to', to_jsonb(c.email_to),
+                    'subject', 'N2S auto-buy: buying STOPPED at the project cap',
+                    'text', format(E'%s\n\nAll buys stay blocked until you review and run '
+                                   || 'n2s_autobuy_resume() (or n2s_autobuy_resume(<new cap>)).',
+                                   c.project_stopped_reason))::text)::extensions.http_request);
       EXCEPTION WHEN OTHERS THEN NULL;
       END;
-      UPDATE public.n2s_autobuy_config SET evo_stop_emailed_at = now() WHERE id;
+      UPDATE public.n2s_autobuy_config SET stop_emailed_at = now() WHERE id;
     END IF;
   END IF;
 
@@ -410,8 +409,8 @@ BEGIN
   RETURN COALESCE(v, 'not_awaiting_approval');
 END $function$;
 
--- The operator's review of an EVO stop: clears it, optionally with a new project cap.
-CREATE OR REPLACE FUNCTION public.n2s_autobuy_evo_resume(p_new_cap_usd numeric DEFAULT NULL)
+-- The operator's review of a cap stop: clears it, optionally with a new project cap.
+CREATE OR REPLACE FUNCTION public.n2s_autobuy_resume(p_new_cap_usd numeric DEFAULT NULL)
  RETURNS text
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -422,17 +421,17 @@ BEGIN
     RAISE EXCEPTION 'cap must be positive';
   END IF;
   UPDATE public.n2s_autobuy_config
-     SET evo_stopped = false, evo_stopped_at = NULL, evo_stopped_reason = NULL, evo_stop_emailed_at = NULL,
-         evo_project_cap_usd = COALESCE(p_new_cap_usd, evo_project_cap_usd), updated_at = now()
+     SET project_stopped = false, project_stopped_at = NULL, project_stopped_reason = NULL, stop_emailed_at = NULL,
+         project_cap_usd = COALESCE(p_new_cap_usd, project_cap_usd), updated_at = now()
    WHERE id;
-  RETURN format('EVO buying resumed; project cap $%s',
-                (SELECT evo_project_cap_usd FROM public.n2s_autobuy_config WHERE id));
+  RETURN format('Auto-buy resumed; project cap $%s',
+                (SELECT project_cap_usd FROM public.n2s_autobuy_config WHERE id));
 END $function$;
 
 REVOKE ALL ON FUNCTION public.n2s_autobuy_enqueue_trg(), public.n2s_autobuy_notify_tick(),
-                       public.n2s_autobuy_approve(bigint, boolean), public.n2s_autobuy_evo_resume(numeric)
+                       public.n2s_autobuy_approve(bigint, boolean), public.n2s_autobuy_resume(numeric)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.n2s_autobuy_notify_tick(), public.n2s_autobuy_approve(bigint, boolean),
-                          public.n2s_autobuy_evo_resume(numeric) TO service_role;
+                          public.n2s_autobuy_resume(numeric) TO service_role;
 
 SELECT cron.schedule('n2s_autobuy_notify_1min', '* * * * *', $$SELECT public.n2s_autobuy_notify_tick();$$);

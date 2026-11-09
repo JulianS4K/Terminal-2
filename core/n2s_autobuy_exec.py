@@ -1,7 +1,7 @@
 """N2S auto-buy EXECUTOR step engine — decides the next step, never sends.
 
 Operator direction 2026-11-09 (spec in supabase/migrations/20261109030000_n2s_autobuy_exec.sql):
-spend limits ($250 a day / $250 an order to start), the event more than 24 hours out and not
+spend limits ($500 for the whole project, $250 an order, $250 a day), the event more than 24 hours out and not
 today, the sub must be CONFIRMED by the selling market's median cutoff or the sale is NOT
 accepted, a rejected sub is never retried, no minimum margin, operator approval (text /
 WhatsApp) only when the sub is over $1,000.
@@ -30,8 +30,8 @@ DEFAULTS: dict[str, Any] = {
     "approval_over_usd": 1000.0,
     "min_event_lead_s": 24 * 3600,
     "min_confirm_window_s": 90,
-    # Operator 2026-11-09: strict $500 cap on EVO subs for the whole project; auto-stop at the cap.
-    "evo_project_cap_usd": 500.0,
+    # Operator 2026-11-09: $500 cap on the whole project (every market); auto-stop at the cap.
+    "project_cap_usd": 500.0,
 }
 
 # Purchase states on the market we bought the sub from.
@@ -54,9 +54,9 @@ def _ts(v: Any) -> datetime | None:
 
 
 def buy_guards(row: dict, *, now: datetime, spend_today: float, buys_today: int, failures_today: int,
-               evo_spent: float = 0.0, evo_stopped: bool = False, cfg: dict | None = None) -> list[str]:
+               project_spent: float = 0.0, stopped: bool = False, cfg: dict | None = None) -> list[str]:
     """Reasons NOT to buy right now (empty = all guards pass). `spend_today` / `buys_today` /
-    `failures_today` / `evo_spent` (all EVO-sub buys ever, this mode) exclude this row.
+    `failures_today` / `project_spent` (every buy ever, this mode) exclude this row.
     Re-checked by the worker immediately before the buy."""
     c = {**DEFAULTS, **(cfg or {})}
     reasons: list[str] = []
@@ -74,10 +74,10 @@ def buy_guards(row: dict, *, now: datetime, spend_today: float, buys_today: int,
         sold = row.get("sold_total_usd")
         if sold is None or total >= float(sold):
             reasons.append("not_profitable")
-        if row.get("sub_source") == "tevo" and not evo_stopped and evo_spent + total > c["evo_project_cap_usd"]:
-            reasons.append("over_evo_project_cap")
-    if row.get("sub_source") == "tevo" and evo_stopped:
-        reasons.append("evo_stopped_pending_review")
+        if not stopped and project_spent + total > c["project_cap_usd"]:
+            reasons.append("over_project_cap")
+    if stopped:
+        reasons.append("stopped_pending_review")
     if buys_today >= c["max_buys_per_day"]:
         reasons.append("max_buys_today")
     if failures_today >= c["max_failures_per_day"]:

@@ -32,16 +32,16 @@ def test_spend_limits():
     assert _guards(_row(), fails=2) == ["circuit_breaker"]
 
 
-def test_evo_project_cap_500_and_stop():
-    evo = _row(sub_source="tevo")
-    assert _guards(evo, evo_spent=380) == []                              # 380 + 120 = 500 is allowed
-    assert _guards(evo, evo_spent=381) == ["over_evo_project_cap"]
-    assert _guards(evo, evo_stopped=True) == ["evo_stopped_pending_review"]
-    assert _guards(_row(sub_source="gotickets"), evo_spent=10_000, evo_stopped=True) == []  # EVO only
+def test_project_cap_500_on_every_market_and_stop():
+    for src in ("tevo", "gotickets"):
+        row = _row(sub_source=src)
+        assert _guards(row, project_spent=380) == []                      # 380 + 120 = 500 is allowed
+        assert _guards(row, project_spent=381) == ["over_project_cap"]
+        assert _guards(row, stopped=True) == ["stopped_pending_review"]
 
 
 def test_approval_only_over_1000():
-    cfg = {"per_order_cap_usd": 5000, "daily_cap_usd": 5000}
+    cfg = {"per_order_cap_usd": 5000, "daily_cap_usd": 5000, "project_cap_usd": 5000}
     assert _guards(_row(sub_total_usd=1000, sold_total_usd=1100), cfg=cfg) == []
     assert _guards(_row(sub_total_usd=1001, sold_total_usd=1100), cfg=cfg) == ["needs_approval"]
     assert _guards(_row(sub_total_usd=1001, sold_total_usd=1100, state="approved"), cfg=cfg) == []
