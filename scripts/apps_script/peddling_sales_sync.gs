@@ -21,7 +21,10 @@
  *   2. parses each one,
  *   3. appends a row to the Google Sheet for any sale whose Invoice # is not
  *      already in the sheet (so a sale is written once, ever), and
- *   4. upserts every parsed sale into Supabase via the RPC
+ *   4. tags the Gmail thread of every sale that is in the sheet (written now,
+ *      written earlier, or typed in by hand — matched on Invoice #) with the
+ *      label PEDDLE_LABEL (default "Peddling/In Sheet"), and
+ *   5. upserts every parsed sale into Supabase via the RPC
  *      public.peddling_sales_ingest_from_apps_script (mig 20261109170000).
  *      The upsert is keyed on the order number, so re-sending is harmless.
  *
@@ -29,9 +32,11 @@
  * and the next run retries (the sheet skips sales it already has; Supabase
  * upserts).
  *
- * Read-only on Gmail: this script never adds/removes labels, marks or moves
- * a thread. (Safe to run in the same project as n2b_sync.gs — every name
- * here is prefixed "peddle"/"Peddling".)
+ * Gmail: the ONLY change this script makes is adding the "In Sheet" label.
+ * It never removes a label, marks, moves or deletes a thread. A thread that
+ * already carries the label is never appended to the sheet again, so
+ * deleting a row by hand keeps it deleted. (Safe to run in the same project
+ * as n2b_sync.gs — every name here is prefixed "peddle"/"Peddling".)
  *
  * Sheet columns (A → AC), written by position because City/State appear
  * twice and B–D have no header:
@@ -48,13 +53,16 @@
  * Setup (once):
  *   1. setPeddlingConfig()  — fill the literals first, run, then blank them.
  *   2. peddlingPreview()    — parses and logs, writes nothing.
- *   3. setupPeddlingSheet() — writes the header row if the tab is empty.
+ *   3. setupPeddlingSheet() — writes the header row if the tab is empty
+ *      (the sheet must have "Invoice #" in column Y, or nothing is written).
  *   4. installPeddlingTrigger() — every 5 minutes.
  *   Optional: backfillPeddlingSales() — same as a sync over 60 days.
  *
  * Script properties:
- *   PEDDLE_SHEET_ID          — spreadsheet id (from its URL)
- *   PEDDLE_SHEET_TAB         — tab name (default "Sales")
+ *   PEDDLE_SHEET_ID          — spreadsheet id (default: PEDDLE.SHEET_ID)
+ *   PEDDLE_SHEET_TAB         — tab name (default: the first tab, gid=0)
+ *   PEDDLE_LABEL             — Gmail label for sales in the sheet
+ *                              (default "Peddling/In Sheet")
  *   PEDDLE_QUERY             — optional Gmail search override for this inbox
  *                              (default: subject:"PEDDLING SALE RECEIVED")
  *   SUPABASE_PROJECT_URL     — https://hzrizjeaxlqcxfrtczpq.supabase.co
@@ -70,7 +78,8 @@ const PEDDLE = {
   BACKFILL: '60d',         // backfillPeddlingSales() window
   PAGE: 100,
   MAX_THREADS: 2000,
-  DEFAULT_TAB: 'Sales',
+  SHEET_ID: '1va20j1eUvM-rlDC34QZjc4i81TLSAlwXsjqISUZ2wYg',
+  LABEL: 'Peddling/In Sheet',
   RPC: 'peddling_sales_ingest_from_apps_script',
   HEADER: [
     'Event Date & Time', '', '', '', 'Email', 'Password', 'URL', 'Address',
@@ -89,8 +98,8 @@ const PEDDLE_COL = { EVENT_DT: 1, GRAND_TOTAL: 20, TOTAL_COST: 21, PROFIT: 22, I
 
 function setPeddlingConfig() {
   const literals = {
-    'PEDDLE_SHEET_ID'         : 'PASTE_SPREADSHEET_ID_HERE',
-    'PEDDLE_SHEET_TAB'        : 'Sales',
+    'PEDDLE_SHEET_ID'         : '1va20j1eUvM-rlDC34QZjc4i81TLSAlwXsjqISUZ2wYg',
+    'PEDDLE_LABEL'            : 'Peddling/In Sheet',
     'PEDDLE_QUERY'            : 'subject:"PEDDLING SALE RECEIVED"',
     'SUPABASE_PROJECT_URL'    : 'https://hzrizjeaxlqcxfrtczpq.supabase.co',
     'SUPABASE_ANON_KEY'       : 'PASTE_SUPABASE_ANON_KEY_HERE',
@@ -114,6 +123,7 @@ function backfillPeddlingSales() { peddleRun_(PEDDLE.BACKFILL); }
 function peddlingPreview() {
   const got = peddleCollect_(PEDDLE.LOOKBACK);
   console.log(`${got.items.length} sale(s) from ${got.threads} thread(s); unparsed: ${got.unparsed.length}`);
+  console.log(`Already tagged "${peddleLabelName_()}": ${got.items.filter(it => it.in_sheet_tag).length}`);
   got.items.slice(0, 25).forEach(it => console.log(JSON.stringify(it)));
   if (got.unparsed.length) console.log('Unparsed message ids: ' + got.unparsed.join(', '));
 }
@@ -139,8 +149,10 @@ function peddleRun_(window) {
                 (got.unparsed.length ? `; unparsed: ${got.unparsed.join(', ')}` : ''));
     if (!got.items.length) return;
 
-    try { peddleWriteSheet_(got.items); }
-    catch (e) { console.error('Sheet write failed: ' + (e && e.stack || e)); }
+    try {
+      const inSheet = peddleWriteSheet_(got.items);
+      peddleTag_(got, inSheet);
+    } catch (e) { console.error('Sheet write / tagging failed: ' + (e && e.stack || e)); }
 
     try { peddleSendSupabase_(got.items); }
     catch (e) { console.error('Supabase send failed: ' + (e && e.stack || e)); }
@@ -157,6 +169,8 @@ function peddleCollect_(window) {
   const base = PropertiesService.getScriptProperties().getProperty('PEDDLE_QUERY') || PEDDLE.QUERY;
   const q = `${base} newer_than:${window}`;
   const mailbox = peddleMailbox_();
+  const labelName = peddleLabelName_();
+  const threadOf = {};      // pos_order -> GmailThread (kept out of the items)
   const items = [];
   const unparsed = [];
   const seen = {};
@@ -168,6 +182,7 @@ function peddleCollect_(window) {
     page.forEach(thread => {
       const msgs = thread.getMessages();
       const cancelled = msgs.some(m => /CANCEL/i.test(m.getSubject()));
+      const tagged = thread.getLabels().some(l => l.getName() === labelName);
       msgs.forEach(m => {
         const subj = m.getSubject();
         if (!/PEDDLING SALE RECEIVED/i.test(subj) || /CANCEL/i.test(subj)) return;
@@ -179,6 +194,8 @@ function peddleCollect_(window) {
         it.gmail_message_id = m.getId();
         it.gmail_thread_id = thread.getId();
         it.mailbox = mailbox;
+        it.in_sheet_tag = tagged;
+        threadOf[it.pos_order] = thread;
         it.cancelled = cancelled;
         items.push(it);
       });
@@ -189,7 +206,7 @@ function peddleCollect_(window) {
   }
   // oldest first, so sheet rows land in sale order
   items.sort((a, b) => String(a.email_at).localeCompare(String(b.email_at)));
-  return { items, unparsed, threads };
+  return { items, unparsed, threads, threadOf };
 }
 
 /**
@@ -265,16 +282,21 @@ function peddleLocalIso_(s) {
 
 function peddleSheet_() {
   const props = PropertiesService.getScriptProperties();
-  const id = props.getProperty('PEDDLE_SHEET_ID');
-  if (!id) throw new Error('PEDDLE_SHEET_ID not set. Run setPeddlingConfig() first.');
-  const tab = props.getProperty('PEDDLE_SHEET_TAB') || PEDDLE.DEFAULT_TAB;
-  const ss = SpreadsheetApp.openById(id);
-  return ss.getSheetByName(tab) || ss.insertSheet(tab);
+  const ss = SpreadsheetApp.openById(props.getProperty('PEDDLE_SHEET_ID') || PEDDLE.SHEET_ID);
+  const tab = props.getProperty('PEDDLE_SHEET_TAB');
+  if (tab) return ss.getSheetByName(tab) || ss.insertSheet(tab);
+  return ss.getSheets().find(sh => sh.getSheetId() === 0) || ss.getSheets()[0];
 }
 
+/** Appends new sales; returns the set of Invoice #s now in the sheet. */
 function peddleWriteSheet_(items) {
   const sh = peddleSheet_();
   if (sh.getLastRow() === 0) setupPeddlingSheet();
+  const head = String(sh.getRange(1, PEDDLE_COL.INVOICE).getValue()).trim();
+  if (!/^Invoice\s*#?$/i.test(head)) {
+    throw new Error(`Column ${peddleColLetter_(PEDDLE_COL.INVOICE)} header is "${head}", expected ` +
+                    '"Invoice #". Nothing written — fix the sheet layout or PEDDLE_SHEET_TAB.');
+  }
 
   // Invoice #s already in the sheet → never write a sale twice.
   const last = sh.getLastRow();
@@ -284,8 +306,10 @@ function peddleWriteSheet_(items) {
       .forEach(r => { const v = String(r[0]).trim(); if (v) have[v] = true; });
   }
 
-  const fresh = items.filter(it => !have[it.pos_order] && !it.cancelled);
-  if (!fresh.length) { console.log('Sheet: nothing new.'); return; }
+  // already tagged = it went to the sheet before; if the row is gone now,
+  // someone deleted it on purpose, so don't put it back
+  const fresh = items.filter(it => !have[it.pos_order] && !it.cancelled && !it.in_sheet_tag);
+  if (!fresh.length) { console.log('Sheet: nothing new.'); return have; }
 
   const first = sh.getLastRow() + 1;
   const rows = fresh.map((it, i) => peddleRow_(it, first + i));
@@ -294,6 +318,39 @@ function peddleWriteSheet_(items) {
   SpreadsheetApp.flush();
   console.log(`Sheet: appended ${rows.length} row(s): ${fresh.map(it => it.pos_order).join(', ')}`);
   peddleDropRaceDupes_(sh, fresh.map(it => String(it.pos_order)));
+  fresh.forEach(it => { have[it.pos_order] = true; });
+  return have;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * GMAIL TAG — label every sale that is in the sheet
+ * ───────────────────────────────────────────────────────────────────────── */
+
+function peddleLabelName_() {
+  return PropertiesService.getScriptProperties().getProperty('PEDDLE_LABEL') || PEDDLE.LABEL;
+}
+
+function peddleLabel_() {
+  const name = peddleLabelName_();
+  let label = GmailApp.getUserLabelByName(name);
+  if (label) return label;
+  // create parents first for a nested name like "Peddling/In Sheet"
+  const parts = name.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const parent = parts.slice(0, i).join('/');
+    if (!GmailApp.getUserLabelByName(parent)) GmailApp.createLabel(parent);
+  }
+  return GmailApp.createLabel(name);
+}
+
+function peddleTag_(got, inSheet) {
+  const todo = got.items.filter(it => inSheet[it.pos_order] && !it.in_sheet_tag && got.threadOf[it.pos_order]);
+  if (!todo.length) return;
+  const label = peddleLabel_();
+  const threads = todo.map(it => got.threadOf[it.pos_order]);
+  for (let i = 0; i < threads.length; i += 100) label.addToThreads(threads.slice(i, i + 100));
+  todo.forEach(it => { it.in_sheet_tag = true; });
+  console.log(`Tagged "${label.getName()}" on ${todo.length} thread(s): ${todo.map(it => it.pos_order).join(', ')}`);
 }
 
 /**
