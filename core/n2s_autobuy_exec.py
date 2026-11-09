@@ -30,6 +30,8 @@ DEFAULTS: dict[str, Any] = {
     "approval_over_usd": 1000.0,
     "min_event_lead_s": 24 * 3600,
     "min_confirm_window_s": 90,
+    # Operator 2026-11-09: strict $500 cap on EVO subs for the whole project; auto-stop at the cap.
+    "evo_project_cap_usd": 500.0,
 }
 
 # Purchase states on the market we bought the sub from.
@@ -52,9 +54,10 @@ def _ts(v: Any) -> datetime | None:
 
 
 def buy_guards(row: dict, *, now: datetime, spend_today: float, buys_today: int, failures_today: int,
-               cfg: dict | None = None) -> list[str]:
+               evo_spent: float = 0.0, evo_stopped: bool = False, cfg: dict | None = None) -> list[str]:
     """Reasons NOT to buy right now (empty = all guards pass). `spend_today` / `buys_today` /
-    `failures_today` exclude this row. Re-checked by the worker immediately before the buy."""
+    `failures_today` / `evo_spent` (all EVO-sub buys ever, this mode) exclude this row.
+    Re-checked by the worker immediately before the buy."""
     c = {**DEFAULTS, **(cfg or {})}
     reasons: list[str] = []
     total = row.get("sub_total_usd")
@@ -71,6 +74,10 @@ def buy_guards(row: dict, *, now: datetime, spend_today: float, buys_today: int,
         sold = row.get("sold_total_usd")
         if sold is None or total >= float(sold):
             reasons.append("not_profitable")
+        if row.get("sub_source") == "tevo" and not evo_stopped and evo_spent + total > c["evo_project_cap_usd"]:
+            reasons.append("over_evo_project_cap")
+    if row.get("sub_source") == "tevo" and evo_stopped:
+        reasons.append("evo_stopped_pending_review")
     if buys_today >= c["max_buys_per_day"]:
         reasons.append("max_buys_today")
     if failures_today >= c["max_failures_per_day"]:

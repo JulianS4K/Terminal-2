@@ -16,8 +16,8 @@ def _row(**kw):
     return base
 
 
-def _guards(row, spend=0.0, buys=0, fails=0, cfg=None):
-    return ex.buy_guards(row, now=NOW, spend_today=spend, buys_today=buys, failures_today=fails, cfg=cfg)
+def _guards(row, spend=0.0, buys=0, fails=0, cfg=None, **kw):
+    return ex.buy_guards(row, now=NOW, spend_today=spend, buys_today=buys, failures_today=fails, cfg=cfg, **kw)
 
 
 def test_clean_row_passes_every_guard():
@@ -30,6 +30,14 @@ def test_spend_limits():
     assert _guards(_row(), spend=130) == []                           # 130 + 120 = 250 is allowed
     assert _guards(_row(), buys=3) == ["max_buys_today"]
     assert _guards(_row(), fails=2) == ["circuit_breaker"]
+
+
+def test_evo_project_cap_500_and_stop():
+    evo = _row(sub_source="tevo")
+    assert _guards(evo, evo_spent=380) == []                              # 380 + 120 = 500 is allowed
+    assert _guards(evo, evo_spent=381) == ["over_evo_project_cap"]
+    assert _guards(evo, evo_stopped=True) == ["evo_stopped_pending_review"]
+    assert _guards(_row(sub_source="gotickets"), evo_spent=10_000, evo_stopped=True) == []  # EVO only
 
 
 def test_approval_only_over_1000():
