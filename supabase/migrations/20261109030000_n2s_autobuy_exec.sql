@@ -305,7 +305,7 @@ AS $function$
 DECLARE
   c    public.n2s_autobuy_config%ROWTYPE;
   e    RECORD;
-  sid  text; tok text; pre text; body text; rk text;
+  sid  text; tok text; pre text; body text; rk text; addr text; best int;
   resp extensions.http_response;
   n    int := 0;
 BEGIN
@@ -332,31 +332,40 @@ BEGIN
                      e.sub_listing_id, e.order_number, e.sell_market, e.event_name, e.event_dt_local, e.qty,
                      e.sub_total_usd, e.sold_total_usd, e.margin_usd,
                      to_char(e.sub_confirm_by AT TIME ZONE 'America/New_York', 'HH24:MI:SS'));
-      BEGIN
-        resp := extensions.http(('POST', 'https://api.resend.com/emails',
-                  ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
-                  jsonb_build_object('from', c.email_from, 'to', to_jsonb(c.email_to),
-                    'subject', format('N2S %s buy: %s purchase %s for sale %s',
-                                      CASE WHEN e.buy_order_id IS NULL THEN 'SHADOW' ELSE 'LIVE' END,
-                                      CASE e.sub_source WHEN 'tevo' THEN 'EVO' ELSE 'GoTickets' END,
-                                      COALESCE(e.buy_order_id, 'n/a'), e.order_number),
-                    'text', body)::text)::extensions.http_request);
-        UPDATE public.n2s_autobuy_exec SET emailed_at = now(), email_http = resp.status WHERE exec_id = e.exec_id;
-      EXCEPTION WHEN OTHERS THEN
-        UPDATE public.n2s_autobuy_exec SET emailed_at = now(), email_http = -1 WHERE exec_id = e.exec_id;
-      END;
+      -- One message per recipient: Resend rejects a whole message when any recipient is not
+      -- allowed (its test sender only reaches the account owner), and one bad address must not
+      -- cost the others the email. email_http keeps the best status.
+      best := NULL;
+      FOREACH addr IN ARRAY c.email_to LOOP
+        BEGIN
+          resp := extensions.http(('POST', 'https://api.resend.com/emails',
+                    ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
+                    jsonb_build_object('from', c.email_from, 'to', jsonb_build_array(addr),
+                      'subject', format('N2S %s buy: %s purchase %s for sale %s',
+                                        CASE WHEN e.buy_order_id IS NULL THEN 'SHADOW' ELSE 'LIVE' END,
+                                        CASE e.sub_source WHEN 'tevo' THEN 'EVO' ELSE 'GoTickets' END,
+                                        COALESCE(e.buy_order_id, 'n/a'), e.order_number),
+                      'text', body)::text)::extensions.http_request);
+          best := CASE WHEN best = 200 THEN 200 ELSE resp.status END;
+        EXCEPTION WHEN OTHERS THEN
+          best := COALESCE(best, -1);
+        END;
+      END LOOP;
+      UPDATE public.n2s_autobuy_exec SET emailed_at = now(), email_http = best WHERE exec_id = e.exec_id;
     END LOOP;
     IF c.project_stopped AND c.stop_emailed_at IS NULL THEN
-      BEGIN
-        resp := extensions.http(('POST', 'https://api.resend.com/emails',
-                  ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
-                  jsonb_build_object('from', c.email_from, 'to', to_jsonb(c.email_to),
-                    'subject', 'N2S auto-buy: buying STOPPED at the project cap',
-                    'text', format(E'%s\n\nAll buys stay blocked until you review and run '
-                                   || 'n2s_autobuy_resume() (or n2s_autobuy_resume(<new cap>)).',
-                                   c.project_stopped_reason))::text)::extensions.http_request);
-      EXCEPTION WHEN OTHERS THEN NULL;
-      END;
+      FOREACH addr IN ARRAY c.email_to LOOP
+        BEGIN
+          resp := extensions.http(('POST', 'https://api.resend.com/emails',
+                    ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
+                    jsonb_build_object('from', c.email_from, 'to', jsonb_build_array(addr),
+                      'subject', 'N2S auto-buy: buying STOPPED at the project cap',
+                      'text', format(E'%s\n\nAll buys stay blocked until you review and run '
+                                     || 'n2s_autobuy_resume() (or n2s_autobuy_resume(<new cap>)).',
+                                     c.project_stopped_reason))::text)::extensions.http_request);
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+      END LOOP;
       UPDATE public.n2s_autobuy_config SET stop_emailed_at = now() WHERE id;
     END IF;
   END IF;
