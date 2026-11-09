@@ -21,8 +21,13 @@
  *      nothing in any cell). Rows with anything in them are never touched;
  *   4. for every sale already in the sheet (matched on Invoice #), fills only
  *      the cells of our columns that are still EMPTY — it never overwrites a
- *      value someone typed or a formula;
- *   5. tags the Gmail thread of every sale in the sheet "Peddling/In Sheet".
+ *      value someone typed or a formula (Status excepted, see 6);
+ *   5. tags the Gmail thread of every sale in the sheet "Peddling/In Sheet";
+ *   6. refreshes Status for EVERY order in the sheet from the marketplace
+ *      (public.peddling_sales_status_from_apps_script, mig 20261109180945) —
+ *      Status is the one column that is overwritten when it changes;
+ *   7. renames the tab "All orders 11/9 12:44pm NY" (time of the run, New
+ *      York). Steps 6–7 run every time, even with no new emails.
  *
  * Columns are found BY HEADER NAME in row 1, so the order can change. Used:
  *   Event, Venue, Section, Row, Start Seat, End Seat, Quantity,
@@ -30,8 +35,8 @@
  *   Customer Name, Customer Email, Invoice # (required), Site Order#, Site,
  *   City / State (Event)  — the SECOND "City" column, and "State (Event)",
  *   Status, Sale Date, TU Ticket #, TNOW Ticket #,
- *   Event date — a header containing "Event Date", else column A when A1 is
- *   blank.
+ *   Event Date — the header "Event Date" (or "Event Date & Time"). Column A:
+ *   when A1 is blank the script names it "Event Date" and uses it.
  * Left for people: Account Name, First/Last Name, Email, Password, Last 4,
  * Confirmation, URL, Address, the first City / State, Zip Code, Total Cost.
  *
@@ -74,10 +79,12 @@ const PEDDLE = {
   SHEET_GID: 1691718237,
   LABEL: 'Peddling/In Sheet',
   RPC: 'peddling_sales_ingest_from_apps_script',
+  STATUS_RPC: 'peddling_sales_status_from_apps_script',
+  TAB_PREFIX: 'All orders',   // tab renamed "All orders 11/9 12:44pm NY" each run
   DATE_FMT: 'm/d/yyyy h:mm AM/PM',
   // written only when the tab is completely empty
   HEADER: [
-    'Event Date & Time', 'Account Name', 'First Name', 'Last Name', 'Email',
+    'Event Date', 'Account Name', 'First Name', 'Last Name', 'Email',
     'Password', 'Last 4', 'Confirmation', 'URL', 'Address', 'City', 'State',
     'Zip Code', 'Event', 'Venue', 'Section', 'Row', 'Start Seat', 'End Seat',
     'Quantity', 'Price per Ticket', 'GrandTotal Amount', 'Total Cost', 'Profit',
@@ -210,17 +217,30 @@ function peddleRun_(window, opts) {
     const got = peddleCollect_(window);
     console.log(`Peddling: ${got.items.length} sale(s) from ${got.threads} thread(s)` +
                 (got.unparsed.length ? `; unparsed: ${got.unparsed.join(', ')}` : ''));
-    if (!got.items.length) return;
 
-    // Supabase first: its reply carries customer / event city / status.
-    let extra = {};
-    try { extra = peddleSendSupabase_(got.items) || {}; }
-    catch (e) { console.error('Supabase send failed: ' + (e && e.stack || e)); }
+    let sheetOk = true;
+    try { peddleEnsureEventDateHeader_(); }
+    catch (e) { console.error('Header check failed: ' + (e && e.stack || e)); }
+    if (got.items.length) {
+      // Supabase first: its reply carries customer / event city / status.
+      let extra = {};
+      try { extra = peddleSendSupabase_(got.items) || {}; }
+      catch (e) { console.error('Supabase send failed: ' + (e && e.stack || e)); }
 
-    try {
-      const inSheet = peddleWriteSheet_(got.items, extra, opts);
-      peddleTag_(got, inSheet);
-    } catch (e) { console.error('Sheet write / tagging failed: ' + (e && e.stack || e)); }
+      try {
+        const inSheet = peddleWriteSheet_(got.items, extra, opts);
+        peddleTag_(got, inSheet);
+      } catch (e) { sheetOk = false; console.error('Sheet write / tagging failed: ' + (e && e.stack || e)); }
+    }
+
+    // Every run, new emails or not: current marketplace status for EVERY
+    // order in the sheet, then stamp the tab name with the time.
+    try { peddleRefreshStatus_(); }
+    catch (e) { sheetOk = false; console.error('Status refresh failed: ' + (e && e.stack || e)); }
+    if (sheetOk) {
+      try { peddleStampTabName_(); }
+      catch (e) { console.error('Tab rename failed: ' + (e && e.stack || e)); }
+    }
   } finally {
     lock.releaseLock();
   }
@@ -525,7 +545,9 @@ function peddleFillRow_(sh, ctx, r, it, ex) {
     const c = ctx.cols[f], v = want[f];
     if (!c || v === '' || v == null) return;
     const cur = r.values[c - 1], fx = r.formulas[c - 1];
-    if ((cur !== '' && cur !== null) || fx) return; // only empty cells, never a formula
+    // only empty cells, never a formula. (Status is kept current separately,
+    // by peddleRefreshStatus_ — the one place that overwrites a cell.)
+    if ((cur !== '' && cur !== null) || fx) return;
     put[c] = v;
   });
   const cs = Object.keys(put).map(Number).sort((a, b) => a - b);
@@ -542,6 +564,61 @@ function peddleFillRow_(sh, ctx, r, it, ex) {
   });
   cs.forEach(c => { r.values[c - 1] = put[c]; });
   return cs.length;
+}
+
+/**
+ * Current marketplace status for EVERY order in the sheet (not only the ones
+ * whose email is still in the 3-day window). Sends each row's Invoice # /
+ * Site Order# / Quantity to Supabase and rewrites Status where it changed.
+ * Rows typed in by hand are matched on their Site Order #. Formula cells and
+ * rows without an Invoice # are left alone.
+ */
+function peddleRefreshStatus_() {
+  const sh = peddleSheet_();
+  const ctx = peddleSheetCtx_(sh);
+  const c = ctx.cols, sc = c.status;
+  if (!sc || !c.invoice) { console.log('Status refresh: no Status / Invoice # column.'); return; }
+  const cell = (r, f) => c[f] ? String(r.values[c[f] - 1]).trim() : '';
+  const rows = ctx.rows.filter(r => /^\d{1,15}$/.test(cell(r, 'invoice')));
+  if (!rows.length) return;
+
+  const got = peddleCallRpc_(PEDDLE.STATUS_RPC, {
+    p_rows: rows.map(r => ({ invoice: cell(r, 'invoice'), site_order: cell(r, 'siteOrder'), qty: cell(r, 'qty') })),
+  });
+  if (!got) return;
+  const status = {};
+  (got.rows || []).forEach(x => { status[String(x.invoice)] = x.status; });
+
+  let changed = 0;
+  rows.forEach(r => {
+    const v = status[cell(r, 'invoice')];
+    if (!v || r.formulas[sc - 1] || String(r.values[sc - 1]) === String(v)) return;
+    sh.getRange(r.row, sc).setValue(v);
+    r.values[sc - 1] = v;
+    changed++;
+  });
+  console.log(`Status refresh: ${rows.length} order(s) checked, ${got.with_status || 0} with a marketplace ` +
+              `status, ${changed} cell(s) changed.`);
+}
+
+/** Tab name → "All orders 11/9 12:44pm NY" (New York time of this run). */
+function peddleStampTabName_() {
+  // a tab picked by NAME would be lost after a rename — only rename by gid
+  if (PropertiesService.getScriptProperties().getProperty('PEDDLE_SHEET_TAB')) return;
+  const sh = peddleSheet_();
+  const stamp = Utilities.formatDate(new Date(), 'America/New_York', 'M/d h:mma')
+    .replace(/AM$/, 'am').replace(/PM$/, 'pm');
+  const name = `${PEDDLE.TAB_PREFIX} ${stamp} NY`;
+  if (sh.getName() !== name) sh.setName(name);
+}
+
+/** A1 blank → "Event Date", so column A is named for what the script puts there. */
+function peddleEnsureEventDateHeader_() {
+  const sh = peddleSheet_();
+  const a1 = sh.getRange(1, 1);
+  if (String(a1.getValue()).trim() || a1.getFormula()) return;
+  a1.setValue('Event Date');
+  console.log('Header: A1 was blank, set to "Event Date".');
 }
 
 function peddleRowStillEmpty_(sh, ctx, row) {
@@ -616,29 +693,35 @@ function peddleTag_(got, inSheet) {
  * SUPABASE
  * ───────────────────────────────────────────────────────────────────────── */
 
-/** Upserts the sales; returns { pos_order: {customer_name, …} } from the reply. */
-function peddleSendSupabase_(items) {
+/** POSTs to a secret-gated RPC; returns the parsed reply, or null on failure. */
+function peddleCallRpc_(rpc, params) {
   const props = PropertiesService.getScriptProperties();
   const url    = props.getProperty('SUPABASE_PROJECT_URL');
   const anon   = props.getProperty('SUPABASE_ANON_KEY');
   const secret = props.getProperty('APPSCRIPT_INGEST_SECRET');
   if (!url || !anon || !secret) {
     console.error('Missing Supabase config. Run setPeddlingConfig() first.');
-    return {};
+    return null;
   }
-  const res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/rest/v1/rpc/' + PEDDLE.RPC, {
+  const res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/rest/v1/rpc/' + rpc, {
     method: 'post',
     contentType: 'application/json',
     headers: { apikey: anon.trim(), Authorization: 'Bearer ' + anon.trim() },
-    payload: JSON.stringify({ p_items: items, p_shared_secret: secret.trim() }),
+    payload: JSON.stringify(Object.assign({}, params, { p_shared_secret: secret.trim() })),
     muteHttpExceptions: true,
   });
   const code = res.getResponseCode();
   if (code < 200 || code >= 300) {
-    console.error(`Supabase ingest failed: HTTP ${code} ${res.getContentText().slice(0, 500)}`);
-    return {};
+    console.error(`Supabase ${rpc} failed: HTTP ${code} ${res.getContentText().slice(0, 500)}`);
+    return null;
   }
-  const body = JSON.parse(res.getContentText() || '{}');
+  return JSON.parse(res.getContentText() || '{}');
+}
+
+/** Upserts the sales; returns { pos_order: {customer_name, …} } from the reply. */
+function peddleSendSupabase_(items) {
+  const body = peddleCallRpc_(PEDDLE.RPC, { p_items: items });
+  if (!body) return {};
   const extra = {};
   (body.rows || []).forEach(r => { extra[String(r.pos_order)] = r; });
   const withCust = (body.rows || []).filter(r => r.customer_email || r.customer_name).length;
