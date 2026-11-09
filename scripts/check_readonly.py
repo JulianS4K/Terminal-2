@@ -323,6 +323,14 @@ def check_ts_writes() -> list[str]:
     return violations
 
 
+# The ONLY write URLs a plpgsql migration may POST to on a forbidden host. Each is a login that
+# writes none of our data (operator-authorized; security-CRIT to extend):
+#   - TickPick OAuth2 password grant (2026-11-10): refreshes TICKPICK_API_TOKEN from vault creds.
+# A sanctioned URL is blanked out of the scanned window, so any OTHER forbidden-host URL near the
+# same POST still fails the build.
+SANCTIONED_PLPGSQL_WRITE_URLS = ("https://api.tickpick.com/1.0/token",)
+
+
 def check_plpgsql_writes() -> list[str]:
     """Scan supabase/migrations/*.sql for net.http_post|put|patch|delete calls
     targeting forbidden hosts. Phase-1 server-side ingest writes data via
@@ -338,6 +346,8 @@ def check_plpgsql_writes() -> list[str]:
             start = max(0, m.start() - 200)
             end = min(len(text), m.end() + 800)
             snippet = text[start:end]
+            for url in SANCTIONED_PLPGSQL_WRITE_URLS:
+                snippet = snippet.replace(f"'{url}'", "''")
             forbidden_hits = [h for h in FORBIDDEN_HOSTS if h in snippet]
             if forbidden_hits:
                 line_no = text[: m.start()].count("\n") + 1
