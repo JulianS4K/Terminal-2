@@ -545,3 +545,21 @@ def test_sale_accept_guard_refuses_reject_and_other_writes():
                  ("DELETE", "https://sellerdirect-api.seatgeek.com/order")):
         with pytest.raises(SaleAcceptError):
             _assert_readonly_method(m, u)
+
+
+def test_audit_allows_only_the_tickpick_token_login_from_plpgsql(tmp_path: Path, monkeypatch):
+    chk = _load_check_module()
+    assert chk.SANCTIONED_PLPGSQL_WRITE_URLS == ("https://api.tickpick.com/1.0/token",)
+    mig = tmp_path / "supabase" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "1_ok.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/token', NULL, 'x', 'grant_type=password'));\n")
+    (mig / "2_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/orders/1/confirmation', NULL, NULL, '{}'));\n")
+    (mig / "3_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/token', NULL, 'x', ''));\n"
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/pro/orders', NULL, NULL, '{}'));\n")
+    monkeypatch.setattr(chk, "ROOT", tmp_path)
+    out = chk.check_plpgsql_writes()
+    assert not any("1_ok.sql" in v for v in out)
+    assert any("2_bad.sql" in v for v in out) and any("3_bad.sql" in v for v in out)
