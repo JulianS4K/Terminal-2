@@ -98,6 +98,9 @@ FORBIDDEN_HOSTS = (
 #     2026-11-09 ("I authorize EVO only, build the live executor"). Its POST is
 #     path-pinned to /v9/orders and /v9/orders/{id}/accept by EVO_WRITE_PATHS, whose
 #     exact literal is required below (SANCTIONED_WRITE_TOKENS).
+#   * sale_accept_client.py — confirm OUR OWN pending sale on GoTickets / SeatGeek / Vivid,
+#     operator-authorized 2026-11-10. Each write is pinned to (method, host, path) by
+#     SALE_ACCEPT_WRITES, whose exact literal is required below.
 CLIENT_FILES = {
     "evo_client.py": frozenset({"GET"}),
     "seatgeek_client.py": frozenset({"GET"}),
@@ -106,6 +109,7 @@ CLIENT_FILES = {
     "gotickets_client.py": frozenset({"GET"}),
     "seatdata_client.py": frozenset({"GET", "POST"}),
     "evo_buy_client.py": frozenset({"GET", "POST"}),
+    "sale_accept_client.py": frozenset({"GET", "PATCH", "POST"}),
     "ticketsdata_client.py": frozenset({"GET"}),
     "broadway_client.py": frozenset({"GET"}),
     "axs_client.py": frozenset({"GET"}),
@@ -123,6 +127,7 @@ CLIENT_FILES = {
 SANCTIONED_WRITE_TOKENS = {
     "seatdata_client.py": 'SANCTIONED_POST_PATHS = frozenset({"v0.4/events/event-request-add"})',
     "evo_buy_client.py": 'EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\\d+/accept$")',
+    "sale_accept_client.py": 'SALE_ACCEPT_WRITES = (("POST", "sc.gotickets.com", r"^/rest/sales/\\d+/confirm$"), ("PATCH", "sellerdirect-api.seatgeek.com", r"^/order$"), ("POST", "brokers.vividseats.com", r"^/webservices/v1/confirmOrder$"))',
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which

@@ -22,7 +22,7 @@ def _row(**kw):
          "sub_listing_id": "6744480374", "qty": 2, "sub_total_usd": 200.0, "sold_total_usd": 260.0,
          "event_dt_local": "2026-11-13T19:00:00", "sub_confirm_by": (NOW + timedelta(minutes=8)).isoformat(),
          "spend_today_before": 0, "project_spent_before": 0, "sale_order_key": "555", "buy_order_id": None,
-         "lease_token": "tok-1"}
+         "lease_token": "tok-1", "sell_market": "evo"}
     r.update(kw)
     return r
 
@@ -213,3 +213,49 @@ def test_accept_failures_are_recorded_not_retried():
     assert out["phase"] == "accept_failed"
     out, _, _ = _tick(_poll_job(), Client(orders=orders, accept=EvoWriteUnknown("t")))
     assert out["phase"] == "accept_unknown"
+
+
+class Sales:
+    def __init__(self, state="UNCONFIRMED", accept=None, has=True):
+        self.state, self.acc, self.has, self.calls = state, accept, has, []
+
+    def has_market(self, m):
+        return self.has
+
+    def sale_state(self, market, key):
+        self.calls.append(("state", market, key))
+        return self.state
+
+    def accept(self, market, key):
+        self.calls.append(("accept", market, key))
+        if isinstance(self.acc, Exception):
+            raise self.acc
+        return self.acc or {"state": "accepted"}
+
+
+def test_other_sell_markets_accept_through_the_sale_client():
+    for market, pending in (("gotickets", "UNCONFIRMED"), ("seatgeek", "submitted"), ("vivid", "UNCONFIRMED")):
+        s = Sales(state=pending)
+        c = Client(orders={"9001": {"state": "accepted"}})
+        out = lv.tick(Rpc(_poll_job(sell_market=market)), c, now=NOW, sales=s)
+        assert out["phase"] == "accepted" and s.calls == [("state", market, "555"), ("accept", market, "555")]
+        assert not any(k[0] == "accept" for k in c.calls)       # nothing sent to EVO's accept
+
+
+def test_other_market_sale_not_pending_or_accept_failing():
+    s = Sales(state="CONFIRMED")
+    out = lv.tick(Rpc(_poll_job(sell_market="vivid")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
+    assert out["reasons"] == ["sale_not_pending"] and s.calls == [("state", "vivid", "555")]
+    s = Sales(accept=EvoWriteRejected(400, "late"))
+    out = lv.tick(Rpc(_poll_job(sell_market="gotickets")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
+    assert out["phase"] == "accept_failed"
+
+
+def test_no_buy_when_the_selling_market_cannot_be_accepted():
+    c = Client(create={"id": 1})
+    out = lv.tick(Rpc(_buy_job(sell_market="vivid")), c, now=NOW, sales=Sales(has=False))
+    assert out["reasons"] == ["no_sale_accept_token"] and c.calls == []
+    out = lv.tick(Rpc(_buy_job(sell_market="seatgeek")), c, now=NOW)            # no sale client at all
+    assert out["reasons"] == ["no_sale_accept_token"]
+    out = lv.tick(Rpc(_buy_job(sell_market="gotickets")), Client(create={"id": 3}), now=NOW, sales=Sales())
+    assert out["phase"] == "buy_sent"

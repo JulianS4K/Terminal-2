@@ -1,4 +1,4 @@
-"""N2S auto-buy LIVE worker — EVO sub covering an EVO sale, one step per tick.
+"""N2S auto-buy LIVE worker — an EVO sub covering a sale on EVO, GoTickets, SeatGeek or Vivid.
 
 Operator authorization 2026-11-09: "I authorize EVO only, build the live executor, limit to
 only 1 live run for testing". The database decides what may run (``n2s_autobuy_live_claim``:
@@ -24,6 +24,7 @@ from typing import Any
 import requests
 
 from core.n2s_autobuy_exec import _ts, buy_guards, next_action
+from sale_accept_client import PENDING, SaleAcceptClient
 from evo_buy_client import (
     SHIPMENT_FOR_FORMAT,
     EvoBuyClient,
@@ -72,8 +73,12 @@ def ticket_group_checks(tg: dict, *, qty: int, sub_total: float, now: datetime, 
     return reasons
 
 
-def _buy(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
+def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: dict, now: datetime) -> dict:
     row, cfg = job["row"], job["cfg"]
+    market = row.get("sell_market")
+    if market != "evo" and not (sales and sales.has_market(market)):
+        # never buy a sub we could not accept the sale for
+        return _record(rpc, job, phase="stopped", reasons=["no_sale_accept_token"])
     guard_row = {**row, "event_start_utc": row.get("event_dt_local")}  # venue-local read as UTC: earlier, so safe
     reasons = buy_guards(guard_row, now=now, spend_today=float(row.get("spend_today_before") or 0),
                          buys_today=0, failures_today=0, project_spent=float(row.get("project_spent_before") or 0),
@@ -94,7 +99,7 @@ def _buy(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
                           seller_office_id=tg["office"]["id"], buyer_office_id=int(cfg["evo_buyer_office_id"]),
                           shipment_type=SHIPMENT_FOR_FORMAT[tg["format"]],
                           email_address_id=cfg.get("evo_email_address_id"),
-                          note=f"N2S auto-cover for EVO sale {row.get('sale_order_key')} (n2s {row['n2s_id']})")
+                          note=f"N2S auto-cover for {market} sale {row.get('sale_order_key')} (n2s {row['n2s_id']})")
     if not _hold(rpc, job, "buying"):
         return {"phase": "lease_lost"}  # nothing sent; the claim sweep decides what happens to the row
     try:
@@ -117,8 +122,18 @@ def _buy(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
                        live_error=f"{type(e).__name__}: {e}"[:300])
 
 
-def _poll(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
+def _sale_state(client: EvoBuyClient, sales: SaleAcceptClient | None, market: str, key: Any) -> tuple[str | None, bool]:
+    """(the sale's state on the market that sold it, whether that state means it still awaits our accept)."""
+    if market == "evo":
+        st = client.get_order(key).get("state")
+        return st, st == "pending"
+    st = sales.sale_state(market, key)  # type: ignore[union-attr]
+    return st, st in PENDING[market]
+
+
+def _poll(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: dict, now: datetime) -> dict:
     row, cfg = job["row"], job["cfg"]
+    market = row.get("sell_market") or "evo"
     st = row.get("buy_state")
     if row["phase"] == "buy_sent":
         st = client.get_order(row["buy_order_id"]).get("state")
@@ -127,13 +142,16 @@ def _poll(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
             return _record(rpc, job, phase="buy_sent", buy_state=st)
         if step["action"] == "stop":
             return _record(rpc, job, phase="stopped", buy_state=st, reasons=[step["reason"]])
-    sale = client.get_order(row["sale_order_key"]).get("state")
-    if sale != "pending":
+    sale, pending = _sale_state(client, sales, market, row["sale_order_key"])
+    if not pending:
         return _record(rpc, job, phase="stopped", buy_state=st, sale_state=sale, reasons=["sale_not_pending"])
     if not _hold(rpc, job, "sub_accepted", buy_state=st, sale_state=sale):
         return {"phase": "lease_lost"}  # another worker may hold the row now: do not accept
     try:
-        out = client.accept_order(row["sale_order_key"], int(cfg["evo_reviewer_id"]))
+        if market == "evo":
+            out = client.accept_order(row["sale_order_key"], int(cfg["evo_reviewer_id"]))
+        else:
+            out = sales.accept(market, row["sale_order_key"])  # type: ignore[union-attr]
     except EvoWriteRejected as e:
         return _record(rpc, job, phase="accept_failed", sale_state=sale, reasons=["accept_failed"], live_error=str(e))
     except EvoWriteUnknown as e:
@@ -142,11 +160,12 @@ def _poll(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
     return _record(rpc, job, phase="accepted", sale_state=out.get("state") or "accepted")
 
 
-def tick(rpc: Rpc, client: EvoBuyClient, now: datetime | None = None) -> dict:
+def tick(rpc: Rpc, client: EvoBuyClient, now: datetime | None = None,
+         sales: SaleAcceptClient | None = None) -> dict:
     """Claim at most one row and take its next step. Returns what was recorded."""
     now = now or datetime.now(timezone.utc)
     job = rpc("n2s_autobuy_live_claim", {})
     if not job:
         return {"action": "idle"}
     step = _buy if job["action"] == "buy" else _poll
-    return {"action": job["action"], "exec_id": job["row"]["exec_id"], **step(rpc, client, job, now)}
+    return {"action": job["action"], "exec_id": job["row"]["exec_id"], **step(rpc, client, sales, job, now)}

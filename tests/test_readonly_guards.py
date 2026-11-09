@@ -530,3 +530,18 @@ def test_audit_catches_pgsql_http_post_to_a_broker(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(chk, "ROOT", tmp_path)
     out = chk.check_plpgsql_writes()
     assert len(out) == 2 and any("1_bad.sql" in v for v in out) and any("2_bad.sql" in v for v in out)
+
+
+def test_sale_accept_client_registered_with_pinned_writes():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["sale_accept_client.py"] == frozenset({"GET", "PATCH", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["sale_accept_client.py"] in (REPO_ROOT / "sale_accept_client.py").read_text()
+
+
+def test_sale_accept_guard_refuses_reject_and_other_writes():
+    from sale_accept_client import _assert_readonly_method, SaleAcceptError
+    for m, u in (("POST", "https://brokers.vividseats.com/webservices/v1/rejectOrder"),
+                 ("POST", "https://sc.gotickets.com/rest/sales/1/cannot-retransfer-or-reissue"),
+                 ("DELETE", "https://sellerdirect-api.seatgeek.com/order")):
+        with pytest.raises(SaleAcceptError):
+            _assert_readonly_method(m, u)
