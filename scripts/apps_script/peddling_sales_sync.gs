@@ -14,7 +14,7 @@
  *   1. finds the recent PEDDLING SALE RECEIVED emails (PEDDLE.LOOKBACK) and
  *      parses each one;
  *   2. upserts them into Supabase (public.peddling_sales_ingest_from_apps_script,
- *      migs 20261109172023 + 20261109174000). The reply carries what our
+ *      migs 20261109172023 + 20261109174437). The reply carries what our
  *      marketplace order books add for each sale: customer name + email
  *      (Vivid Seats), the event's city + state, and the marketplace status;
  *   3. writes each new sale into the first EMPTY row of the sheet (a row with

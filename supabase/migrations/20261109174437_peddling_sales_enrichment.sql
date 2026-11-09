@@ -1,7 +1,9 @@
--- Migration 20261109174000 · level:secondary-sales · lane:D0 · writes:peddling_sales,peddling_sales_enrich,peddling_sales_ingest_from_apps_script · reads:s4kcs_orders,vivid_orders · pre:20261109172023
+-- Migration 20261109174437 · level:secondary-sales · lane:D0 · writes:peddling_sales,peddling_sales_enrich,peddling_sales_ingest_from_apps_script · reads:s4kcs_orders,vivid_orders · pre:20261109172023
+--
+-- Already applied to prod · via MCP 2026-11-09 (operator-approved; recorded as version 20261109174437)
 --
 -- ============================================================================
--- Migration 20261109174000 — enrich peddled sales with marketplace order data
+-- Migration 20261109174437 — enrich peddled sales with marketplace order data
 --
 -- Lane:     D0 (orders)
 -- Touches:  peddling_sales (W), s4kcs_orders (R), vivid_orders (R)
@@ -50,10 +52,11 @@ SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE v_n int;
 BEGIN
-  IF current_user NOT IN ('postgres', 'service_role', 'supabase_admin') THEN
-    RAISE EXCEPTION 'peddling_sales_enrich: caller % not authorized', current_user USING ERRCODE = '42501';
-  END IF;
-
+  -- Access control is the EXECUTE grant below (service_role only; anon and
+  -- authenticated revoked). No current_user check here: inside SECURITY
+  -- DEFINER current_user is the owner, so such a check always passes, and a
+  -- session_user check would also block the secret-gated ingest RPC, which
+  -- calls this as its owner. It only fills peddling_sales from reads.
   WITH st(name, code) AS (VALUES
     ('alabama','AL'),('alaska','AK'),('arizona','AZ'),('arkansas','AR'),('california','CA'),
     ('colorado','CO'),('connecticut','CT'),('delaware','DE'),('district of columbia','DC'),
@@ -118,7 +121,7 @@ REVOKE ALL ON FUNCTION public.peddling_sales_enrich(bigint[]) FROM PUBLIC, anon,
 GRANT EXECUTE ON FUNCTION public.peddling_sales_enrich(bigint[]) TO service_role;
 
 COMMENT ON FUNCTION public.peddling_sales_enrich(bigint[]) IS
-  'Fills peddling_sales market_status / event_city / event_state (s4kcs_orders, venue fallback) and customer_name / customer_email (vivid_orders.raw_xml) by marketplace order id. NULL = all rows. Read-only on sources. Mig 20261109174000.';
+  'Fills peddling_sales market_status / event_city / event_state (s4kcs_orders, venue fallback) and customer_name / customer_email (vivid_orders.raw_xml) by marketplace order id. NULL = all rows. Read-only on sources. Mig 20261109174437.';
 
 -- 3. ingest RPC: enrich what it received and hand the fields back --------------------
 CREATE OR REPLACE FUNCTION public.peddling_sales_ingest_from_apps_script(
@@ -219,7 +222,7 @@ BEGIN
     INTO v_ids, v_new, v_upd
     FROM up;
 
-  -- mig 20261109174000: match to the marketplace order books, return the fields
+  -- mig 20261109174437: match to the marketplace order books, return the fields
   PERFORM public.peddling_sales_enrich(COALESCE(v_ids, ARRAY[]::bigint[]));
 
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
@@ -245,7 +248,7 @@ REVOKE ALL ON FUNCTION public.peddling_sales_ingest_from_apps_script(jsonb, text
 GRANT EXECUTE ON FUNCTION public.peddling_sales_ingest_from_apps_script(jsonb, text) TO anon, service_role;
 
 COMMENT ON FUNCTION public.peddling_sales_ingest_from_apps_script(jsonb, text) IS
-  'Peddling-sales intake from scripts/apps_script/peddling_sales_sync.gs: upserts Gmail "PEDDLING SALE RECEIVED" sales into peddling_sales keyed on our order number, enriches them from the marketplace order books (peddling_sales_enrich) and returns customer / event city+state / status per sale in `rows`. cancelled is sticky; mailbox keeps the first inbox. Secret-gated on APPSCRIPT_INGEST_SECRET (20261109172023, 20261109174000).';
+  'Peddling-sales intake from scripts/apps_script/peddling_sales_sync.gs: upserts Gmail "PEDDLING SALE RECEIVED" sales into peddling_sales keyed on our order number, enriches them from the marketplace order books (peddling_sales_enrich) and returns customer / event city+state / status per sale in `rows`. cancelled is sticky; mailbox keeps the first inbox. Secret-gated on APPSCRIPT_INGEST_SECRET (20261109172023, 20261109174437).';
 
 -- 4. backfill what is already there -------------------------------------------------
 SELECT public.peddling_sales_enrich(NULL);
