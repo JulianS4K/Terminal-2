@@ -998,3 +998,68 @@ def test_bridge_csp_maps_only_on_map_pages(client):
     for path in ("/bridge/checkin/abc", "/bridge/my-tickets", "/bridge/o/brand"):
         csp = client.get(path, follow_redirects=False).headers["Content-Security-Policy"]
         assert "*.googleapis.com" not in csp, path
+
+
+# ---- N2S auto-buy LIVE worker loop (D7, operator 2026-11-09) --------------
+
+def test_autobuy_live_tick_runs_one_step_and_records(monkeypatch):
+    import anyio
+    from core import n2s_autobuy_live
+    seen = {}
+
+    def _fake_tick(rpc, client):
+        seen["claim"] = rpc("n2s_autobuy_live_claim", {})
+        seen["client"] = client
+        return {"action": "buy", "phase": "buy_sent"}
+
+    fake = _WatchdogSb({"action": "buy"})
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    monkeypatch.setattr(n2s_autobuy_live, "tick", _fake_tick)
+    out = anyio.run(app_module._autobuy_live_tick)
+    assert out["phase"] == "buy_sent" and seen["claim"] == {"action": "buy"}
+    assert fake.calls == [("n2s_autobuy_live_claim", {})]
+    assert seen["client"].token == app_module.TOKEN
+    assert app_module._autobuy_live_last["result"]["phase"] == "buy_sent"
+    monkeypatch.setattr(n2s_autobuy_live, "tick", lambda rpc, client: {"action": "idle"})
+    assert anyio.run(app_module._autobuy_live_tick) == {"action": "idle"}
+
+
+def test_autobuy_live_loop_is_off_without_the_env_flag(monkeypatch):
+    import anyio
+    monkeypatch.delenv("N2S_AUTOBUY_LIVE", raising=False)
+    anyio.run(app_module._autobuy_live_loop)  # returns at once
+
+
+def test_autobuy_live_loop_ticks_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.setenv("N2S_AUTOBUY_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "TOKEN", "t")
+    monkeypatch.setattr(app_module, "SECRET", "s")
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("db blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_autobuy_live_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._autobuy_live_loop)
+    assert ticks["n"] == 2 and app_module._autobuy_live_last["error"] == "db blip"
+
+
+def test_autobuy_live_status_route(client, monkeypatch):
+    monkeypatch.setenv("N2S_AUTOBUY_LIVE", "1")
+    r = client.get("/api/admin/n2s-autobuy-live/status")
+    assert r.status_code == 200 and r.json()["enabled"] is True

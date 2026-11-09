@@ -21,8 +21,8 @@ sales / listings feeds:
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
   2. fetch(...) calls in TS/JS with method other than GET
-  3. net.http_post|put|patch|delete calls in plpgsql migrations targeting
-     forbidden hosts (Phase-1 server-side data ingest path)
+  3. net.http_post|put|patch|delete / extensions.http(('POST', …)) calls in
+     plpgsql migrations targeting forbidden hosts (server-side ingest path)
   4. The hardcoded host strings appearing alongside non-GET method tokens
   5. The runtime guards (_assert_readonly_method / ALLOWED_HTTP_METHODS)
      missing from the client modules
@@ -91,9 +91,13 @@ FORBIDDEN_HOSTS = (
 # methods each is permitted to use. Other files can mention the hosts in
 # comments/docs only.
 #
-# All clients are GET-only EXCEPT seatdata_client.py, which has ONE sanctioned
-# metadata POST (/v0.4/events/event-request-add) that writes none of our data
-# and touches no price/inventory — see CLAUDE.md §2 listing-source lockdown.
+# All clients are GET-only EXCEPT:
+#   * seatdata_client.py — ONE sanctioned metadata POST (/v0.4/events/event-request-add)
+#     that writes none of our data and touches no price/inventory (CLAUDE.md §2);
+#   * evo_buy_client.py — the N2S auto-cover buy + accept on EVO, operator-authorized
+#     2026-11-09 ("I authorize EVO only, build the live executor"). Its POST is
+#     path-pinned to /v9/orders and /v9/orders/{id}/accept by EVO_WRITE_PATHS, whose
+#     exact literal is required below (SANCTIONED_WRITE_TOKENS).
 CLIENT_FILES = {
     "evo_client.py": frozenset({"GET"}),
     "seatgeek_client.py": frozenset({"GET"}),
@@ -101,6 +105,7 @@ CLIENT_FILES = {
     "vivid_client.py": frozenset({"GET"}),
     "gotickets_client.py": frozenset({"GET"}),
     "seatdata_client.py": frozenset({"GET", "POST"}),
+    "evo_buy_client.py": frozenset({"GET", "POST"}),
     "ticketsdata_client.py": frozenset({"GET"}),
     "broadway_client.py": frozenset({"GET"}),
     "axs_client.py": frozenset({"GET"}),
@@ -110,6 +115,14 @@ CLIENT_FILES = {
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
     "s4kcs_client.py": frozenset({"GET"}),
+}
+
+# Exact path-allowlist literals a write-capable client must declare. Widening either
+# list (a new write path) breaks the literal and fails the build: that change needs the
+# operator's written authorization (security-CRIT, CLAUDE.md §2).
+SANCTIONED_WRITE_TOKENS = {
+    "seatdata_client.py": 'SANCTIONED_POST_PATHS = frozenset({"v0.4/events/event-request-add"})',
+    "evo_buy_client.py": 'EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\\d+/accept$")',
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
@@ -168,9 +181,12 @@ SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".claude",
              # tests/ is allowed to embed synthetic violations as test fixtures
              "tests"}
 
-# plpgsql write-method patterns (Phase-1 server-side ingest uses pg_net)
+# plpgsql write-method patterns: pg_net (net.http_post …), the pgsql-http helpers
+# (extensions.http_post …) and the generic pgsql-http call with a write verb
+# (extensions.http(('POST', …)) — the last one was a gap until 2026-11-09.
 PLPGSQL_FORBIDDEN_PATTERN = re.compile(
-    r"net\.http_(post|put|patch|delete)\s*\(",
+    r"(?:net|extensions)\.http_(post|put|patch|delete)\s*\("
+    r"|\bhttp\s*\(\s*\(\s*'(post|put|patch|delete)'",
     flags=re.IGNORECASE,
 )
 
@@ -348,6 +364,8 @@ def check_guard_tokens() -> list[str]:
             continue
         text = p.read_text(encoding="utf-8", errors="ignore")
         required = (*COMMON_GUARD_TOKENS, _frozenset_token(methods))
+        if client in SANCTIONED_WRITE_TOKENS:
+            required = (*required, SANCTIONED_WRITE_TOKENS[client])
         for tok in required:
             if tok not in text:
                 violations.append(
