@@ -1975,6 +1975,23 @@ _AUTOBUY_LIVE_INTERVAL_S = float(os.environ.get("N2S_AUTOBUY_LIVE_INTERVAL_SECON
 _autobuy_live_last: dict = {"at": None, "result": None, "error": None}
 
 
+_autobuy_sales_client: list = []  # built once per process from Vault (GoTickets / SeatGeek / Vivid tokens)
+
+
+def _autobuy_sale_client():
+    if not _autobuy_sales_client:
+        from core.vault import vault_secret
+        from sale_accept_client import SaleAcceptClient
+        db = require_sb()
+        c = SaleAcceptClient(
+            gt_id=vault_secret(db, "GOTICKETS_ACCESS_ID"), gt_secret=vault_secret(db, "GOTICKETS_API_SECRET"),
+            sg_token=vault_secret(db, "SEATGEEK_API_TOKEN"), vivid_token=vault_secret(db, "VIVID_API_TOKEN"))
+        if not all(c.has_market(m) for m in ("gotickets", "seatgeek", "vivid")):
+            return c  # a token is missing (or Vault blipped): don't cache, re-read next tick
+        _autobuy_sales_client.append(c)
+    return _autobuy_sales_client[0]
+
+
 async def _autobuy_live_tick():
     from core import n2s_autobuy_live
     from evo_buy_client import EvoBuyClient
@@ -1982,7 +1999,7 @@ async def _autobuy_live_tick():
     def _call():
         def rpc(name, params):
             return require_sb().rpc(name, params).execute().data
-        return n2s_autobuy_live.tick(rpc, EvoBuyClient(TOKEN, SECRET))
+        return n2s_autobuy_live.tick(rpc, EvoBuyClient(TOKEN, SECRET), sales=_autobuy_sale_client())
 
     out = await asyncio.to_thread(_call)
     _autobuy_live_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)

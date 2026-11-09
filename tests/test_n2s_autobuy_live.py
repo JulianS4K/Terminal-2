@@ -5,6 +5,11 @@ import pytest
 import requests
 
 import core.n2s_autobuy_live as lv
+
+
+@pytest.fixture(autouse=True)
+def _no_verify_pause(monkeypatch):
+    monkeypatch.setattr(lv, "VERIFY_DELAY_S", 0)
 from evo_buy_client import EvoWriteRejected, EvoWriteUnknown
 
 NOW = datetime(2026, 11, 10, 18, 0, tzinfo=timezone.utc)
@@ -22,7 +27,7 @@ def _row(**kw):
          "sub_listing_id": "6744480374", "qty": 2, "sub_total_usd": 200.0, "sold_total_usd": 260.0,
          "event_dt_local": "2026-11-13T19:00:00", "sub_confirm_by": (NOW + timedelta(minutes=8)).isoformat(),
          "spend_today_before": 0, "project_spent_before": 0, "sale_order_key": "555", "buy_order_id": None,
-         "lease_token": "tok-1"}
+         "lease_token": "tok-1", "sell_market": "evo"}
     r.update(kw)
     return r
 
@@ -45,8 +50,9 @@ class Rpc:
 
 
 class Client:
-    def __init__(self, tg=TG, create=None, orders=None, accept=None):
+    def __init__(self, tg=TG, create=None, orders=None, accept=None, after_accept=None):
         self.tg, self.create, self.orders, self.accept = tg, create, orders or {}, accept
+        self.after_accept = after_accept or {"state": "accepted"}
         self.calls = []
 
     def _maybe(self, v):
@@ -68,7 +74,9 @@ class Client:
 
     def accept_order(self, oid, reviewer):
         self.calls.append(("accept", oid, reviewer))
-        return self._maybe(self.accept)
+        out = self._maybe(self.accept)
+        self.orders[str(oid)] = self.after_accept   # what the market shows on the re-read
+        return out
 
 
 def _tick(job, client, **rpc_kw):
@@ -177,7 +185,7 @@ def test_poll_accepted_sub_then_accepts_the_pending_sale():
     c = Client(orders={"9001": {"state": "accepted"}, "555": {"state": "pending"}}, accept={"state": "accepted"})
     out, recs, calls = _tick(_poll_job(), c)
     assert out["phase"] == "accepted" and out["sale_state"] == "accepted"
-    assert calls[-1] == ("accept", "555", 53658)
+    assert calls[-2:] == [("accept", "555", 53658), ("get", "555")]    # accept, then the re-read
     assert [r["p_patch"]["phase"] for r in recs] == ["sub_accepted", "accepted"]
     c = Client(orders={"555": {"state": "pending"}}, accept={})
     out, _, calls = _tick({**_poll_job(), "row": _row(phase="sub_accepted", buy_order_id="9001")}, c)
@@ -213,3 +221,74 @@ def test_accept_failures_are_recorded_not_retried():
     assert out["phase"] == "accept_failed"
     out, _, _ = _tick(_poll_job(), Client(orders=orders, accept=EvoWriteUnknown("t")))
     assert out["phase"] == "accept_unknown"
+
+
+class Sales:
+    def __init__(self, state="UNCONFIRMED", accept=None, has=True, after="CONFIRMED"):
+        self.state, self.acc, self.has, self.calls, self.after = state, accept, has, [], after
+
+    def has_market(self, m):
+        return self.has
+
+    def sale_state(self, market, key):
+        self.calls.append(("state", market, key))
+        return self.state
+
+    def accept(self, market, key):
+        self.calls.append(("accept", market, key))
+        if isinstance(self.acc, Exception):
+            raise self.acc
+        self.state = self.after
+        return self.acc or {"state": "accepted"}
+
+
+def test_other_sell_markets_accept_through_the_sale_client():
+    for market, pending in (("gotickets", "UNCONFIRMED"), ("seatgeek", "submitted"), ("vivid", "UNCONFIRMED")):
+        s = Sales(state=pending)
+        c = Client(orders={"9001": {"state": "accepted"}})
+        out = lv.tick(Rpc(_poll_job(sell_market=market)), c, now=NOW, sales=s)
+        assert out["phase"] == "accepted" and out["sale_state"] == "CONFIRMED"
+        assert s.calls == [("state", market, "555"), ("accept", market, "555"), ("state", market, "555")]
+        assert not any(k[0] == "accept" for k in c.calls)       # nothing sent to EVO's accept
+
+
+def test_other_market_sale_not_pending_or_accept_failing():
+    s = Sales(state="CONFIRMED")
+    out = lv.tick(Rpc(_poll_job(sell_market="vivid")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
+    assert out["reasons"] == ["sale_not_pending"] and s.calls == [("state", "vivid", "555")]
+    s = Sales(accept=EvoWriteRejected(400, "late"))
+    out = lv.tick(Rpc(_poll_job(sell_market="gotickets")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
+    assert out["phase"] == "accept_failed"
+
+
+def test_no_buy_when_the_selling_market_cannot_be_accepted():
+    c = Client(create={"id": 1})
+    out = lv.tick(Rpc(_buy_job(sell_market="vivid")), c, now=NOW, sales=Sales(has=False))
+    assert out["reasons"] == ["no_sale_accept_token"] and c.calls == []
+    out = lv.tick(Rpc(_buy_job(sell_market="seatgeek")), c, now=NOW)            # no sale client at all
+    assert out["reasons"] == ["no_sale_accept_token"]
+    out = lv.tick(Rpc(_buy_job(sell_market="gotickets")), Client(create={"id": 3}), now=NOW, sales=Sales())
+    assert out["phase"] == "buy_sent"
+
+
+def test_accept_is_only_counted_when_the_re_read_shows_it():
+    orders = {"9001": {"state": "accepted"}, "555": {"state": "pending"}}
+    out = lv.tick(Rpc(_poll_job()), Client(orders=dict(orders), accept={}, after_accept={"state": "pending"}), now=NOW)
+    assert out["phase"] == "accept_failed" and out["reasons"] == ["accept_unverified"]
+    out = lv.tick(Rpc(_poll_job()), Client(orders=dict(orders), accept={}, after_accept={"state": "rejected"}), now=NOW)
+    assert out["phase"] == "accept_failed" and out["reasons"] == ["sale_rejected_after_accept"]
+    s = Sales(after=None)
+    out = lv.tick(Rpc(_poll_job(sell_market="vivid")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
+    assert out["phase"] == "accepted" and out["sale_state"] is None     # left UNCONFIRMED, no status text
+
+
+def test_an_unreadable_re_read_is_unverified():
+    class FlakySales(Sales):
+        def sale_state(self, market, key):
+            if any(c[0] == "accept" for c in self.calls):
+                raise RuntimeError("timeout")
+            return super().sale_state(market, key)
+    out = lv.tick(Rpc(_poll_job(sell_market="seatgeek")), Client(orders={"9001": {"state": "accepted"}}), now=NOW,
+                  sales=FlakySales(state="submitted"))
+    assert out["phase"] == "accept_failed" and out["reasons"] == ["accept_unverified"]
+    assert "re-read failed: RuntimeError" in out["live_error"]
