@@ -11,9 +11,9 @@ approved). This module is what a live worker runs per row, and it re-checks the 
 guards itself right before each step so a stale row can never spend (defence in depth).
 
 Nothing here can reach a market. The only transport is :class:`RefusingTransport`, which
-raises; ``LIVE_ENABLED`` is False. Going live (CLAUDE.md RULE 2) is a separate PR with the
-operator's written authorization, buyer credentials and a write client restricted to the
-buy/accept endpoints in ``core/n2s_autobuy.py`` — ``scripts/check_readonly.py`` is unchanged.
+raises; ``LIVE_ENABLED`` is False. The live EVO path (operator authorization 2026-11-09, EVO
+only, one live run) is ``core/n2s_autobuy_live.py`` + ``evo_buy_client.py``; it reuses
+:func:`buy_guards` and :func:`next_action` from here.
 """
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def buy_guards(row: dict, *, now: datetime, spend_today: float, buys_today: int,
     confirm_by = _ts(row.get("sub_confirm_by"))
     if confirm_by is None or confirm_by - now < timedelta(seconds=c["min_confirm_window_s"]):
         reasons.append("not_enough_time_for_market")
-    if row.get("state") not in ("shadow_buy", "approved"):
+    if row.get("state") not in ("shadow_buy", "live_buy", "approved"):
         reasons.append(f"state_{row.get('state')}")
     return reasons
 

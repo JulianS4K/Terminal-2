@@ -1963,6 +1963,59 @@ def scheduler_watchdog_status(_=Depends(require_auth)):
     return _sched_watchdog_last
 
 
+# ---------------------------------------------------------------------------
+# N2S auto-buy LIVE worker (D7) — EVO only, one live run (operator 2026-11-09).
+#
+# Off unless N2S_AUTOBUY_LIVE=1 on this service AND n2s_autobuy_config.mode = 'live'.
+# Each tick claims at most one row through n2s_autobuy_live_claim() (a row lock + lease,
+# so several web workers never act on the same row) and runs one market step via
+# core/n2s_autobuy_live.py → evo_buy_client.py (the path-pinned EVO write client).
+# ---------------------------------------------------------------------------
+_AUTOBUY_LIVE_INTERVAL_S = float(os.environ.get("N2S_AUTOBUY_LIVE_INTERVAL_SECONDS", "15"))
+_autobuy_live_last: dict = {"at": None, "result": None, "error": None}
+
+
+async def _autobuy_live_tick():
+    from core import n2s_autobuy_live
+    from evo_buy_client import EvoBuyClient
+
+    def _call():
+        def rpc(name, params):
+            return require_sb().rpc(name, params).execute().data
+        return n2s_autobuy_live.tick(rpc, EvoBuyClient(TOKEN, SECRET))
+
+    out = await asyncio.to_thread(_call)
+    _autobuy_live_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    if out.get("action") != "idle":
+        _log.warning("n2s_autobuy_live: %s", out)
+    return out
+
+
+async def _autobuy_live_loop():
+    if os.environ.get("N2S_AUTOBUY_LIVE") != "1" or sb is None or not (TOKEN and SECRET) or SANDBOX:
+        _log.info("n2s_autobuy_live: disabled (N2S_AUTOBUY_LIVE != 1, no DB / EVO creds, or sandbox)")
+        return
+    _log.warning("n2s_autobuy_live: started (every %ss)", _AUTOBUY_LIVE_INTERVAL_S)
+    while True:
+        try:
+            await _autobuy_live_tick()
+        except Exception as e:  # never let the loop die; the row's lease lapses and it is re-polled
+            _autobuy_live_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("n2s_autobuy_live: tick failed: %s", e)
+        await asyncio.sleep(_AUTOBUY_LIVE_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_autobuy_live():  # pragma: no cover - startup hook; loop covered via _autobuy_live_loop
+    asyncio.create_task(_autobuy_live_loop())
+
+
+@app.get("/api/admin/n2s-autobuy-live/status")
+def autobuy_live_status(_=Depends(require_auth)):
+    """Last live auto-buy tick (auth-gated)."""
+    return {"enabled": os.environ.get("N2S_AUTOBUY_LIVE") == "1", **_autobuy_live_last}
+
+
 # ---------- Site essentials (SEO + browser-tab UX) ----------
 #
 # Browsers + crawlers probe /robots.txt + /sitemap.xml + /favicon.ico at fixed

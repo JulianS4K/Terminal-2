@@ -480,3 +480,53 @@ def test_audit_script_catches_removed_guard(tmp_path: Path):
         assert "evo_client.py" in out
     finally:
         client_path.write_text(original, encoding="utf-8")
+
+
+# ---------- evo_buy_client (operator authorization 2026-11-09: EVO buy + accept only) ----------
+
+def test_evo_buy_client_is_registered_with_a_pinned_path_allowlist():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["evo_buy_client.py"] == frozenset({"GET", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["evo_buy_client.py"] in (REPO_ROOT / "evo_buy_client.py").read_text()
+
+
+def test_evo_buy_guard_refuses_any_other_write():
+    from evo_buy_client import _assert_readonly_method, EvoBuyError
+    for method, path in (("POST", "/v9/orders/1/reject"), ("POST", "/v9/ticket_groups/1"),
+                         ("PUT", "/v9/orders/1"), ("DELETE", "/v9/orders/1"), ("PATCH", "/v9/orders")):
+        with pytest.raises(EvoBuyError):
+            _assert_readonly_method(method, path)
+
+
+def _load_check_module():
+    spec = importlib.util.spec_from_file_location("check_readonly_under_test", CHECK_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_audit_catches_a_widened_evo_write_allowlist(tmp_path: Path, monkeypatch):
+    chk = _load_check_module()
+    text = (REPO_ROOT / "evo_buy_client.py").read_text()
+    for name in chk.CLIENT_FILES:
+        src = REPO_ROOT / name
+        (tmp_path / name).write_text(src.read_text())
+    widened = text.replace(r'r"^/v9/orders/\d+/accept$")', r'r"^/v9/orders/\d+/accept$", r"^/v9/orders/\d+/reject$")')
+    assert widened != text
+    (tmp_path / "evo_buy_client.py").write_text(widened)
+    monkeypatch.setattr(chk, "ROOT", tmp_path)
+    out = chk.check_guard_tokens()
+    assert any("evo_buy_client.py" in v and "EVO_WRITE_PATHS" in v for v in out)
+
+
+def test_audit_catches_pgsql_http_post_to_a_broker(tmp_path: Path, monkeypatch):
+    chk = _load_check_module()
+    mig = tmp_path / "supabase" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "1_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.ticketevolution.com/v9/orders', NULL, NULL, '{}'));\n")
+    (mig / "2_bad.sql").write_text("SELECT extensions.http_post('https://gotickets.com/rest/pro/api/orders', '{}');\n")
+    (mig / "3_ok.sql").write_text("SELECT extensions.http(('POST', 'https://api.resend.com/emails', NULL, NULL, '{}'));\n")
+    monkeypatch.setattr(chk, "ROOT", tmp_path)
+    out = chk.check_plpgsql_writes()
+    assert len(out) == 2 and any("1_bad.sql" in v for v in out) and any("2_bad.sql" in v for v in out)
