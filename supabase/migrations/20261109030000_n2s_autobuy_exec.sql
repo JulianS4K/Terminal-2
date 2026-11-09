@@ -41,6 +41,11 @@
 -- needs buyer credentials, the operator's written authorization for the write endpoints
 -- (CLAUDE.md RULE 2) and a separate PR that adds the guarded write client.
 --
+-- Buy email (operator 2026-11-09: "send an email to me containing both the evo buy id and sale
+-- it bought for id"): n2s_autobuy_notify_tick() emails email_to through Resend for every buy
+-- that has a buy_order_id (live), naming the purchase id and the sale order it covers — and for
+-- shadow buys too when email_shadow is on. It also emails once when the EVO cap auto-stops.
+--
 -- The approval text goes to Twilio (SMS, or WhatsApp when notify_channel = 'whatsapp') from
 -- n2s_autobuy_notify_tick(); it is inert until notify_to / notify_from are set in
 -- n2s_autobuy_config. No market API is called.
@@ -72,6 +77,10 @@ CREATE TABLE IF NOT EXISTS public.n2s_autobuy_config (
   evo_stopped           boolean     NOT NULL DEFAULT false,
   evo_stopped_at        timestamptz,
   evo_stopped_reason    text,
+  evo_stop_emailed_at   timestamptz,
+  email_to              text        DEFAULT 'julian@s4kent.com',  -- operator 2026-11-09: buy emails
+  email_from            text        DEFAULT 'N2S Auto-buy <onboarding@resend.dev>',
+  email_shadow          boolean     NOT NULL DEFAULT false,      -- also email shadow buys (to test)
   updated_at            timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO public.n2s_autobuy_config (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
@@ -104,6 +113,9 @@ CREATE TABLE IF NOT EXISTS public.n2s_autobuy_exec (
   evo_spent_before numeric,
   notified_at      timestamptz,
   notify_http      integer,
+  buy_order_id     text,        -- our purchase id on the sub's market (set by the live worker)
+  emailed_at       timestamptz,
+  email_http       integer,
   decided_at       timestamptz,
   created_at       timestamptz NOT NULL DEFAULT now()
 );
@@ -159,7 +171,9 @@ DECLARE
   v_tz_today date := (now() AT TIME ZONE 'America/New_York')::date;
   v_state    text;
 BEGIN
-  SELECT * INTO c FROM public.n2s_autobuy_config WHERE id;
+  -- FOR UPDATE serializes enqueues: concurrent would_buys queue here, so each sees the spend
+  -- the others committed and two buys can never both pass the daily / EVO project cap.
+  SELECT * INTO c FROM public.n2s_autobuy_config WHERE id FOR UPDATE;
   SELECT * INTO i FROM public.n2s_items WHERE n2s_id = NEW.n2s_id;
   IF EXISTS (SELECT 1 FROM public.n2s_autobuy_exec WHERE n2s_id = NEW.n2s_id) THEN
     RETURN NULL;                                         -- one attempt per sale; never a retry
@@ -286,7 +300,7 @@ AS $function$
 DECLARE
   c    public.n2s_autobuy_config%ROWTYPE;
   e    RECORD;
-  sid  text; tok text; pre text; body text;
+  sid  text; tok text; pre text; body text; rk text;
   resp extensions.http_response;
   n    int := 0;
 BEGIN
@@ -294,6 +308,54 @@ BEGIN
   -- an unanswered request lapses when the sub can no longer be confirmed in time
   UPDATE public.n2s_autobuy_exec SET state = 'approval_expired', decided_at = now()
    WHERE state = 'awaiting_approval' AND sub_confirm_by - now() < make_interval(secs => c.min_confirm_window_s);
+  -- Buy emails: the purchase id and the sale it covers (Resend). Then the EVO auto-stop email.
+  SELECT max(decrypted_secret) FILTER (WHERE name = 'RESEND_API_KEY') INTO rk FROM vault.decrypted_secrets;
+  IF rk IS NOT NULL AND c.email_to IS NOT NULL AND c.email_from IS NOT NULL THEN
+    PERFORM set_config('http.timeout_msec', '5000', true);
+    FOR e IN SELECT * FROM public.n2s_autobuy_exec
+              WHERE emailed_at IS NULL
+                AND (buy_order_id IS NOT NULL OR (c.email_shadow AND state IN ('shadow_buy', 'approved')))
+              ORDER BY exec_id LIMIT 5 LOOP
+      body := format(E'%s buy for N2S sale %s\n\n'
+                     || E'Buy (purchase) id: %s on %s, listing %s\n'
+                     || E'Sale it covers:    order %s on %s\n\n'
+                     || E'Event: %s (%s)\nQty %s, buy $%s, sale $%s, margin $%s\n'
+                     || 'Sub must confirm by %s ET or the sale is not accepted.',
+                     CASE WHEN e.buy_order_id IS NULL THEN 'SHADOW (not sent)' ELSE 'LIVE' END, e.n2s_id,
+                     COALESCE(e.buy_order_id, 'none - shadow mode'),
+                     CASE e.sub_source WHEN 'tevo' THEN 'EVO' WHEN 'gotickets' THEN 'GoTickets' ELSE e.sub_source END,
+                     e.sub_listing_id, e.order_number, e.sell_market, e.event_name, e.event_dt_local, e.qty,
+                     e.sub_total_usd, e.sold_total_usd, e.margin_usd,
+                     to_char(e.sub_confirm_by AT TIME ZONE 'America/New_York', 'HH24:MI:SS'));
+      BEGIN
+        resp := extensions.http(('POST', 'https://api.resend.com/emails',
+                  ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
+                  jsonb_build_object('from', c.email_from, 'to', jsonb_build_array(c.email_to),
+                    'subject', format('N2S %s buy: %s purchase %s for sale %s',
+                                      CASE WHEN e.buy_order_id IS NULL THEN 'SHADOW' ELSE 'LIVE' END,
+                                      CASE e.sub_source WHEN 'tevo' THEN 'EVO' ELSE 'GoTickets' END,
+                                      COALESCE(e.buy_order_id, 'n/a'), e.order_number),
+                    'text', body)::text)::extensions.http_request);
+        UPDATE public.n2s_autobuy_exec SET emailed_at = now(), email_http = resp.status WHERE exec_id = e.exec_id;
+      EXCEPTION WHEN OTHERS THEN
+        UPDATE public.n2s_autobuy_exec SET emailed_at = now(), email_http = -1 WHERE exec_id = e.exec_id;
+      END;
+    END LOOP;
+    IF c.evo_stopped AND c.evo_stop_emailed_at IS NULL THEN
+      BEGIN
+        resp := extensions.http(('POST', 'https://api.resend.com/emails',
+                  ARRAY[extensions.http_header('Authorization', 'Bearer ' || rk)], 'application/json',
+                  jsonb_build_object('from', c.email_from, 'to', jsonb_build_array(c.email_to),
+                    'subject', 'N2S auto-buy: EVO buying STOPPED at the project cap',
+                    'text', format(E'%s\n\nEVO subs stay blocked until you review and run '
+                                   || 'n2s_autobuy_evo_resume() (or n2s_autobuy_evo_resume(<new cap>)).',
+                                   c.evo_stopped_reason))::text)::extensions.http_request);
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END;
+      UPDATE public.n2s_autobuy_config SET evo_stop_emailed_at = now() WHERE id;
+    END IF;
+  END IF;
+
   IF c.notify_to IS NULL OR c.notify_from IS NULL THEN RETURN 0; END IF;
   SELECT max(decrypted_secret) FILTER (WHERE name = 'Twilio_Account SID'),
          max(decrypted_secret) FILTER (WHERE name = 'Twilio_Auth Token')
@@ -354,7 +416,7 @@ BEGIN
     RAISE EXCEPTION 'cap must be positive';
   END IF;
   UPDATE public.n2s_autobuy_config
-     SET evo_stopped = false, evo_stopped_at = NULL, evo_stopped_reason = NULL,
+     SET evo_stopped = false, evo_stopped_at = NULL, evo_stopped_reason = NULL, evo_stop_emailed_at = NULL,
          evo_project_cap_usd = COALESCE(p_new_cap_usd, evo_project_cap_usd), updated_at = now()
    WHERE id;
   RETURN format('EVO buying resumed; project cap $%s',
