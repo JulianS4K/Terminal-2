@@ -105,7 +105,12 @@ class EvoBuyClient:
             raise EvoWriteUnknown(f"{path}: HTTP {resp.status_code}")
         if resp.status_code >= 400:
             raise EvoWriteRejected(resp.status_code, (resp.text or "")[:500])
-        return resp.json() if resp.content else {}
+        try:
+            return resp.json() if resp.content else {}
+        except ValueError as e:
+            if method == "POST":  # the write landed (2xx) but we cannot read what it made
+                raise EvoWriteUnknown(f"{path}: unreadable response") from e
+            raise
 
     # ---------- reads ----------
 

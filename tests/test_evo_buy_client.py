@@ -136,3 +136,12 @@ def test_buy_order_body():
                                                       "items": [{"ticket_group_id": 1, "quantity": 1,
                                                                  "price": "1.00"}]}
     assert eb.SHIPMENT_FOR_FORMAT["TM_mobile"] == "TMMobile"
+
+
+def test_an_unreadable_write_response_is_unknown_and_a_read_one_raises():
+    bad = SimpleNamespace(status_code=201, content=b"<html>", text="<html>", json=lambda: json.loads("<html>"))
+    with pytest.raises(eb.EvoWriteUnknown, match="unreadable"):
+        _client(bad).create_order({})
+    bad2 = SimpleNamespace(status_code=200, content=b"<html>", text="<html>", json=lambda: json.loads("<html>"))
+    with pytest.raises(ValueError):
+        _client(bad2).get_order(1)

@@ -417,8 +417,10 @@ Since 2026-11-04 (`20261104170000`) they also skip a **single-letter vs double-l
   runs are used up (`live_runs_used_up`); a row that passes gets state `live_buy`. The web worker
   (`server.py` → `core/n2s_autobuy_live.py`, every 15 s, only with env `N2S_AUTOBUY_LIVE=1`) takes
   one row at a time from `n2s_autobuy_live_claim()` (config row lock + `FOR UPDATE SKIP LOCKED` +
-  a 45 s lease; a new buy uses up a live run **before** anything is sent) and records each step with
-  `n2s_autobuy_live_record()` in `phase`: `buying` → `buy_sent` → `sub_accepted` → `accepted`, or
+  a 180 s lease with its own `lease_token`; a new buy uses up a live run **before** anything is
+  sent) and records each step with `n2s_autobuy_live_record()`, which only writes under that
+  unexpired lease — the worker re-checks it right before each market write, and a row left in
+  `buying` past its lease becomes `buy_unknown` and sets `kill_switch`. Steps land in `phase`: `buying` → `buy_sent` → `sub_accepted` → `accepted`, or
   `stopped` / `buy_unknown` / `accept_failed` / `accept_unknown`. The buy step re-checks the
   guards, reads the ticket group fresh (not ours — brokerage 1768 / `owned`; enough tickets; a split
   that fits; wholesale × qty not above our quote; event > 24 h out by EVO's own UTC start) and

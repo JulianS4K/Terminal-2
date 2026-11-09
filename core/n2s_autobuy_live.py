@@ -37,9 +37,18 @@ OUR_BROKERAGE_ID = 1768  # S4K Entertainment
 Rpc = Callable[[str, dict], Any]
 
 
-def _record(rpc: Rpc, exec_id: int, **patch: Any) -> dict:
-    rpc("n2s_autobuy_live_record", {"p_exec_id": exec_id, "p_patch": patch})
-    return patch
+def _record(rpc: Rpc, job: dict, **patch: Any) -> dict:
+    """Record one step under this worker's lease. The DB refuses ('lease_lost') once the lease
+    has run out or another claim holds the row."""
+    row = job["row"]
+    got = rpc("n2s_autobuy_live_record",
+              {"p_exec_id": row["exec_id"], "p_token": row.get("lease_token"), "p_patch": patch})
+    return {**patch, "recorded": got}
+
+
+def _hold(rpc: Rpc, job: dict, phase: str, **patch: Any) -> bool:
+    """Re-check the lease right before a market write: True only if this worker still holds it."""
+    return _record(rpc, job, phase=phase, **patch)["recorded"] == phase
 
 
 def ticket_group_checks(tg: dict, *, qty: int, sub_total: float, now: datetime, min_lead_s: int) -> list[str]:
@@ -64,66 +73,73 @@ def ticket_group_checks(tg: dict, *, qty: int, sub_total: float, now: datetime, 
 
 
 def _buy(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
-    row, cfg, eid = job["row"], job["cfg"], job["row"]["exec_id"]
+    row, cfg = job["row"], job["cfg"]
     guard_row = {**row, "event_start_utc": row.get("event_dt_local")}  # venue-local read as UTC: earlier, so safe
     reasons = buy_guards(guard_row, now=now, spend_today=float(row.get("spend_today_before") or 0),
                          buys_today=0, failures_today=0, project_spent=float(row.get("project_spent_before") or 0),
                          cfg=cfg)
     if reasons:
-        return _record(rpc, eid, phase="stopped", reasons=reasons)
+        return _record(rpc, job, phase="stopped", reasons=reasons)
     try:
         tg = client.get_ticket_group(row["sub_listing_id"])
     except EvoWriteRejected as e:
-        return _record(rpc, eid, phase="stopped", reasons=["listing_gone"], live_error=str(e))
+        return _record(rpc, job, phase="stopped", reasons=["listing_gone"], live_error=str(e))
     except requests.RequestException as e:  # nothing was sent; the row stops (no retry)
-        return _record(rpc, eid, phase="stopped", reasons=["listing_read_failed"], live_error=type(e).__name__)
+        return _record(rpc, job, phase="stopped", reasons=["listing_read_failed"], live_error=type(e).__name__)
     reasons = ticket_group_checks(tg, qty=int(row["qty"]), sub_total=float(row["sub_total_usd"]), now=now,
                                   min_lead_s=int(cfg["min_event_lead_s"]))
     if reasons:
-        return _record(rpc, eid, phase="stopped", reasons=reasons)
+        return _record(rpc, job, phase="stopped", reasons=reasons)
     body = buy_order_body(ticket_group_id=tg["id"], quantity=int(row["qty"]), price_ea=float(tg["wholesale_price"]),
                           seller_office_id=tg["office"]["id"], buyer_office_id=int(cfg["evo_buyer_office_id"]),
                           shipment_type=SHIPMENT_FOR_FORMAT[tg["format"]],
                           email_address_id=cfg.get("evo_email_address_id"),
                           note=f"N2S auto-cover for EVO sale {row.get('sale_order_key')} (n2s {row['n2s_id']})")
+    if not _hold(rpc, job, "buying"):
+        return {"phase": "lease_lost"}  # nothing sent; the claim sweep decides what happens to the row
     try:
         resp = client.create_order(body)
     except EvoWriteRejected as e:
-        return _record(rpc, eid, phase="stopped", reasons=["buy_failed"], live_error=str(e))
+        return _record(rpc, job, phase="stopped", reasons=["buy_failed"], live_error=str(e))
     except EvoWriteUnknown as e:
-        return _record(rpc, eid, phase="buy_unknown", reasons=["buy_unknown"], live_error=str(e))
-    order = (resp.get("orders") or [resp])[0]
-    if not order.get("id"):
-        return _record(rpc, eid, phase="buy_unknown", reasons=["buy_unknown"],
-                       live_error="no order id in the EVO response")
-    total = order.get("total")
-    note = None if total is None or float(total) <= float(row["sub_total_usd"]) + 0.01 else \
-        f"EVO total ${total} is above the quoted ${row['sub_total_usd']}"
-    return _record(rpc, eid, phase="buy_sent", buy_order_id=str(order["id"]), buy_state=order.get("state"),
-                   live_error=note)
+        return _record(rpc, job, phase="buy_unknown", reasons=["buy_unknown"], live_error=str(e))
+    try:  # the buy was sent: anything going wrong from here is an unknown outcome, never a silent one
+        order = (resp.get("orders") or [resp])[0]
+        if not order.get("id"):
+            raise ValueError("no order id in the EVO response")
+        total = order.get("total")
+        note = None if total is None or float(total) <= float(row["sub_total_usd"]) + 0.01 else \
+            f"EVO total ${total} is above the quoted ${row['sub_total_usd']}"
+        return _record(rpc, job, phase="buy_sent", buy_order_id=str(order["id"]), buy_state=order.get("state"),
+                       live_error=note)
+    except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy
+        return _record(rpc, job, phase="buy_unknown", reasons=["buy_unknown"],
+                       live_error=f"{type(e).__name__}: {e}"[:300])
 
 
 def _poll(rpc: Rpc, client: EvoBuyClient, job: dict, now: datetime) -> dict:
-    row, cfg, eid = job["row"], job["cfg"], job["row"]["exec_id"]
+    row, cfg = job["row"], job["cfg"]
+    st = row.get("buy_state")
     if row["phase"] == "buy_sent":
         st = client.get_order(row["buy_order_id"]).get("state")
         step = next_action(row, now=now, sub_status=st)
         if step["action"] == "wait_sub":
-            return _record(rpc, eid, phase="buy_sent", buy_state=st)
+            return _record(rpc, job, phase="buy_sent", buy_state=st)
         if step["action"] == "stop":
-            return _record(rpc, eid, phase="stopped", buy_state=st, reasons=[step["reason"]])
-        _record(rpc, eid, phase="sub_accepted", buy_state=st)
+            return _record(rpc, job, phase="stopped", buy_state=st, reasons=[step["reason"]])
     sale = client.get_order(row["sale_order_key"]).get("state")
     if sale != "pending":
-        return _record(rpc, eid, phase="stopped", sale_state=sale, reasons=["sale_not_pending"])
+        return _record(rpc, job, phase="stopped", buy_state=st, sale_state=sale, reasons=["sale_not_pending"])
+    if not _hold(rpc, job, "sub_accepted", buy_state=st, sale_state=sale):
+        return {"phase": "lease_lost"}  # another worker may hold the row now: do not accept
     try:
         out = client.accept_order(row["sale_order_key"], int(cfg["evo_reviewer_id"]))
     except EvoWriteRejected as e:
-        return _record(rpc, eid, phase="accept_failed", sale_state=sale, reasons=["accept_failed"], live_error=str(e))
+        return _record(rpc, job, phase="accept_failed", sale_state=sale, reasons=["accept_failed"], live_error=str(e))
     except EvoWriteUnknown as e:
-        return _record(rpc, eid, phase="accept_unknown", sale_state=sale, reasons=["accept_unknown"],
+        return _record(rpc, job, phase="accept_unknown", sale_state=sale, reasons=["accept_unknown"],
                        live_error=str(e))
-    return _record(rpc, eid, phase="accepted", sale_state=out.get("state") or "accepted")
+    return _record(rpc, job, phase="accepted", sale_state=out.get("state") or "accepted")
 
 
 def tick(rpc: Rpc, client: EvoBuyClient, now: datetime | None = None) -> dict:

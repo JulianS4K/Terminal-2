@@ -22,8 +22,14 @@
 --     or stopped / buy_unknown / accept_failed / accept_unknown. No phase ever goes back to
 --     buying: a stopped row is never retried. buy_unknown / accept_unknown (a write whose
 --     outcome is unknown) also set kill_switch, so nothing else runs until a person checks EVO.
---   * n2s_autobuy_live_claim(): hands one row to a worker under a 45 s lease (FOR UPDATE SKIP
---     LOCKED behind the config row lock), polls first, then at most one new buy.
+--   * n2s_autobuy_live_claim(): hands one row to a worker under a 180 s lease and a fresh
+--     lease_token (FOR UPDATE SKIP LOCKED behind the config row lock), polls first, then at most
+--     one new buy. A step makes at most three 20 s EVO calls, so the lease outlasts it.
+--     n2s_autobuy_live_record() only writes with the live token of an unexpired lease, and the
+--     worker records (and so re-checks the lease) right BEFORE each market write; the lease is
+--     released only on buy_sent (waiting on EVO) or an end phase. A row left in 'buying' after its
+--     lease ran out (worker died mid-buy, or the buy's result could not be recorded) is marked
+--     buy_unknown and sets kill_switch at the next claim: fail closed, a person checks EVO.
 --     The kill switch stops everything, polls included; project_stopped only stops new buys
 --     (a buy that reached the cap must still get its sale accepted).
 --   * n2s_autobuy_outcome_tick() (cron n2s_autobuy_outcome_1min): emails email_to the outcome of
@@ -36,7 +42,7 @@
 -- rollback: SELECT cron.unschedule('n2s_autobuy_outcome_1min');
 --           UPDATE n2s_autobuy_config SET mode = 'shadow';
 --           re-create n2s_autobuy_enqueue_trg() from 20261109200000;
---           DROP FUNCTION n2s_autobuy_live_claim(), n2s_autobuy_live_record(bigint, jsonb), n2s_autobuy_outcome_tick();
+--           DROP FUNCTION n2s_autobuy_live_claim(), n2s_autobuy_live_record(bigint, uuid, jsonb), n2s_autobuy_outcome_tick();
 
 ALTER TABLE public.n2s_autobuy_config DROP CONSTRAINT IF EXISTS n2s_autobuy_config_mode_check;
 ALTER TABLE public.n2s_autobuy_config ADD CONSTRAINT n2s_autobuy_config_mode_check
@@ -59,6 +65,7 @@ ALTER TABLE public.n2s_autobuy_exec
   ADD COLUMN IF NOT EXISTS sale_state         text,
   ADD COLUMN IF NOT EXISTS live_error         text,
   ADD COLUMN IF NOT EXISTS lease_until        timestamptz,
+  ADD COLUMN IF NOT EXISTS lease_token        uuid,
   ADD COLUMN IF NOT EXISTS live_started_at    timestamptz,
   ADD COLUMN IF NOT EXISTS live_updated_at    timestamptz,
   ADD COLUMN IF NOT EXISTS outcome_emailed_at timestamptz;
@@ -235,6 +242,16 @@ DECLARE
 BEGIN
   SELECT * INTO c FROM public.n2s_autobuy_config WHERE id FOR UPDATE;
   IF c.mode <> 'live' OR c.kill_switch THEN RETURN NULL; END IF;
+  -- Fail closed: a buy whose worker lost its lease may or may not have reached EVO.
+  UPDATE public.n2s_autobuy_exec
+     SET phase = 'buy_unknown', reasons = reasons || 'worker_lost'::text, lease_until = NULL, lease_token = NULL,
+         live_error = COALESCE(live_error, 'lease expired during the buy step: check EVO for this purchase'),
+         live_updated_at = now()
+   WHERE mode = 'live' AND phase = 'buying' AND lease_until < now();
+  IF FOUND THEN
+    UPDATE public.n2s_autobuy_config SET kill_switch = true, updated_at = now() WHERE id;
+    RETURN NULL;
+  END IF;
 
   SELECT * INTO e FROM public.n2s_autobuy_exec
    WHERE mode = 'live' AND phase IN ('buy_sent', 'sub_accepted')
@@ -256,7 +273,7 @@ BEGIN
   IF v_act IS NULL THEN RETURN NULL; END IF;
 
   UPDATE public.n2s_autobuy_exec
-     SET lease_until = now() + interval '45 seconds', live_updated_at = now(),
+     SET lease_until = now() + interval '180 seconds', lease_token = gen_random_uuid(), live_updated_at = now(),
          phase = CASE WHEN v_act = 'buy' THEN 'buying' ELSE phase END,
          live_started_at = COALESCE(live_started_at, now())
    WHERE exec_id = e.exec_id
@@ -276,14 +293,15 @@ BEGIN
       'evo_email_address_id', c.evo_email_address_id));
 END $function$;
 
--- The worker's result for one step. Releases the lease; an unknown write outcome kills buying.
-CREATE OR REPLACE FUNCTION public.n2s_autobuy_live_record(p_exec_id bigint, p_patch jsonb)
+-- The worker's result for one step, only under its own unexpired lease ('lease_lost' otherwise).
+-- An unknown write outcome sets kill_switch whatever the lease says.
+CREATE OR REPLACE FUNCTION public.n2s_autobuy_live_record(p_exec_id bigint, p_token uuid, p_patch jsonb)
  RETURNS text
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public', 'pg_temp'
 AS $function$
-DECLARE v_phase text := p_patch ->> 'phase';
+DECLARE v_phase text := p_patch ->> 'phase'; v_ok boolean;
 BEGIN
   UPDATE public.n2s_autobuy_exec
      SET phase        = COALESCE(v_phase, phase),
@@ -292,14 +310,26 @@ BEGIN
          sale_state   = COALESCE(p_patch ->> 'sale_state', sale_state),
          live_error   = COALESCE(p_patch ->> 'live_error', live_error),
          reasons      = reasons || COALESCE(ARRAY(SELECT jsonb_array_elements_text(p_patch -> 'reasons')), '{}'),
-         lease_until  = NULL,
+         lease_until  = CASE WHEN v_phase IN ('buying', 'sub_accepted') THEN lease_until END,
+         lease_token  = CASE WHEN v_phase IN ('buying', 'sub_accepted') THEN lease_token END,
          live_updated_at = now()
    WHERE exec_id = p_exec_id AND mode = 'live' AND phase IS NOT NULL
-     AND phase NOT IN ('accepted', 'stopped', 'buy_unknown', 'accept_failed', 'accept_unknown');
-  IF NOT FOUND THEN RETURN 'not_recorded'; END IF;
+     AND phase NOT IN ('accepted', 'stopped', 'buy_unknown', 'accept_failed', 'accept_unknown')
+     AND lease_token = p_token AND lease_until > now();
+  v_ok := FOUND;
   IF v_phase IN ('buy_unknown', 'accept_unknown') THEN
     UPDATE public.n2s_autobuy_config SET kill_switch = true, updated_at = now() WHERE id;
   END IF;
+  IF NOT v_ok AND p_patch ? 'buy_order_id' THEN
+    -- the buy went through but this worker's lease is gone: keep the purchase id, fail closed
+    UPDATE public.n2s_autobuy_exec
+       SET buy_order_id = COALESCE(buy_order_id, p_patch ->> 'buy_order_id'), phase = 'buy_unknown',
+           reasons = reasons || 'lease_lost_after_buy'::text, lease_until = NULL, lease_token = NULL,
+           live_updated_at = now()
+     WHERE exec_id = p_exec_id AND mode = 'live' AND phase = 'buying';
+    UPDATE public.n2s_autobuy_config SET kill_switch = true, updated_at = now() WHERE id;
+  END IF;
+  IF NOT v_ok THEN RETURN 'lease_lost'; END IF;
   RETURN COALESCE(v_phase, 'recorded');
 END $function$;
 
@@ -354,9 +384,9 @@ BEGIN
   RETURN n;
 END $function$;
 
-REVOKE ALL ON FUNCTION public.n2s_autobuy_live_claim(), public.n2s_autobuy_live_record(bigint, jsonb),
+REVOKE ALL ON FUNCTION public.n2s_autobuy_live_claim(), public.n2s_autobuy_live_record(bigint, uuid, jsonb),
                        public.n2s_autobuy_outcome_tick() FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.n2s_autobuy_live_claim(), public.n2s_autobuy_live_record(bigint, jsonb),
+GRANT EXECUTE ON FUNCTION public.n2s_autobuy_live_claim(), public.n2s_autobuy_live_record(bigint, uuid, jsonb),
                           public.n2s_autobuy_outcome_tick() TO service_role;
 
 SELECT cron.schedule('n2s_autobuy_outcome_1min', '* * * * *', $$SELECT public.n2s_autobuy_outcome_tick();$$);

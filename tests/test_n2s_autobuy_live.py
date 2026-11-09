@@ -21,20 +21,27 @@ def _row(**kw):
     r = {"exec_id": 7, "n2s_id": 325, "state": "live_buy", "phase": "buying", "sub_source": "tevo",
          "sub_listing_id": "6744480374", "qty": 2, "sub_total_usd": 200.0, "sold_total_usd": 260.0,
          "event_dt_local": "2026-11-13T19:00:00", "sub_confirm_by": (NOW + timedelta(minutes=8)).isoformat(),
-         "spend_today_before": 0, "project_spent_before": 0, "sale_order_key": "555", "buy_order_id": None}
+         "spend_today_before": 0, "project_spent_before": 0, "sale_order_key": "555", "buy_order_id": None,
+         "lease_token": "tok-1"}
     r.update(kw)
     return r
 
 
 class Rpc:
-    def __init__(self, job):
-        self.job, self.records = job, []
+    """Fake DB: the lease holds (record echoes the phase) unless `lost` names phases it refuses,
+    or `boom` names a phase whose record raises."""
+
+    def __init__(self, job, lost=(), boom=()):
+        self.job, self.records, self.lost, self.boom = job, [], set(lost), set(boom)
 
     def __call__(self, name, params):
         if name == "n2s_autobuy_live_claim":
             return self.job
+        phase = params["p_patch"].get("phase")
+        if phase in self.boom:
+            raise RuntimeError("db blip")
         self.records.append(params)
-        return "ok"
+        return "lease_lost" if phase in self.lost else phase
 
 
 class Client:
@@ -64,8 +71,8 @@ class Client:
         return self._maybe(self.accept)
 
 
-def _tick(job, client):
-    rpc = Rpc(job)
+def _tick(job, client, **rpc_kw):
+    rpc = Rpc(job, **rpc_kw)
     out = lv.tick(rpc, client, now=NOW)
     return out, rpc.records, client.calls
 
@@ -91,8 +98,10 @@ def test_buy_happy_path_sends_one_order():
     assert body["seller_id"] == 1692 and body["buyer_id"] == 42029
     assert body["shipped_items"][0]["type"] == "TMMobile"
     assert body["shipped_items"][0]["items"] == [{"ticket_group_id": 6744480374, "quantity": 2, "price": "100.00"}]
-    assert recs == [{"p_exec_id": 7, "p_patch": {"phase": "buy_sent", "buy_order_id": "9001",
-                                                  "buy_state": "pending", "live_error": None}}]
+    assert [r["p_patch"]["phase"] for r in recs] == ["buying", "buy_sent"]
+    assert recs[1] == {"p_exec_id": 7, "p_token": "tok-1", "p_patch": {"phase": "buy_sent", "buy_order_id": "9001",
+                                                                       "buy_state": "pending", "live_error": None}}
+    assert out["recorded"] == "buy_sent"
 
 
 def test_buy_notes_a_total_above_the_quote_and_a_flat_response():
@@ -151,7 +160,8 @@ def _poll_job(**kw):
 
 def test_poll_waits_while_the_sub_is_pending():
     out, _recs, calls = _tick(_poll_job(), Client(orders={"9001": {"state": "pending"}}))
-    assert out == {"action": "poll", "exec_id": 7, "phase": "buy_sent", "buy_state": "pending"}
+    assert out == {"action": "poll", "exec_id": 7, "phase": "buy_sent", "buy_state": "pending",
+                   "recorded": "buy_sent"}
     assert calls == [("get", "9001")]
 
 
@@ -170,8 +180,24 @@ def test_poll_accepted_sub_then_accepts_the_pending_sale():
     assert calls[-1] == ("accept", "555", 53658)
     assert [r["p_patch"]["phase"] for r in recs] == ["sub_accepted", "accepted"]
     c = Client(orders={"555": {"state": "pending"}}, accept={})
-    out, _, _ = _tick({**_poll_job(), "row": _row(phase="sub_accepted", buy_order_id="9001")}, c)
-    assert out["sale_state"] == "accepted"
+    out, _, calls = _tick({**_poll_job(), "row": _row(phase="sub_accepted", buy_order_id="9001")}, c)
+    assert out["sale_state"] == "accepted" and calls[0] == ("get", "555")
+
+
+def test_lost_lease_never_sends_a_write():
+    c = Client(create={"id": 1})
+    out, _, calls = _tick(_buy_job(), c, lost={"buying"})
+    assert out == {"action": "buy", "exec_id": 7, "phase": "lease_lost"} and [k[0] for k in calls] == ["tg"]
+    c = Client(orders={"9001": {"state": "accepted"}, "555": {"state": "pending"}}, accept={})
+    out, _, calls = _tick(_poll_job(), c, lost={"sub_accepted"})
+    assert out["phase"] == "lease_lost" and not any(k[0] == "accept" for k in calls)
+
+
+def test_anything_failing_after_a_sent_buy_is_unknown():
+    out, _, _ = _tick(_buy_job(), Client(create={"orders": [{"id": 5, "total": "abc"}]}))
+    assert out["phase"] == "buy_unknown" and out["live_error"].startswith("ValueError")
+    out, recs, _ = _tick(_buy_job(), Client(create={"id": 5}), boom={"buy_sent"})
+    assert out["phase"] == "buy_unknown" and "db blip" in out["live_error"]
 
 
 def test_sale_no_longer_pending_is_left_alone():
