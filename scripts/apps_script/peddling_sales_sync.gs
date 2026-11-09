@@ -78,7 +78,7 @@ const PEDDLE = {
   BACKFILL: '60d',         // backfillPeddlingSales() window
   PAGE: 100,
   MAX_THREADS: 2000,
-  SHEET_ID: '1va20j1eUvM-rlDC34QZjc4i81TLSAlwXsjqISUZ2wYg',
+  SHEET_ID: '1FqRTKj5Dn1cUqEwqUptUamWm266GPPCTSrMqWeDmzE0',
   LABEL: 'Peddling/In Sheet',
   RPC: 'peddling_sales_ingest_from_apps_script',
   HEADER: [
@@ -98,7 +98,7 @@ const PEDDLE_COL = { EVENT_DT: 1, GRAND_TOTAL: 20, TOTAL_COST: 21, PROFIT: 22, I
 
 function setPeddlingConfig() {
   const literals = {
-    'PEDDLE_SHEET_ID'         : '1va20j1eUvM-rlDC34QZjc4i81TLSAlwXsjqISUZ2wYg',
+    'PEDDLE_SHEET_ID'         : '1FqRTKj5Dn1cUqEwqUptUamWm266GPPCTSrMqWeDmzE0',
     'PEDDLE_LABEL'            : 'Peddling/In Sheet',
     'PEDDLE_QUERY'            : 'subject:"PEDDLING SALE RECEIVED"',
     'SUPABASE_PROJECT_URL'    : 'https://hzrizjeaxlqcxfrtczpq.supabase.co',
