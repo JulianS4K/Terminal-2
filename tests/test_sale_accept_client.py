@@ -97,7 +97,13 @@ def test_write_failures_never_retry():
         _client(_resp(502, "")).accept("seatgeek", "x")
     with pytest.raises(EvoWriteUnknown):
         _client(requests.Timeout()).accept("gotickets", 1)
-    with pytest.raises(requests.ConnectionError):
-        _client(requests.ConnectionError()).sale_state("gotickets", 1)
+    leak = requests.ConnectionError("GET https://brokers.vividseats.com/webservices/v1/getOrder?apiToken=SECRET")
+    with pytest.raises(sa.SaleAcceptError) as ex:
+        _client(leak).sale_state("vivid", 1)
+    assert "SECRET" not in str(ex.value) and ex.value.__cause__ is None and ex.value.__suppress_context__
+    assert str(ex.value) == "/webservices/v1/getOrder: ConnectionError"
+    with pytest.raises(EvoWriteUnknown) as ex:
+        _client(requests.Timeout("https://brokers.vividseats.com/x?apiToken=SECRET")).accept("vivid", 1)
+    assert "SECRET" not in str(ex.value) and ex.value.__suppress_context__
     with pytest.raises(EvoWriteRejected):
         _client(_resp(503, "")).sale_state("seatgeek", "x")  # a failed read is a plain rejection

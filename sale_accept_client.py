@@ -70,9 +70,12 @@ class SaleAcceptClient:
         try:
             resp = self.session.request(method, url, timeout=self.timeout, **kw)
         except requests.RequestException as e:
+            # Never let the requests error (its message holds the full URL, Vivid's apiToken
+            # included) reach logs or the status route: path + error type only, no chain.
+            where = f"{urlsplit(url).path}: {type(e).__name__}"
             if method != "GET":
-                raise EvoWriteUnknown(f"{urlsplit(url).path}: {type(e).__name__}") from e
-            raise
+                raise EvoWriteUnknown(where) from None
+            raise SaleAcceptError(where) from None
         if resp.status_code >= 500 and method != "GET":
             raise EvoWriteUnknown(f"{urlsplit(url).path}: HTTP {resp.status_code}")
         if resp.status_code >= 400:
