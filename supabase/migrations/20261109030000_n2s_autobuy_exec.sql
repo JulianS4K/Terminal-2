@@ -27,8 +27,9 @@
 -- EVO project cap (operator 2026-11-09: "put strict spend cap on evo for full project at 500,
 -- autostop when it hits that cap, until i review"): every EVO-sub buy ever committed in the
 -- current mode (shadow_buy / awaiting_approval / approved) counts against evo_project_cap_usd
--- ($500). A buy that would cross it is blocked (over_evo_project_cap) and EVO buying STOPS
--- (evo_stopped); reaching the cap exactly stops it too. While stopped every EVO sub is blocked
+-- ($500). A buy that would otherwise go through but would cross it is blocked
+-- (over_evo_project_cap) and EVO buying STOPS (evo_stopped); reaching the cap exactly stops it
+-- too. (A sub already blocked by another guard is tagged over_evo_project_cap but does not stop.) While stopped every EVO sub is blocked
 -- (evo_stopped_pending_review). Only n2s_autobuy_evo_resume() — the operator's review —
 -- clears it. Shadow and a future live mode each count their own spend, so the stop is
 -- exercised now and live money starts its own $500.
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS public.n2s_autobuy_config (
   notify_to             text,       -- E.164, e.g. +15551234567 (unset = no text is sent)
   notify_from           text,       -- the Twilio number / WhatsApp sender (unset = no text is sent)
   evo_project_cap_usd   numeric     NOT NULL DEFAULT 500  CHECK (evo_project_cap_usd > 0),
+  evo_reviewer_id       integer     NOT NULL DEFAULT 53658,  -- operator 2026-11-09: tu3 (Office 3, the N2S EVO seller)
   evo_stopped           boolean     NOT NULL DEFAULT false,
   evo_stopped_at        timestamptz,
   evo_stopped_reason    text,
@@ -249,11 +251,15 @@ BEGIN
       IF c.evo_stopped THEN
         r := r || 'evo_stopped_pending_review'::text;
       ELSIF v_sub IS NOT NULL AND v_evo + v_sub > c.evo_project_cap_usd THEN
+        -- Stop EVO only when the cap is what blocks a buy that would otherwise go through; a sub
+        -- already blocked by another guard (e.g. a $1,800 one over the order cap) must not freeze EVO.
+        IF cardinality(r) = 0 THEN
+          UPDATE public.n2s_autobuy_config SET evo_stopped = true, evo_stopped_at = now(), updated_at = now(),
+                 evo_stopped_reason = format('dryrun %s: $%s would take EVO spend from $%s past the $%s cap',
+                                             NEW.dryrun_id, v_sub, v_evo, c.evo_project_cap_usd)
+           WHERE id;
+        END IF;
         r := r || 'over_evo_project_cap'::text;
-        UPDATE public.n2s_autobuy_config SET evo_stopped = true, evo_stopped_at = now(), updated_at = now(),
-               evo_stopped_reason = format('dryrun %s: $%s would take EVO spend from $%s past the $%s cap',
-                                           NEW.dryrun_id, v_sub, v_evo, c.evo_project_cap_usd)
-         WHERE id;
       END IF;
     END IF;
     v_state := CASE WHEN cardinality(r) > 0 THEN 'blocked'

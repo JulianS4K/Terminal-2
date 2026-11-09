@@ -111,7 +111,7 @@ def test_not_ours_and_other_markets():
     assert evo["go"] is True and s[3]["ok"] is True and s[3]["kind"] == "check"
     assert s[4]["request"]["url"] == "https://api.ticketevolution.com/v9/orders"
     assert s[4]["body"]["orders"][0]["ticket_group"]["id"] == "7792279723"
-    assert s[6]["request"]["url"].endswith("/v9/orders/473339/accept") and s[6]["body"] == {"reviewer_id": None}
+    assert s[6]["request"]["url"].endswith("/v9/orders/473339/accept") and s[6]["body"] == {"reviewer_id": 53658}
     # TickPick sub sold on TickPick.
     tp = a.plan_cover(_order(sub_source="tickpick", s4k_source="TickPick"), owned=False, now=NOW)
     s = {x["step"]: x for x in tp["steps"]}
