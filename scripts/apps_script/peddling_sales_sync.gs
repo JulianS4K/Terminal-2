@@ -25,7 +25,7 @@
  *      written earlier, or typed in by hand — matched on Invoice #) with the
  *      label PEDDLE_LABEL (default "Peddling/In Sheet"), and
  *   5. upserts every parsed sale into Supabase via the RPC
- *      public.peddling_sales_ingest_from_apps_script (mig 20261109170000).
+ *      public.peddling_sales_ingest_from_apps_script (mig 20261109172023).
  *      The upsert is keyed on the order number, so re-sending is harmless.
  *
  * The sheet and Supabase are independent: if one fails, the other still runs,
@@ -57,6 +57,8 @@
  *      (the sheet must have "Invoice #" in column Y, or nothing is written).
  *   4. installPeddlingTrigger() — every 5 minutes.
  *   Optional: backfillPeddlingSales() — same as a sync over 60 days.
+ *   One-off: repairPeddlingSeats() — fixes Vivid Seats rows written before
+ *   the parser fix (Start/End Seat held "Site Order # … Seats 23-25").
  *
  * Script properties:
  *   PEDDLE_SHEET_ID          — spreadsheet id (default: PEDDLE.SHEET_ID)
@@ -90,7 +92,7 @@ const PEDDLE = {
   ],
 };
 // 1-based column numbers used below
-const PEDDLE_COL = { EVENT_DT: 1, GRAND_TOTAL: 20, TOTAL_COST: 21, PROFIT: 22, INVOICE: 25 };
+const PEDDLE_COL = { EVENT_DT: 1, START_SEAT: 16, GRAND_TOTAL: 20, TOTAL_COST: 21, PROFIT: 22, INVOICE: 25 };
 
 /* ─────────────────────────────────────────────────────────────────────────
  * CONFIG — run ONCE, then blank the literal values so they don't sit in source.
@@ -138,6 +140,33 @@ function setupPeddlingSheet() {
   } else {
     console.log('Tab already has data; header left as is.');
   }
+}
+
+/**
+ * One-off fix for rows written before the "Vivid Seats" parser fix: their
+ * Start/End Seat cells hold "Site Order # … Seats 23-25". Takes the trailing
+ * "Seats X-Y" from such a cell and rewrites Start/End Seat. Touches no other
+ * cell and no row whose seats already look right.
+ */
+function repairPeddlingSeats() {
+  const sh = peddleSheet_();
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  const rng = sh.getRange(2, PEDDLE_COL.START_SEAT, last - 1, 2);
+  const vals = rng.getValues();
+  let fixed = 0;
+  const out = vals.map(([a, b]) => {
+    const bad = /Seats\s/i.test(String(a)) || /Seats\s/i.test(String(b));
+    if (!bad) return [a, b];
+    const src = /Seats\s/i.test(String(a)) ? String(a) : String(b);
+    const m = src.match(/Seats\s+([A-Za-z]*\d+)(?:\s*-\s*([A-Za-z]*\d+))?\s*$/i);
+    if (!m) return [a, b];
+    fixed++;
+    const n = v => (/^\d+$/.test(v) ? Number(v) : v);
+    return [n(m[1]), n(m[2] || m[1])];
+  });
+  if (fixed) rng.setValues(out);
+  console.log(`repairPeddlingSeats: fixed ${fixed} row(s).`);
 }
 
 function peddleRun_(window) {
@@ -221,13 +250,19 @@ function peddleParseBody_(body, subject) {
   const t = ' ' + String(body).replace(/[|\t\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
   const get = re => { const m = t.match(re); return m ? m[1].trim() : ''; };
   const money = re => get(re).replace(/,/g, '');
+  // Ticket fields are read only from the part AFTER "Ticket Details": the
+  // header part holds the site name, and "Vivid Seats" would otherwise be
+  // read as the Seats field (it was, in the first run).
+  const td = t.search(/ Ticket Details /i);
+  const d = td >= 0 ? t.slice(td) : t;
+  const getD = re => { const m = d.match(re); return m ? m[1].trim() : ''; };
   const DT = '(\\d{1,2}\\/\\d{1,2}\\/\\d{4}\\s+\\d{1,2}:\\d{2}\\s*[AP]M)';
 
   let pos = get(/Order #\s*(\d+)/);
   if (!pos) { const m = String(subject).match(/RECEIVED\s+(\d+)/i); pos = m ? m[1] : ''; }
   if (!pos) return null;
 
-  let eventName = get(/ Event\s+(?!Date\b)(.+?)\s+Venue\s/);
+  let eventName = getD(/ Event\s+(?!Date\b)(.+?)\s+Venue\s/);
   if (!eventName) {
     const m = String(subject).match(/\|\s*(.+?)\/[0-9a-f-]{36}\s*$/i);
     eventName = m ? m[1].trim() : '';
@@ -235,9 +270,9 @@ function peddleParseBody_(body, subject) {
   const src = get(/\[([A-Z0-9 _-]+)\]\s*PEDDLING/i) ||
               (String(subject).match(/\[([A-Z0-9 _-]+)\]/i) || [])[1] || 'PACIOLAN';
 
-  const seats = get(/ Seats\s+(.*?)\s*Qty\s/);
+  const seats = getD(/ Row\s+.+?\s+Seats\s+(.*?)\s+Qty\s/);
   const sm = seats.match(/^\s*([A-Za-z]*\d+)\s*-\s*([A-Za-z]*\d+)\s*$/);
-  const qty = get(/ Qty\s+(\d+)/);
+  const qty = getD(/ Qty\s+(\d+)/);
 
   return {
     pos_order:   pos,
@@ -245,13 +280,13 @@ function peddleParseBody_(body, subject) {
     sale_dt:     peddleLocalIso_(get(new RegExp('Sale Date\\s+' + DT, 'i'))),
     site:        get(/ Site\s+(.+?)\s+Site Order #/),
     site_order:  get(/Site Order #\s*(\S+)/),
-    tnow_ticket: get(/TNOW Ticket #\s*(\S+)/),
-    tu_ticket:   get(/TU Ticket #\s*(\S+)/),
-    event_dt:    peddleLocalIso_(get(new RegExp('Event Date\\s+' + DT, 'i'))),
+    tnow_ticket: getD(/TNOW Ticket #\s*(\S+)/),
+    tu_ticket:   getD(/TU Ticket #\s*(\S+)/),
+    event_dt:    peddleLocalIso_(getD(new RegExp('Event Date\\s+' + DT, 'i'))),
     event_name:  eventName,
-    venue:       get(/ Venue\s+(.+?)\s+Section\s/),
-    section:     get(/ Section\s+(.+?)\s+Row\s/),
-    row:         get(/ Row\s+(.+?)\s+Seats\s/),
+    venue:       getD(/ Venue\s+(.+?)\s+Section\s/),
+    section:     getD(/ Section\s+(.+?)\s+Row\s/),
+    row:         getD(/ Row\s+(.+?)\s+Seats\s/),
     seats:       seats,
     seat_start:  sm ? sm[1] : seats,
     seat_end:    sm ? sm[2] : seats,

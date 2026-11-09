@@ -1,7 +1,9 @@
--- Migration 20261109170000 · level:secondary-sales · lane:D0 · writes:peddling_sales,peddling_sales_ingest_from_apps_script · reads:vault(APPSCRIPT_INGEST_SECRET) · pre:20260515120000
+-- Migration 20261109172023 · level:secondary-sales · lane:D0 · writes:peddling_sales,peddling_sales_ingest_from_apps_script · reads:vault(APPSCRIPT_INGEST_SECRET) · pre:20260515120000
+--
+-- Already applied to prod · via MCP 2026-11-09 (operator-approved; recorded as version 20261109172023)
 --
 -- ============================================================================
--- Migration 20261109170000 — peddling sales ledger fed from Gmail (Apps Script)
+-- Migration 20261109172023 — peddling sales ledger fed from Gmail (Apps Script)
 --
 -- Lane:     D0 (orders)
 -- Touches:  peddling_sales (W), get_app_secret (R, existing allowlist entry)
@@ -67,7 +69,7 @@ REVOKE ALL ON TABLE public.peddling_sales FROM PUBLIC, anon, authenticated;
 GRANT ALL ON TABLE public.peddling_sales TO service_role;
 
 COMMENT ON TABLE public.peddling_sales IS
-  'Ledger of every Gmail "PEDDLING SALE RECEIVED" sale, one row per our order number. Written only by peddling_sales_ingest_from_apps_script (scripts/apps_script/peddling_sales_sync.gs). Mig 20261109170000.';
+  'Ledger of every Gmail "PEDDLING SALE RECEIVED" sale, one row per our order number. Written only by peddling_sales_ingest_from_apps_script (scripts/apps_script/peddling_sales_sync.gs). Mig 20261109172023.';
 
 -- 2. intake RPC -----------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.peddling_sales_ingest_from_apps_script(
@@ -177,7 +179,7 @@ REVOKE ALL ON FUNCTION public.peddling_sales_ingest_from_apps_script(jsonb, text
 GRANT EXECUTE ON FUNCTION public.peddling_sales_ingest_from_apps_script(jsonb, text) TO anon, service_role;
 
 COMMENT ON FUNCTION public.peddling_sales_ingest_from_apps_script(jsonb, text) IS
-  'Peddling-sales intake from scripts/apps_script/peddling_sales_sync.gs: upserts Gmail "PEDDLING SALE RECEIVED" sales into peddling_sales keyed on our order number. cancelled is sticky; mailbox keeps the first inbox. Secret-gated on APPSCRIPT_INGEST_SECRET (20261109170000).';
+  'Peddling-sales intake from scripts/apps_script/peddling_sales_sync.gs: upserts Gmail "PEDDLING SALE RECEIVED" sales into peddling_sales keyed on our order number. cancelled is sticky; mailbox keeps the first inbox. Secret-gated on APPSCRIPT_INGEST_SECRET (20261109172023).';
 
 -- rollback:
 --   DROP FUNCTION public.peddling_sales_ingest_from_apps_script(jsonb, text);
