@@ -1068,7 +1068,8 @@ def test_autobuy_live_status_route(client, monkeypatch):
 
 def test_autobuy_sale_client_caches_only_when_every_token_is_there(monkeypatch):
     import core.vault as vault
-    vals = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": "b", "SEATGEEK_API_TOKEN": None, "VIVID_API_TOKEN": "v"}
+    vals = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": "b", "SEATGEEK_API_TOKEN": None, "VIVID_API_TOKEN": "v",
+            "TICKPICK_API_TOKEN": "tp1"}
     monkeypatch.setattr(vault, "vault_secret", lambda db, name: vals[name])
     monkeypatch.setattr(app_module, "require_sb", lambda: object())
     monkeypatch.setattr(app_module, "_autobuy_sales_client", [])
@@ -1077,3 +1078,7 @@ def test_autobuy_sale_client_caches_only_when_every_token_is_there(monkeypatch):
     vals["SEATGEEK_API_TOKEN"] = "s"
     c2 = app_module._autobuy_sale_client()
     assert app_module._autobuy_sales_client == [c2] and app_module._autobuy_sale_client() is c2
+    # TickPick's token is replaced about daily: the cached client reads the current one on each use
+    assert c2.has_market("tickpick") and c2._tp_token() == "tp1"
+    vals["TICKPICK_API_TOKEN"] = "tp2"
+    assert c2._tp_token() == "tp2"

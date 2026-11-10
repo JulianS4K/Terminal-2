@@ -1985,7 +1985,9 @@ def _autobuy_sale_client():
         db = require_sb()
         c = SaleAcceptClient(
             gt_id=vault_secret(db, "GOTICKETS_ACCESS_ID"), gt_secret=vault_secret(db, "GOTICKETS_API_SECRET"),
-            sg_token=vault_secret(db, "SEATGEEK_API_TOKEN"), vivid_token=vault_secret(db, "VIVID_API_TOKEN"))
+            sg_token=vault_secret(db, "SEATGEEK_API_TOKEN"), vivid_token=vault_secret(db, "VIVID_API_TOKEN"),
+            # read on every use: tickpick_token_refresh replaces it about daily
+            tickpick_token=lambda: vault_secret(require_sb(), "TICKPICK_API_TOKEN"))
         if not all(c.has_market(m) for m in ("gotickets", "seatgeek", "vivid")):
             return c  # a token is missing (or Vault blipped): don't cache, re-read next tick
         _autobuy_sales_client.append(c)

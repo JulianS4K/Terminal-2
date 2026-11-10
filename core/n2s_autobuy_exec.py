@@ -38,7 +38,8 @@ DEFAULTS: dict[str, Any] = {
 
 # Purchase states on the market we bought the sub from.
 SUB_CONFIRMED = frozenset({"accepted", "confirmed", "completed", "shipped", "delivered", "fulfilled"})
-SUB_REJECTED = frozenset({"rejected", "denied", "declined", "cancelled", "canceled", "failed", "expired"})
+SUB_REJECTED = frozenset({"rejected", "denied", "declined", "cancelled", "canceled", "failed", "expired",
+                          "busted"})  # TickPick seller_status for a sale that fell through
 
 
 class RefusingTransport:

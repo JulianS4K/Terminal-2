@@ -292,3 +292,31 @@ def test_an_unreadable_re_read_is_unverified():
                   sales=FlakySales(state="submitted"))
     assert out["phase"] == "accept_failed" and out["reasons"] == ["accept_unverified"]
     assert "re-read failed: RuntimeError" in out["live_error"]
+
+
+def test_tickpick_buys_only_for_a_sale_our_login_still_shows_unconfirmed():
+    s = Sales(state="Unconfirmed")
+    c = Client(create={"id": 4})
+    out = lv.tick(Rpc(_buy_job(sell_market="tickpick")), c, now=NOW, sales=s)
+    assert out["phase"] == "buy_sent" and s.calls == [("state", "tickpick", "555")]
+    for state in ("Canceled", None):                       # lapsed, or not on our account
+        c = Client(create={"id": 5})
+        out = lv.tick(Rpc(_buy_job(sell_market="tickpick")), c, now=NOW, sales=Sales(state=state))
+        assert out["reasons"] == ["sale_not_pending"] and out["sale_state"] == state and c.calls == []
+
+    class Unreadable(Sales):
+        def sale_state(self, market, key):
+            raise EvoWriteRejected(404, "Not Found")
+    c = Client(create={"id": 6})
+    out = lv.tick(Rpc(_buy_job(sell_market="tickpick")), c, now=NOW, sales=Unreadable())
+    assert out["reasons"] == ["sale_read_failed"] and out["live_error"] == "EvoWriteRejected" and c.calls == []
+
+
+def test_tickpick_sale_accept_and_busted_after_accept():
+    s = Sales(state="Unconfirmed", after="Confirmed")
+    out = lv.tick(Rpc(_poll_job(sell_market="tickpick")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
+    assert out["phase"] == "accepted" and out["sale_state"] == "Confirmed"
+    assert s.calls == [("state", "tickpick", "555"), ("accept", "tickpick", "555"), ("state", "tickpick", "555")]
+    s = Sales(state="Unconfirmed", after="Busted")
+    out = lv.tick(Rpc(_poll_job(sell_market="tickpick")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
+    assert out["phase"] == "accept_failed" and out["reasons"] == ["sale_rejected_after_accept"]

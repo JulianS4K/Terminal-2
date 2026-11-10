@@ -1,4 +1,4 @@
-"""Sale-accept client for GoTickets, SeatGeek and Vivid — confirm OUR OWN pending sale.
+"""Sale-accept client for GoTickets, SeatGeek, Vivid and TickPick — confirm OUR OWN pending sale.
 
 Operator authorization 2026-11-10: "not just evo sales, any sales that have an active token and
 ability to confirm order". With evo_buy_client.py (EVO accept), this lets the N2S live worker
@@ -8,6 +8,10 @@ path-pinned by ``SALE_ACCEPT_WRITES`` (``scripts/check_readonly.py`` requires th
   GoTickets Seller Central  POST  sc.gotickets.com/rest/sales/{orderId}/confirm
   SeatGeek SellerDirect     PATCH sellerdirect-api.seatgeek.com/order   (order_id, status=confirmed)
   Vivid Broker Portal       POST  brokers.vividseats.com/webservices/v1/confirmOrder
+  TickPick seller API       POST  api.tickpick.com/1.0/orders/{orderNumber}/confirmation
+                                  (operator 2026-11-10: "add tickpick to auto-accept markets",
+                                  "build tickpick now", after N2S's TickPick sales were shown to
+                                  be visible to our TickPick seller login while open)
 
 There is no reject, cancel, price or listing write, and none may be added without the operator's
 written authorization (security-CRIT, CLAUDE.md RULE 2). Writes are never retried: a timeout or
@@ -16,6 +20,7 @@ written authorization (security-CRIT, CLAUDE.md RULE 2). Writes are never retrie
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,13 +36,13 @@ class SaleAcceptError(Exception):
 ALLOWED_HTTP_METHODS = frozenset({"GET", "PATCH", "POST"})
 
 # (method, host, path regex): the ONLY writes this client may send. Security-CRIT to widen.
-SALE_ACCEPT_WRITES = (("POST", "sc.gotickets.com", r"^/rest/sales/\d+/confirm$"), ("PATCH", "sellerdirect-api.seatgeek.com", r"^/order$"), ("POST", "brokers.vividseats.com", r"^/webservices/v1/confirmOrder$"))
+SALE_ACCEPT_WRITES = (("POST", "sc.gotickets.com", r"^/rest/sales/\d+/confirm$"), ("PATCH", "sellerdirect-api.seatgeek.com", r"^/order$"), ("POST", "brokers.vividseats.com", r"^/webservices/v1/confirmOrder$"), ("POST", "api.tickpick.com", r"^/1\.0/orders/\d+/confirmation$"))
 _WRITES = tuple((m, h, re.compile(p)) for m, h, p in SALE_ACCEPT_WRITES)
-READ_HOSTS = frozenset({"sc.gotickets.com", "sellerdirect-api.seatgeek.com", "brokers.vividseats.com"})
+READ_HOSTS = frozenset({"sc.gotickets.com", "sellerdirect-api.seatgeek.com", "brokers.vividseats.com", "api.tickpick.com"})
 
 
 def _assert_readonly_method(method: str, url: str = "") -> None:
-    """GET to the three sale hosts; a write only if it is one of SALE_ACCEPT_WRITES."""
+    """GET to the four sale hosts; a write only if it is one of SALE_ACCEPT_WRITES."""
     m = method.upper()
     parts = urlsplit(url)
     if m not in ALLOWED_HTTP_METHODS:
@@ -49,19 +54,32 @@ def _assert_readonly_method(method: str, url: str = "") -> None:
                               "sale accept (RULE 2, operator 2026-11-10).")
 
 
-# Sale states that mean "still waiting for us to accept" (from our order-timer log).
+# Sale states that mean "still waiting for us to accept" (from our order-timer log; TickPick's
+# seller_status from the N2S TickPick watch, 20261110040000).
 PENDING = {"gotickets": frozenset({"UNCONFIRMED"}), "seatgeek": frozenset({"submitted", "pending", "open"}),
-           "vivid": frozenset({"UNCONFIRMED"})}
+           "vivid": frozenset({"UNCONFIRMED"}), "tickpick": frozenset({"Unconfirmed"})}
+
+TokenSource = Callable[[], "str | None"]
 
 
 class SaleAcceptClient:
     def __init__(self, *, gt_id: str | None = None, gt_secret: str | None = None, sg_token: str | None = None,
-                 vivid_token: str | None = None, session: Any = None, timeout: float = 20.0):
+                 vivid_token: str | None = None, tickpick_token: TokenSource | str | None = None,
+                 session: Any = None, timeout: float = 20.0):
         self.gt_id, self.gt_secret, self.sg_token, self.vivid_token = gt_id, gt_secret, sg_token, vivid_token
+        # TickPick's token is replaced about daily (tickpick_token_refresh): pass a callable so each
+        # use reads the current one instead of a token cached at start-up.
+        self.tickpick_token = tickpick_token
         self.session = session or requests.Session()
         self.timeout = timeout
 
+    def _tp_token(self) -> str | None:
+        t = self.tickpick_token
+        return t() if callable(t) else t
+
     def has_market(self, market: str) -> bool:
+        if market == "tickpick":
+            return bool(self._tp_token())
         return {"gotickets": bool(self.gt_id and self.gt_secret), "seatgeek": bool(self.sg_token),
                 "vivid": bool(self.vivid_token)}.get(market, False)
 
@@ -86,6 +104,9 @@ class SaleAcceptClient:
         return {"X-Api-Access-Id": self.gt_id or "", "X-Api-Access-Secret": self.gt_secret or "",
                 "Accept": "application/json"}
 
+    def _tp_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self._tp_token() or ''}", "Accept": "application/json"}
+
     def sale_state(self, market: str, order_id: Any) -> str | None:
         """The market's own status of our sale (as the order timer reads it)."""
         oid = str(order_id)
@@ -101,6 +122,9 @@ class SaleAcceptClient:
                            params={"apiToken": self.vivid_token or "", "orderId": oid})
             m = re.search(r"<status>([^<]*)</status>", r.text or "")
             return m.group(1) if m else None
+        if market == "tickpick":
+            r = self._send("GET", f"https://api.tickpick.com/1.0/orders/{int(oid)}", headers=self._tp_headers())
+            return (r.json() or {}).get("seller_status")
         raise SaleAcceptError(f"no sale-accept support for {market!r}")
 
     def accept(self, market: str, order_id: Any) -> dict:
@@ -114,6 +138,9 @@ class SaleAcceptClient:
         elif market == "vivid":
             r = self._send("POST", "https://brokers.vividseats.com/webservices/v1/confirmOrder",
                            data={"apiToken": self.vivid_token or "", "orderId": oid, "shipNow": "false"})
+        elif market == "tickpick":  # ConfirmOrderRequest: no required fields
+            r = self._send("POST", f"https://api.tickpick.com/1.0/orders/{int(oid)}/confirmation",
+                           headers=self._tp_headers(), json={})
         else:
             raise SaleAcceptError(f"no sale-accept support for {market!r}")
         text = (r.text or "")[:300]

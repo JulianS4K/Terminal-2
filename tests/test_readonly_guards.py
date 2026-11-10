@@ -542,7 +542,9 @@ def test_sale_accept_guard_refuses_reject_and_other_writes():
     from sale_accept_client import _assert_readonly_method, SaleAcceptError
     for m, u in (("POST", "https://brokers.vividseats.com/webservices/v1/rejectOrder"),
                  ("POST", "https://sc.gotickets.com/rest/sales/1/cannot-retransfer-or-reissue"),
-                 ("DELETE", "https://sellerdirect-api.seatgeek.com/order")):
+                 ("DELETE", "https://sellerdirect-api.seatgeek.com/order"),
+                 ("POST", "https://api.tickpick.com/1.0/orders/1/rejection"),
+                 ("POST", "https://api.tickpick.com/1.0/token")):
         with pytest.raises(SaleAcceptError):
             _assert_readonly_method(m, u)
 
