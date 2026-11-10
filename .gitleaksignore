@@ -90,3 +90,11 @@ tests/fixtures/checkout_sections_six.html:generic-api-key:18
 # commit 7fffec4 quoted that join in an earlier version of this comment.
 a7dd99490b3cc1b7120c3960e8240543bb0cb36e:supabase/migrations/20261104190000_n2s_order_timer.sql:generic-api-key:96
 7fffec4a701ba29a219c663f65955fb791a61637:.gitleaksignore:generic-api-key:88
+
+# Reverted Oxylabs Agent Skills docs (PR #1071 history only; the files were removed in 58f83da and
+# never reach main). Their curl examples use the literal placeholder words USERNAME:PASSWORD, not
+# credentials. Kept so the PR secret-scan over the branch's earlier commits stays green.
+.claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:100
+.claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:110
+.claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:111
+.claude-plugins/oxylabs/skills/proxies/dedicated-isp.md:curl-auth-user:104
