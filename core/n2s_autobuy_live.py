@@ -1,4 +1,4 @@
-"""N2S auto-buy LIVE worker — an EVO sub covering a sale on EVO, GoTickets, SeatGeek or Vivid.
+"""N2S auto-buy LIVE worker — an EVO sub covering a sale on EVO, GoTickets, SeatGeek, Vivid or TickPick.
 
 Operator authorization 2026-11-09: "I authorize EVO only, build the live executor, limit to
 only 1 live run for testing". The database decides what may run (``n2s_autobuy_live_claim``:
@@ -6,8 +6,9 @@ mode 'live', not killed, the live-run allowance not used up, EVO sale + EVO sub,
 live_buy / approved, enough time left) and hands out one row at a time under a lease, so two
 web workers can never act on the same row. This module does the market steps:
 
-  buy    re-check the guards → read the ticket group fresh (not ours, enough tickets, a split
-         that fits, price not above our quote, event > 24 h out) → POST /v9/orders once
+  buy    re-check the guards → (TickPick sale: our seller login still shows it Unconfirmed) →
+         read the ticket group fresh (not ours, enough tickets, a split that fits, price not
+         above our quote, event > 24 h out) → POST /v9/orders once
   poll   read our purchase: accepted → read the sale, still pending → accept it (reviewer
          53658); rejected → stop; not accepted by sub_confirm_by → stop, sale NOT accepted
 
@@ -88,6 +89,16 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
                          cfg=cfg)
     if reasons:
         return _record(rpc, job, phase="stopped", reasons=reasons)
+    if market == "tickpick":
+        # An unconfirmed TickPick sale lapses and vanishes after 10-60 min, and N2S's TickPick sales
+        # were only shown visible to our seller login on 2026-11-10: buy only for a sale that login
+        # can read right now as Unconfirmed. Nothing has been sent yet, so a failed read stops.
+        try:
+            sale = sales.sale_state(market, row["sale_order_key"])  # type: ignore[union-attr]
+        except Exception as e:  # noqa: BLE001 - fail closed: never buy for a sale we cannot see
+            return _record(rpc, job, phase="stopped", reasons=["sale_read_failed"], live_error=type(e).__name__)
+        if sale not in PENDING[market]:
+            return _record(rpc, job, phase="stopped", sale_state=sale, reasons=["sale_not_pending"])
     try:
         tg = client.get_ticket_group(row["sub_listing_id"])
     except EvoWriteRejected as e:

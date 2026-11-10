@@ -107,3 +107,41 @@ def test_write_failures_never_retry():
     assert "SECRET" not in str(ex.value) and ex.value.__suppress_context__
     with pytest.raises(EvoWriteRejected):
         _client(_resp(503, "")).sale_state("seatgeek", "x")  # a failed read is a plain rejection
+
+
+def test_tickpick_guard_allows_only_the_confirm():
+    g = sa._assert_readonly_method
+    g("GET", "https://api.tickpick.com/1.0/orders/1074266885")
+    g("POST", "https://api.tickpick.com/1.0/orders/1074266885/confirmation")
+    for m, u in (("POST", "https://api.tickpick.com/1.0/token"),          # login lives in plpgsql only
+                 ("POST", "https://api.tickpick.com/1.0/orders/1/rejection"),
+                 ("POST", "https://api.tickpick.com/1.0/orders/abc/confirmation"),
+                 ("PUT", "https://api.tickpick.com/1.0/orders/1/confirmation"),
+                 ("PATCH", "https://api.tickpick.com/1.0/listings/1"),
+                 ("POST", "https://api.tickpick.com/1.0/orders/1/confirmation/x"),
+                 ("POST", "https://api.tickpick.com/1x0/orders/1/confirmation")):
+        with pytest.raises(sa.SaleAcceptError):
+            g(m, u)
+
+
+def test_tickpick_token_is_read_on_every_use():
+    toks = iter(["t1", "t2", None])
+    c = _client(_resp(data={"seller_status": "Unconfirmed"}), _resp(200, ""), tickpick_token=lambda: next(toks))
+    assert c.sale_state("tickpick", "1074266885") == "Unconfirmed"
+    assert c.accept("tickpick", 1074266885) == {"state": "accepted", "http": 200, "body": ""}
+    assert not c.has_market("tickpick")
+    (m1, u1, k1), (m2, u2, k2) = c.session.calls
+    assert (m1, u1) == ("GET", "https://api.tickpick.com/1.0/orders/1074266885")
+    assert k1["headers"] == {"Authorization": "Bearer t1", "Accept": "application/json"}
+    assert (m2, u2) == ("POST", "https://api.tickpick.com/1.0/orders/1074266885/confirmation")
+    assert k2["headers"]["Authorization"] == "Bearer t2" and k2["json"] == {}
+    assert _client(tickpick_token="fixed").has_market("tickpick") and not _client().has_market("tickpick")
+
+
+def test_tickpick_lapsed_sale_is_a_rejection_never_a_retry():
+    with pytest.raises(EvoWriteRejected):
+        _client(_resp(404, "Not Found"), tickpick_token="t").accept("tickpick", 1)
+    with pytest.raises(EvoWriteUnknown):
+        _client(requests.Timeout(), tickpick_token="t").accept("tickpick", 1)
+    with pytest.raises(EvoWriteRejected):
+        _client(_resp(404, ""), tickpick_token="t").sale_state("tickpick", 1)
