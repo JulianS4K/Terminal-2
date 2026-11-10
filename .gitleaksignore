@@ -90,3 +90,12 @@ tests/fixtures/checkout_sections_six.html:generic-api-key:18
 # commit 7fffec4 quoted that join in an earlier version of this comment.
 a7dd99490b3cc1b7120c3960e8240543bb0cb36e:supabase/migrations/20261104190000_n2s_order_timer.sql:generic-api-key:96
 7fffec4a701ba29a219c663f65955fb791a61637:.gitleaksignore:generic-api-key:88
+
+# Vendored Oxylabs Agent Skills docs (upstream oxylabs/agent-skills, MIT): curl examples whose
+# credentials are the literal placeholder words USERNAME / PASSWORD, not values. Real creds come
+# from env (OXY_DC_USERNAME / OXY_DC_PASSWORD). Path-only form so the weekly full-history scan and a
+# squash-merge SHA are covered too.
+.claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:100
+.claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:110
+.claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:111
+.claude-plugins/oxylabs/skills/proxies/dedicated-isp.md:curl-auth-user:104
