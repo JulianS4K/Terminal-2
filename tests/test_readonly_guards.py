@@ -323,6 +323,40 @@ def test_bandsintown_allowlist_constant_is_get_only():
     assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
 
 
+# ---------- crawlproxies_client ----------
+
+def test_crawlproxies_assert_readonly_raises_on_post():
+    from crawlproxies_client import _assert_readonly_method, CrawlProxiesReadOnlyError
+    with pytest.raises(CrawlProxiesReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+    assert "RULE 2" in str(exc.value)
+
+
+def test_crawlproxies_assert_readonly_raises_on_put_patch_delete():
+    # DELETE matters most here: DELETE /key (self-revoke) is the API's one write.
+    from crawlproxies_client import _assert_readonly_method, CrawlProxiesReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
+        with pytest.raises(CrawlProxiesReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_crawlproxies_assert_readonly_allows_get():
+    from crawlproxies_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_crawlproxies_allowlist_constant_is_get_only():
+    from crawlproxies_client import ALLOWED_HTTP_METHODS
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+
+
+def test_crawlproxies_client_has_no_revoke_method():
+    from crawlproxies_client import CrawlProxiesClient
+    assert not [n for n in dir(CrawlProxiesClient) if "revoke" in n.lower() or "delete" in n.lower()]
+
+
 # ---------- s4kcs_client ----------
 
 def test_s4kcs_assert_readonly_raises_on_post():

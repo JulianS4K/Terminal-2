@@ -17,6 +17,7 @@ sales / listings feeds:
   - www.broadway.com / checkout.broadway.com  (Broadway.com availability)
   - rest.bandsintown.com              (Bands in Town artist tour dates)
   - api.twitterapi.io                 (TwitterAPI.io — X posts for the news wire)
+  - crawlproxies.com                  (crawlproxies User API — account/plan/usage reads)
 
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
@@ -85,6 +86,11 @@ FORBIDDEN_HOSTS = (
     # eVenue host is forbidden. Bare "evenue.net" substring-matches
     # <tenant>.evenue.net / any future subdomain, same as seatdata.io / axs.com.
     "evenue.net",
+    # crawlproxies User API (crawlproxies.com/api/user/v1). Read-only by our
+    # contract: its one write, DELETE /key (self-revoke), is account-side config
+    # and is deliberately not implemented in crawlproxies_client.py. Bare host
+    # substring-matches geo.crawlproxies.com / any future subdomain.
+    "crawlproxies.com",
 )
 
 # Client modules that legitimately reference these hosts, mapped to the HTTP
@@ -119,6 +125,7 @@ CLIENT_FILES = {
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
     "s4kcs_client.py": frozenset({"GET"}),
+    "crawlproxies_client.py": frozenset({"GET"}),
 }
 
 # Exact path-allowlist literals a write-capable client must declare. Widening either
