@@ -15,6 +15,7 @@
   "enabledPlugins": {
     "terminal2-governance@terminal2": true,
     "security-guidance@claude-plugins-official": true,
-    "pr-review-toolkit@claude-plugins-official": true
+    "pr-review-toolkit@claude-plugins-official": true,
+    "oxylabs@terminal2": true
   }
 }

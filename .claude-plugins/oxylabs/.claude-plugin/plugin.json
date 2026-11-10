@@ -1,0 +1,17 @@
+{
+  "name": "oxylabs",
+  "description": "Oxylabs Agent Skills, vendored verbatim from github.com/oxylabs/agent-skills @ 026d180a1ad3e1918c0b0a5ccea6e5ca867406fe (MIT, see LICENSE): proxies (Residential/Mobile/DC/ISP/Dedicated), web-unblocker, agent-browser. Only the products we hold credentials for; video-data and web-scraper-api are deliberately not vendored. Credentials come from env (OXY_RES_*, OXY_DC_*, OXYLABS_USERNAME/PASSWORD, OXY_AB_*), never from files. Update by re-copying skills/<name>/ from a newer upstream commit and bumping the SHA here.",
+  "author": {
+    "name": "Oxylabs",
+    "email": "support@oxylabs.io",
+    "url": "https://oxylabs.io"
+  },
+  "homepage": "https://github.com/oxylabs/agent-skills",
+  "repository": "https://github.com/oxylabs/agent-skills",
+  "license": "MIT",
+  "skills": [
+    "./skills/proxies",
+    "./skills/web-unblocker",
+    "./skills/agent-browser"
+  ]
+}
