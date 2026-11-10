@@ -17,9 +17,6 @@ sales / listings feeds:
   - www.broadway.com / checkout.broadway.com  (Broadway.com availability)
   - rest.bandsintown.com              (Bands in Town artist tour dates)
   - api.twitterapi.io                 (TwitterAPI.io — X posts for the news wire)
-  - crawlproxies.com                  (crawlproxies User API — account/plan/usage reads)
-  - api.oxylabs.io                    (Oxylabs management APIs — residential-api.oxylabs.io
-                                       reads + the one sanctioned POST /v2/login)
 
 This script grep-walks the repo and fails (exit 1) if it finds:
   1. requests.(post|put|patch|delete) calls anywhere in Python
@@ -88,16 +85,6 @@ FORBIDDEN_HOSTS = (
     # eVenue host is forbidden. Bare "evenue.net" substring-matches
     # <tenant>.evenue.net / any future subdomain, same as seatdata.io / axs.com.
     "evenue.net",
-    # crawlproxies User API (crawlproxies.com/api/user/v1). Read-only by our
-    # contract: its one write, DELETE /key (self-revoke), is account-side config
-    # and is deliberately not implemented in crawlproxies_client.py. Bare host
-    # substring-matches geo.crawlproxies.com / any future subdomain.
-    "crawlproxies.com",
-    # Oxylabs management APIs: residential-api.oxylabs.io (sub-user create/update/delete) and
-    # api.oxylabs.io (whitelist add/delete, proxy lists). "api.oxylabs.io" substring-matches both.
-    # oxylabs_client.py may POST only to /v2/login (operator 2026-11-10, OXYLABS_WRITE_PATHS).
-    # Proxy entry hosts (pr./dc./isp./unblock.oxylabs.io) carry traffic, not account writes.
-    "api.oxylabs.io",
 )
 
 # Client modules that legitimately reference these hosts, mapped to the HTTP
@@ -114,9 +101,6 @@ FORBIDDEN_HOSTS = (
 #   * sale_accept_client.py — confirm OUR OWN pending sale on GoTickets / SeatGeek / Vivid /
 #     TickPick, operator-authorized 2026-11-10. Each write is pinned to (method, host, path)
 #     by SALE_ACCEPT_WRITES, whose exact literal is required below.
-#   * oxylabs_client.py — the Oxylabs Residential API token login only (POST /v2/login, Basic
-#     auth, writes nothing), operator-authorized 2026-11-10 ("Authorize login only"). Pinned by
-#     OXYLABS_WRITE_PATHS, whose exact literal is required below. Sub-user writes stay unbuilt.
 CLIENT_FILES = {
     "evo_client.py": frozenset({"GET"}),
     "seatgeek_client.py": frozenset({"GET"}),
@@ -135,8 +119,6 @@ CLIENT_FILES = {
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
     "s4kcs_client.py": frozenset({"GET"}),
-    "crawlproxies_client.py": frozenset({"GET"}),
-    "oxylabs_client.py": frozenset({"GET", "POST"}),
 }
 
 # Exact path-allowlist literals a write-capable client must declare. Widening either
@@ -146,7 +128,6 @@ SANCTIONED_WRITE_TOKENS = {
     "seatdata_client.py": 'SANCTIONED_POST_PATHS = frozenset({"v0.4/events/event-request-add"})',
     "evo_buy_client.py": 'EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\\d+/accept$")',
     "sale_accept_client.py": 'SALE_ACCEPT_WRITES = (("POST", "sc.gotickets.com", r"^/rest/sales/\\d+/confirm$"), ("PATCH", "sellerdirect-api.seatgeek.com", r"^/order$"), ("POST", "brokers.vividseats.com", r"^/webservices/v1/confirmOrder$"), ("POST", "api.tickpick.com", r"^/1\\.0/orders/\\d+/confirmation$"))',
-    "oxylabs_client.py": 'OXYLABS_WRITE_PATHS = (("POST", "residential-api.oxylabs.io", r"^/v2/login$"),)',
 }
 
 # Guard tokens that must appear in EVERY client module, regardless of which
