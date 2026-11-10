@@ -9,6 +9,11 @@
 -- The vault secrets themselves are not touched by this migration.
 --
 -- rollback: re-apply 20261110214000.
+--
+-- Already applied to prod · via MCP 2026-11-10 under operator direction ("Apply whitelist rollback");
+-- recorded in supabase_migrations.schema_migrations as 20261110224435 sunset_proxy_vault_whitelist.
+-- Verified: no proxy names left; GOTICKETS_API_SECRET / TICKPICK_API_TOKEN still resolve;
+-- SECURITY DEFINER, EXECUTE service_role only. Vault secrets left in place (operator choice).
 
 CREATE OR REPLACE FUNCTION public.get_app_secret(p_name text)
  RETURNS text
