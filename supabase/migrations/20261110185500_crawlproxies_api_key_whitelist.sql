@@ -9,6 +9,9 @@
 --   SELECT vault.create_secret('<crawl_user_...>', 'CRAWLPROXIES_API_KEY');
 --
 -- rollback: re-create get_app_secret without 'CRAWLPROXIES_API_KEY' (harmless to keep).
+--
+-- Already applied to prod · via MCP 2026-11-10 under operator direction ("apply the migration");
+-- recorded in supabase_migrations.schema_migrations as 20261110213211 crawlproxies_api_key_whitelist.
 
 CREATE OR REPLACE FUNCTION public.get_app_secret(p_name text)
  RETURNS text

@@ -3,8 +3,9 @@
 Host: https://crawlproxies.com  (base path /api/user/v1)
 Auth: a user API key (`crawl_user_...`, up to 5 per account, created on the
 dashboard's API page) sent as `Authorization: Bearer <key>`. Resolved arg → env
-`CRAWLPROXIES_API_KEY` → Supabase Vault (`get_app_secret`), mirroring the other
-upstream clients so rotation is one vault.update_secret() with no redeploy.
+`CRAWLPROXIES_API_KEY` → Supabase Vault (`get_app_secret`): the `CRAWLPROXIES_API_KEY` name,
+then `crawlproxies` (the name the operator stored it under, whitelisted by mig 20261110214000).
+Rotation is one vault.update_secret() with no redeploy.
 
 Endpoints used (all GET):
   GET /account                          username, email, balance, active plans
@@ -54,6 +55,8 @@ PLAN_STATUSES = frozenset({"active", "expired"})
 TRANSACTION_TYPES = frozenset({"topup", "purchase", "extend", "refund", "gift"})
 PROXY_PROTOCOLS = frozenset({"http", "socks5"})
 PROXY_LIST_FORMATS = frozenset({"json", "standard", "url", "hostport"})
+# Vault names tried in order (both whitelisted in get_app_secret()).
+VAULT_NAMES = ("CRAWLPROXIES_API_KEY", "crawlproxies")
 
 
 class CrawlProxiesError(RuntimeError):
@@ -90,22 +93,22 @@ class CrawlProxiesClient:
         # api_key resolution order:
         #   1. Explicit api_key argument (one-off scripts / tests)
         #   2. CRAWLPROXIES_API_KEY env var
-        #   3. Supabase Vault via get_app_secret('CRAWLPROXIES_API_KEY')
+        #   3. Supabase Vault via get_app_secret: VAULT_NAMES in order
         self.db = db
-        api_key = (
-            api_key
-            or os.environ.get("CRAWLPROXIES_API_KEY")
-            or vault_secret(
-                db, "CRAWLPROXIES_API_KEY",
+        api_key = api_key or os.environ.get("CRAWLPROXIES_API_KEY")
+        for name in VAULT_NAMES:
+            if api_key:
+                break
+            api_key = vault_secret(
+                db, name,
                 on_error=lambda e: print(f"crawlproxies: vault lookup failed: {type(e).__name__}"),
             )
-        )
         if not api_key or not api_key.strip():
             raise CrawlProxiesError(
                 "CRAWLPROXIES_API_KEY not found. Either pass api_key, set the env "
                 "var, or store it in Supabase Vault: "
-                "SELECT vault.create_secret('<crawl_user_...>', 'CRAWLPROXIES_API_KEY'); "
-                "(the name is whitelisted in public.get_app_secret())."
+                "SELECT vault.create_secret('<crawl_user_...>', 'crawlproxies'); "
+                "(both names are whitelisted in public.get_app_secret())."
             )
         self.api_key = api_key.strip()
         self.timeout = timeout

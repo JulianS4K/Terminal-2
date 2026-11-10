@@ -285,3 +285,23 @@ def test_proxy_list_text_without_headers(monkeypatch, client):
     _patch_get(monkeypatch, _FakeResp(200, text="a:1:u:p\n\nb:1:u:p", headers={}))
     out = client.get_proxy_list("plan_dc", format="standard")
     assert (out["count"], out["total"], out["stale"]) == (2, None, False)
+
+
+def test_key_falls_back_to_operator_vault_name(monkeypatch):
+    monkeypatch.delenv("CRAWLPROXIES_API_KEY", raising=False)
+    asked = []
+
+    class _Rpc:
+        def __init__(self, name):
+            self.name = name
+
+        def execute(self):
+            return type("R", (), {"data": "crawl_user_x" if self.name == "crawlproxies" else None})()
+
+    class _Db:
+        def rpc(self, fn, args):
+            asked.append(args["p_name"])
+            return _Rpc(args["p_name"])
+
+    assert cp.CrawlProxiesClient(db=_Db()).api_key == "crawl_user_x"
+    assert asked == ["CRAWLPROXIES_API_KEY", "crawlproxies"]

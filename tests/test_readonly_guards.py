@@ -357,6 +357,37 @@ def test_crawlproxies_client_has_no_revoke_method():
     assert not [n for n in dir(CrawlProxiesClient) if "revoke" in n.lower() or "delete" in n.lower()]
 
 
+# ---------- oxylabs_client ----------
+#
+# One sanctioned write: the token login POST /v2/login (operator 2026-11-10). Sub-user
+# create/update/delete must stay refused.
+
+def test_oxylabs_guard_allows_get_and_login_only():
+    from oxylabs_client import _assert_readonly_method
+    _assert_readonly_method("GET", "https://residential-api.oxylabs.io/v2/users/u/sub-users")
+    _assert_readonly_method("post", "https://residential-api.oxylabs.io/v2/login")
+
+
+def test_oxylabs_guard_refuses_sub_user_writes_and_other_hosts():
+    from oxylabs_client import _assert_readonly_method, OxylabsReadOnlyError
+    base = "https://residential-api.oxylabs.io/v2/users/u/sub-users"
+    for method, url in (("POST", base), ("PATCH", f"{base}/1"), ("DELETE", f"{base}/1"),
+                        ("PUT", f"{base}/1"), ("POST", "https://residential-api.oxylabs.io/v2/login/x"),
+                        ("POST", "https://api.oxylabs.io/v1/whitelisted_ips"),
+                        ("GET", "https://evil.example/v2/login"),
+                        ("GET", "http://residential-api.oxylabs.io/v2/login")):
+        with pytest.raises(OxylabsReadOnlyError):
+            _assert_readonly_method(method, url)
+
+
+def test_oxylabs_client_registered_with_pinned_login():
+    import scripts.check_readonly as chk
+    assert chk.CLIENT_FILES["oxylabs_client.py"] == frozenset({"GET", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["oxylabs_client.py"] in (REPO_ROOT / "oxylabs_client.py").read_text()
+    from oxylabs_client import OXYLABS_WRITE_PATHS
+    assert OXYLABS_WRITE_PATHS == (("POST", "residential-api.oxylabs.io", r"^/v2/login$"),)
+
+
 # ---------- s4kcs_client ----------
 
 def test_s4kcs_assert_readonly_raises_on_post():
