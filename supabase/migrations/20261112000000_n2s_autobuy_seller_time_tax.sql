@@ -27,8 +27,13 @@
 --      live run the moment it hands one out). The worker re-checks with the listing's own in_hand.
 --   5. n2s_autobuy_live_record(): a repeated call for a step that is already recorded returns the
 --      phase and changes nothing; holds ('buying', 'sub_accepted') still need the live lease.
+--   6. n2s_autobuy_live_record(): a run the worker stops BEFORE sending the buy (a guard, the fresh
+--      listing read, the seller-time check) gives the live run back. The live run is a buy sent to
+--      EVO: one EVO rejected ('buy_failed') or whose outcome is unknown still counts. Without this
+--      the new seller-time check would spend the one test run on a buy that never went out.
 --
 -- rollback: UPDATE n2s_autobuy_config SET seller_window_pct = 0.01, seller_window_fallback_s = 0;
+--           (to keep counting a stopped-before-send run, re-create the record function from 20261110000000)
 --           (windows ~0 s: the 90 s floor is all that is left) and re-create the three functions from
 --           20261111000000 (enqueue) and 20261110000000 (claim, record); added columns are harmless.
 
@@ -387,8 +392,9 @@ CREATE OR REPLACE FUNCTION public.n2s_autobuy_live_record(p_exec_id bigint, p_to
  SECURITY DEFINER
  SET search_path TO 'public', 'pg_temp'
 AS $function$
-DECLARE v_phase text := p_patch ->> 'phase'; v_ok boolean;
+DECLARE v_phase text := p_patch ->> 'phase'; v_ok boolean; v_prev text; v_prev_order text;
 BEGIN
+  SELECT phase, buy_order_id INTO v_prev, v_prev_order FROM public.n2s_autobuy_exec WHERE exec_id = p_exec_id;
   UPDATE public.n2s_autobuy_exec
      SET phase        = COALESCE(v_phase, phase),
          buy_order_id = COALESCE(buy_order_id, p_patch ->> 'buy_order_id'),
@@ -403,14 +409,21 @@ BEGIN
      AND phase NOT IN ('accepted', 'stopped', 'buy_unknown', 'accept_failed', 'accept_unknown')
      AND lease_token = p_token AND lease_until > now();
   v_ok := FOUND;
+  -- 20261112000000: stopped while still 'buying', with no purchase id and no EVO refusal = the
+  -- worker stopped before the buy went out: the live run was not used, give it back.
+  IF v_ok AND v_prev = 'buying' AND v_phase = 'stopped' AND v_prev_order IS NULL
+     AND p_patch ->> 'buy_order_id' IS NULL AND NOT COALESCE((p_patch -> 'reasons') ? 'buy_failed', false) THEN
+    UPDATE public.n2s_autobuy_config SET live_runs_used = GREATEST(live_runs_used - 1, 0), updated_at = now() WHERE id;
+  END IF;
+  -- an unknown write outcome flips kill_switch on EVERY call, a repeat included (fail closed)
+  IF v_phase IN ('buy_unknown', 'accept_unknown') THEN
+    UPDATE public.n2s_autobuy_config SET kill_switch = true, updated_at = now() WHERE id;
+  END IF;
   IF NOT v_ok AND v_phase IS NOT NULL AND v_phase NOT IN ('buying', 'sub_accepted')
      AND EXISTS (SELECT 1 FROM public.n2s_autobuy_exec x
                   WHERE x.exec_id = p_exec_id AND x.mode = 'live' AND x.phase = v_phase
                     AND (NOT p_patch ? 'buy_order_id' OR x.buy_order_id = p_patch ->> 'buy_order_id')) THEN
     RETURN v_phase;   -- a repeat of a step that is already recorded
-  END IF;
-  IF v_phase IN ('buy_unknown', 'accept_unknown') THEN
-    UPDATE public.n2s_autobuy_config SET kill_switch = true, updated_at = now() WHERE id;
   END IF;
   IF NOT v_ok AND p_patch ? 'buy_order_id' THEN
     -- the buy went through but this worker's lease is gone: keep the purchase id, fail closed
