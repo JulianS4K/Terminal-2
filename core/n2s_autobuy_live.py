@@ -8,7 +8,7 @@ web workers can never act on the same row. This module does the market steps:
 
   buy    re-check the guards → (TickPick sale: our seller login still shows it Unconfirmed) →
          read the ticket group fresh (not ours, enough tickets, a split that fits, price not
-         above our quote, event > 24 h out) → POST /v9/orders once
+         above our quote, event further out than min_event_lead) → POST /v9/orders once
   poll   read our purchase: accepted → read the sale, still pending → accept it (reviewer
          53658); rejected → stop; not accepted by sub_confirm_by → stop, sale NOT accepted
 
@@ -56,6 +56,20 @@ def _hold(rpc: Rpc, job: dict, phase: str, **patch: Any) -> bool:
     return _record(rpc, job, phase=phase, **patch)["recorded"] == phase
 
 
+def _event_start(event: dict) -> datetime | None:
+    """The event's real start. EVO's occurs_at is local time with a misleading "Z" (evo_client.py);
+    occurs_at_local carries the real offset. Without it, occurs_at read as UTC is never later than
+    the real start for US venues, so the fallback can only block a buy, never allow a late one."""
+    for key in ("occurs_at_local", "occurs_at"):
+        try:
+            start = _ts(event.get(key))
+        except ValueError:
+            continue
+        if start is not None:
+            return start
+    return None
+
+
 def ticket_group_checks(tg: dict, *, qty: int, sub_total: float, now: datetime, min_lead_s: int) -> list[str]:
     """Reasons the fresh ticket-group read says NOT to buy (empty = buy)."""
     reasons = []
@@ -71,7 +85,7 @@ def ticket_group_checks(tg: dict, *, qty: int, sub_total: float, now: datetime, 
         reasons.append("price_rose")
     if tg.get("format") not in SHIPMENT_FOR_FORMAT:
         reasons.append("unknown_format")
-    start = _ts((tg.get("event") or {}).get("occurs_at"))
+    start = _event_start(tg.get("event") or {})
     if start is None or (start - now).total_seconds() < min_lead_s:
         reasons.append("event_within_24h")
     return reasons
@@ -83,7 +97,8 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
     if market != "evo" and not (sales and sales.has_market(market)):
         # never buy a sub we could not accept the sale for
         return _record(rpc, job, phase="stopped", reasons=["no_sale_accept_token"])
-    guard_row = {**row, "event_start_utc": row.get("event_dt_local")}  # venue-local read as UTC: earlier, so safe
+    # the real start the DB stored (20261111000000); else venue-local read as UTC (earlier, so safe)
+    guard_row = {**row, "event_start_utc": row.get("event_start_utc") or row.get("event_dt_local")}
     reasons = buy_guards(guard_row, now=now, spend_today=float(row.get("spend_today_before") or 0),
                          buys_today=0, failures_today=0, project_spent=float(row.get("project_spent_before") or 0),
                          cfg=cfg)
