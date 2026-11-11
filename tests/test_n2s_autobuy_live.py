@@ -344,3 +344,72 @@ def test_buy_guards_use_the_stored_real_start():
     out = lv.tick(Rpc({"action": "buy", "row": _row(event_dt_local="2026-11-11T02:00:00"), "cfg": cfg}),
                   Client(tg=tg, create={"id": 9}), now=NOW)
     assert out["reasons"] == ["event_within_24h"]                                        # local-as-UTC: 8 h, blocks
+
+
+# ---- 20261112000000: seller time, EVO tax, one retry on a dropped DB connection -----------
+
+def test_seller_time_uses_the_window_for_the_listing_in_hand_or_not():
+    left = 480                                   # _row: sub_confirm_by is NOW + 8 min
+    row = _row(seller_window_s=534, seller_window_in_hand_s=298)
+    assert lv.seller_time_checks({**TG, "in_hand": True}, row, now=NOW, floor_s=90) == []      # 480 >= 298
+    assert lv.seller_time_checks({**TG, "in_hand": "true"}, row, now=NOW, floor_s=90) == []
+    assert lv.seller_time_checks({**TG, "in_hand": False}, row, now=NOW, floor_s=90) == ["not_enough_time_for_seller"]
+    assert lv.seller_time_checks(TG, row, now=NOW, floor_s=90) == ["not_enough_time_for_seller"]  # unknown = not
+    assert lv.seller_time_checks(TG, _row(), now=NOW, floor_s=90) == []                          # no windows: floor
+    assert lv.seller_time_checks(TG, _row(), now=NOW, floor_s=left + 1) == ["not_enough_time_for_seller"]
+    assert lv.seller_time_checks(TG, _row(sub_confirm_by=None), now=NOW, floor_s=90) == ["not_enough_time_for_seller"]
+
+
+def test_no_buy_when_the_seller_may_not_accept_in_time():
+    job = _buy_job(seller_window_s=534, seller_window_in_hand_s=298)
+    out, _, calls = _tick(job, Client(tg={**TG, "in_hand": False}))
+    assert out["phase"] == "stopped" and out["reasons"] == ["not_enough_time_for_seller"]
+    assert [k[0] for k in calls] == ["tg"]                                     # read, never bought
+    out, _, calls = _tick(job, Client(tg={**TG, "in_hand": True}, create={"id": 9100, "state": "pending"}))
+    assert out["phase"] == "buy_sent" and [k[0] for k in calls] == ["tg", "buy"]
+
+
+def test_tax_is_in_the_guards_and_in_the_quote_evo_is_checked_against():
+    out, _, calls = _tick(_buy_job(sub_total_usd=240.0, est_tax_usd=13.2, sold_total_usd=400.0), Client())
+    assert out["phase"] == "stopped" and "over_per_order_cap" in out["reasons"] and calls == []
+    out, _, _ = _tick(_buy_job(est_tax_usd=11.0), Client(create={"id": 9101, "total": "211.00"}))
+    assert out["phase"] == "buy_sent" and out["live_error"] is None            # 200 + 11 tax, as quoted
+    out, _, _ = _tick(_buy_job(est_tax_usd=11.0), Client(create={"id": 9102, "total": "212.00"}))
+    assert out["live_error"] == "EVO total $212.00 is above the quoted $211.00"
+
+
+def test_retrying_repeats_a_call_once_when_the_connection_dropped(monkeypatch):
+    monkeypatch.setattr(lv, "DB_RETRY_PAUSE_S", 0)
+    calls = []
+
+    def flaky(name, params):
+        calls.append(name)
+        if len(calls) == 1:
+            raise lv.httpx.RemoteProtocolError("Server disconnected")
+        return "buy_sent"
+
+    assert lv.retrying(flaky)("n2s_autobuy_live_record", {}) == "buy_sent" and len(calls) == 2
+    calls.clear()
+    assert lv.retrying(lambda n, p: calls.append(n) or "ok")("x", {}) == "ok" and len(calls) == 1
+
+
+def test_retrying_gives_up_after_one_retry_and_leaves_other_errors_alone(monkeypatch):
+    monkeypatch.setattr(lv, "DB_RETRY_PAUSE_S", 0)
+    calls = []
+
+    def down(name, params):
+        calls.append(name)
+        raise lv.httpx.ConnectError("refused")
+
+    with pytest.raises(lv.httpx.ConnectError):
+        lv.retrying(down)("n2s_autobuy_live_claim", {})
+    assert len(calls) == 2
+    calls.clear()
+
+    def timeout(name, params):
+        calls.append(name)
+        raise lv.httpx.ReadTimeout("slow")          # may have run: never repeated
+
+    with pytest.raises(lv.httpx.ReadTimeout):
+        lv.retrying(timeout)("n2s_autobuy_live_claim", {})
+    assert len(calls) == 1

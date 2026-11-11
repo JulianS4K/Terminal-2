@@ -8,13 +8,16 @@ web workers can never act on the same row. This module does the market steps:
 
   buy    re-check the guards → (TickPick sale: our seller login still shows it Unconfirmed) →
          read the ticket group fresh (not ours, enough tickets, a split that fits, price not
-         above our quote, event further out than min_event_lead) → POST /v9/orders once
+         above our quote, event further out than min_event_lead, enough time left for the
+         seller to accept: the window for an in-hand listing or not, from our own EVO history,
+         20261112000000) → POST /v9/orders once
   poll   read our purchase: accepted → read the sale, still pending → accept it (reviewer
          53658); rejected → stop; not accepted by sub_confirm_by → stop, sale NOT accepted
 
 Never retried: a write that fails is recorded and the row stops. A write whose outcome is
 unknown (timeout / 5xx) stops the row AND flips the kill switch until a person checks EVO.
-Never rejects a sale (operator: "dont auto reject").
+Never rejects a sale (operator: "dont auto reject"). Only a database call is retried, once, and
+only when the connection dropped (:func:`retrying`); a repeated record is a no-op in the DB.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 import requests
 
 import time
@@ -40,6 +44,25 @@ OUR_BROKERAGE_ID = 1768  # S4K Entertainment
 VERIFY_DELAY_S = 3.0      # pause before re-reading the sale after an accept (operator 2026-11-10)
 
 Rpc = Callable[[str, dict], Any]
+
+# A database call that never got an answer because the connection dropped: Supabase closes idle
+# HTTP/2 connections, and the next call on one fails with "Server disconnected" (5 times on
+# 2026-11-11). Timeouts are NOT here: the call may have run.
+TRANSIENT_DB_ERRORS: tuple[type[BaseException], ...] = (httpx.RemoteProtocolError, httpx.ConnectError)
+DB_RETRY_PAUSE_S = 0.5
+
+
+def retrying(rpc: Rpc) -> Rpc:
+    """``rpc`` with one retry when the connection dropped. Safe because a repeated record of a step
+    that already landed returns that phase and changes nothing (n2s_autobuy_live_record,
+    20261112000000), and a hold still needs the live lease."""
+    def call(name: str, params: dict) -> Any:
+        try:
+            return rpc(name, params)
+        except TRANSIENT_DB_ERRORS:
+            time.sleep(DB_RETRY_PAUSE_S)
+            return rpc(name, params)
+    return call
 
 
 def _record(rpc: Rpc, job: dict, **patch: Any) -> dict:
@@ -91,6 +114,18 @@ def ticket_group_checks(tg: dict, *, qty: int, sub_total: float, now: datetime, 
     return reasons
 
 
+def seller_time_checks(tg: dict, row: dict, *, now: datetime, floor_s: int) -> list[str]:
+    """Stop when the sub's seller may not accept before we must confirm the sale. The window is our
+    own EVO history at the configured percentile, stored on the row at enqueue: shorter for a
+    listing the seller holds in hand (20261112000000). Rows without windows keep the floor."""
+    in_hand = str(tg.get("in_hand")).strip().lower() == "true"
+    window = row.get("seller_window_in_hand_s") if in_hand else row.get("seller_window_s")
+    confirm_by = _ts(row.get("sub_confirm_by"))
+    if confirm_by is None or (confirm_by - now).total_seconds() < max(floor_s, int(window or 0)):
+        return ["not_enough_time_for_seller"]
+    return []
+
+
 def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: dict, now: datetime) -> dict:
     row, cfg = job["row"], job["cfg"]
     market = row.get("sell_market")
@@ -122,6 +157,7 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
         return _record(rpc, job, phase="stopped", reasons=["listing_read_failed"], live_error=type(e).__name__)
     reasons = ticket_group_checks(tg, qty=int(row["qty"]), sub_total=float(row["sub_total_usd"]), now=now,
                                   min_lead_s=int(cfg["min_event_lead_s"]))
+    reasons += seller_time_checks(tg, row, now=now, floor_s=int(cfg["min_confirm_window_s"]))
     if reasons:
         return _record(rpc, job, phase="stopped", reasons=reasons)
     body = buy_order_body(ticket_group_id=tg["id"], quantity=int(row["qty"]), price_ea=float(tg["wholesale_price"]),
@@ -142,8 +178,9 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
         if not order.get("id"):
             raise ValueError("no order id in the EVO response")
         total = order.get("total")
-        note = None if total is None or float(total) <= float(row["sub_total_usd"]) + 0.01 else \
-            f"EVO total ${total} is above the quoted ${row['sub_total_usd']}"
+        quoted = round(float(row["sub_total_usd"]) + float(row.get("est_tax_usd") or 0), 2)  # with tax
+        note = None if total is None or float(total) <= quoted + 0.01 else \
+            f"EVO total ${total} is above the quoted ${quoted:.2f}"
         return _record(rpc, job, phase="buy_sent", buy_order_id=str(order["id"]), buy_state=order.get("state"),
                        live_error=note)
     except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy

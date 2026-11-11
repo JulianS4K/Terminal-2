@@ -2001,7 +2001,9 @@ async def _autobuy_live_tick():
     def _call():
         def rpc(name, params):
             return require_sb().rpc(name, params).execute().data
-        return n2s_autobuy_live.tick(rpc, EvoBuyClient(TOKEN, SECRET), sales=_autobuy_sale_client())
+        # one retry when the DB connection dropped ("Server disconnected"; 20261112000000)
+        return n2s_autobuy_live.tick(n2s_autobuy_live.retrying(rpc), EvoBuyClient(TOKEN, SECRET),
+                                     sales=_autobuy_sale_client())
 
     out = await asyncio.to_thread(_call)
     _autobuy_live_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
