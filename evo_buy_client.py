@@ -7,6 +7,10 @@ auto-cover:
   POST /v9/orders               buy the sub (a purchase order from Office 3, paid by evopay)
   POST /v9/orders/{id}/accept   accept our own pending EVO sale once the sub is confirmed
 
+Operator authorization 2026-11-11: the buy (POST /v9/orders, nothing else) may also be sent by
+the manual sub buy path (core/manual_sub_buy.py): one EVO listing the operator chose for one
+sale, kept separate from N2S. No path was added for it.
+
 Everything else stays read-only (CLAUDE.md RULE 2). The guard below is path-scoped like
 seatdata_client's: any method other than GET/POST raises, and a POST raises unless its path
 matches one of ``EVO_WRITE_PATHS``. There is no reject, cancel, reprice or listing write,
