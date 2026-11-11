@@ -320,3 +320,27 @@ def test_tickpick_sale_accept_and_busted_after_accept():
     s = Sales(state="Unconfirmed", after="Busted")
     out = lv.tick(Rpc(_poll_job(sell_market="tickpick")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
     assert out["phase"] == "accept_failed" and out["reasons"] == ["sale_rejected_after_accept"]
+
+
+def test_lead_time_uses_the_real_event_start():
+    # EVO's occurs_at is local time with a fake "Z": 02:30 local ET is 07:30 UTC, 13.5 h after NOW.
+    tg = {**TG, "event": {"occurs_at": "2026-11-11T02:30:00Z", "occurs_at_local": "2026-11-11T02:30:00-05:00"}}
+    ok = lv.ticket_group_checks(tg, qty=2, sub_total=200.0, now=NOW, min_lead_s=12 * 3600)
+    assert "event_within_24h" not in ok
+    for ev in ({"occurs_at": "2026-11-11T02:30:00Z"},                                  # no offset: 8.5 h, blocks
+               {"occurs_at": "2026-11-11T02:30:00Z", "occurs_at_local": "not a date"},  # unreadable: falls back
+               {"occurs_at_local": "garbage"}, {}):                                     # nothing readable
+        assert "event_within_24h" in lv.ticket_group_checks({**TG, "event": ev}, qty=2, sub_total=200.0, now=NOW,
+                                                            min_lead_s=12 * 3600)
+
+
+def test_buy_guards_use_the_stored_real_start():
+    cfg = {**CFG, "min_event_lead_s": 12 * 3600}
+    tg = {**TG, "event": {"occurs_at_local": "2026-11-11T09:00:00-05:00"}}            # 20 h out
+    real = (NOW + timedelta(hours=13)).isoformat()
+    out = lv.tick(Rpc({"action": "buy", "row": _row(event_start_utc=real, event_dt_local="2026-11-11T02:00:00"),
+                       "cfg": cfg}), Client(tg=tg, create={"id": 9}), now=NOW)
+    assert out["phase"] == "buy_sent"                                                    # 13 h real start passes
+    out = lv.tick(Rpc({"action": "buy", "row": _row(event_dt_local="2026-11-11T02:00:00"), "cfg": cfg}),
+                  Client(tg=tg, create={"id": 9}), now=NOW)
+    assert out["reasons"] == ["event_within_24h"]                                        # local-as-UTC: 8 h, blocks
