@@ -2035,6 +2035,59 @@ def autobuy_live_status(_=Depends(require_auth)):
     return {"enabled": os.environ.get("N2S_AUTOBUY_LIVE") == "1", **_autobuy_live_last}
 
 
+# ---------------------------------------------------------------------------
+# MANUAL sub buy worker (D0) — an EVO listing the operator chose for one sale
+# (operator 2026-11-11). Separate from the N2S worker above: its own env flag, its own
+# tables and config (manual_sub_buy*), its own kill switch. Off unless
+# MANUAL_SUB_BUY_LIVE=1 on this service AND manual_sub_buy_config.enabled is true.
+# Each tick claims at most one requested row and buys it once via core/manual_sub_buy.py →
+# evo_buy_client.py (the path-pinned EVO write client).
+# ---------------------------------------------------------------------------
+_MANUAL_SUB_BUY_INTERVAL_S = float(os.environ.get("MANUAL_SUB_BUY_INTERVAL_SECONDS", "15"))
+_manual_sub_buy_last: dict = {"at": None, "result": None, "error": None}
+
+
+async def _manual_sub_buy_tick():
+    from core import manual_sub_buy
+    from evo_buy_client import EvoBuyClient
+
+    def _call():
+        def rpc(name, params):
+            return require_sb().rpc(name, params).execute().data
+        return manual_sub_buy.tick(rpc, EvoBuyClient(TOKEN, SECRET))
+
+    out = await asyncio.to_thread(_call)
+    _manual_sub_buy_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    if out.get("action") != "idle":
+        _log.warning("manual_sub_buy: %s", out)
+    return out
+
+
+async def _manual_sub_buy_loop():
+    if os.environ.get("MANUAL_SUB_BUY_LIVE") != "1" or sb is None or not (TOKEN and SECRET) or SANDBOX:
+        _log.info("manual_sub_buy: disabled (MANUAL_SUB_BUY_LIVE != 1, no DB / EVO creds, or sandbox)")
+        return
+    _log.warning("manual_sub_buy: started (every %ss)", _MANUAL_SUB_BUY_INTERVAL_S)
+    while True:
+        try:
+            await _manual_sub_buy_tick()
+        except Exception as e:  # never let the loop die; an unfinished row is swept to 'unknown' by the DB
+            _manual_sub_buy_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("manual_sub_buy: tick failed: %s", e)
+        await asyncio.sleep(_MANUAL_SUB_BUY_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_manual_sub_buy():  # pragma: no cover - startup hook; loop covered via _manual_sub_buy_loop
+    asyncio.create_task(_manual_sub_buy_loop())
+
+
+@app.get("/api/admin/manual-sub-buy/status")
+def manual_sub_buy_status(_=Depends(require_auth)):
+    """Last manual sub buy tick (auth-gated)."""
+    return {"enabled": os.environ.get("MANUAL_SUB_BUY_LIVE") == "1", **_manual_sub_buy_last}
+
+
 # ---------- Site essentials (SEO + browser-tab UX) ----------
 #
 # Browsers + crawlers probe /robots.txt + /sitemap.xml + /favicon.ico at fixed
