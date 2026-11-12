@@ -177,7 +177,8 @@ ALTER TABLE public.sub_finder_order
   ADD COLUMN IF NOT EXISTS refreshed_at  timestamptz,
   ADD COLUMN IF NOT EXISTS refresh_count integer NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS closed_reason text,
-  ADD COLUMN IF NOT EXISTS closed_at     timestamptz;
+  ADD COLUMN IF NOT EXISTS closed_at     timestamptz,
+  ADD COLUMN IF NOT EXISTS feed_checked_at timestamptz;          -- last look in v_sub_orders (paced)
 CREATE INDEX IF NOT EXISTS sub_finder_order_watch ON public.sub_finder_order (tevo_event_id) WHERE watching;
 CREATE INDEX IF NOT EXISTS sub_finder_order_sync ON public.sub_finder_order (key_id, updated_at, job_id, idx);
 CREATE INDEX IF NOT EXISTS sub_finder_order_number ON public.sub_finder_order (job_id, order_number);
@@ -789,8 +790,7 @@ BEGIN
   RETURN NULL;
 END
 $$;
-DROP TRIGGER IF EXISTS sub_finder_buy_touch ON public.manual_sub_buy;
-CREATE TRIGGER sub_finder_buy_touch AFTER UPDATE ON public.manual_sub_buy
+CREATE OR REPLACE TRIGGER sub_finder_buy_touch AFTER UPDATE ON public.manual_sub_buy
   FOR EACH ROW EXECUTE FUNCTION public.sub_finder_buy_touch_trg();
 CREATE INDEX IF NOT EXISTS sub_finder_order_buy ON public.sub_finder_order (buy_id) WHERE buy_id IS NOT NULL;
 
@@ -813,7 +813,7 @@ BEGIN
   IF NOT public.cron_try_lock('sub_finder_refresh') THEN RETURN jsonb_build_object('skipped', 'overlap'); END IF;
 
   -- 1. stop watching what is finished. Only these reasons end a watch (plus a newer lookup
-  --    of the same order, in sub_finder_submit).
+  --    of the same order, in sub_finder_submit). The cheap ones run for every order every tick.
   UPDATE public.sub_finder_order o
      SET watching = false, closed_reason = x.reason, closed_at = now(), updated_at = now()
     FROM (
@@ -825,14 +825,31 @@ BEGIN
                  WHERE (n.order_number = w.order_number OR n.n2s_order_key = w.order_number)
                    AND NOT coalesce(n.is_terminal, false) AND n.status IN ('n2s', 'n2b'))
             THEN 'left_crm_n2s'
-          -- one of our order feeds says the sale is over
-          ELSE (SELECT 'order_' || f.canonical_status FROM public.v_sub_orders f
-                WHERE f.order_id = w.order_number AND NOT f.is_open
-                  AND f.canonical_status IN ('fulfilled', 'cancelled', 'rejected') LIMIT 1)
         END AS reason
       FROM public.sub_finder_order w WHERE w.watching) x
    WHERE o.job_id = x.job_id AND o.idx = x.idx AND x.reason IS NOT NULL;
   GET DIAGNOSTICS v_closed = ROW_COUNT;
+  -- "One of our order feeds says the sale is over" is a lookup in v_sub_orders by order
+  -- number, which costs about 1.7 s each (its EVO arm cannot use an index on a text id). So
+  -- it is paced: a few orders per tick, each at most every 15 minutes.
+  FOR r IN SELECT w.job_id, w.idx, w.order_number FROM public.sub_finder_order w
+            WHERE w.watching AND (w.feed_checked_at IS NULL OR w.feed_checked_at < now() - interval '15 minutes')
+            ORDER BY w.feed_checked_at NULLS FIRST, w.updated_at LIMIT 3
+  LOOP
+    UPDATE public.sub_finder_order o
+       SET feed_checked_at = now(),
+           watching      = (f.reason IS NULL),
+           closed_reason = coalesce(f.reason, o.closed_reason),
+           closed_at     = CASE WHEN f.reason IS NULL THEN o.closed_at ELSE now() END,
+           updated_at    = CASE WHEN f.reason IS NULL THEN o.updated_at ELSE now() END
+      FROM (SELECT (SELECT 'order_' || v.canonical_status FROM public.v_sub_orders v
+                    WHERE v.order_id = r.order_number AND NOT v.is_open
+                      AND v.canonical_status IN ('fulfilled', 'cancelled', 'rejected') LIMIT 1) AS reason) f
+     WHERE o.job_id = r.job_id AND o.idx = r.idx;
+    IF NOT (SELECT watching FROM public.sub_finder_order WHERE job_id = r.job_id AND idx = r.idx) THEN
+      v_closed := v_closed + 1;
+    END IF;
+  END LOOP;
 
   -- 2. the watched events, longest-unrefreshed first. Their listings come from the routine
   --    polling; a pull of our own is fired only if refresh_pull is switched on (the pull
