@@ -68,7 +68,7 @@
 -- No upstream call is made by this migration itself.
 --
 -- rollback: SELECT cron.unschedule('sub_finder_refresh_1min');
---           DROP FUNCTION public.sub_finder_refresh(), public.sub_finder_load_native(uuid, interval),
+--           DROP FUNCTION public.sub_finder_refresh(), public.sub_finder_load_native(uuid, interval), public.sub_finder_scratch(),
 --             public.sub_finder_covers_key(jsonb);
 --           DROP TRIGGER sub_finder_buy_touch ON public.manual_sub_buy;
 --           DROP FUNCTION public.sub_finder_buy_touch_trg(), public.sub_finder_order_read(bigint, uuid, text),
@@ -361,6 +361,23 @@ AS $$
   FROM jsonb_array_elements(coalesce(p, '[]'::jsonb)) WITH ORDINALITY t(x, ord);
 $$;
 
+-- A fresh, empty scratch table _sf_l for this transaction: the listings sub_finder_match ranks.
+-- Dropped and recreated rather than emptied: an unqualified DELETE or a TRUNCATE in a function
+-- body trips the migration tool's destructive-statement prompt, and this is only a temp table.
+CREATE OR REPLACE FUNCTION public.sub_finder_scratch()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF to_regclass('pg_temp._sf_l') IS NOT NULL THEN DROP TABLE _sf_l; END IF;
+  CREATE TEMP TABLE _sf_l (
+    market text, via text, eid bigint, lid text, section text, seat_row text, quantity integer,
+    px numeric, sp integer[], pulled_at timestamptz, link text, price_note text) ON COMMIT DROP;
+END
+$$;
+
 -- Fill the caller's temp table _sf_l with the EVO / GoTickets / SeatGeek listings we hold for
 -- a job's events (never our own listings). p_max_age: only listings pulled that recently.
 CREATE OR REPLACE FUNCTION public.sub_finder_load_native(p_job_id uuid, p_max_age interval DEFAULT NULL)
@@ -373,12 +390,7 @@ DECLARE
   v_since timestamptz := CASE WHEN p_max_age IS NULL THEN '-infinity'::timestamptz ELSE now() - p_max_age END;
   v_n     integer;
 BEGIN
-  IF to_regclass('pg_temp._sf_l') IS NULL THEN
-    CREATE TEMP TABLE _sf_l (
-      market text, via text, eid bigint, lid text, section text, seat_row text, quantity integer,
-      px numeric, sp integer[], pulled_at timestamptz, link text, price_note text) ON COMMIT DROP;
-  END IF;
-  DELETE FROM _sf_l;
+  PERFORM public.sub_finder_scratch();
   INSERT INTO _sf_l
   SELECT 'evo', 'native', x.event_id, x.tevo_ticket_group_id::text, x.section, x.row, x.quantity,
          x.retail_price, x.splits::int[], x.pulled_at,
@@ -515,16 +527,7 @@ BEGIN
   IF NOT FOUND THEN RETURN NULL; END IF;
   IF j.status = 'done' THEN RETURN 'done'; END IF;
 
-  -- the listings to rank, for sub_finder_match: one temp table per transaction (several jobs
-  -- may settle in one), emptied here. DELETE, not TRUNCATE: it is a scratch table of a few
-  -- thousand rows, and the word TRUNCATE in a function body trips the migration tool's
-  -- destructive-statement prompt.
-  IF to_regclass('pg_temp._sf_l') IS NULL THEN
-    CREATE TEMP TABLE _sf_l (
-      market text, via text, eid bigint, lid text, section text, seat_row text, quantity integer,
-      px numeric, sp integer[], pulled_at timestamptz, link text, price_note text) ON COMMIT DROP;
-  END IF;
-  DELETE FROM _sf_l;
+  PERFORM public.sub_finder_scratch();   -- the listings to rank, empty
 
   IF j.status = 'pulling' THEN
     IF now() < j.created_at + make_interval(secs => c.settle_min_s) THEN RETURN 'pulling'; END IF;
@@ -573,7 +576,7 @@ BEGIN
       RETURN 'done';
     END IF;
     UPDATE public.sub_finder_job SET status = 'pulling_td', updated_at = now() WHERE job_id = p_job_id;
-    DELETE FROM _sf_l;
+    PERFORM public.sub_finder_scratch();
   END IF;
 
   -- ── pulling_td ──────────────────────────────────────────────────────────────────────────
@@ -952,6 +955,7 @@ REVOKE ALL ON FUNCTION public.sub_finder_latest_job(bigint, text) FROM PUBLIC, a
 REVOKE ALL ON FUNCTION public.sub_finder_match(uuid, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_load_native(uuid, interval) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_covers_key(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sub_finder_scratch() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_refresh() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_order_read(bigint, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_buy_touch_trg() FROM PUBLIC, anon, authenticated;
@@ -966,6 +970,7 @@ GRANT EXECUTE ON FUNCTION public.sub_finder_latest_job(bigint, text) TO service_
 GRANT EXECUTE ON FUNCTION public.sub_finder_match(uuid, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_load_native(uuid, interval) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_covers_key(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.sub_finder_scratch() TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_refresh() TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_order_read(bigint, uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_order_json(public.sub_finder_order) TO service_role;
