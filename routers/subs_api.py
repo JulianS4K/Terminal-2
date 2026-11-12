@@ -17,6 +17,11 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
   GET  /api/v1/subs/orders/{order_number}                   the same order, newest job, no job id
   POST /api/v1/subs/orders/{order_number}/buy               the same buy, newest job, no job id
+  POST /api/v1/subs/orders/{order_number}/needs-sub         the ALERT: "this order needs a sub"
+
+The alert is the integration we ask the CRM for: one "Needs sub" checkbox on an order, which
+fires that last call with nothing but the order number in the URL. It is a one-order submit;
+ticking twice within NEEDS_SUB_WINDOW_S returns the same lookup instead of starting another.
 
 Built around how the CRM holds orders: an order can be sent as just its number, or as the CRM's
 own row under the CRM's field names (ALIASES); whatever is missing is filled from our mirror of
@@ -42,6 +47,7 @@ carries the result (`buy.outcome`, EVO order number, total charged, seat numbers
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from collections.abc import Callable
 from datetime import date, datetime, timezone
@@ -54,6 +60,7 @@ from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
 MAX_LIMIT = 1000           # the CRM's own page ceiling
+NEEDS_SUB_WINDOW_S = 600   # a repeated "needs sub" alert inside this window is the same lookup
 _ORDER_NO = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 _ERROR_STATUS = {"forbidden": 403, "invalid": 422, "not_found": 404, "conflict": 409}
 
@@ -295,6 +302,28 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if not jid:
             return _err(404, "not_found", "no job holds this order number; submit it first")
         return _read_order(key, str(jid), order_number)
+
+    @router.post("/orders/{order_number}/needs-sub")
+    async def needs_sub(order_number: str, request: Request):
+        """The alert behind the CRM's "Needs sub" checkbox. The order number in the URL is
+        enough; a body may carry the CRM's own row for an order we do not mirror yet."""
+        key = _auth(request, "needs_sub")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - no body is the normal case
+            body = None
+        raw = dict(body) if isinstance(body, dict) else {}
+        raw = {k: v for k, v in raw.items() if k not in ALIASES["order_number"]}
+        row, why = clean_order({**raw, "order_number": order_number}, 0)
+        if why:
+            return _err(422, "invalid", why.replace("orders[0].", "").replace("orders[0] ", ""))
+        bucket = int(time.time() // NEEDS_SUB_WINDOW_S)
+        out = _rpc("sub_finder_submit", {
+            "p_key_id": key["id"], "p_key_label": key.get("label"), "p_orders": [row],
+            "p_idempotency_key": f"needs-sub:{row['order_number']}:{bucket}"})  # type: ignore[index]
+        return _answer(out, ok_status=202)
 
     @router.post("/orders/{order_number}/buy")
     async def buy_latest(order_number: str, request: Request):

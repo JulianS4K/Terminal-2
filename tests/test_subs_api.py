@@ -284,6 +284,44 @@ def test_by_order_number_routes_use_the_newest_job():
     assert not [n for n, _ in none.rpcs if n in ("sub_finder_order_read", "sub_finder_buy")]
 
 
+def test_needs_sub_alert_is_a_one_order_submit(monkeypatch):
+    db = FakeDB(rpc_data={"sub_finder_submit": {"job_id": JOB, "status": "pulling", "order_count": 1}})
+    c = _client(db)
+    url = "/api/v1/subs/orders/JY8EGX10HP/needs-sub"
+    assert c.post(url).status_code == 401
+    monkeypatch.setattr(s.time, "time", lambda: 6000.0)
+    r = c.post(url, headers=H)                                  # no body: the order number is enough
+    assert r.status_code == 202 and r.json()["job_id"] == JOB
+    args = db.last("sub_finder_submit")
+    assert args["p_orders"] == [{"order_number": "JY8EGX10HP"}]
+    assert args["p_idempotency_key"] == "needs-sub:JY8EGX10HP:10" and args["p_key_id"] == 7
+    assert db.last("mcp_count_call")["p_tool"] == "subs.needs_sub"
+    # ticked again inside the window: the same idempotency key, so SQL returns the same lookup
+    monkeypatch.setattr(s.time, "time", lambda: 6599.0)
+    c.post(url, headers=H)
+    assert db.last("sub_finder_submit")["p_idempotency_key"] == "needs-sub:JY8EGX10HP:10"
+    monkeypatch.setattr(s.time, "time", lambda: 6600.0)
+    c.post(url, headers=H)
+    assert db.last("sub_finder_submit")["p_idempotency_key"] == "needs-sub:JY8EGX10HP:11"
+    # the CRM's row may ride along; the URL's order number always wins over the body's
+    c.post(url, headers=H, json={"order_number": "OTHER", "s4k_order_id": "X", "marketplace": "Gametime",
+                                 "section": "108", "row": "3", "qty": 3, "grand_total": 744})
+    assert db.last("sub_finder_submit")["p_orders"] == [{
+        "order_number": "JY8EGX10HP", "site": "Gametime", "section": "108", "row": "3", "qty": 3,
+        "sold_ea": 248.0}]
+    c.post(url, headers=H, json=["not", "a", "row"])            # a non-object body is ignored
+    assert db.last("sub_finder_submit")["p_orders"] == [{"order_number": "JY8EGX10HP"}]
+    n = len(db.rpcs)
+    r = c.post(url, headers=H, json={"qty": 0})
+    assert r.status_code == 422 and r.json()["detail"] == "qty must be a whole number from 1 to 50"
+    r = c.post("/api/v1/subs/orders/bad%20order/needs-sub", headers=H)
+    assert r.status_code == 422 and r.json()["detail"].startswith("order_number is required")
+    assert not [x for x, _ in db.rpcs[n:] if x == "sub_finder_submit"]
+    # an order we cannot place answers 404 from SQL
+    db.rpc_data["sub_finder_submit"] = {"error": "not_found", "not_found": ["JY8EGX10HP"]}
+    assert c.post(url, headers=H).status_code == 404
+
+
 def test_results_cursor_and_bounds():
     db = FakeDB(rpc_data={"sub_finder_results": {"count": 0, "total": 0, "items": [],
                                                  "generated_at": "2026-11-12T20:00:00.000000Z"}})

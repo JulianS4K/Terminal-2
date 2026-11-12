@@ -1,12 +1,49 @@
 # S4K Sub Finder API — onboarding
 
-> **Doc version:** v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
+> **Doc version:** v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
 
 For the CRM team. You send us orders that need a substitute ("sub"); we pull fresh listings, and you read back the best replacement tickets for each order. If you are allowed to, you can also ask us to buy an EVO replacement and then follow that purchase until the seller confirms or rejects it.
 
 Code: `routers/subs_api.py` · SQL: migrations `20261112000000` (buy follow-up) and `20261112010000` (the API) · operator switches: [§9](#9-for-s4k-operators-switching-it-on).
 
-**Contents:** [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [7 Buy an EVO cover](#7-buy-an-evo-cover) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+**Contents:** [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [7 Buy an EVO cover](#7-buy-an-evo-cover) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+
+## The one thing we ask you to build: a "Needs sub" checkbox
+
+Put one checkbox on the order screen, labelled **Needs sub**. When an agent ticks it, the CRM tells us, and we do the rest. That single alert is the whole integration; everything else in this document is optional.
+
+**When the box is ticked, make one call.** The order number goes in the URL and no body is needed, because we already mirror the CRM's order books:
+
+```bash
+curl -s -X POST -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/<order_number>/needs-sub
+```
+
+It answers at once (**202**) with a job header. The search itself runs on our side.
+
+**Then show the agent what we found.** Read the order back by its number and render it next to the checkbox:
+
+```bash
+curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/<order_number>
+```
+
+| The order's `state` | Show the agent |
+|---|---|
+| `pending` | "Looking for a sub..." — read again in 10 seconds (answers take 20 seconds to 3 minutes) |
+| `cover` | the `best` cover: market, section, row, quantity, price, profit or loss, and its `link`. A **Buy** button if `best.buyable` is true and your key may buy ([§7](#7-buy-an-evo-cover)) |
+| `no_cover` | "No sub found" — offer **Check again** (the same alert call) |
+| `unmapped` | "Event not recognised" — S4K needs to map it; tell us the order number |
+
+**How we would like to be alerted — please follow these.**
+
+1. **Alert at the moment the order is flagged, one order per call.** Do not save them up for a nightly batch: listings sell, and a sub found three hours late is usually gone.
+2. **Alert only orders that actually need a sub.** Do not send the whole book. Each alert pulls live listings from several marketplaces.
+3. **Send the order number, nothing else.** If the order is too new for our mirror (the call answers 404 `not_found`), retry once after a minute; only then send the CRM's row as the JSON body, unchanged.
+4. **Ticking twice is safe.** A repeat within 10 minutes returns the same lookup. After that, a new tick is a fresh search — which is exactly what **Check again** should do.
+5. **Unticking needs no call.** We hold nothing open: an alert is a one-off search, not a subscription. Just stop reading the order.
+6. **Do not poll every order forever.** Read an order while its `state` is `pending`, or while a purchase on it is unconfirmed. For anything broader use the sync feed ([§6](#6-keep-in-sync)).
+7. **If the CRM auto-creates N2S items from failed-order alerts,** fire the same call when it does, so the agent opens the order to a sub already found.
+
+That is all the CRM has to build: one checkbox, one call when it is ticked, one read to show the answer.
 
 ## 1. Quick start (5 minutes)
 
@@ -18,13 +55,10 @@ The whole flow is three calls, and the only thing you have to send is the order 
 HOST=https://<host>          # given with your key
 KEY=s4k_...                  # given once; we store only its hash
 
-# 1. Send the order numbers. We already mirror the CRM's N2S and marketplace books, so we
-#    look up the event, section, row, quantity and sale price ourselves.
-curl -s -X POST $HOST/api/v1/subs/jobs \
-  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"order_numbers": ["JY8EGX10HP", "659213629"]}'
+# 1. Alert us: this order needs a sub. (What the "Needs sub" checkbox does.)
+curl -s -X POST -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/659213629/needs-sub
 
-# 2. Read an order by its number until "state" is no longer "pending"
+# 2. Read the order by its number until "state" is no longer "pending"
 #    (usually 20 seconds to 3 minutes).
 curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/659213629
 
@@ -34,6 +68,8 @@ curl -s -X POST $HOST/api/v1/subs/orders/659213629/buy \
   -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"listing_id": "6833175743"}'
 ```
+
+Many orders at once (a backlog, a one-off sweep) go through the batch call in [§3](#3-submit-orders) instead: `POST /api/v1/subs/jobs` with `{"order_numbers": [...]}`.
 
 Check your key first with `curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/ping`.
 
@@ -88,7 +124,9 @@ An empty `scopes` list means the key is valid but not yet allow-listed (or the A
 
 ## 3. Submit orders
 
-**`POST /api/v1/subs/jobs`** — up to 200 orders (see `max_orders_per_job`). Answers **202** with the job header. Pick whichever body is least work for you:
+For one order, use the alert: **`POST /api/v1/subs/orders/{order_number}/needs-sub`** (no body; or the CRM's row as the body when the order is not in our mirror yet). It takes the same fields as below and answers the same job header.
+
+For many at once: **`POST /api/v1/subs/jobs`** — up to 200 orders (see `max_orders_per_job`). Answers **202** with the job header. Pick whichever body is least work for you:
 
 | Body | When |
 |---|---|
@@ -115,7 +153,7 @@ Unknown fields are ignored, so a full CRM row is fine.
 
 **Orders we cannot place.** A number that is not in the mirror and came with no section, row and quantity is not stored; it is listed in the response's `not_found`. If every order is like that the call answers 404 `not_found`. A brand-new order may take up to a minute to reach the mirror: retry, or send its row.
 
-**Retries.** Send an `Idempotency-Key` header (or `idempotency_key` in the body). A repeat with the same key returns the first job with `"replayed": true` and creates nothing. Without it, a retry creates a second job and a second round of pulls.
+**Retries.** The alert call handles this itself (a repeat within 10 minutes is the same lookup). For the batch call, send an `Idempotency-Key` header (or `idempotency_key` in the body). A repeat with the same key returns the first job with `"replayed": true` and creates nothing. Without it, a retry creates a second job and a second round of pulls.
 
 ```json
 {"job_id": "3f0c2a0e-1b7d-4c55-9a53-0d6f1f0a9b11", "status": "pulling",
