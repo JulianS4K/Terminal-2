@@ -68,24 +68,53 @@ H = {"x-api-key": KEY}
 
 # ---------------------------------------------------------------- pure helpers
 
-def test_clean_order_accepts_id_or_name_and_date():
-    row, why = s.clean_order(dict(ORDER, tevo_event_id="3241050"), 0)
-    assert why is None and row == {"order_number": "659213629", "site": "Viagogo", "venue": None,
+def test_clean_order_spelled_out():
+    row, why = s.clean_order(dict(ORDER, tevo_event_id="3241050", venue=" Carter "), 0)
+    assert why is None and row == {"order_number": "659213629", "site": "Viagogo", "venue": "Carter",
                                    "section": "217", "row": "G", "qty": 2, "sold_ea": 125.72,
                                    "tevo_event_id": 3241050}
     by_name = {"order_number": "A-1", "event_name": " Utah at Arizona ", "event_date": "2026-11-14",
                "section": "19", "row": "5", "qty": "2"}
     row, why = s.clean_order(by_name, 0)
     assert why is None and row["event_name"] == "Utah at Arizona" and row["event_date"] == "2026-11-14"
-    assert row["sold_ea"] is None and "tevo_event_id" not in row
+    assert row["qty"] == 2 and "sold_ea" not in row and "tevo_event_id" not in row
+
+
+def test_clean_order_number_only_and_crm_rows():
+    # just the number: everything else comes from our mirror of the CRM's books (SQL)
+    assert s.clean_order("JY8EGX10HP", 0) == ({"order_number": "JY8EGX10HP"}, None)
+    assert s.clean_order({"order_number": " JY8EGX10HP "}, 0) == ({"order_number": "JY8EGX10HP"}, None)
+    # the CRM's N2S row, posted unchanged: its field names, event_dt, total instead of per ticket
+    n2s = {"id": 9, "order_number": "JY8EGX10HP", "marketplace": "Gametime", "source": "automatiq",
+           "event_name": "Commanders at Giants (Thursday Night Football)", "event_dt": "2026-11-12T20:15:00",
+           "venue": "MetLife Stadium", "section": "108", "row": "3", "seats": None, "qty": 3,
+           "grand_total": 744.0, "status": "n2s"}
+    row, why = s.clean_order(n2s, 0)
+    assert why is None and row == {
+        "order_number": "JY8EGX10HP", "site": "Gametime", "venue": "MetLife Stadium", "section": "108",
+        "row": "3", "qty": 3, "sold_ea": 248.0, "event_date": "2026-11-12",
+        "event_name": "Commanders at Giants (Thursday Night Football)"}
+    # price_per_ticket wins over the total; an unusable total is just left out
+    assert s.clean_order(dict(n2s, price_per_ticket=250), 0)[0]["sold_ea"] == 250.0
+    assert "sold_ea" not in s.clean_order(dict(n2s, grand_total="n/a"), 0)[0]
+    # the CRM's marketplace row: s4k_order_id / source / quantity / venue_name
+    mk = {"s4k_order_id": "82410899", "source": "Vivid Seats", "quantity": 1, "venue_name": "Boone Pickens",
+          "section": "140", "row": "22", "event_date": "2026-11-14", "event_name": "Tech at OSU", "price": 163.65}
+    row, why = s.clean_order(mk, 0)
+    assert why is None and row["order_number"] == "82410899" and row["site"] == "Vivid Seats"
+    assert row["qty"] == 1 and row["venue"] == "Boone Pickens" and "sold_ea" not in row  # `price` basis varies
+
+
+def test_orders_of_accepts_every_body_shape():
+    assert s.orders_of({"orders": [1]}) == [1] and s.orders_of({"order_numbers": ["a"]}) == ["a"]
+    assert s.orders_of({"items": [2], "count": 1}) == [2] and s.orders_of([3]) == [3]
+    assert s.orders_of({"nope": 1}) is None and s.orders_of("x") is None
 
 
 @pytest.mark.parametrize("patch, needle", [
     ({"order_number": ""}, "order_number"),
     ({"order_number": "a b;c"}, "order_number"),
     ({"order_number": {"x": 1}}, "order_number"),
-    ({"section": " "}, "section and row"),
-    ({"row": None}, "section and row"),
     ({"qty": 0}, "qty"),
     ({"qty": "two"}, "qty"),
     ({"qty": True}, "qty"),
@@ -95,16 +124,15 @@ def test_clean_order_accepts_id_or_name_and_date():
     ({"sold_ea": True}, "sold_ea"),
     ({"tevo_event_id": "abc"}, "tevo_event_id"),
     ({"tevo_event_id": True}, "tevo_event_id"),
-    ({"tevo_event_id": None}, "event_name"),
-    ({"tevo_event_id": None, "event_name": "X", "event_date": "11/14/26"}, "event_date"),
+    ({"event_date": "11/14/26"}, "event_date"),
 ])
 def test_clean_order_refusals(patch, needle):
     row, why = s.clean_order(dict(ORDER, **patch), 3)
     assert row is None and needle in why and "orders[3]" in why
 
 
-def test_clean_order_not_an_object():
-    assert s.clean_order("x", 1) == (None, "orders[1] must be an object")
+def test_clean_order_not_an_order():
+    assert s.clean_order(7, 1) == (None, "orders[1] must be an order number or an object")
 
 
 def test_parse_instant():
@@ -162,18 +190,25 @@ def test_submit_passes_clean_rows_and_idempotency_key():
     assert r.status_code == 202 and r.json()["job_id"] == JOB
     args = db.last("sub_finder_submit")
     assert args["p_key_id"] == 7 and args["p_key_label"] == "crm" and args["p_idempotency_key"] == "sheet-new-1"
-    assert args["p_orders"] == [{"order_number": "659213629", "site": "Viagogo", "venue": None, "section": "217",
+    assert args["p_orders"] == [{"order_number": "659213629", "site": "Viagogo", "section": "217",
                                  "row": "G", "qty": 2, "sold_ea": 125.72, "tevo_event_id": 3241050}]
     # the body field works when there is no header
     _client(db).post("/api/v1/subs/jobs", headers=H, json={"orders": [ORDER], "idempotency_key": "b"})
     assert db.last("sub_finder_submit")["p_idempotency_key"] == "b"
+    # order numbers alone, the CRM's own list envelope, and a bare list all work
+    for body in ({"order_numbers": ["JY8EGX10HP", "82410899"]}, {"items": ["JY8EGX10HP", {"order_id": "82410899"}]},
+                 ["JY8EGX10HP", "82410899"]):
+        assert _client(db).post("/api/v1/subs/jobs", headers=H, json=body).status_code == 202
+        assert db.last("sub_finder_submit")["p_orders"] == [{"order_number": "JY8EGX10HP"},
+                                                            {"order_number": "82410899"}]
+        assert db.last("sub_finder_submit")["p_idempotency_key"] is None
 
 
 def test_submit_refusals_never_reach_sql():
     db = FakeDB()
     c = _client(db)
     assert c.post("/api/v1/subs/jobs", json={"orders": [ORDER]}).status_code == 401
-    for body in ({"orders": []}, {"orders": "x"}, [1], {"orders": [ORDER] * (s.MAX_ORDERS + 1)},
+    for body in ({"orders": []}, {"orders": "x"}, [1], {"x": 1}, {"orders": [ORDER] * (s.MAX_ORDERS + 1)},
                  {"orders": [dict(ORDER, qty=0)]}):
         r = c.post("/api/v1/subs/jobs", headers=H, json=body)
         assert r.status_code == 422 and r.json()["error"] == "invalid"
@@ -222,6 +257,31 @@ def test_order_read():
     assert r.status_code == 404 and r.json()["detail"] == "no such order in this job"
     db.rpc_data["sub_finder_order_read"] = {"error": "forbidden"}
     assert c.get(url, headers=H).status_code == 403
+
+
+def test_by_order_number_routes_use_the_newest_job():
+    db = FakeDB(rpc_data={"sub_finder_latest_job": JOB,
+                          "sub_finder_order_read": {"count": 1, "items": [{"order_number": "82410899"}]},
+                          "sub_finder_buy": {"buy_id": 22, "state": "requested"}})
+    c = _client(db)
+    assert c.get("/api/v1/subs/orders/82410899").status_code == 401
+    assert c.post("/api/v1/subs/orders/82410899/buy", json={"listing_id": "1"}).status_code == 401
+    r = c.get("/api/v1/subs/orders/82410899", headers=H)
+    assert r.status_code == 200 and r.json()["count"] == 1
+    assert db.last("sub_finder_latest_job") == {"p_key_id": 7, "p_order_number": "82410899"}
+    assert db.last("sub_finder_order_read")["p_job_id"] == JOB
+    r = c.post("/api/v1/subs/orders/82410899/buy", headers=H, json={"listing_id": "6022006793"})
+    assert r.status_code == 202 and db.last("sub_finder_buy")["p_job_id"] == JOB
+    assert db.last("sub_finder_buy")["p_listing_id"] == "6022006793"
+    # a stray query parameter cannot stand in for the key
+    assert c.get("/api/v1/subs/orders/82410899?_key=x").status_code == 401
+    # no job holds it, or the number is malformed: 404 before any read or buy
+    none = FakeDB()
+    c2 = _client(none)
+    assert c2.get("/api/v1/subs/orders/82410899", headers=H).status_code == 404
+    assert c2.post("/api/v1/subs/orders/82410899/buy", headers=H, json={"listing_id": "1"}).status_code == 404
+    assert c2.get("/api/v1/subs/orders/bad%20order", headers=H).status_code == 404
+    assert not [n for n, _ in none.rpcs if n in ("sub_finder_order_read", "sub_finder_buy")]
 
 
 def test_results_cursor_and_bounds():

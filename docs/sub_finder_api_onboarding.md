@@ -1,6 +1,6 @@
 # S4K Sub Finder API — onboarding
 
-> **Doc version:** v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
+> **Doc version:** v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
 
 For the CRM team. You send us orders that need a substitute ("sub"); we pull fresh listings, and you read back the best replacement tickets for each order. If you are allowed to, you can also ask us to buy an EVO replacement and then follow that purchase until the seller confirms or rejects it.
 
@@ -12,26 +12,30 @@ Code: `routers/subs_api.py` · SQL: migrations `20261112000000` (buy follow-up) 
 
 You need the **host** and an **API key**; both come from S4K with your onboarding. The API looks like the CRM's own (`/api/v1`, `X-API-Key`, the same list envelope and `updated_since` cursor), so nothing here should be new.
 
+The whole flow is three calls, and the only thing you have to send is the order number:
+
 ```bash
 HOST=https://<host>          # given with your key
 KEY=s4k_...                  # given once; we store only its hash
 
-# 1. Is my key working, and what may it do?
-curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/ping
-
-# 2. Send orders. You get a job id back straight away.
+# 1. Send the order numbers. We already mirror the CRM's N2S and marketplace books, so we
+#    look up the event, section, row, quantity and sale price ourselves.
 curl -s -X POST $HOST/api/v1/subs/jobs \
   -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -H "Idempotency-Key: crm-batch-2026-11-12-001" \
-  -d '{"orders":[
-        {"order_number":"659213629","site":"Viagogo",
-         "event_name":"Kansas State Wildcats at TCU Horned Frogs Football","event_date":"2026-11-14",
-         "section":"217","row":"G","qty":2,"sold_ea":125.72}
-      ]}'
+  -d '{"order_numbers": ["JY8EGX10HP", "659213629"]}'
 
-# 3. Read the job until "status" is "done" (usually 20 seconds to 3 minutes).
-curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/jobs/<job_id>
+# 2. Read an order by its number until "state" is no longer "pending"
+#    (usually 20 seconds to 3 minutes).
+curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/659213629
+
+# 3. Optional, if your key may buy: buy the EVO cover you were quoted, then keep reading
+#    the same URL until buy.outcome is "confirmed" or "rejected".
+curl -s -X POST $HOST/api/v1/subs/orders/659213629/buy \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"listing_id": "6833175743"}'
 ```
+
+Check your key first with `curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/ping`.
 
 A finished order looks like this (shortened):
 
@@ -84,34 +88,48 @@ An empty `scopes` list means the key is valid but not yet allow-listed (or the A
 
 ## 3. Submit orders
 
-**`POST /api/v1/subs/jobs`** with `{"orders": [...]}` — up to 200 orders (see `max_orders_per_job`). Answers **202** with the job header.
+**`POST /api/v1/subs/jobs`** — up to 200 orders (see `max_orders_per_job`). Answers **202** with the job header. Pick whichever body is least work for you:
 
-| Field | Required | Notes |
+| Body | When |
+|---|---|
+| `{"order_numbers": ["JY8EGX10HP", "82410899"]}` | the order is already in the CRM's N2S or marketplace book. **Simplest; use this by default** |
+| `{"items": [ ...CRM rows... ]}` or `{"orders": [ ...CRM rows... ]}` | post rows exactly as the CRM API returns them (`/n2s/items` or `/marketplace/orders`); no renaming needed |
+| `{"orders": [ {...}, "JY8EGX10HP" ]}` | spelled-out orders and bare numbers can be mixed |
+
+**How an order is filled in.** Only `order_number` is required. Anything you leave out is taken from our mirror of the CRM's books, looked up by order number (the N2S book first, then the marketplace book). Anything you do send wins over the mirror. An EVO order can be sent as its full number or its order part.
+
+| Field | CRM names also accepted | Notes |
 |---|---|---|
-| `order_number` | yes | the marketplace's order number; letters, digits, `-`, `_`, `.`; up to 64 characters |
-| `section` | yes | as sold |
-| `row` | yes | as sold |
-| `qty` | yes | tickets sold, 1 to 50 |
-| `tevo_event_id` | one of | the Ticket Evolution event id — the most reliable way to name the event |
-| `event_name` + `event_date` | one of | exact event name as Ticket Evolution spells it, plus `YYYY-MM-DD` |
-| `sold_ea` | no | what the customer paid per ticket; without it `profit` is null |
-| `site` | no | where it sold (`Viagogo`, `Vivid Seats`, ...); used on the buy record |
-| `venue` | no | stored and echoed back; not used for matching |
+| `order_number` | `s4k_order_id`, `order_id`, `order_no` | **required**; letters, digits, `-`, `_`, `.`; up to 64 characters |
+| `section`, `row` | | as sold |
+| `qty` | `quantity` | tickets sold, 1 to 50 |
+| `sold_ea` | `price_per_ticket`; or `grand_total` ÷ `qty` | what the customer paid per ticket; without it `profit` is null. The marketplace book's `price` is ignored because its basis differs by market |
+| `site` | `marketplace`, `source` | where it sold; used on the buy record |
+| `tevo_event_id` | | the Ticket Evolution event id, if you have it |
+| `event_name` + `event_date` | `event_dt` (the date part is used) | only used when neither you nor the mirror has an event id |
+| `venue` | `venue_name` | stored and echoed back; not used for matching |
 
-Events are never guessed. With `event_name` + `event_date` the name must match exactly one event on that date (case does not matter); otherwise the order comes back `unmapped`. A doubleheader, where the same name plays twice on one date, needs `tevo_event_id`.
+Unknown fields are ignored, so a full CRM row is fine.
+
+**Which event.** In order: the `tevo_event_id` you sent, then the event our own mappers already resolved for that order in the mirror, then an exact `event_name` + `event_date` match that names exactly one event. The mirror is the reliable route: CRM event names often differ from Ticket Evolution's. If none works the order comes back `unmapped`; it is never guessed.
+
+**Orders we cannot place.** A number that is not in the mirror and came with no section, row and quantity is not stored; it is listed in the response's `not_found`. If every order is like that the call answers 404 `not_found`. A brand-new order may take up to a minute to reach the mirror: retry, or send its row.
 
 **Retries.** Send an `Idempotency-Key` header (or `idempotency_key` in the body). A repeat with the same key returns the first job with `"replayed": true` and creates nothing. Without it, a retry creates a second job and a second round of pulls.
 
 ```json
 {"job_id": "3f0c2a0e-1b7d-4c55-9a53-0d6f1f0a9b11", "status": "pulling",
- "order_count": 30, "unmapped": 1, "replayed": false, "created_at": "2026-11-12T19:53:39Z"}
+ "order_count": 29, "not_found": ["ZZ123"], "unmapped": 1, "replayed": false,
+ "created_at": "2026-11-12T19:53:39Z"}
 ```
 
-The whole request is refused (422) if any one order is malformed; `detail` names it, for example `orders[3].qty must be a whole number from 1 to 50`.
+The whole request is refused (422) if any one order carries a malformed value; `detail` names it, for example `orders[3].qty must be a whole number from 1 to 50`.
 
 ## 4. Read results
 
-**`GET /api/v1/subs/jobs/{job_id}`** — the job with every order. Reading a job is also what moves it forward, so poll it (or the sync feed in [§6](#6-keep-in-sync)).
+**`GET /api/v1/subs/orders/{order_number}`** — that order from the newest job holding it, as `{"count": 1, "items": [...]}`. No job id to keep. This is the simplest way to read one order or follow its buy.
+
+**`GET /api/v1/subs/jobs/{job_id}`** — the whole job with every order; use it for batches. Reading (either route, or the sync feed in [§6](#6-keep-in-sync)) is also what moves a job forward, so keep polling.
 
 | `status` | Meaning |
 |---|---|
@@ -127,13 +145,14 @@ The whole request is refused (422) if any one order is malformed; `detail` names
 
 Suggested polling: every 10 seconds; expect `done` in 20 seconds to 3 minutes, a little longer when TicketsData is involved. Results are a snapshot from that moment: listings sell, so act on them soon, and submit again for a fresh look.
 
-**`GET /api/v1/subs/jobs/{job_id}/orders/{order_number}`** — just that order, as `{"count": 1, "items": [...]}`. Handy for following one buy.
+**`GET /api/v1/subs/jobs/{job_id}/orders/{order_number}`** — the same single-order read, pinned to one job (for when you submitted the same order more than once and want an older answer).
 
 ## 5. The order object
 
 | Field | Meaning |
 |---|---|
-| `job_id`, `order_number`, `site`, `section`, `row`, `qty`, `sold_ea`, `venue` | what you sent |
+| `job_id`, `order_number`, `site`, `section`, `row`, `qty`, `sold_ea`, `venue` | the order as we understood it |
+| `order_source` | where its details came from: `request` (you sent them), `n2s` or `marketplace` (our mirror of that CRM book) |
 | `tevo_event_id`, `event_name`, `event_date` | the event we matched it to |
 | `state` | `pending` (not answered yet) · `cover` · `no_cover` · `unmapped` (event not recognised) |
 | `best` | the recommended cover: same-or-better row first, then cheapest total. Null without a cover |
@@ -187,7 +206,7 @@ Calling the feed also moves your open jobs forward, so a client that only ever s
 
 Needs the `subs:buy` scope. Only covers with `"buyable": true` can be bought, and only one this job quoted for that order.
 
-**`POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy`**
+**`POST /api/v1/subs/orders/{order_number}/buy`** (newest job holding that order) or **`POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy`** (a specific job)
 
 ```json
 {"listing_id": "6833175743", "requested_by": "dana@crm"}
@@ -212,7 +231,7 @@ That is a request, not a purchase yet. What happens next, and what you see in th
 | `stopped` | `none` | we did not send it; `reasons` says why (below) |
 | `unknown` | `none` | EVO did not answer clearly. A person at S4K checks; do not re-buy until told |
 
-Follow it by polling the order (`GET .../orders/{order_number}`) every 15 to 30 seconds, or just keep syncing: each change re-emits the order in the feed. We re-check EVO every 30 seconds at first, then less often, for up to 7 days.
+Follow it by polling `GET /api/v1/subs/orders/{order_number}` every 15 to 30 seconds, or just keep syncing: each change re-emits the order in the feed. We re-check EVO every 30 seconds at first, then less often, for up to 7 days.
 
 **The `buy` object:**
 
@@ -304,7 +323,8 @@ RULE 2 note: this API adds no upstream write. Its only way to spend money is a r
 | Symptom | Likely cause |
 |---|---|
 | `scopes` is empty | key not allow-listed yet, or the API is off — ask S4K |
-| order is `unmapped` | event name or date did not match exactly one event; send `tevo_event_id` |
+| order is `unmapped` | no event id from you or the mirror, and the name + date did not match exactly one event; send `tevo_event_id` |
+| order number in `not_found` | not in the CRM books we mirror (yet) and no section / row / qty sent; retry in a minute or send the row |
 | job sits in `pulling` | a listing pull is slow; it is matched with whatever arrived after 3 minutes. Keep reading — a job only moves when it is read |
 | `no_cover` but you can see tickets on the site | different section spelling, a row more than 5 back, a quantity the seller will not split, or the listing appeared after the pull. Submit again |
 | `price_above_ceiling` on a buy | the listing's price rose since the quote; submit the order again and buy from the new job |

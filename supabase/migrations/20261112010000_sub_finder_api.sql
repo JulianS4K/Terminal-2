@@ -1,4 +1,4 @@
--- Migration 20261112010000 · level:secondary-sales · lane:D0 · writes:sub_finder_config,sub_finder_job,sub_finder_order,sub_finder_td_pull,sub_finder_submit,sub_finder_settle,sub_finder_match,sub_finder_job_json,sub_finder_order_read,sub_finder_results,sub_finder_buy · reads:events,n2s_evo_current,n2s_gt_current,n2s_sg_current,n2s_mkt_pull,sg_events_canonical,aq_event_map,manual_sub_buy · pre:20261112000000
+-- Migration 20261112010000 · level:secondary-sales · lane:D0 · writes:sub_finder_config,sub_finder_job,sub_finder_order,sub_finder_td_pull,sub_finder_submit,sub_finder_latest_job,sub_finder_settle,sub_finder_match,sub_finder_job_json,sub_finder_order_read,sub_finder_results,sub_finder_buy · reads:events,n2s_items,v_s4kcs_orders,n2s_evo_current,n2s_gt_current,n2s_sg_current,n2s_mkt_pull,sg_events_canonical,aq_event_map,manual_sub_buy · pre:20261112000000
 --
 -- SUB FINDER API: a CRM user sends orders, gets back the best substitute per order.
 --
@@ -6,7 +6,10 @@
 -- "turn this into an out bound api trigger where crm user can auto get subs for orders".
 -- Answers given the same day: the CRM calls us and reads the answer back (no webhook); the CRM
 -- may send ANY order (event + section + row + quantity + sale price), not only ones already in
--- the N2S book; and a CRM user may ask for an EVO cover to be bought.
+-- the N2S book; and a CRM user may ask for an EVO cover to be bought. Then: "it's going to be
+-- getting info from crm so look at how it has orders and simplify process" — so an order can be
+-- sent as just its number, or as the CRM's own row, and is filled in from our mirror of the
+-- CRM's books (see sub_finder_submit).
 --
 -- This is the SQL half; routers/subs_api.py is the HTTP half (/api/v1/subs/*). The API shape
 -- copies the CRM's own (s4kcs_client.py): X-API-Key, an envelope of count/total/limit/offset/
@@ -57,7 +60,8 @@
 --             public.sub_finder_results(bigint, timestamptz, integer, integer),
 --             public.sub_finder_job_json(bigint, uuid), public.sub_finder_settle(uuid),
 --             public.sub_finder_order_json(public.sub_finder_order),
---             public.sub_finder_submit(bigint, text, jsonb, text), public.sub_finder_access(bigint);
+--             public.sub_finder_submit(bigint, text, jsonb, text), public.sub_finder_latest_job(bigint, text),
+--             public.sub_finder_access(bigint);
 --           DROP TABLE public.sub_finder_td_pull, public.sub_finder_order, public.sub_finder_job, public.sub_finder_config;
 
 CREATE TABLE IF NOT EXISTS public.sub_finder_config (
@@ -116,6 +120,8 @@ CREATE TABLE IF NOT EXISTS public.sub_finder_order (
   -- TicketsData fallback for this order: NULL = not needed (a cover was found) or switched off;
   -- queued -> searched | failed; no_event_link = we hold no StubHub id for the event; over_limit
   td_state      text CHECK (td_state IN ('queued', 'searched', 'failed', 'no_event_link', 'over_limit')),
+  -- where the order's details came from: 'request' (all sent) | 'n2s' | 'marketplace' (our CRM mirror)
+  order_source  text NOT NULL DEFAULT 'request',
   updated_at    timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (job_id, idx)
 );
@@ -163,7 +169,21 @@ AS $$
 $$;
 
 -- Store a batch of orders, resolve their events, fire the pulls. Returns the job header.
--- p_orders: [{order_number, site?, tevo_event_id? | event_name + event_date, venue?, section, row, qty, sold_ea?}]
+--
+-- BUILT AROUND HOW THE CRM HOLDS ORDERS. An order may be sent three ways:
+--   * just its number        {"order_number": "JY8EGX10HP"}
+--   * the CRM's own row      (routers/subs_api.py maps the CRM's field names onto ours)
+--   * spelled out            order_number, section, row, qty, and an event
+-- Whatever is missing is filled from OUR MIRROR of the CRM's two books, looked up by order
+-- number: n2s_items first (the Need-to-Sub book, incl. the Gmail peddled orders), then
+-- v_s4kcs_orders (the marketplace book). The mirror also carries the event our mappers already
+-- resolved for that order, which beats matching an event by name: the CRM's names often differ
+-- from Ticket Evolution's ("... (Thursday Night Football)").
+--
+-- The event is taken, in order: the tevo_event_id sent -> the mirror's -> an exact name + local
+-- date that names exactly one event. Otherwise the order is 'unmapped' — never a guess.
+-- An order with no section / row / quantity anywhere (not sent, not in the mirror) is not
+-- stored; its number comes back in `not_found`.
 CREATE OR REPLACE FUNCTION public.sub_finder_submit(
   p_key_id bigint, p_key_label text, p_orders jsonb, p_idempotency_key text DEFAULT NULL)
  RETURNS jsonb
@@ -172,11 +192,12 @@ CREATE OR REPLACE FUNCTION public.sub_finder_submit(
  SET search_path = public, pg_temp
 AS $$
 DECLARE
-  c      public.sub_finder_config;
-  v_job  uuid;
-  v_n    integer;
-  v_evs  bigint[];
-  v_idem text := nullif(btrim(coalesce(p_idempotency_key, '')), '');
+  c       public.sub_finder_config;
+  v_job   uuid;
+  v_n     integer;
+  v_evs   bigint[];
+  v_miss  jsonb;
+  v_idem  text := nullif(btrim(coalesce(p_idempotency_key, '')), '');
 BEGIN
   SELECT * INTO c FROM public.sub_finder_config;
   IF NOT c.enabled OR NOT (p_key_id = ANY (c.key_ids)) THEN
@@ -193,36 +214,71 @@ BEGIN
   IF jsonb_typeof(p_orders) IS DISTINCT FROM 'array' OR jsonb_array_length(p_orders) = 0 THEN
     RETURN jsonb_build_object('error', 'invalid', 'detail', 'orders must be a non-empty array');
   END IF;
-  v_n := jsonb_array_length(p_orders);
-  IF v_n > c.max_orders_per_job THEN
+  IF jsonb_array_length(p_orders) > c.max_orders_per_job THEN
     RETURN jsonb_build_object('error', 'invalid',
                               'detail', format('at most %s orders per job', c.max_orders_per_job));
+  END IF;
+
+  IF to_regclass('pg_temp._sf_in') IS NOT NULL THEN DROP TABLE _sf_in; END IF;
+  CREATE TEMP TABLE _sf_in ON COMMIT DROP AS
+  SELECT o.ord::int AS idx, btrim(o.j->>'order_number') AS order_number,
+         coalesce(nullif(btrim(o.j->>'site'), ''), m.site)                 AS site,
+         coalesce(nullif(btrim(o.j->>'section'), ''), m.section)           AS section,
+         coalesce(nullif(btrim(o.j->>'row'), ''), m.seat_row)              AS seat_row,
+         coalesce((o.j->>'qty')::int, m.qty)                               AS qty,
+         coalesce((o.j->>'sold_ea')::numeric, m.sold_ea)                   AS sold_ea,
+         (o.j->>'tevo_event_id')::bigint                                   AS sent_event,
+         m.tevo_event_id                                                   AS book_event,
+         coalesce(nullif(btrim(o.j->>'event_name'), ''), m.event_name)     AS event_name,
+         coalesce((o.j->>'event_date')::date, m.event_date)                AS event_date,
+         coalesce(nullif(btrim(o.j->>'venue'), ''), m.venue)               AS venue,
+         m.book
+  FROM jsonb_array_elements(p_orders) WITH ORDINALITY o(j, ord)
+  LEFT JOIN LATERAL (
+    SELECT u.* FROM (
+      SELECT 1 AS pri, 'n2s'::text AS book, n.marketplace AS site, n.tevo_event_id, n.event_name,
+             n.event_dt::date AS event_date, n.venue, n.section, n.row AS seat_row, n.qty,
+             n.price_per_ticket AS sold_ea, n.pulled_at
+      FROM public.n2s_items n
+      WHERE n.order_number = btrim(o.j->>'order_number') OR n.n2s_order_key = btrim(o.j->>'order_number')
+      UNION ALL
+      SELECT 2, 'marketplace', v.source, v.tevo_event_id, v.event_name, v.event_date, v.venue_name,
+             v.section, v.row, v.quantity, v.price_per_ticket, v.pulled_at
+      FROM public.v_s4kcs_orders v
+      WHERE v.s4k_order_id = btrim(o.j->>'order_number')) u
+    ORDER BY u.pri, u.pulled_at DESC NULLS LAST LIMIT 1) m ON true;
+
+  SELECT jsonb_agg(order_number ORDER BY idx) INTO v_miss FROM _sf_in
+   WHERE section IS NULL OR seat_row IS NULL OR qty IS NULL OR qty NOT BETWEEN 1 AND 50;
+  SELECT count(*) INTO v_n FROM _sf_in
+   WHERE section IS NOT NULL AND seat_row IS NOT NULL AND qty BETWEEN 1 AND 50;
+  IF v_n = 0 THEN
+    RETURN jsonb_build_object('error', 'not_found', 'not_found', v_miss,
+      'detail', 'none of these orders is in the CRM books we mirror; send section, row, qty and the event');
   END IF;
 
   INSERT INTO public.sub_finder_job (key_id, key_label, idempotency_key, order_count)
   VALUES (p_key_id, p_key_label, v_idem, v_n) RETURNING job_id INTO v_job;
 
-  -- An event is taken on its id when we hold that event, else on an exact name + local date
-  -- that names exactly one event. Anything else is 'unmapped' — never a guess.
   INSERT INTO public.sub_finder_order (job_id, idx, key_id, order_number, site, tevo_event_id, event_name,
-                                       event_date, venue, section, seat_row, qty, sold_ea, state)
-  SELECT v_job, o.ord::int, p_key_id, btrim(o.j->>'order_number'), nullif(btrim(o.j->>'site'), ''),
-         ev.id, coalesce(ev.name, nullif(btrim(o.j->>'event_name'), '')),
-         coalesce(ev.occurs_at_local::date, (o.j->>'event_date')::date), nullif(btrim(o.j->>'venue'), ''),
-         btrim(o.j->>'section'), btrim(o.j->>'row'), (o.j->>'qty')::int, (o.j->>'sold_ea')::numeric,
-         CASE WHEN ev.id IS NULL THEN 'unmapped' ELSE 'pending' END
-  FROM jsonb_array_elements(p_orders) WITH ORDINALITY o(j, ord)
+                                       event_date, venue, section, seat_row, qty, sold_ea, state, order_source)
+  SELECT v_job, i.idx, p_key_id, i.order_number, i.site, ev.id, coalesce(ev.name, i.event_name),
+         coalesce(ev.occurs_at_local::date, i.event_date), i.venue, i.section, i.seat_row, i.qty, i.sold_ea,
+         CASE WHEN ev.id IS NULL THEN 'unmapped' ELSE 'pending' END,
+         coalesce(i.book, 'request')
+  FROM _sf_in i
   LEFT JOIN LATERAL (
     SELECT e.id, e.name, e.occurs_at_local
     FROM public.events e
-    WHERE CASE WHEN (o.j->>'tevo_event_id') IS NOT NULL THEN e.id = (o.j->>'tevo_event_id')::bigint
-               ELSE lower(e.name) = lower(btrim(o.j->>'event_name'))
-                    AND e.occurs_at_local::date = (o.j->>'event_date')::date
+    WHERE CASE WHEN i.sent_event IS NOT NULL THEN e.id = i.sent_event
+               WHEN i.book_event IS NOT NULL THEN e.id = i.book_event
+               ELSE lower(e.name) = lower(i.event_name) AND e.occurs_at_local::date = i.event_date
                     AND (SELECT count(*) FROM public.events e2
-                         WHERE lower(e2.name) = lower(btrim(o.j->>'event_name'))
-                           AND e2.occurs_at_local::date = (o.j->>'event_date')::date) = 1
+                         WHERE lower(e2.name) = lower(i.event_name)
+                           AND e2.occurs_at_local::date = i.event_date) = 1
           END
-    LIMIT 1) ev ON true;
+    LIMIT 1) ev ON true
+  WHERE i.section IS NOT NULL AND i.seat_row IS NOT NULL AND i.qty BETWEEN 1 AND 50;
 
   SELECT array_agg(DISTINCT tevo_event_id) INTO v_evs
   FROM public.sub_finder_order WHERE job_id = v_job AND tevo_event_id IS NOT NULL;
@@ -234,10 +290,25 @@ BEGIN
 
   RETURN (SELECT jsonb_build_object('job_id', j.job_id, 'status', j.status, 'order_count', j.order_count,
                                     'created_at', j.created_at, 'replayed', false,
+                                    'not_found', coalesce(v_miss, '[]'::jsonb),
                                     'unmapped', (SELECT count(*) FROM public.sub_finder_order o
                                                  WHERE o.job_id = v_job AND o.state = 'unmapped'))
           FROM public.sub_finder_job j WHERE j.job_id = v_job);
 END
+$$;
+
+-- The newest job of this key that holds an order number: lets a caller address an order by
+-- its number alone (read it, buy for it) without keeping job ids. NULL when there is none.
+CREATE OR REPLACE FUNCTION public.sub_finder_latest_job(p_key_id bigint, p_order_number text)
+ RETURNS uuid
+ LANGUAGE sql
+ STABLE
+ SECURITY DEFINER
+ SET search_path = public, pg_temp
+AS $$
+  SELECT o.job_id FROM public.sub_finder_order o JOIN public.sub_finder_job j USING (job_id)
+  WHERE o.key_id = p_key_id AND o.order_number = p_order_number
+  ORDER BY j.created_at DESC, o.job_id LIMIT 1;
 $$;
 
 -- Rank the listings in the caller's temp table _sf_l against a job's still-'pending' orders
@@ -503,7 +574,7 @@ AS $$
     'job_id', o.job_id, 'order_number', o.order_number, 'site', o.site,
     'tevo_event_id', o.tevo_event_id, 'event_name', o.event_name, 'event_date', o.event_date, 'venue', o.venue,
     'section', o.section, 'row', o.seat_row, 'qty', o.qty, 'sold_ea', o.sold_ea,
-    'state', o.state, 'best', o.best, 'covers', o.covers,
+    'order_source', o.order_source, 'state', o.state, 'best', o.best, 'covers', o.covers,
     'markets_searched', CASE WHEN o.state IN ('cover', 'no_cover')
                              THEN to_jsonb(ARRAY['evo', 'gotickets', 'seatgeek']
                                            || CASE WHEN o.td_state = 'searched' THEN ARRAY['ticketsdata']
@@ -695,6 +766,7 @@ $$;
 REVOKE ALL ON FUNCTION public.sub_finder_access(bigint) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_submit(bigint, text, jsonb, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_settle(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sub_finder_latest_job(bigint, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_match(uuid, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_order_read(bigint, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_buy_touch_trg() FROM PUBLIC, anon, authenticated;
@@ -705,6 +777,7 @@ REVOKE ALL ON FUNCTION public.sub_finder_buy(bigint, text, uuid, text, text, tex
 GRANT EXECUTE ON FUNCTION public.sub_finder_access(bigint) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_submit(bigint, text, jsonb, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_settle(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.sub_finder_latest_job(bigint, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_match(uuid, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_order_read(bigint, uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_order_json(public.sub_finder_order) TO service_role;

@@ -15,6 +15,12 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/jobs/{job_id}/orders/{order_number}     one order (e.g. to follow its buy)
   GET  /api/v1/subs/results?updated_since=&limit=&offset=   sync feed of answered orders
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
+  GET  /api/v1/subs/orders/{order_number}                   the same order, newest job, no job id
+  POST /api/v1/subs/orders/{order_number}/buy               the same buy, newest job, no job id
+
+Built around how the CRM holds orders: an order can be sent as just its number, or as the CRM's
+own row under the CRM's field names (ALIASES); whatever is missing is filled from our mirror of
+the CRM's books, which also carries the event our mappers already resolved for it.
 
 All the work is in SQL (mig 20261112000000): `sub_finder_submit` stores the orders and fires
 the on-demand listing pulls N2S already uses (GETs to EVO, GoTickets and SeatGeek); reading a
@@ -62,47 +68,97 @@ def _text(v: Any, limit: int) -> str | None:
     return s[:limit] or None
 
 
+# The CRM's own field names, mapped onto ours, so one of its rows can be posted unchanged
+# (s4kcs_client.py: /n2s/items rows and /marketplace/orders rows). First name present wins.
+# `source` comes last for the site: on an N2S row it is the intake source, not the marketplace.
+ALIASES = {
+    "order_number": ("order_number", "s4k_order_id", "order_id", "order_no"),
+    "site": ("site", "marketplace", "source"),
+    "qty": ("qty", "quantity"),
+    "sold_ea": ("sold_ea", "price_per_ticket"),
+    "venue": ("venue", "venue_name"),
+    "event_date": ("event_date", "event_dt"),
+}
+
+
+def _pick(raw: dict, name: str) -> Any:
+    for k in ALIASES.get(name, (name,)):
+        v = raw.get(k)
+        if v is not None and not (isinstance(v, str) and not v.strip()):
+            return v
+    return None
+
+
 def clean_order(raw: Any, i: int) -> tuple[dict | None, str | None]:
-    """One submitted order -> (the row for SQL, None) or (None, why it was refused)."""
+    """One submitted order -> (the row for SQL, None) or (None, why it was refused).
+
+    Only the order number is required: anything else left out is filled from our mirror of the
+    CRM's books (SQL, sub_finder_submit). What IS sent is checked here. A bare string is an
+    order number; a CRM row is accepted under its own field names (ALIASES)."""
+    if isinstance(raw, str):
+        raw = {"order_number": raw}
     if not isinstance(raw, dict):
-        return None, f"orders[{i}] must be an object"
-    num = _text(raw.get("order_number"), 64)
+        return None, f"orders[{i}] must be an order number or an object"
+    num = _text(_pick(raw, "order_number"), 64)
     if not num or not _ORDER_NO.fullmatch(num):
         return None, f"orders[{i}].order_number is required (letters, digits, '-', '_', '.')"
-    section, row = _text(raw.get("section"), 40), _text(raw.get("row"), 20)
-    if not section or not row:
-        return None, f"orders[{i}] needs section and row"
-    try:
-        qty = int(str(raw.get("qty")).strip())
-    except (TypeError, ValueError):
-        qty = 0
-    if isinstance(raw.get("qty"), bool) or not 1 <= qty <= 50:
-        return None, f"orders[{i}].qty must be a whole number from 1 to 50"
-    sold = raw.get("sold_ea")
+    out: dict[str, Any] = {"order_number": num}
+    for name, limit in (("site", 40), ("venue", 120), ("section", 40), ("row", 20)):
+        v = _text(_pick(raw, name), limit)
+        if v:
+            out[name] = v
+    qty = _pick(raw, "qty")
+    if qty is not None:
+        try:
+            n = int(str(qty).strip())
+        except ValueError:
+            n = 0
+        if isinstance(qty, bool) or not 1 <= n <= 50:
+            return None, f"orders[{i}].qty must be a whole number from 1 to 50"
+        out["qty"] = n
+    sold = _pick(raw, "sold_ea")
+    if sold is None and out.get("qty") and raw.get("grand_total") is not None:
+        try:  # the CRM's N2S rows always carry the total; per ticket is total / quantity
+            sold = float(raw["grand_total"]) / out["qty"]
+        except (TypeError, ValueError):
+            sold = None
     if sold is not None:
         try:
-            sold = round(float(sold), 2)
+            price = round(float(sold), 2)
         except (TypeError, ValueError):
-            sold = -1
-        if isinstance(raw.get("sold_ea"), bool) or not 0 < sold < 100000:
+            price = -1.0
+        if isinstance(sold, bool) or not 0 < price < 100000:
             return None, f"orders[{i}].sold_ea must be a positive price per ticket"
-    out = {"order_number": num, "site": _text(raw.get("site"), 40), "venue": _text(raw.get("venue"), 120),
-           "section": section, "row": row, "qty": qty, "sold_ea": sold}
+        out["sold_ea"] = price
     ev = raw.get("tevo_event_id")
     if ev is not None:
         if isinstance(ev, bool) or not str(ev).strip().isdigit():
             return None, f"orders[{i}].tevo_event_id must be a number"
         out["tevo_event_id"] = int(str(ev).strip())
-        return out, None
-    name, day = _text(raw.get("event_name"), 200), _text(raw.get("event_date"), 10)
-    try:
-        date.fromisoformat(day or "")
-    except ValueError:
-        day = None
-    if not name or not day:
-        return None, f"orders[{i}] needs tevo_event_id, or event_name with event_date (YYYY-MM-DD)"
-    out.update(event_name=name, event_date=day)
+    ev_name = _text(raw.get("event_name"), 200)
+    day = _pick(raw, "event_date")
+    if day is not None:
+        day = str(day).strip()[:10]  # the CRM's event_dt is a venue-local "YYYY-MM-DDTHH:MM:SS"
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            return None, f"orders[{i}].event_date must be YYYY-MM-DD"
+        out["event_date"] = day
+    if ev_name:
+        out["event_name"] = ev_name
     return out, None
+
+
+def orders_of(body: Any) -> Any:
+    """The order list of a submit body: {"orders": [...]}, {"order_numbers": [...]}, the CRM's
+    own list envelope {"items": [...]}, or a bare list."""
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        for k in ("orders", "order_numbers", "items"):
+            if body.get(k) is not None:
+                return body[k]
+    return None
 
 
 def parse_instant(value: str | None) -> tuple[str | None, bool]:
@@ -180,9 +236,9 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             body = await request.json()
         except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
             body = None
-        orders = body.get("orders") if isinstance(body, dict) else None
+        orders = orders_of(body)
         if not isinstance(orders, list) or not orders:
-            return _err(422, "invalid", "send {\"orders\": [...]} with at least one order")
+            return _err(422, "invalid", "send {\"orders\": [...]} or {\"order_numbers\": [...]}")
         if len(orders) > MAX_ORDERS:
             return _err(422, "invalid", f"at most {MAX_ORDERS} orders per job")
         rows = []
@@ -191,7 +247,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             if why:
                 return _err(422, "invalid", why)
             rows.append(row)
-        idem = _text(request.headers.get("idempotency-key") or body.get("idempotency_key"), 80)  # type: ignore[union-attr]
+        idem = _text(request.headers.get("idempotency-key")
+                     or (body.get("idempotency_key") if isinstance(body, dict) else None), 80)
         out = _rpc("sub_finder_submit", {"p_key_id": key["id"], "p_key_label": key.get("label"),
                                          "p_orders": rows, "p_idempotency_key": idem})
         return _answer(out, ok_status=202)
@@ -207,11 +264,7 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             return _err(404, "not_found", "no such job for this key")
         return _answer(_rpc("sub_finder_job_json", {"p_key_id": key["id"], "p_job_id": jid}))
 
-    @router.get("/jobs/{job_id}/orders/{order_number}")
-    def order(job_id: str, order_number: str, request: Request):
-        key = _auth(request, "order")
-        if isinstance(key, JSONResponse):
-            return key
+    def _read_order(key: dict, job_id: str, order_number: str) -> JSONResponse:
         try:
             jid = str(uuid.UUID(job_id))
         except ValueError:
@@ -221,6 +274,37 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         out = _rpc("sub_finder_order_read", {"p_key_id": key["id"], "p_job_id": jid,
                                               "p_order_number": order_number})
         return _err(404, "not_found", "no such order in this job") if out is None else _answer(out)
+
+    @router.get("/jobs/{job_id}/orders/{order_number}")
+    def order(job_id: str, order_number: str, request: Request):
+        key = _auth(request, "order")
+        return key if isinstance(key, JSONResponse) else _read_order(key, job_id, order_number)
+
+    def _latest(key: dict, order_number: str) -> str | None:
+        """The newest job of this key holding that order number (so callers need no job ids)."""
+        if not _ORDER_NO.fullmatch(order_number):
+            return None
+        return _rpc("sub_finder_latest_job", {"p_key_id": key["id"], "p_order_number": order_number})
+
+    @router.get("/orders/{order_number}")
+    def order_latest(order_number: str, request: Request):
+        key = _auth(request, "order")
+        if isinstance(key, JSONResponse):
+            return key
+        jid = _latest(key, order_number)
+        if not jid:
+            return _err(404, "not_found", "no job holds this order number; submit it first")
+        return _read_order(key, str(jid), order_number)
+
+    @router.post("/orders/{order_number}/buy")
+    async def buy_latest(order_number: str, request: Request):
+        key = _auth(request, "buy")
+        if isinstance(key, JSONResponse):
+            return key
+        jid = _latest(key, order_number)
+        if not jid:
+            return _err(404, "not_found", "no job holds this order number; submit it first")
+        return await _request_buy(key, str(jid), order_number, request)
 
     @router.get("/results")
     def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
@@ -240,8 +324,9 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
     @router.post("/jobs/{job_id}/orders/{order_number}/buy")
     async def buy(job_id: str, order_number: str, request: Request):
         key = _auth(request, "buy")
-        if isinstance(key, JSONResponse):
-            return key
+        return key if isinstance(key, JSONResponse) else await _request_buy(key, job_id, order_number, request)
+
+    async def _request_buy(key: dict, job_id: str, order_number: str, request: Request) -> JSONResponse:
         try:
             jid = str(uuid.UUID(job_id))
         except ValueError:
