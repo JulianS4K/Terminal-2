@@ -12,13 +12,15 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/ping                                    key check + what it may do
   POST /api/v1/subs/jobs                                    submit orders -> job id (202)
   GET  /api/v1/subs/jobs/{job_id}                           one job: status + every order
+  GET  /api/v1/subs/jobs/{job_id}/orders/{order_number}     one order (e.g. to follow its buy)
   GET  /api/v1/subs/results?updated_since=&limit=&offset=   sync feed of answered orders
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
 
 All the work is in SQL (mig 20261112000000): `sub_finder_submit` stores the orders and fires
 the on-demand listing pulls N2S already uses (GETs to EVO, GoTickets and SeatGeek); reading a
-job settles it once those pulls have answered. This module validates, authenticates and
-passes through.
+job settles it once those pulls have answered. Orders those three found nothing for then get
+one TicketsData /match per event (a GET; only when `sub_finder_config.td_enabled`). This
+module validates, authenticates and passes through.
 
 Keys are the existing API keys (mcp_api_keys); a key may call only if its id is listed in
 `sub_finder_config.key_ids`, and reads only its own jobs. The usual per-minute rate and daily
@@ -27,7 +29,9 @@ quota of the key apply.
 RULE 2: this module makes no upstream call. The buy route sends nothing either — it files a
 `manual_sub_buy` request for an EVO cover this API quoted, and that path (core/manual_sub_buy.py,
 its switches, ceilings and one-per-sale rule) decides whether a buy is sent. It is refused
-unless `sub_finder_config.buy_enabled` is on and the key is in `buy_key_ids`.
+unless `sub_finder_config.buy_enabled` is on and the key is in `buy_key_ids`. That worker then
+follows the EVO order until the seller confirms or rejects it; every read of the order here
+carries the result (`buy.outcome`, EVO order number, total charged, seat numbers once known).
 """
 from __future__ import annotations
 
@@ -164,6 +168,7 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         scopes = [s for s, on in (("subs:find", access.get("find")), ("subs:buy", access.get("buy"))) if on]
         return {"ok": True, "key_label": key.get("label"), "scopes": scopes,
                 "max_orders_per_job": min(int(access.get("max_orders_per_job") or MAX_ORDERS), MAX_ORDERS),
+                "ticketsdata_fallback": bool(access.get("ticketsdata_fallback")),
                 "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
     @router.post("/jobs")
@@ -201,6 +206,21 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         except ValueError:
             return _err(404, "not_found", "no such job for this key")
         return _answer(_rpc("sub_finder_job_json", {"p_key_id": key["id"], "p_job_id": jid}))
+
+    @router.get("/jobs/{job_id}/orders/{order_number}")
+    def order(job_id: str, order_number: str, request: Request):
+        key = _auth(request, "order")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            jid = str(uuid.UUID(job_id))
+        except ValueError:
+            jid = ""
+        if not jid or not _ORDER_NO.fullmatch(order_number):
+            return _err(404, "not_found", "no such order in this job")
+        out = _rpc("sub_finder_order_read", {"p_key_id": key["id"], "p_job_id": jid,
+                                              "p_order_number": order_number})
+        return _err(404, "not_found", "no such order in this job") if out is None else _answer(out)
 
     @router.get("/results")
     def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):

@@ -2055,11 +2055,14 @@ async def _manual_sub_buy_tick():
     def _call():
         def rpc(name, params):
             return require_sb().rpc(name, params).execute().data
-        return manual_sub_buy.tick(rpc, EvoBuyClient(TOKEN, SECRET))
+        client = EvoBuyClient(TOKEN, SECRET)
+        out = manual_sub_buy.tick(rpc, client)
+        # then follow one already-bought order toward confirmed / rejected (a GET, never a write)
+        return {**out, "follow": manual_sub_buy.follow(rpc, client)}
 
     out = await asyncio.to_thread(_call)
     _manual_sub_buy_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
-    if out.get("action") != "idle":
+    if out.get("action") != "idle" or out["follow"].get("action") != "idle":
         _log.warning("manual_sub_buy: %s", out)
     return out
 

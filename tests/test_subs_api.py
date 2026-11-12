@@ -139,16 +139,18 @@ def test_rate_limit_and_quota():
 
 
 def test_ping_scopes_bearer_and_usage_stamp_never_fails():
-    db = FakeDB(rpc_data={"sub_finder_access": {"find": True, "buy": False, "max_orders_per_job": 50}},
+    db = FakeDB(rpc_data={"sub_finder_access": {"find": True, "buy": False, "max_orders_per_job": 50,
+                                                "ticketsdata_fallback": True}},
                 errors={"mcp_count_call": RuntimeError("stamp")})
     r = _client(db, limiter=_Limiter()).get("/api/v1/subs/ping", headers={"authorization": f"Bearer {KEY}"})
     body = r.json()
     assert r.status_code == 200 and body["scopes"] == ["subs:find"] and body["max_orders_per_job"] == 50
     assert body["key_label"] == "crm" and body["generated_at"].endswith("Z")
+    assert body["ticketsdata_fallback"] is True
     assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.ping"}
     # no access row at all -> no scopes, the module ceiling
     body = _client(FakeDB()).get("/api/v1/subs/ping", headers=H).json()
-    assert body["scopes"] == [] and body["max_orders_per_job"] == s.MAX_ORDERS
+    assert body["scopes"] == [] and body["max_orders_per_job"] == s.MAX_ORDERS and body["ticketsdata_fallback"] is False
 
 
 # ---------------------------------------------------------------- submit
@@ -199,6 +201,27 @@ def test_job_read():
     # NULL from SQL = not this key's job
     r = _client(FakeDB()).get(f"/api/v1/subs/jobs/{JOB}", headers=H)
     assert r.status_code == 404 and r.json()["error"] == "not_found"
+
+
+def test_order_read():
+    buy = {"evo_order_id": "19429529", "outcome": "confirmed", "seats": ["14", "15", "16", "17"]}
+    db = FakeDB(rpc_data={"sub_finder_order_read": {"count": 1, "items": [{"order_number": "659240801",
+                                                                          "buy": buy}]}})
+    c = _client(db)
+    url = f"/api/v1/subs/jobs/{JOB}/orders/659240801"
+    assert c.get(url).status_code == 401
+    r = c.get(url, headers=H)
+    assert r.status_code == 200 and r.json()["items"][0]["buy"]["outcome"] == "confirmed"
+    assert db.last("sub_finder_order_read") == {"p_key_id": 7, "p_job_id": JOB, "p_order_number": "659240801"}
+    assert db.last("mcp_count_call")["p_tool"] == "subs.order"
+    n = len(db.rpcs)
+    assert c.get("/api/v1/subs/jobs/nope/orders/659240801", headers=H).status_code == 404
+    assert c.get(f"/api/v1/subs/jobs/{JOB}/orders/bad%20order", headers=H).status_code == 404
+    assert not [x for x, _ in db.rpcs[n:] if x == "sub_finder_order_read"]   # refused before SQL
+    r = _client(FakeDB()).get(url, headers=H)                                  # NULL = not this key's
+    assert r.status_code == 404 and r.json()["detail"] == "no such order in this job"
+    db.rpc_data["sub_finder_order_read"] = {"error": "forbidden"}
+    assert c.get(url, headers=H).status_code == 403
 
 
 def test_results_cursor_and_bounds():
