@@ -28,14 +28,20 @@
 --            already has a cover never costs a credit.
 --   refresh  sub_finder_refresh(), every minute (cron sub_finder_refresh_1min, only when
 --            refresh_enabled): an answered order is not final. While it is still open it keeps
---            being re-checked — covered or not — against EVO, GoTickets and SeatGeek at THEIR
---            OWN polling pace: the refresh asks n2s_pull_events for the watched events with the
---            same 2-minute per-market timer N2S uses, so a market is re-pulled only when its
---            own last pull is that old, and an order is re-matched only when one of its event's
---            markets has landed something newer. A market with nothing fresh (a failed pull)
---            keeps the covers it had; TicketsData covers are kept and never re-bought. The
---            order's updated_at moves only when its covers actually change, so the sync feed
---            carries real changes, not every tick.
+--            being re-checked — covered or not — against EVO, GoTickets and SeatGeek.
+--            IT USES THE POLLING WE ALREADY DO (operator 2026-11-12: "we already should be
+--            polling Evo and gotix routinely just use that data"): the N2S pipeline re-pulls
+--            every market for every open N2S order's event about every 2 minutes into the
+--            n2s_*_current tables, each market on its own timer. The refresh fires NO pull of
+--            its own (unless refresh_pull is switched on); it re-matches an order when one of
+--            its event's markets has landed something newer. A market with nothing fresh (a
+--            failed pull) keeps the covers it had; TicketsData covers are kept and never
+--            re-bought. The order's updated_at moves only when its covers actually change, so
+--            the sync feed carries real changes, not every tick. An order whose event nobody
+--            polls (it is in no open N2S order) simply keeps its last answer.
+--            The same data answers the FIRST lookup: when an event already has listings
+--            pulled within refresh_fresh, submit fires nothing and settles on the spot, so an
+--            alert for an order the pipeline is already working is answered in the same call.
 --            WATCHING STOPS ONLY when the order leaves the CRM's N2S book, one of our order
 --            feeds (v_sub_orders) shows it fulfilled / cancelled / rejected, the event date has
 --            passed, or the same order is alerted again (the new lookup takes over).
@@ -161,7 +167,10 @@ CREATE INDEX IF NOT EXISTS sub_finder_td_pull_open ON public.sub_finder_td_pull 
 ALTER TABLE public.sub_finder_config
   ADD COLUMN IF NOT EXISTS refresh_enabled    boolean  NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS refresh_max_events integer  NOT NULL DEFAULT 40,     -- events re-pulled per tick
-  ADD COLUMN IF NOT EXISTS refresh_fresh      interval NOT NULL DEFAULT interval '10 minutes';
+  ADD COLUMN IF NOT EXISTS refresh_fresh      interval NOT NULL DEFAULT interval '10 minutes',
+  ADD COLUMN IF NOT EXISTS refresh_pull       boolean  NOT NULL DEFAULT false;  -- off: use the routine polling only
+ALTER TABLE public.sub_finder_job
+  ADD COLUMN IF NOT EXISTS pulled boolean NOT NULL DEFAULT true;   -- false: routine polling already had every event
 ALTER TABLE public.sub_finder_order
   ADD COLUMN IF NOT EXISTS watching      boolean NOT NULL DEFAULT true,   -- still being re-checked
   ADD COLUMN IF NOT EXISTS rematch       boolean NOT NULL DEFAULT false,  -- marked for the next match pass
@@ -319,12 +328,20 @@ BEGIN
   UPDATE public.sub_finder_order SET watching = false, closed_reason = 'unmapped', closed_at = now()
    WHERE job_id = v_job AND state = 'unmapped';
 
-  SELECT array_agg(DISTINCT tevo_event_id) INTO v_evs
-  FROM public.sub_finder_order WHERE job_id = v_job AND tevo_event_id IS NOT NULL;
+  -- Pull only the events the routine polling does not already have: one with EVO listings
+  -- pulled within refresh_fresh is being polled (N2S does every open order's event, every
+  -- market, about every 2 minutes), so its data is used as it stands.
+  SELECT array_agg(DISTINCT o.tevo_event_id) INTO v_evs
+  FROM public.sub_finder_order o
+  WHERE o.job_id = v_job AND o.tevo_event_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM public.n2s_evo_current x
+                    WHERE x.event_id = o.tevo_event_id AND x.pulled_at > now() - c.refresh_fresh);
   IF v_evs IS NOT NULL THEN
     PERFORM public.n2s_pull_events(v_evs, c.pull_refresh);
   ELSE
-    UPDATE public.sub_finder_job SET status = 'done', done_at = now(), updated_at = now() WHERE job_id = v_job;
+    -- nothing to wait for: answer now (also closes a job whose orders are all unmapped)
+    UPDATE public.sub_finder_job SET pulled = false WHERE job_id = v_job;
+    PERFORM public.sub_finder_settle(v_job);
   END IF;
 
   RETURN (SELECT jsonb_build_object('job_id', j.job_id, 'status', j.status, 'order_count', j.order_count,
@@ -530,20 +547,23 @@ BEGIN
   PERFORM public.sub_finder_scratch();   -- the listings to rank, empty
 
   IF j.status = 'pulling' THEN
-    IF now() < j.created_at + make_interval(secs => c.settle_min_s) THEN RETURN 'pulling'; END IF;
-    IF now() < j.created_at + make_interval(secs => c.settle_timeout_s) AND EXISTS (
-         -- an event with a pull still out, or with no answered pull at all since the job began
+    -- j.pulled = false: routine polling already had every event, so there is nothing to wait for
+    IF j.pulled AND now() < j.created_at + make_interval(secs => c.settle_min_s) THEN RETURN 'pulling'; END IF;
+    IF j.pulled AND now() < j.created_at + make_interval(secs => c.settle_timeout_s) AND EXISTS (
+         -- an event we had to pull for (no routine data), whose pull is still out or has not
+         -- answered at all since the job began
          SELECT 1 FROM (SELECT DISTINCT tevo_event_id FROM public.sub_finder_order
                         WHERE job_id = p_job_id AND tevo_event_id IS NOT NULL) e
-         WHERE EXISTS (SELECT 1 FROM public.n2s_mkt_pull p
-                       WHERE p.tevo_event_id = e.tevo_event_id
-                         AND p.fired_at >= j.created_at - c.pull_refresh AND p.resolved_at IS NULL)
-            OR NOT EXISTS (SELECT 1 FROM public.n2s_mkt_pull p
-                           WHERE p.tevo_event_id = e.tevo_event_id
-                             AND p.fired_at >= j.created_at - c.pull_refresh AND p.resolved_at IS NOT NULL)) THEN
+         WHERE NOT EXISTS (SELECT 1 FROM public.n2s_evo_current x
+                           WHERE x.event_id = e.tevo_event_id AND x.pulled_at > j.created_at - c.refresh_fresh)
+           AND (EXISTS (SELECT 1 FROM public.n2s_mkt_pull p
+                        WHERE p.tevo_event_id = e.tevo_event_id
+                          AND p.fired_at >= j.created_at - c.pull_refresh AND p.resolved_at IS NULL)
+             OR NOT EXISTS (SELECT 1 FROM public.n2s_mkt_pull p
+                            WHERE p.tevo_event_id = e.tevo_event_id
+                              AND p.fired_at >= j.created_at - c.pull_refresh AND p.resolved_at IS NOT NULL))) THEN
       RETURN 'pulling';
     END IF;
-
     PERFORM public.sub_finder_load_native(p_job_id);
     PERFORM public.sub_finder_match(p_job_id);
 
@@ -814,9 +834,9 @@ BEGIN
    WHERE o.job_id = x.job_id AND o.idx = x.idx AND x.reason IS NOT NULL;
   GET DIAGNOSTICS v_closed = ROW_COUNT;
 
-  -- 2. ask for fresh listings for the watched events, longest-unrefreshed first. The pull
-  --    function skips any market whose own last pull is newer than pull_refresh, which is
-  --    what makes each market keep its own pace.
+  -- 2. the watched events, longest-unrefreshed first. Their listings come from the routine
+  --    polling; a pull of our own is fired only if refresh_pull is switched on (the pull
+  --    function then skips any market whose own last pull is newer than pull_refresh).
   SELECT array_agg(e) INTO v_evs FROM (
     SELECT o.tevo_event_id AS e
     FROM public.sub_finder_order o JOIN public.sub_finder_job j USING (job_id)
@@ -825,7 +845,9 @@ BEGIN
   IF v_evs IS NULL THEN
     RETURN jsonb_build_object('closed', v_closed, 'events', 0, 'jobs_rematched', 0);
   END IF;
-  PERFORM public.n2s_pull_events(v_evs, c.pull_refresh);
+  IF c.refresh_pull THEN
+    PERFORM public.n2s_pull_events(v_evs, c.pull_refresh);
+  END IF;
 
   -- 3. re-match the jobs with a watched order whose event has landed something newer
   FOR r IN
