@@ -1,4 +1,4 @@
--- Migration 20261112010000 · level:secondary-sales · lane:D0 · writes:sub_finder_config,sub_finder_job,sub_finder_order,sub_finder_td_pull,sub_finder_submit,sub_finder_latest_job,sub_finder_settle,sub_finder_match,sub_finder_job_json,sub_finder_order_read,sub_finder_results,sub_finder_buy · reads:events,n2s_items,v_s4kcs_orders,n2s_evo_current,n2s_gt_current,n2s_sg_current,n2s_mkt_pull,sg_events_canonical,aq_event_map,manual_sub_buy · pre:20261112000000
+-- Migration 20261112010000 · level:secondary-sales · lane:D0 · writes:sub_finder_config,sub_finder_job,sub_finder_order,sub_finder_td_pull,sub_finder_submit,sub_finder_latest_job,sub_finder_settle,sub_finder_load_native,sub_finder_match,sub_finder_refresh,cron:sub_finder_refresh_1min,sub_finder_job_json,sub_finder_order_read,sub_finder_results,sub_finder_buy · reads:events,n2s_items,v_s4kcs_orders,v_sub_orders,n2s_evo_current,n2s_gt_current,n2s_sg_current,n2s_mkt_pull,sg_events_canonical,aq_event_map,manual_sub_buy · pre:20261112000000
 --
 -- SUB FINDER API: a CRM user sends orders, gets back the best substitute per order.
 --
@@ -26,6 +26,19 @@
 --            in aq_event_map. Its other markets' listings (StubHub, Viagogo, Vivid Seats,
 --            TickPick, Gametime, Ticketmaster) are then matched the same way. An order that
 --            already has a cover never costs a credit.
+--   refresh  sub_finder_refresh(), every minute (cron sub_finder_refresh_1min, only when
+--            refresh_enabled): an answered order is not final. While it is still open it keeps
+--            being re-checked — covered or not — against EVO, GoTickets and SeatGeek at THEIR
+--            OWN polling pace: the refresh asks n2s_pull_events for the watched events with the
+--            same 2-minute per-market timer N2S uses, so a market is re-pulled only when its
+--            own last pull is that old, and an order is re-matched only when one of its event's
+--            markets has landed something newer. A market with nothing fresh (a failed pull)
+--            keeps the covers it had; TicketsData covers are kept and never re-bought. The
+--            order's updated_at moves only when its covers actually change, so the sync feed
+--            carries real changes, not every tick.
+--            WATCHING STOPS ONLY when the order leaves the CRM's N2S book, one of our order
+--            feeds (v_sub_orders) shows it fulfilled / cancelled / rejected, the event date has
+--            passed, or the same order is alerted again (the new lookup takes over).
 --   read     one job, one order, or every order changed since a cursor. Each order carries its
 --            buy, if one was asked for: EVO order number, seller outcome (pending / confirmed /
 --            rejected / canceled), what EVO charged, and seat numbers once the seller gives
@@ -54,7 +67,10 @@
 --
 -- No upstream call is made by this migration itself.
 --
--- rollback: DROP TRIGGER sub_finder_buy_touch ON public.manual_sub_buy;
+-- rollback: SELECT cron.unschedule('sub_finder_refresh_1min');
+--           DROP FUNCTION public.sub_finder_refresh(), public.sub_finder_load_native(uuid, interval),
+--             public.sub_finder_covers_key(jsonb);
+--           DROP TRIGGER sub_finder_buy_touch ON public.manual_sub_buy;
 --           DROP FUNCTION public.sub_finder_buy_touch_trg(), public.sub_finder_order_read(bigint, uuid, text),
 --             public.sub_finder_match(uuid, boolean), public.sub_finder_buy(bigint, text, uuid, text, text, text),
 --             public.sub_finder_results(bigint, timestamptz, integer, integer),
@@ -140,6 +156,20 @@ CREATE TABLE IF NOT EXISTS public.sub_finder_td_pull (
   PRIMARY KEY (job_id, tevo_event_id)
 );
 CREATE INDEX IF NOT EXISTS sub_finder_td_pull_open ON public.sub_finder_td_pull (fired_at) WHERE resolved_at IS NULL;
+-- Keeping answers fresh (sub_finder_refresh). Added by ALTER so a database that already has
+-- the tables gets them too.
+ALTER TABLE public.sub_finder_config
+  ADD COLUMN IF NOT EXISTS refresh_enabled    boolean  NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS refresh_max_events integer  NOT NULL DEFAULT 40,     -- events re-pulled per tick
+  ADD COLUMN IF NOT EXISTS refresh_fresh      interval NOT NULL DEFAULT interval '10 minutes';
+ALTER TABLE public.sub_finder_order
+  ADD COLUMN IF NOT EXISTS watching      boolean NOT NULL DEFAULT true,   -- still being re-checked
+  ADD COLUMN IF NOT EXISTS rematch       boolean NOT NULL DEFAULT false,  -- marked for the next match pass
+  ADD COLUMN IF NOT EXISTS refreshed_at  timestamptz,
+  ADD COLUMN IF NOT EXISTS refresh_count integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS closed_reason text,
+  ADD COLUMN IF NOT EXISTS closed_at     timestamptz;
+CREATE INDEX IF NOT EXISTS sub_finder_order_watch ON public.sub_finder_order (tevo_event_id) WHERE watching;
 CREATE INDEX IF NOT EXISTS sub_finder_order_sync ON public.sub_finder_order (key_id, updated_at, job_id, idx);
 CREATE INDEX IF NOT EXISTS sub_finder_order_number ON public.sub_finder_order (job_id, order_number);
 
@@ -280,6 +310,15 @@ BEGIN
     LIMIT 1) ev ON true
   WHERE i.section IS NOT NULL AND i.seat_row IS NOT NULL AND i.qty BETWEEN 1 AND 50;
 
+  -- a new lookup of an order takes over: older lookups of it stop being refreshed
+  UPDATE public.sub_finder_order o
+     SET watching = false, closed_reason = 'superseded', closed_at = now()
+   WHERE o.key_id = p_key_id AND o.watching AND o.job_id <> v_job
+     AND o.order_number IN (SELECT n.order_number FROM public.sub_finder_order n WHERE n.job_id = v_job);
+  -- nothing to refresh on an order with no event
+  UPDATE public.sub_finder_order SET watching = false, closed_reason = 'unmapped', closed_at = now()
+   WHERE job_id = v_job AND state = 'unmapped';
+
   SELECT array_agg(DISTINCT tevo_event_id) INTO v_evs
   FROM public.sub_finder_order WHERE job_id = v_job AND tevo_event_id IS NOT NULL;
   IF v_evs IS NOT NULL THEN
@@ -311,11 +350,80 @@ AS $$
   ORDER BY j.created_at DESC, o.job_id LIMIT 1;
 $$;
 
--- Rank the listings in the caller's temp table _sf_l against a job's still-'pending' orders
--- and store the covers. One rule for every market: same section, same row kind, the row the
--- same or better or up to rows_back behind; a quantity the listing's splits allow, the whole
--- lot when it is exactly the quantity, or a lot of exactly one more. Returns orders touched.
--- p_td_answered: take only the orders whose TicketsData pull has answered (the fallback pass).
+-- Covers without the per-pull timestamp: two cover lists are "the same" when these are equal.
+CREATE OR REPLACE FUNCTION public.sub_finder_covers_key(p jsonb)
+ RETURNS jsonb
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path = public, pg_temp
+AS $$
+  SELECT coalesce(jsonb_agg(x - 'listing_seen_at' ORDER BY ord), '[]'::jsonb)
+  FROM jsonb_array_elements(coalesce(p, '[]'::jsonb)) WITH ORDINALITY t(x, ord);
+$$;
+
+-- Fill the caller's temp table _sf_l with the EVO / GoTickets / SeatGeek listings we hold for
+-- a job's events (never our own listings). p_max_age: only listings pulled that recently.
+CREATE OR REPLACE FUNCTION public.sub_finder_load_native(p_job_id uuid, p_max_age interval DEFAULT NULL)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_since timestamptz := CASE WHEN p_max_age IS NULL THEN '-infinity'::timestamptz ELSE now() - p_max_age END;
+  v_n     integer;
+BEGIN
+  IF to_regclass('pg_temp._sf_l') IS NULL THEN
+    CREATE TEMP TABLE _sf_l (
+      market text, via text, eid bigint, lid text, section text, seat_row text, quantity integer,
+      px numeric, sp integer[], pulled_at timestamptz, link text, price_note text) ON COMMIT DROP;
+  END IF;
+  DELETE FROM _sf_l;
+  INSERT INTO _sf_l
+  SELECT 'evo', 'native', x.event_id, x.tevo_ticket_group_id::text, x.section, x.row, x.quantity,
+         x.retail_price, x.splits::int[], x.pulled_at,
+         'https://core.ticketevolution.com/buy/event/' || x.event_id || '/tickets/' || x.tevo_ticket_group_id, NULL
+  FROM public.n2s_evo_current x
+  WHERE x.event_id IN (SELECT tevo_event_id FROM public.sub_finder_order WHERE job_id = p_job_id)
+    AND x.pulled_at >= v_since
+    AND NOT coalesce(x.is_owned, false) AND NOT coalesce(x.is_ancillary, false)
+  UNION ALL
+  SELECT 'gotickets', 'native', x.tevo_event_id, x.gt_listing_id::text, x.section, x.row, x.quantity,
+         x.all_in_price, x.splits::int[], x.pulled_at,
+         'https://pro.gotickets.com/tickets/' || x.gt_event_id || '/?sortBy=price&sortDirection=asc', NULL
+  FROM public.n2s_gt_current x
+  WHERE x.tevo_event_id IN (SELECT tevo_event_id FROM public.sub_finder_order WHERE job_id = p_job_id)
+    AND x.pulled_at >= v_since
+  UNION ALL
+  -- SeatGeek link: the stored event URL plus the listing's display id — both or neither
+  -- (see mig 20260910310000: half a link is worse than none).
+  SELECT 'seatgeek', 'native', x.tevo_event_id, x.sglid::text, x.section, x.row, x.quantity,
+         x.retail_price_all_in,
+         ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(x.splits) = 'array' THEN x.splits
+                                                     ELSE '[]'::jsonb END)::int),
+         x.pulled_at,
+         CASE WHEN sg.sg_url IS NOT NULL AND x.display_id IS NOT NULL
+              THEN sg.sg_url || '#listing=' || x.display_id END, NULL
+  FROM public.n2s_sg_current x
+  LEFT JOIN public.sg_events_canonical sg ON sg.sg_event_id = x.sg_event_id
+  WHERE x.tevo_event_id IN (SELECT tevo_event_id FROM public.sub_finder_order WHERE job_id = p_job_id)
+    AND x.pulled_at >= v_since
+    AND NOT coalesce(x.is_broker_owned, false);
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END
+$$;
+
+-- Rank the listings in the caller's temp table _sf_l against a job's orders and store the
+-- covers. One rule for every market: same section, same row kind, the row the same or better
+-- or up to rows_back behind; a quantity the listing's splits allow, the whole lot when it is
+-- exactly the quantity, or a lot of exactly one more. Returns orders touched.
+--
+-- Which orders: the 'pending' ones (p_td_answered: only those whose TicketsData pull has
+-- answered), plus any marked `rematch` by sub_finder_refresh. For a rematch the covers of a
+-- market that has NO listings in _sf_l for that event are carried over unchanged — a failed
+-- pull, or TicketsData which is not re-asked, must not look like "sold out" — and updated_at
+-- moves only if the cover list really changed.
 CREATE OR REPLACE FUNCTION public.sub_finder_match(p_job_id uuid, p_td_answered boolean DEFAULT false)
  RETURNS integer
  LANGUAGE plpgsql
@@ -328,7 +436,9 @@ DECLARE
 BEGIN
   WITH o AS (
     SELECT * FROM public.sub_finder_order
-    WHERE job_id = p_job_id AND state = 'pending' AND (NOT p_td_answered OR td_state IN ('searched', 'failed'))
+    WHERE job_id = p_job_id
+      AND ((state = 'pending' AND (NOT p_td_answered OR td_state IN ('searched', 'failed')))
+           OR (rematch AND state IN ('cover', 'no_cover')))
   ), cand AS (
     SELECT o.job_id, o.idx, o.qty, o.sold_ea, l.*,
            CASE WHEN o.qty = ANY (l.sp) OR l.quantity = o.qty THEN o.qty
@@ -345,22 +455,36 @@ BEGIN
            row_number() OVER (PARTITION BY job_id, idx, market
                               ORDER BY (row_delta > 0), buy_qty * px, lid) AS rn
     FROM cand WHERE buy_qty IS NOT NULL
-  ), per_order AS (
-    SELECT job_id, idx,
-           jsonb_agg(jsonb_build_object(
+  ), fresh AS (
+    SELECT job_id, idx, jsonb_build_object(
              'market', market, 'source', via, 'listing_id', lid, 'section', section, 'row', seat_row,
              'listing_qty', quantity, 'buy_qty', buy_qty, 'spare', buy_qty - qty,
              'price_ea', px, 'total', round(total, 2), 'profit', profit, 'price_note', price_note,
              'row_relation', CASE WHEN row_delta < 0 THEN 'better' WHEN row_delta = 0 THEN 'same' ELSE 'back' END,
-             'link', link, 'buyable', market = 'evo', 'listing_seen_at', pulled_at)
-             ORDER BY (row_delta > 0), total, lid) AS covers
-    FROM ranked WHERE rn <= 3 GROUP BY job_id, idx
+             'link', link, 'buyable', market = 'evo', 'listing_seen_at', pulled_at) AS cover
+    FROM ranked WHERE rn <= 3
+  ), kept AS (
+    -- rematch only: what a market found before, when that market has nothing in _sf_l now
+    SELECT o.job_id, o.idx, x AS cover
+    FROM o, jsonb_array_elements(o.covers) x
+    WHERE o.rematch AND o.state IN ('cover', 'no_cover')
+      AND NOT EXISTS (SELECT 1 FROM _sf_l l WHERE l.eid = o.tevo_event_id AND l.market = x->>'market')
+  ), per_order AS (
+    SELECT job_id, idx,
+           jsonb_agg(cover ORDER BY (cover->>'row_relation' = 'back'), (cover->>'total')::numeric,
+                                    cover->>'listing_id') AS covers
+    FROM (SELECT * FROM fresh UNION ALL SELECT * FROM kept) u GROUP BY job_id, idx
   )
   UPDATE public.sub_finder_order t
      SET covers = coalesce(p.covers, '[]'::jsonb),
          best   = p.covers -> 0,                    -- same-or-better row first, then cheapest
          state  = CASE WHEN p.covers IS NULL THEN 'no_cover' ELSE 'cover' END,
-         updated_at = now()
+         updated_at = CASE WHEN o.state = 'pending'
+                             OR public.sub_finder_covers_key(p.covers) IS DISTINCT FROM public.sub_finder_covers_key(o.covers)
+                           THEN now() ELSE t.updated_at END,
+         refreshed_at  = CASE WHEN o.state = 'pending' THEN t.refreshed_at ELSE now() END,
+         refresh_count = t.refresh_count + CASE WHEN o.state = 'pending' THEN 0 ELSE 1 END,
+         rematch = false
     FROM o LEFT JOIN per_order p ON p.job_id = o.job_id AND p.idx = o.idx
    WHERE t.job_id = o.job_id AND t.idx = o.idx;
   GET DIAGNOSTICS v_n = ROW_COUNT;
@@ -391,13 +515,16 @@ BEGIN
   IF NOT FOUND THEN RETURN NULL; END IF;
   IF j.status = 'done' THEN RETURN 'done'; END IF;
 
-  -- the listings to rank, for sub_finder_match (one table per transaction; several jobs may settle in one)
+  -- the listings to rank, for sub_finder_match: one temp table per transaction (several jobs
+  -- may settle in one), emptied here. DELETE, not TRUNCATE: it is a scratch table of a few
+  -- thousand rows, and the word TRUNCATE in a function body trips the migration tool's
+  -- destructive-statement prompt.
   IF to_regclass('pg_temp._sf_l') IS NULL THEN
     CREATE TEMP TABLE _sf_l (
       market text, via text, eid bigint, lid text, section text, seat_row text, quantity integer,
       px numeric, sp integer[], pulled_at timestamptz, link text, price_note text) ON COMMIT DROP;
   END IF;
-  TRUNCATE _sf_l;
+  DELETE FROM _sf_l;
 
   IF j.status = 'pulling' THEN
     IF now() < j.created_at + make_interval(secs => c.settle_min_s) THEN RETURN 'pulling'; END IF;
@@ -414,33 +541,7 @@ BEGIN
       RETURN 'pulling';
     END IF;
 
-    INSERT INTO _sf_l
-    SELECT 'evo', 'native', x.event_id, x.tevo_ticket_group_id::text, x.section, x.row, x.quantity,
-           x.retail_price, x.splits::int[], x.pulled_at,
-           'https://core.ticketevolution.com/buy/event/' || x.event_id || '/tickets/' || x.tevo_ticket_group_id, NULL
-    FROM public.n2s_evo_current x
-    WHERE x.event_id IN (SELECT tevo_event_id FROM public.sub_finder_order WHERE job_id = p_job_id)
-      AND NOT coalesce(x.is_owned, false) AND NOT coalesce(x.is_ancillary, false)
-    UNION ALL
-    SELECT 'gotickets', 'native', x.tevo_event_id, x.gt_listing_id::text, x.section, x.row, x.quantity,
-           x.all_in_price, x.splits::int[], x.pulled_at,
-           'https://pro.gotickets.com/tickets/' || x.gt_event_id || '/?sortBy=price&sortDirection=asc', NULL
-    FROM public.n2s_gt_current x
-    WHERE x.tevo_event_id IN (SELECT tevo_event_id FROM public.sub_finder_order WHERE job_id = p_job_id)
-    UNION ALL
-    -- SeatGeek link: the stored event URL plus the listing's display id — both or neither
-    -- (see mig 20260910310000: half a link is worse than none).
-    SELECT 'seatgeek', 'native', x.tevo_event_id, x.sglid::text, x.section, x.row, x.quantity,
-           x.retail_price_all_in,
-           ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(x.splits) = 'array' THEN x.splits
-                                                       ELSE '[]'::jsonb END)::int),
-           x.pulled_at,
-           CASE WHEN sg.sg_url IS NOT NULL AND x.display_id IS NOT NULL
-                THEN sg.sg_url || '#listing=' || x.display_id END, NULL
-    FROM public.n2s_sg_current x
-    LEFT JOIN public.sg_events_canonical sg ON sg.sg_event_id = x.sg_event_id
-    WHERE x.tevo_event_id IN (SELECT tevo_event_id FROM public.sub_finder_order WHERE job_id = p_job_id)
-      AND NOT coalesce(x.is_broker_owned, false);
+    PERFORM public.sub_finder_load_native(p_job_id);
     PERFORM public.sub_finder_match(p_job_id);
 
     -- TicketsData: only events that still have an uncovered order, cheapest way in first
@@ -472,7 +573,7 @@ BEGIN
       RETURN 'done';
     END IF;
     UPDATE public.sub_finder_job SET status = 'pulling_td', updated_at = now() WHERE job_id = p_job_id;
-    TRUNCATE _sf_l;
+    DELETE FROM _sf_l;
   END IF;
 
   -- ── pulling_td ──────────────────────────────────────────────────────────────────────────
@@ -580,6 +681,8 @@ AS $$
                                            || CASE WHEN o.td_state = 'searched' THEN ARRAY['ticketsdata']
                                                    ELSE ARRAY[]::text[] END) END,
     'ticketsdata', o.td_state,
+    -- watching: still re-checked against EVO / GoTickets / SeatGeek. closed_reason says why not.
+    'watching', o.watching, 'refreshed_at', o.refreshed_at, 'closed_reason', o.closed_reason,
     -- request_state: requested -> buying -> bought | stopped | unknown (our side).
     -- outcome: the seller's answer once bought: pending -> confirmed | rejected | canceled.
     'buy', (SELECT jsonb_build_object(
@@ -667,6 +770,85 @@ DROP TRIGGER IF EXISTS sub_finder_buy_touch ON public.manual_sub_buy;
 CREATE TRIGGER sub_finder_buy_touch AFTER UPDATE ON public.manual_sub_buy
   FOR EACH ROW EXECUTE FUNCTION public.sub_finder_buy_touch_trg();
 CREATE INDEX IF NOT EXISTS sub_finder_order_buy ON public.sub_finder_order (buy_id) WHERE buy_id IS NOT NULL;
+
+-- Keep answered orders fresh, once a minute. See the header ("refresh") for the rules.
+CREATE OR REPLACE FUNCTION public.sub_finder_refresh()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = public, pg_temp
+AS $$
+DECLARE
+  c        public.sub_finder_config;
+  v_closed integer := 0;
+  v_jobs   integer := 0;
+  v_evs    bigint[];
+  r        record;
+BEGIN
+  SELECT * INTO c FROM public.sub_finder_config;
+  IF NOT c.enabled OR NOT c.refresh_enabled THEN RETURN jsonb_build_object('skipped', 'off'); END IF;
+  IF NOT public.cron_try_lock('sub_finder_refresh') THEN RETURN jsonb_build_object('skipped', 'overlap'); END IF;
+
+  -- 1. stop watching what is finished. Only these reasons end a watch (plus a newer lookup
+  --    of the same order, in sub_finder_submit).
+  UPDATE public.sub_finder_order o
+     SET watching = false, closed_reason = x.reason, closed_at = now(), updated_at = now()
+    FROM (
+      SELECT w.job_id, w.idx, CASE
+          WHEN w.event_date < (now() AT TIME ZONE 'America/New_York')::date THEN 'event_passed'
+          -- it came from the CRM's N2S book and is no longer open there
+          WHEN w.order_source = 'n2s' AND NOT EXISTS (
+                 SELECT 1 FROM public.n2s_items n
+                 WHERE (n.order_number = w.order_number OR n.n2s_order_key = w.order_number)
+                   AND NOT coalesce(n.is_terminal, false) AND n.status IN ('n2s', 'n2b'))
+            THEN 'left_crm_n2s'
+          -- one of our order feeds says the sale is over
+          ELSE (SELECT 'order_' || f.canonical_status FROM public.v_sub_orders f
+                WHERE f.order_id = w.order_number AND NOT f.is_open
+                  AND f.canonical_status IN ('fulfilled', 'cancelled', 'rejected') LIMIT 1)
+        END AS reason
+      FROM public.sub_finder_order w WHERE w.watching) x
+   WHERE o.job_id = x.job_id AND o.idx = x.idx AND x.reason IS NOT NULL;
+  GET DIAGNOSTICS v_closed = ROW_COUNT;
+
+  -- 2. ask for fresh listings for the watched events, longest-unrefreshed first. The pull
+  --    function skips any market whose own last pull is newer than pull_refresh, which is
+  --    what makes each market keep its own pace.
+  SELECT array_agg(e) INTO v_evs FROM (
+    SELECT o.tevo_event_id AS e
+    FROM public.sub_finder_order o JOIN public.sub_finder_job j USING (job_id)
+    WHERE o.watching AND j.status = 'done' AND o.tevo_event_id IS NOT NULL
+    GROUP BY 1 ORDER BY min(coalesce(o.refreshed_at, j.done_at)) LIMIT c.refresh_max_events) q;
+  IF v_evs IS NULL THEN
+    RETURN jsonb_build_object('closed', v_closed, 'events', 0, 'jobs_rematched', 0);
+  END IF;
+  PERFORM public.n2s_pull_events(v_evs, c.pull_refresh);
+
+  -- 3. re-match the jobs with a watched order whose event has landed something newer
+  FOR r IN
+    SELECT DISTINCT o.job_id
+    FROM public.sub_finder_order o JOIN public.sub_finder_job j USING (job_id)
+    WHERE o.watching AND j.status = 'done' AND o.state IN ('cover', 'no_cover')
+      AND o.tevo_event_id = ANY (v_evs)
+      AND (EXISTS (SELECT 1 FROM public.n2s_evo_current x WHERE x.event_id = o.tevo_event_id
+                     AND x.pulled_at > coalesce(o.refreshed_at, j.done_at))
+        OR EXISTS (SELECT 1 FROM public.n2s_gt_current x WHERE x.tevo_event_id = o.tevo_event_id
+                     AND x.pulled_at > coalesce(o.refreshed_at, j.done_at))
+        OR EXISTS (SELECT 1 FROM public.n2s_sg_current x WHERE x.tevo_event_id = o.tevo_event_id
+                     AND x.pulled_at > coalesce(o.refreshed_at, j.done_at)))
+    LIMIT 200
+  LOOP
+    UPDATE public.sub_finder_order SET rematch = true
+     WHERE job_id = r.job_id AND watching AND state IN ('cover', 'no_cover');
+    PERFORM public.sub_finder_load_native(r.job_id, c.refresh_fresh);
+    PERFORM public.sub_finder_match(r.job_id);
+    v_jobs := v_jobs + 1;
+  END LOOP;
+  RETURN jsonb_build_object('closed', v_closed, 'events', cardinality(v_evs), 'jobs_rematched', v_jobs);
+END
+$$;
+
+SELECT cron.schedule('sub_finder_refresh_1min', '* * * * *', $cron$SELECT public.sub_finder_refresh();$cron$);
 
 -- The sync feed: this key's orders changed at or after p_updated_since, oldest change first,
 -- in the CRM's own envelope. Feed `generated_at` back as the next `updated_since`.
@@ -768,6 +950,9 @@ REVOKE ALL ON FUNCTION public.sub_finder_submit(bigint, text, jsonb, text) FROM 
 REVOKE ALL ON FUNCTION public.sub_finder_settle(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_latest_job(bigint, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_match(uuid, boolean) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sub_finder_load_native(uuid, interval) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sub_finder_covers_key(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sub_finder_refresh() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_order_read(bigint, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_buy_touch_trg() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_order_json(public.sub_finder_order) FROM PUBLIC, anon, authenticated;
@@ -779,6 +964,9 @@ GRANT EXECUTE ON FUNCTION public.sub_finder_submit(bigint, text, jsonb, text) TO
 GRANT EXECUTE ON FUNCTION public.sub_finder_settle(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_latest_job(bigint, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_match(uuid, boolean) TO service_role;
+GRANT EXECUTE ON FUNCTION public.sub_finder_load_native(uuid, interval) TO service_role;
+GRANT EXECUTE ON FUNCTION public.sub_finder_covers_key(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.sub_finder_refresh() TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_order_read(bigint, uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_order_json(public.sub_finder_order) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_job_json(bigint, uuid) TO service_role;
