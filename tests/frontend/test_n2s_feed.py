@@ -572,8 +572,8 @@ def test_obstructed_view_is_flagged_on_a_gate_1_row(feed_page, live_server):
 def test_unknown_view_renders_differently_from_clear(feed_page, live_server):
     """"Not checked" must not look like "checked and fine".
 
-    Every TEvo row is 'unknown' because public_notes is not mirrored into
-    listings_snapshots, so this is the majority case, not an edge one. Showing
+    A listing with no seller note and no view data reads 'unknown' (EVO rows
+    did, all of them, until 20261112010000 read n2s_evo_current). Showing
     nothing would let the absence of a warning read as an all-clear — the exact
     inversion this field exists to prevent.
     """
@@ -692,3 +692,70 @@ def test_all_three_suffixes_coexist_without_eating_the_gate_name(feed_page, live
     assert gate.inner_text().strip() == "Index Down offer subs repost single"
     assert feed_page.locator(".n2s-gate-unver").count() == 1
     assert feed_page.locator(".n2s-gate-obstructed").count() == 1
+
+
+# ---- 20261112010000: the seller's note is text on the suggestion, not just a tooltip ----
+
+_DRYRUN_RE = re.compile(r"/api/broker/n2s-gt-dryrun\?")
+
+
+def test_seller_notes_show_as_text_on_an_evo_suggestion(feed_page, live_server):
+    """Operator 2026-11-12: suggestions had limited / obstructed views nobody saw.
+
+    EVO subs carried no notes at all, and other sources only had them in a
+    tooltip. The note is now a line of text under the listing, whatever the
+    classification says: a clear-read note is still the seller's words.
+    """
+    r = _cover(1)
+    r.update({"sub_source": "tevo", "cover_gate": 1, "cover_label": "Index",
+              "sub_view": "clear", "sub_notes": "View: Full · XFER TMX"})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    note = feed_page.locator(".n2s-sub-notes").first
+    note.wait_for()
+    assert note.inner_text().strip() == "notes: View: Full · XFER TMX"
+    assert "muted" in note.get_attribute("class")
+
+
+def test_an_obstructed_note_is_red_and_a_long_one_keeps_its_full_text(feed_page, live_server):
+    long_note = "Limited View, " + "x" * 200
+    r = _cover(1)
+    r.update({"sub_source": "tevo", "cover_gate": 1, "cover_label": "Index obstructed view",
+              "sub_view": "obstructed", "sub_notes": long_note})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    note = feed_page.locator(".n2s-sub-notes").first
+    note.wait_for()
+    assert "n2s-sub-notes-obstructed" in note.get_attribute("class")
+    text = note.inner_text().strip()
+    assert text.startswith("notes: Limited View, ") and text.endswith("…")
+    assert len(text) < len(long_note)
+    assert note.get_attribute("title") == long_note        # the whole note, verbatim
+    assert note.evaluate("e => getComputedStyle(e).color") == "rgb(248, 113, 113)"
+
+
+def test_no_notes_line_when_the_seller_wrote_none(feed_page, live_server):
+    r = _cover(1)
+    r.update({"sub_source": "tevo", "cover_gate": 1, "cover_label": "Index", "sub_view": "unknown",
+              "sub_notes": None})
+    feed_page.route(_COVERS_RE, lambda route: _json_route(route, _payload([r])))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    feed_page.locator(".n2s-gate-cell .n2s-gate").first.wait_for()
+    assert feed_page.locator(".n2s-sub-notes").count() == 0
+
+
+def test_dry_run_rows_show_the_seller_note(feed_page, live_server):
+    rows = [{"dryrun_id": 7, "captured_at": "2026-11-12T20:00:00Z", "order_number": "O7",
+             "s4k_source": "EVO", "event_name": "E", "event_date": "2026-12-01",
+             "sold_section": "101", "sold_row": "5", "sold_qty": 2, "sold_ea": 200,
+             "sub_section": "101", "sub_row": "4", "sub_qty": 2, "quoted_ea": 100,
+             "quoted_total": 200, "cover_cost": -200, "cover_gate": 1, "cover_label": "Index",
+             "sub_view": "obstructed", "sub_notes": "Limited View,Mobile Xfer",
+             "decision": "skip", "skip_reasons": ["obstructed_view"], "payload": {}}]
+    feed_page.route(_DRYRUN_RE, lambda route: _json_route(
+        route, json.dumps({"rows": rows, "count": 1, "today": {}})))
+    feed_page.goto(f"{live_server}/static/terminal/subs.html")
+    note = feed_page.locator("#gtdTable .n2s-sub-notes").first
+    note.wait_for()
+    assert note.inner_text().strip() == "notes: Limited View,Mobile Xfer"
+    assert "n2s-sub-notes-obstructed" in note.get_attribute("class")
