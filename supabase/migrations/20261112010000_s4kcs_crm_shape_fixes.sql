@@ -29,11 +29,15 @@
 --    crm_order_status_lookup's per-source freshness test saw it as 'feed_stale' after 45 min).
 --    New s4kcs_orders_retry_failed() (cron :06/:16/…): if the latest full fetch resolved with
 --    errors, it queues one GET per failed market (markets=<name> — the CRM takes the display
---    names, e.g. 'Vivid Seats'; keys like 'vividseats' are a 400), at most 3, once per full
---    fetch. 401s are not retried (a dead credential on the CRM side does not heal in 6 minutes).
---    The existing s4kcs_orders_process() lands them unchanged (same body shape).
---    GET only, to our own CRM; RULE 2 unaffected. Live-fetch budget: CRM allows 10/min, this
---    adds at most 3 calls in a minute nothing else fetches.
+--    names, e.g. 'Vivid Seats'; keys like 'vividseats' are a 400), once per full fetch.
+--    ONLY StubHub and Gametime are retried (operator 2026-11-12: "we only need to fetch markets
+--    we can't pull via our own apis"). Vivid, GoTickets, SeatGeek and TickPick each have their
+--    own book here (vivid_orders, gotickets_sales, seatgeek_orders, tickpick_orders), so a CRM
+--    miss on them is not re-asked — and re-asking would spend the same marketplace rate limit
+--    that produced the 429. 401s are not retried either (a dead credential on the CRM side
+--    does not heal in 6 minutes). The existing s4kcs_orders_process() lands the reply
+--    unchanged (same body shape). GET only, to our own CRM; RULE 2 unaffected. Live-fetch
+--    budget: CRM allows 10/min, this adds at most 2 calls in a minute nothing else fetches.
 --
 -- 3. N2B MARKET NAMES are normalised.
 --    N2B rows (item_source 'gmail', from n2b_ingest_from_apps_script) carry the site name as the
@@ -412,13 +416,12 @@ BEGIN
   FOR v_market IN
     SELECT DISTINCT e->>'market'
       FROM jsonb_array_elements(v_full.errors) AS e
-     -- The CRM's own market names (GET /marketplace/marketplaces, 2026-11-11). Anything else
-     -- is never put in a URL.
-     WHERE e->>'market' IN ('TickPick', 'GoTickets', 'SeatGeek', 'StubHub', 'Vivid Seats', 'Gametime')
+     -- Only the markets we cannot pull through our own APIs (operator 2026-11-12); the CRM's
+     -- own display names (GET /marketplace/marketplaces). Anything else is never put in a URL.
+     WHERE e->>'market' IN ('StubHub', 'Gametime')
        -- A 401 is a dead credential on the CRM side; retrying in 6 minutes does not heal it.
        AND COALESCE(e->>'error', '') !~ '\m401\M'
      ORDER BY 1
-     LIMIT 3
   LOOP
     SELECT net.http_get(
       url := 'https://crm.s4kcs.com/api/v1/marketplace/orders?markets=' || replace(v_market, ' ', '%20'),
