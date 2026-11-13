@@ -1,0 +1,9 @@
+done
+M1|requested
+N1|requested
+M2|the Need-to-Sub auto-buy already has this order
+M3|this sale is marked fulfilled, cancelled or rejected
+M4|this order is not in our copy of the order books with these seats, quantity and sale price; alert us with the order number only
+X1|this order is not in our copy of the order books with these seats, quantity and sale price; alert us with the order number only
+M1|4001|150
+N1|4001|150

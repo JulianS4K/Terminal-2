@@ -1,0 +1,17 @@
+limit: 5
+L80|2|210.00|-10.00|auto_bought|-
+L81|2|210.02|-10.02|buy_manually|no_evo_one_to_one
+L82|1|198.00|2.00|auto_bought|-
+L83|1|180.00|20.00|buy_manually|needs_spare_ticket
+L84|4|208.00|-8.00|offer|no_evo_one_to_one
+L85|2|208.89|-8.89|auto_bought|-
+L86|2|208.00||buy_manually|no_evo_one_to_one
+L80|8001|105|auto: gate 2, sold 101 row 2 x2; sub 101 row 2 x2, quoted profit -10.00
+L82|8202|99|auto: gate 1, sold 101 row 2 x2; sub 101 row 1 x2, quoted profit 2.00
+L85|8501|99|auto: gate 2, sold 101 row 2 x2; sub 101 row 2 x2, quoted profit -8.89
+after the buy: EVO charged more than quoted (tax) -> flagged gate 2; a profitable one -> gate 1; unknown yet -> null
+L80||||
+L82|205|-5.00|2|S4KTrading
+L85|198|2.00|1|Index
+limit 0 = breakeven only:
+t|f|t|f|f

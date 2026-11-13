@@ -1,0 +1,19 @@
+done
+order | label | flags | bypass | action | auto_buy_note | bought
+4001|Index single ticket|[]|false|auto_bought|-|t
+4002|Index|[]|false|auto_bought|-|t
+4003|Index Down offer subs zone unverified|["zone_unverified"]|false|offer|no_evo_one_to_one|f
+4004|Index repost single|["repost_single"]|false|buy_manually|needs_spare_ticket|f
+4005|Index single ticket|["single_ticket_row_differs"]|true|offer|needs_crm_confirm|f
+4006|Index single ticket|["single_ticket_row_differs"]|true|offer|needs_crm_confirm|f
+CRM bypass on the single in another row: refused without confirm, bought with it
+{"error": "confirm_needed", "flags": ["single_ticket_row_differs"]}
+requested
+GoTickets single in another row: sub_offer asks the CRM, bypass allowed; offer goes through with confirm
+true|true|1
+
+{"error": "conflict", "detail": "an offer already exists for this order"}
+a clean gate 1 pair on GoTickets still needs no offer
+confirm_needed
+old covers without the flags key
+["single_ticket_row_differs"]|[]
