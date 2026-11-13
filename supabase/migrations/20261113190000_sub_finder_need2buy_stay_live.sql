@@ -1,21 +1,25 @@
 -- Migration 20261113190000 · level:secondary-sales · lane:D0 · writes:sub_finder_order,sub_finder_n2b_intake,sub_finder_refresh · reads:n2s_items,sub_finder_n2b_seen · pre:20261113160000
 --
--- SUB FINDER: a need2buy order stays live until the order's status changes.
+-- SUB FINDER: a need2buy lookup ends when the label is removed, or the marketplace says so.
 --
 -- Operator 2026-11-13: "The ones labeled need2buy, keep them live till order status changes
--- and keep looking for data unless it meets our poll pausing conditions".
+-- and keep looking for data unless it meets our poll pausing conditions", then "Label removed
+-- or order status change is detected via API from marketplace".
 --
--- A lookup started from the CRM's need2buy label (20261113160000) used to close the moment
--- the label was taken off the item ('left_crm_n2s'). Now such a lookup (sub_finder_order.
--- via_need2buy) ends only when the order itself is finished:
---   * its marketplace says the sale is cancelled, delivered or rejected (order_cancelled /
---     order_fulfilled / order_rejected), checked every 2 minutes against feeds pulled every 5;
---   * the CRM has finished the item: it is terminal (resolved / allocated) or 'subbed'
---     ('left_crm_n2s');
---   * the event has passed, or a newer lookup of the same order took over.
--- Taking the label off, or changing it to another open status, no longer closes it.
--- It is polled and re-matched every round like any watched order, except while a pause
--- condition holds (a GoTickets sub offer waiting on the customer).
+-- A lookup started from the CRM's need2buy label (sub_finder_order.via_need2buy, set by the
+-- intake) is live until one of two things is seen:
+--   1. the label is removed: the CRM's feed no longer shows an open item for that order
+--      labelled need2buy. That covers a label taken off, changed to anything else (n2s,
+--      subbed, no_subs ...), or an item resolved / allocated. closed_reason 'label_removed'.
+--      Until now a label changed back to n2s left the lookup open, because the N2S book rule
+--      counts n2s as open;
+--   2. the order's status changes, read from the marketplace's own order feed (GoTickets,
+--      TickPick, Vivid, SeatGeek, EVO: pulled every 5 minutes, checked every 2), with our copy
+--      of the CRM's marketplace book for the others: order_cancelled / order_fulfilled /
+--      order_rejected. Unchanged.
+-- (Also unchanged: the event passing, and a newer lookup of the same order taking over.)
+-- While live it is polled and re-matched every round like any watched order, except while a
+-- pause condition holds (a GoTickets sub offer waiting on the customer).
 --
 -- sub_finder_refresh is patched in place; the patch fails loudly if the line it edits is not
 -- there exactly once, and does nothing on a second run.
@@ -73,7 +77,7 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
       v_out := jsonb_build_object('error', left(SQLERRM, 200));      -- one bad item never stops the rest
     END;
-    -- these lookups stay live until the ORDER's status changes, not until the label goes
+    -- these lookups live as long as the label does (or until the marketplace says the sale is over)
     UPDATE public.sub_finder_order SET via_need2buy = true
      WHERE job_id = (v_out->>'job_id')::uuid AND order_number = r.order_number;
     INSERT INTO public.sub_finder_n2b_seen (n2s_id, order_number, job_id, result)
@@ -89,18 +93,13 @@ DO $patch$
 DECLARE
   v_def text := pg_get_functiondef('public.sub_finder_refresh()'::regprocedure);
   v_old text := $o$WHEN (w.order_source = 'n2s' OR w.in_n2s) AND NOT EXISTS ($o$;
-  v_new text := $n$-- a need2buy lookup outlives its label: only a finished item (terminal, or subbed) ends it
-          WHEN w.via_need2buy AND EXISTS (
+  v_new text := $n$-- a need2buy lookup lives as long as its label: gone, changed or the item finished -> closed
+          WHEN w.via_need2buy AND NOT EXISTS (
                  SELECT 1 FROM public.n2s_items n
                  WHERE (n.order_number = w.order_number OR n.n2s_order_key = w.order_number)
-                   AND n.item_source IS DISTINCT FROM 'gmail'
-                   AND (coalesce(n.is_terminal, false) OR lower(n.status) = 'subbed'))
-            AND NOT EXISTS (
-                 SELECT 1 FROM public.n2s_items n
-                 WHERE (n.order_number = w.order_number OR n.n2s_order_key = w.order_number)
-                   AND n.item_source IS DISTINCT FROM 'gmail'
-                   AND NOT coalesce(n.is_terminal, false) AND lower(n.status) <> 'subbed')
-            THEN 'left_crm_n2s'
+                   AND n.item_source IS DISTINCT FROM 'gmail' AND NOT coalesce(n.is_terminal, false)
+                   AND public.sub_finder_need2buy(n.status, n.status_label, n.raw))
+            THEN 'label_removed'
           WHEN (w.order_source = 'n2s' OR w.in_n2s) AND NOT w.via_need2buy AND NOT EXISTS ($n$;
 BEGIN
   IF position('via_need2buy' IN v_def) > 0 THEN RETURN; END IF;               -- already patched
