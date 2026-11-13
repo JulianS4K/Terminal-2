@@ -20,6 +20,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/orders/{order_number}/offer-sub         GoTickets orders: yes, offer the customer this sub
   POST /api/v1/subs/orders/{order_number}/needs-sub         the ALERT: "this order needs a sub"
   GET  /api/v1/subs/docs                                    the onboarding guide, current version
+  GET  /api/v1/subs/balances                                our EVO balances + GoTickets gift cards, read hourly
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us").
@@ -74,6 +75,18 @@ _ERROR_STATUS = {"forbidden": 403, "invalid": 422, "not_found": 404, "conflict":
 
 
 NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
+
+# RPCs that only read, or whose repeat changes nothing: safe to send a second time when the
+# connection to the database API dropped under the first (about 1 call in 30 did, 2026-11-13).
+# A buy, an offer, a submit or a note is never repeated: the first may have gone through.
+RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
+                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results"})
+
+
+def dropped_connection(exc: BaseException) -> bool:
+    """True for an HTTP transport failure (httpx.TransportError and its kin: the connection
+    reset, closed or timed out), as opposed to an answer from the database."""
+    return any(c.__name__ == "TransportError" for c in type(exc).__mro__)
 
 DOC_PATH = Path(__file__).resolve().parent.parent / "docs" / "sub_finder_api_onboarding.md"
 DOCS_ROUTE = "/api/v1/subs/docs"
@@ -230,6 +243,11 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
     router = APIRouter(prefix="/api/v1/subs", tags=["subs-api"])
 
     def _rpc(name: str, args: dict) -> Any:
+        try:
+            return get_db().rpc(name, args).execute().data
+        except Exception as exc:  # noqa: BLE001 - re-raised unless it is a dropped connection on a read
+            if name not in RETRY_ONCE_RPCS or not dropped_connection(exc):
+                raise
         return get_db().rpc(name, args).execute().data
 
     def _auth(request: Request, tool: str) -> dict | JSONResponse:
@@ -297,6 +315,15 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                                      headers={"X-Doc-Version": str(doc["version"])})
         return {"version": doc["version"], "updated": doc["updated"], "format": "markdown",
                 "markdown": doc["markdown"]}
+
+    @router.get("/balances")
+    def balances(request: Request):
+        """Our EVO office balances and GoTickets gift cards as last read (hourly, mig
+        20261113270000). Only for keys in `sub_finder_config.balances_key_ids`."""
+        key = _auth(request, "balances")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_balances", {"p_key_id": key["id"]}))
 
     @router.post("/jobs")
     async def submit(request: Request):
