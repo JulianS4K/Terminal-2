@@ -4,7 +4,10 @@ done
 G110|gotickets|1|false|buy_manually|no_evo_one_to_one
 that listing is not a cover we can buy that this job quoted for this order
 0
-GoTickets buying on: the same order is bought on GoTickets at the next match
+one switch alone changes nothing
+f|t|f
+both switches on: the same order is bought on GoTickets at the next match
+t
 t|t|1
 G110|gotickets|true|auto_bought|-
 the cheapest one-to-one wins, whichever market; a missing GoTickets event id comes from our event map
@@ -20,7 +23,7 @@ done
 {"qty": 2, "state": "requested", "market": "gotickets", "listing_id": "51401", "max_price_ea": 90, "order_number": "G114"}
 {"qty": 2, "state": "requested", "market": "gotickets", "listing_id": "51501", "max_price_ea": 90, "order_number": "G115"}
 a buy was already requested for this order
-the worker: GoTickets off -> the GoTickets row stops, nothing is handed out
+the worker switch for GoTickets goes off after requests were filed: the GoTickets row stops, nothing is handed out
 t
 G110|stopped|{gotickets_buy_off}
 the worker: the EVO row is handed out with the GoTickets buyer details beside the EVO ones

@@ -25,8 +25,12 @@ SELECT order_number, best->>'market', best->>'gate', best->>'buyable', action, c
 SELECT sub_finder_buy(7,'crm',(SELECT id FROM j1),'G110','51001')->>'detail';
 SELECT count(*) FROM manual_sub_buy;
 
-\echo GoTickets buying on: the same order is bought on GoTickets at the next match
+\echo one switch alone changes nothing
 UPDATE sub_finder_config SET gt_buy_enabled=true WHERE id;
+SELECT sub_finder_market_buyable('gotickets'), sub_finder_market_buyable('evo'), sub_finder_market_buyable('stubhub');
+\echo both switches on: the same order is bought on GoTickets at the next match
+UPDATE manual_sub_buy_config SET gt_enabled=true WHERE id;
+SELECT sub_finder_market_buyable('gotickets');
 UPDATE sub_finder_order SET rematch=true WHERE job_id=(SELECT id FROM j1);
 SELECT sub_finder_scratch() IS NOT NULL, sub_finder_load_native((SELECT id FROM j1)) IS NOT NULL, sub_finder_match((SELECT id FROM j1));
 SELECT order_number, best->>'market', best->>'buyable', action, coalesce(auto_buy_note,'-') FROM sub_finder_order WHERE job_id=(SELECT id FROM j1);
@@ -45,8 +49,8 @@ SELECT sub_finder_buy(7,'crm',(SELECT id FROM j3),'G114','51401','dana') - 'buy_
 SELECT sub_finder_buy(7,'crm',(SELECT id FROM j3),'G115','51501','dana') - 'buy_id';
 SELECT sub_finder_buy(7,'crm',(SELECT id FROM j3),'G115','999')->>'detail';
 
-\echo the worker: GoTickets off -> the GoTickets row stops, nothing is handed out
-UPDATE manual_sub_buy_config SET enabled=true, per_order_cap_usd=750, daily_cap_usd=4000, gt_buyer_email='b@x.test', gt_buyer_phone='5550100',
+\echo the worker switch for GoTickets goes off after requests were filed: the GoTickets row stops, nothing is handed out
+UPDATE manual_sub_buy_config SET enabled=true, gt_enabled=false, per_order_cap_usd=750, daily_cap_usd=4000, gt_buyer_email='b@x.test', gt_buyer_phone='5550100',
   gt_billing_address='{"firstName":"A"}', gt_recipient='{"firstName":"A"}', gt_gift_card_ids='{28085}' WHERE id;
 SELECT manual_sub_buy_claim() IS NULL;
 SELECT sale_order_number, state, reasons FROM manual_sub_buy WHERE sale_order_number='G110';

@@ -20,10 +20,12 @@
 -- sends POST /rest/pro/api/orders once through gotickets_buy_client.py (GT_BUY_WRITES).
 --
 -- Switches, all OFF until the operator turns them on:
---   sub_finder_config.gt_buy_enabled      GoTickets covers read `buyable: true`; the automatic
---                                         buy, the CRM buy and the accepted-offer buy may pick one
---   manual_sub_buy_config.gt_enabled      the worker may send a GoTickets buy. Off: a GoTickets
---                                         row stops with 'gotickets_buy_off'
+--   sub_finder_config.gt_buy_enabled      the sub finder may pick a GoTickets cover (automatic
+--                                         buy, CRM buy, accepted-offer buy)
+--   manual_sub_buy_config.gt_enabled      the worker may send a GoTickets buy
+-- A GoTickets cover reads `buyable: true`, and a request is filed, only while BOTH are on, so
+-- one switch alone changes nothing. If the worker's switch goes off after a request was filed,
+-- that row stops with 'gotickets_buy_off' and nothing is sent.
 -- Limits: GoTickets has its own per-order and per-day ceilings
 -- (manual_sub_buy_config.gt_per_order_cap_usd / gt_daily_cap_usd, 666 each), counted apart from
 -- EVO's. The automatic buy's own daily cap (sub_finder_config.auto_buy_daily_cap_usd) counts
@@ -90,7 +92,9 @@ STABLE
 SET search_path = public, pg_temp
 AS $function$
   SELECT p_market = 'evo'
-      OR (p_market = 'gotickets' AND coalesce((SELECT gt_buy_enabled FROM public.sub_finder_config), false))
+      OR (p_market = 'gotickets'
+          AND coalesce((SELECT gt_buy_enabled FROM public.sub_finder_config), false)
+          AND coalesce((SELECT gt_enabled FROM public.manual_sub_buy_config), false))   -- both switches
 $function$;
 
 REVOKE ALL ON FUNCTION public.sub_finder_market_buyable(text) FROM PUBLIC, anon, authenticated;
