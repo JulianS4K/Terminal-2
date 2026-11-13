@@ -17,6 +17,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
   GET  /api/v1/subs/orders/{order_number}                   the same order, newest job, no job id
   POST /api/v1/subs/orders/{order_number}/buy               the same buy, newest job, no job id
+  POST /api/v1/subs/orders/{order_number}/offer-sub         GoTickets orders: yes, offer the customer this sub
   POST /api/v1/subs/orders/{order_number}/needs-sub         the ALERT: "this order needs a sub"
 
 The alert is the integration we ask the CRM for: one "Needs sub" checkbox on an order, which
@@ -228,7 +229,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if isinstance(key, JSONResponse):
             return key
         access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
-        scopes = [s for s, on in (("subs:find", access.get("find")), ("subs:buy", access.get("buy"))) if on]
+        scopes = [s for s, on in (("subs:find", access.get("find")), ("subs:buy", access.get("buy")),
+                                  ("subs:offer", access.get("offer"))) if on]
         return {"ok": True, "key_label": key.get("label"), "scopes": scopes,
                 "max_orders_per_job": min(int(access.get("max_orders_per_job") or MAX_ORDERS), MAX_ORDERS),
                 "ticketsdata_fallback": bool(access.get("ticketsdata_fallback")),
@@ -334,6 +336,28 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if not jid:
             return _err(404, "not_found", "no job holds this order number; submit it first")
         return await _request_buy(key, str(jid), order_number, request)
+
+    @router.post("/orders/{order_number}/offer-sub")
+    async def offer_sub(order_number: str, request: Request):
+        """The CRM's yes to `sub_offer.ask_crm`: offer the customer this cover through GoTickets.
+        Files a request only; core/gt_sub_offer.py sends it (RULE 2: this module calls no upstream)."""
+        key = _auth(request, "offer")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        if not isinstance(body, dict):
+            body = {}
+        listing = _text(body.get("listing_id"), 40)
+        if not listing or not _ORDER_NO.fullmatch(listing) or not _ORDER_NO.fullmatch(order_number):
+            return _err(422, "invalid", "send {\"listing_id\": \"<listing id from this order's sub_offer>\"}")
+        out = _rpc("sub_finder_gt_offer_request", {
+            "p_key_id": key["id"], "p_key_label": key.get("label"), "p_order_number": order_number,
+            "p_listing_id": listing, "p_market": _text(body.get("market"), 20),
+            "p_requested_by": _text(body.get("requested_by"), 80)})
+        return _answer(out, ok_status=202)
 
     @router.get("/results")
     def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):

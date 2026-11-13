@@ -2088,6 +2088,64 @@ async def _start_manual_sub_buy():  # pragma: no cover - startup hook; loop cove
     asyncio.create_task(_manual_sub_buy_loop())
 
 
+# ---------------------------------------------------------------------------
+# GoTickets sub offer worker (D0) — a substitution request the CRM confirmed through the sub
+# finder API (operator 2026-11-13). Off unless GT_SUB_OFFER_LIVE=1 on this service AND
+# sub_finder_config.gt_offer_enabled. Each tick sends at most one confirmed offer via
+# core/gt_sub_offer.py -> gotickets_sub_client.py (path-pinned), then follows one sent offer (GET).
+# ---------------------------------------------------------------------------
+_GT_SUB_OFFER_INTERVAL_S = float(os.environ.get("GT_SUB_OFFER_INTERVAL_SECONDS", "20"))
+_gt_sub_offer_last: dict = {"at": None, "result": None, "error": None}
+
+
+async def _gt_sub_offer_tick():
+    from core import gt_sub_offer
+    from core.vault import vault_secret
+    from gotickets_sub_client import GoTicketsSubClient
+
+    def _call():
+        db = require_sb()
+
+        def rpc(name, params):
+            return db.rpc(name, params).execute().data
+        client = GoTicketsSubClient(vault_secret(db, "GOTICKETS_ACCESS_ID"), vault_secret(db, "GOTICKETS_API_SECRET"))
+        if not client.ready():
+            return {"action": "no_credentials", "follow": {"action": "idle"}}
+        out = gt_sub_offer.tick(rpc, client)
+        return {**out, "follow": gt_sub_offer.follow(rpc, client)}
+
+    out = await asyncio.to_thread(_call)
+    _gt_sub_offer_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    if out.get("action") != "idle" or out["follow"].get("action") != "idle":
+        _log.warning("gt_sub_offer: %s", out)
+    return out
+
+
+async def _gt_sub_offer_loop():
+    if os.environ.get("GT_SUB_OFFER_LIVE") != "1" or sb is None or SANDBOX:
+        _log.info("gt_sub_offer: disabled (GT_SUB_OFFER_LIVE != 1, no DB, or sandbox)")
+        return
+    _log.warning("gt_sub_offer: started (every %ss)", _GT_SUB_OFFER_INTERVAL_S)
+    while True:
+        try:
+            await _gt_sub_offer_tick()
+        except Exception as e:  # never let the loop die; a row left 'sending' is swept to 'unknown' by the DB
+            _gt_sub_offer_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("gt_sub_offer: tick failed: %s", e)
+        await asyncio.sleep(_GT_SUB_OFFER_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_gt_sub_offer():  # pragma: no cover - startup hook; loop covered via _gt_sub_offer_loop
+    asyncio.create_task(_gt_sub_offer_loop())
+
+
+@app.get("/api/admin/gt-sub-offer/status")
+def gt_sub_offer_status(_=Depends(require_auth)):
+    """Last GoTickets sub offer tick (auth-gated)."""
+    return {"enabled": os.environ.get("GT_SUB_OFFER_LIVE") == "1", **_gt_sub_offer_last}
+
+
 @app.get("/api/admin/manual-sub-buy/status")
 def manual_sub_buy_status(_=Depends(require_auth)):
     """Last manual sub buy tick (auth-gated)."""
