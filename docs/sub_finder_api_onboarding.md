@@ -74,7 +74,7 @@ The label starts a lookup. With the additions below, the rest of the conversatio
 | Ask | Why |
 |---|---|
 | `need2buy` as a real status in `GET /n2s/meta`, usable as `GET /n2s/items?status=need2buy` | we could ask for exactly the labelled items instead of scanning the book |
-| newest change first by default, or `sort=updated_at&order=desc` honoured on `GET /n2s/items` | our 30-second poll reads the first 500 items; a newly labelled item must be among them |
+| newest change first by default, or `sort=updated_at&order=desc` honoured on `GET /n2s/items` | our 30-second poll reads the first 250 items; a newly labelled item must be among them |
 | `updated_since=<instant>` on `GET /n2s/items` | lets us ask only for what changed, however large the book is |
 
 **B. So your decision reaches us without a call (read today)**
