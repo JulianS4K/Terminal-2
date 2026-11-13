@@ -270,6 +270,20 @@ When a migration breaks production, the first 30 seconds of debugging is reading
 
 ---
 
+## 6a. Changing a function: ship the whole definition (2026-11-13)
+
+**A migration that changes an existing function carries that function's full `CREATE OR REPLACE`.** Do not patch a function in place by reading `pg_get_functiondef()` and replacing text inside it.
+
+Why: a text patch only works while the function in the database matches, character for character, what the author assumed. Prod has drifted from the repo before (comments stripped, an earlier patch applied by hand), so every patch needed its anchors checked against prod first, and the review showed a few replaced lines instead of the function that would result.
+
+For the sub finder and the manual sub buy path the full text is in the repo, checked in CI:
+
+- `tests/sql/sub_finder/functions/<name>.sql` is each function exactly as the migrations listed in `tests/sql/sub_finder/build.sh` leave it. The `sub finder SQL scenarios` job fails when a file and the built function differ.
+- **To change one:** copy its file into the new migration, edit it there, add the migration to `build.sh`, run `tests/sql/sub_finder/run.sh --update`, and commit the changed file with the migration. The diff of that file is the review.
+- Applying a full definition also brings prod's copy of that function back in line with the repo, so no anchor check is needed.
+
+The in-place patches already merged (2026-11-11 to 2026-11-13) stay as they are: they have run. A function owned by another lane is still changed by that lane's own rules; when a migration here has to touch one, a patch guarded against the exact prod text is acceptable, and say so in the header.
+
 ## 7. Vault secrets (process; current name list → `RESOURCES_BIBLE §7`)
 
 - **Naming** `<DOMAIN>_<PURPOSE>` (e.g. `FRED_API_KEY`). One secret per service per lane; document new ones in the migration header (`Pre-reqs: vault.<NAME>`). **Never** check a secret into git (leak ⇒ reject PR + rotate).

@@ -10,6 +10,9 @@
 #   run.sh            run every scenario, fail on any difference
 #   run.sh --update   rewrite the expected files from the current output
 #
+# It also checks functions/: the full definition of every sub finder function
+# as the migrations leave it (snapshot.sh). --update rewrites those too.
+#
 # A new migration that touches the sub finder is added to the list in build.sh.
 # psql connects using the standard PG* environment variables.
 set -euo pipefail
@@ -20,6 +23,7 @@ UPDATE=0; [ "${1:-}" = "--update" ] && UPDATE=1
 
 "$HERE/build.sh" "$TPL"
 fail=0
+if [ "$UPDATE" = 1 ]; then "$HERE/snapshot.sh" "$TPL" update; else "$HERE/snapshot.sh" "$TPL" check || fail=1; fi
 cd "$HERE/scenarios"
 for f in *.sql; do
   name="${f%.sql}"
