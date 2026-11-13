@@ -20,11 +20,17 @@ END $$;
 INSERT INTO events (id, name, occurs_at_local) VALUES (1, 'Game', '2026-12-01 19:00');
 UPDATE manual_sub_buy_config SET enabled = true, gt_enabled = true, per_order_cap_usd = 750, daily_cap_usd = 4000 WHERE id;
 INSERT INTO manual_sub_buy (requested_by, sale_site, sale_order_number, event_name, tevo_event_id, ticket_group_id, qty, max_price_ea, sold_ea, market, gt_event_id, created_at)
-VALUES ('test','Vivid','E1','Game',1,101,2,50,60,'evo',NULL,now()-interval '9 min'), ('test','Vivid','E2','Game',1,102,2,50,60,'evo',NULL,now()-interval '8 min'),
+VALUES ('test','Vivid','E0','Game',1,100,2,50,60,'evo',NULL,now()-interval '10 min'), ('test','Vivid','E1','Game',1,101,2,50,60,'evo',NULL,now()-interval '9 min'), ('test','Vivid','E2','Game',1,102,2,50,60,'evo',NULL,now()-interval '8 min'),
        ('test','Vivid','E3','Game',1,103,2,50,60,'evo',NULL,now()-interval '7 min'), ('test','Vivid','E4','Game',1,104,2,50,60,'evo',NULL,now()-interval '6 min'),
        ('test','Vivid','E5','Game',1,105,2,50,60,'evo',NULL,now()-interval '5 min'), ('test','Vivid','G1','Game',1,106,2,50,60,'gotickets',9001,now()-interval '4 min');
 SELECT 'starts: enforce ' || enforce || ', stop ' || stop || ', ceiling ' || coalesce(daily_ceiling_usd::text, 'none')
-       || ', EVO in flight at most ' || evo_inflight_max || ' (an unanswered buy counts for ' || evo_inflight_minutes || ' min)' FROM sub_buy_control;
+       || ', EVO in-flight limit ' || coalesce(evo_inflight_max::text, 'none') FROM sub_buy_control;
+\echo as shipped nothing is held: the worker hands out one buy per tick, as before
+SELECT pg_temp.buy_next('9000');
+SELECT manual_sub_buy_follow_record(1, '{"seller_state":"accepted"}');
+
+\echo with an in-flight limit of 3 set
+UPDATE sub_buy_control SET evo_inflight_max = 3 WHERE id;
 
 \echo three EVO buys go out, one per tick
 SELECT pg_temp.buy_next('9001'); SELECT pg_temp.buy_next('9002'); SELECT pg_temp.buy_next('9003');
@@ -33,9 +39,9 @@ SELECT 'EVO buys waiting for a seller: ' || sub_buy_evo_inflight();
 SELECT pg_temp.buy_next('G-1'); SELECT pg_temp.buy_next('9004');
 SELECT sale_order_number, market, state, coalesce(array_to_string(reasons, ','), '') FROM manual_sub_buy ORDER BY buy_id;
 \echo a seller confirms one: the next EVO buy goes
-SELECT manual_sub_buy_follow_record(1, '{"seller_state":"accepted"}'); SELECT pg_temp.buy_next('9004'); SELECT pg_temp.buy_next('9005');
+SELECT manual_sub_buy_follow_record(2, '{"seller_state":"accepted"}'); SELECT pg_temp.buy_next('9004'); SELECT pg_temp.buy_next('9005');
 \echo a seller rejects one: that also frees a place
-SELECT manual_sub_buy_follow_record(2, '{"seller_state":"rejected"}'); SELECT pg_temp.buy_next('9005');
+SELECT manual_sub_buy_follow_record(3, '{"seller_state":"rejected"}'); SELECT pg_temp.buy_next('9005');
 \echo a buy no seller answered stops counting after the window
 UPDATE manual_sub_buy SET updated_at = now() - interval '61 minutes' WHERE sale_order_number = 'E3';
 SELECT 'waiting: ' || sub_buy_evo_inflight();
@@ -86,6 +92,6 @@ SELECT i->>'buyer', i->>'buy_ref', i->>'status', i#>>'{for_order,ref}', i#>>'{bo
 SELECT i#>>'{event,name}', i#>>'{event,local_start}', i#>>'{bought,listing_id}', i->>'phase'
   FROM jsonb_array_elements(sub_finder_buys(7)->'items') i WHERE i->>'buy_ref' = 'evo-9001';
 \echo a confirmation by the seller moves changed_at (the cursor of the feed), not updated_at (the spend day)
-SELECT changed_at > updated_at FROM manual_sub_buy WHERE buy_id = 1;
+SELECT changed_at > updated_at FROM manual_sub_buy WHERE buy_id = 2;
 SELECT 'changed since a minute from now: ' || (sub_finder_buys(7, now() + interval '1 minute')->>'total');
 SELECT 'page of 2 from the third: ' || (j->>'count') || ' of ' || (j->>'total') FROM sub_finder_buys(7, NULL, 2, 2) j;

@@ -5,27 +5,26 @@
 -- Two workers buy substitute tickets: the sub finder's (manual_sub_buy: the automatic
 -- one-to-one buy, a CRM key's buy, seats a GoTickets customer accepted, an operator's buy) and
 -- the N2S auto-buyer (n2s_autobuy_exec, lane D7). Each keeps its own switches and ceilings;
--- nothing sat above both. Operator 2026-11-13: "do 3 but retain n2s buy conditions" (one
--- buyer), and on EVO buys sent together: "there was a limit" / "i think it's 3".
+-- nothing sat above both. Operator 2026-11-13: "do 3 but retain n2s buy conditions" (one buyer).
 --
--- What the EVO record shows (read 2026-11-13): 15 buys sent in 14 seconds on one event on
--- 2026-10-01; EVO took all 15, and sellers then rejected 9 ("Tickets No Longer Available").
--- No other purchase of ours was ever rejected.
+-- The limit on buys sent together is the one each worker already has and keeps: one buy at a
+-- time, one per tick (15 seconds). The operator confirmed that is the limit ("that's the limit
+-- not 3"). Nothing here changes it, and NOTHING HERE IS IN FORCE WHEN APPLIED:
 --
---   1. sub_buy_control (one row):
---        evo_inflight_max (3)        at most this many EVO buys, from BOTH buyers, waiting for
---                                    their seller to confirm. A buy over the limit is not
---                                    refused: it waits and is sent when one confirms.
---                                    evo_inflight_minutes (60): an unanswered buy stops
---                                    counting after this long. NULL max = no limit.
---                                    In force as soon as this is applied.
+--   1. sub_buy_control (one row), every setting off:
 --        enforce (false)             master switch for the two below; while false they are ignored.
 --        stop                        no NEW buy by either buyer. Buys already placed are still
 --                                    followed to their result.
 --        daily_ceiling_usd           both buyers, both markets, per New York day. NULL = none.
+--        evo_inflight_max (NULL)     optional, off: at most this many EVO buys, from BOTH
+--                                    buyers, waiting for their seller to confirm; the next one
+--                                    waits. evo_inflight_minutes (60): an unanswered buy stops
+--                                    counting after this long. Kept because of the one burst
+--                                    on record (2026-10-01: 15 EVO buys in 14 seconds on one
+--                                    event, before these workers existed; sellers rejected 9).
 --      Each buyer's own switches, ceilings, runs and kill switch are untouched and still apply.
---   2. manual_sub_buy_claim() (full definition): honours the control. An EVO buy over the
---      in-flight limit stays 'requested'; a GoTickets buy behind it may go.
+--   2. manual_sub_buy_claim() (full definition): honours the control. With an in-flight limit
+--      set, an EVO buy over it stays 'requested'; a GoTickets buy behind it may go.
 --   3. n2s_autobuy_live_claim() (lane D7's function, patched as D7 asked in bot_chat 6687): one
 --      anchor, in the branch that hands out a buy, guarded by production's md5. Poll steps and
 --      everything else are unchanged. The advisory lock is taken after N2S's own FOR UPDATE on
@@ -39,7 +38,7 @@
 -- Nothing here calls a market. Functions of ours are shipped whole (MIGRATION_CONVENTIONS 6a).
 --
 -- rollback: UPDATE public.sub_buy_control SET enforce = false, evo_inflight_max = NULL WHERE id = true;
---           (every check then passes; the claims behave as before.)
+--           (the state this ships in: every check passes; the claims behave as before.)
 
 -- ── 1. the control ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.sub_buy_control (
@@ -48,7 +47,7 @@ CREATE TABLE IF NOT EXISTS public.sub_buy_control (
   stop                 boolean NOT NULL DEFAULT false,
   stop_reason          text,
   daily_ceiling_usd    numeric CHECK (daily_ceiling_usd IS NULL OR daily_ceiling_usd >= 0),
-  evo_inflight_max     integer DEFAULT 3 CHECK (evo_inflight_max IS NULL OR evo_inflight_max >= 1),
+  evo_inflight_max     integer CHECK (evo_inflight_max IS NULL OR evo_inflight_max >= 1),
   evo_inflight_minutes integer NOT NULL DEFAULT 60 CHECK (evo_inflight_minutes >= 1),
   updated_at           timestamptz NOT NULL DEFAULT now()
 );
@@ -56,7 +55,7 @@ INSERT INTO public.sub_buy_control DEFAULT VALUES ON CONFLICT DO NOTHING;
 ALTER TABLE public.sub_buy_control ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.sub_buy_control FROM PUBLIC, anon, authenticated;
 COMMENT ON TABLE public.sub_buy_control IS
-  'One row over both sub buyers (manual_sub_buy and n2s_autobuy_exec): the EVO in-flight limit, and behind `enforce` a shared stop and a shared daily ceiling. 20261113430000.';
+  'One row over both sub buyers (manual_sub_buy and n2s_autobuy_exec), all off as shipped: behind `enforce` a shared stop and a shared daily ceiling; and an optional EVO in-flight limit. 20261113430000.';
 
 -- Both claims take this after their own config row lock, never before.
 CREATE OR REPLACE FUNCTION public.sub_buy_lock()
