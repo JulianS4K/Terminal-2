@@ -1,0 +1,45 @@
+1 lookup_best (book, site, event, section, row, qty, price):
+7001|api|GoTickets|60|101|2|2|100
+7002|api|GoTickets|61|101|2|2|100
+7003|api|GoTickets|60|101|2|2|100
+7004|marketplace|Vivid Seats|62|101|2|2|100
+SH1|marketplace|StubHub|63|101|2|2|100
+TP1|api|TickPick|64|101|2|2|100
+VV1|api|Vivid Seats|65|101|2|2|100
+SG1|api|SeatGeek|66|101|2|2|100
+NOPE|||||||
+caller says GoTickets for 7004: api/GoTickets/555
+2 closed:
+7001|-
+7003|fulfilled
+VV1|cancelled
+TP1|-
+SH1|-
+3 orders (source, site, event, sold, action, note):
+7001|api|GoTickets|60|100|cover|auto_bought|-
+7002|api|GoTickets|61|100|cover|auto_bought|-
+7003|api|GoTickets|60|100|cover|buy_manually|order_closed
+7004|marketplace|Vivid Seats|62|100|cover|buy_manually|not_in_our_books
+SH1|marketplace|StubHub|63|100|cover|auto_bought|-
+TP1|api|TickPick|64|100|cover|auto_bought|-
+VV1|api|Vivid Seats|65|100|cover|buy_manually|order_closed
+SG1|api|SeatGeek|66|100|cover|auto_bought|-
+7001X|request|GoTickets|60|500|cover|buy_manually|not_in_our_books
+GoTickets|7001|100
+GoTickets|7002|100
+SeatGeek|SG1|100
+StubHub|SH1|100
+TickPick|TP1|100
+4 a caller cannot inflate the price of an api order:
+TP1|api|900|buy_manually|already_bought_for_this_sale
+5 live status: the marketplace marks a watched sale fulfilled -> the refresh closes it:
+{"closed": 3}
+7001|t|-
+7002|f|order_fulfilled
+7003|f|order_fulfilled
+7004|t|-
+SH1|t|-
+TP1|f|superseded
+VV1|f|order_cancelled
+SG1|t|-
+7001X|t|-

@@ -1,0 +1,14 @@
+with the alert: 5001 has a note, 5002 none
+5001|buyer wants aisle|t
+5002|-|f
+set, replace, clear, unknown order, wrong key
+called buyer 3pm
+t
+(cleared)
+not_found|forbidden
+a re-alert keeps the last note unless it brings its own
+1
+5001|f|buyer wants aisle
+5001|t|buyer wants aisle
+1
+new note

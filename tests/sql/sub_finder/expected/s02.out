@@ -1,0 +1,37 @@
+T1 submit, native pulls answer:
+|
+T2 what was sent to TicketsData (only events with an uncovered order, creds from vault):
+
+T3 event 3241050 answers:
+|
+T4 a TicketsData-only cover cannot be bought:
+buying is not enabled for this key
+T5 event 2 answers 429 -> failed, job done:
+|
+f|forbidden
+T6 concurrency 1 and per-job cap 1; overdue pull times out:
+
+sent so far: 0
+
+sent so far: 0
+
+sent so far: 0
+T7 no credentials -> failed, nothing sent:
+|||0
+F1 follow a bought order:
+
+t
+not_open
+
+
+not_open
+t|not_open
+F2 the CRM sees it, and the sync feed re-emits the order:
+F3 a rejected order frees the sale and the spend:
+none
+777
+rejected
+stopped|rejected|{seller_rejected}|Tickets sold|777
+t
+canceled|{}
+pre-migration bought rows start pending after backfill rule: 0

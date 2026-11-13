@@ -1,0 +1,9 @@
+default pct: 0
+EVEN|2|0.00|auto_bought|-
+WIN1|1|2.00|auto_bought|-
+LOSS|2|-0.02|auto_bought|-
+WIN5|1|10.00|auto_bought|-
+EVEN|auto: gate 2, sold 101 row 2 x2; sub 101 row 2 x2, quoted profit 0.00
+LOSS|auto: gate 2, sold 101 row 2 x2; sub 101 row 2 x2, quoted profit -0.02
+WIN1|auto: gate 1, sold 101 row 2 x2; sub 101 row 2 x2, quoted profit 2.00
+WIN5|auto: gate 1, sold 101 row 2 x2; sub 101 row 2 x2, quoted profit 10.00

@@ -1,0 +1,66 @@
+1 sub_offer per order:
+1001|GoTickets|offer|true|false|3|3001|false/20.00
+1002|GoTickets|offer|true|false|4|3101|false/0
+1003|GoTickets|offer|true|false|5|3201|true/60.00
+1004|GoTickets|offer|false|true|6|3301|false/-
+1005|GoTickets|buy_manually|-|-|-|-|-/-
+1006|StubHub|offer|-|-|-|-|-/-
+1007|GoTickets|offer|false|false|3|3001|false/20.00
+2 refusals: off, wrong gate, not gotickets, unverified, unknown listing, unknown order:
+forbidden
+true|false
+gate 6 covers are results only and are not offered
+gate 1-2 covers need no offer: the seats are in the same section, same or better row
+only GoTickets orders can be offered a sub here
+this order is not in our copy of the GoTickets order book with these seats; alert us with the order number only
+that listing is not a cover this lookup quoted for this order
+not_found
+3 yes for gates 3, 4, 5; a second yes conflicts:
+{"row": "1", "gate": 3, "state": "requested", "rebate": null, "section": "102"}
+{"row": "2", "gate": 4, "state": "requested", "rebate": null, "section": "102"}
+{"error": "invalid", "detail": "this sub moves the customer back: send rebate_amount (0 for none)", "rebate_suggested": 60.00}
+rebate_amount must be between 0 and the sale total
+{"row": "4", "gate": 5, "state": "requested", "rebate": null, "section": "102"}
+conflict
+1001|1001|3|102|1|200.00|180.00|-|crm api key crm / dana|Comparable replacement seats in the same area, in the same row or closer than the original section 101 row 2.
+1002|1002|4|102|2|200.00|240.00|-|crm api key crm|Comparable replacement seats in the same area, in the same row or closer than the original section 101 row 2.
+1003|1003|5|102|4|200.00|140.00|-|crm api key crm|Replacement seats in the same area, 2 rows further back than the original row 2.
+4 worker: claim, send, sent; stop; lease lost:
+1001|requested|t
+sending
+lease_lost
+sent
+stopped
+1001|sent|t|{}|555|PENDING
+1002|stopped|f|{sale_cancelled}||
+1003|requested|t|{}||
+5 follow: pending (no change), accepted; stopped order can be offered again; stale sending -> unknown:
+{"gt_order_id": 1001, "gt_request_id": 555}
+t
+PENDING|ACCEPTED|t
+requested
+sending
+t
+1001|sent|t|ACCEPTED|t
+1002|stopped|f||t
+1003|unknown|t||f
+1002|requested|t||f
+5b accepted with auto buy off -> note; on -> EVO buy filed once; spare / cap / gotickets seats are not bought:
+1001|-|auto_buy_off
+buy_requested|t|t
+GoTickets|1001|3001|2|90|sub finder auto (gotickets offer accepted, key crm)|customer accepted GoTickets substitution 555 (gate 3): sub 102 row 1 x2
+1001|auto_bought|t
+needs_spare_ticket
+not_on_evo
+over_daily_cap
+already_bought_for_this_sale
+auto_buy_off
+order_closed
+6 order json after:
+1001|false|sent|ACCEPTED|-|buy_requested|requested
+1002|false|requested|-|-|-|-
+1003|false|unknown|-|-|-|-
+1004|false||-|-|-|-
+1007|false||-|-|-|-
+psql:s07.sql:84: ERROR:  sub_finder_gt_offer_record: bad state bogus
+CONTEXT:  PL/pgSQL function sub_finder_gt_offer_record(bigint,uuid,jsonb) line 7 at RAISE

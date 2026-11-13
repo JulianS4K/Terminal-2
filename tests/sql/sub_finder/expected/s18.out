@@ -1,0 +1,25 @@
+off by default: nothing taken in
+0|0
+the refresh job takes in the two labelled items, once
+t
+t
+1|6080|done
+2|6081|done
+done
+done
+order | source | notes | watching | action | note | bought (labelled orders are auto-bought; still watched)
+t
+6080|n2s|rush|t|auto_bought|-|t
+6081|n2s|-|t|auto_bought|-|t
+a plain N2S order alerted by hand is still left to N2S
+done
+6082|n2s_order|f
+label removed -> watch closes and the item is forgotten; labelled again -> taken in again
+t
+f|label_removed
+1
+t
+2
+2
+label test
+t|t|t|f|f

@@ -1,0 +1,49 @@
+1 disabled:
+forbidden
+2 other key / bad payloads:
+forbidden|invalid|invalid
+at most 1 orders per job
+3 submit:
+{"status": "done", "replayed": false, "unmapped": 3, "not_found": [], "order_count": 7}
+replay same job: true
+pull rows: 0
+4 too early / pulls out / done:
+done
+done
+f|{"error": "forbidden", "detail": "this key may not use the sub finder"}
+done|{"cover": 3, "no_cover": 1, "unmapped": 3}
+659213629|cover|gotickets|900|G|same|2|0|120.00|131.44|4
+659240801|cover|evo|6833175913|G|better|4|1|296.40|60.03|1
+X1|no_cover|||||||||0
+U1|unmapped|||||||||0
+U2|unmapped|||||||||0
+U3|unmapped|||||||||0
+N1|cover|gotickets|900|G|same|2|0|120.00||4
+5 covers for 659213629 (market,listing,row,rel,price,link):
+gotickets|900|G|same|60|false|https://pro.gotickets.com/tickets/1353401/?sortBy=price&sortDirection=asc
+evo|6833175743|D|better|65.98|true|https://core.ticketevolution.com/buy/event/3241050/tickets/6833175743
+seatgeek|500|C|better|70|false|https://seatgeek.com/tcu/18024494#listing=A6rs2KO4wGY
+seatgeek|501|F|better|71|false|https://seatgeek.com/tcu/18024494
+5b covers for 659240801:
+evo|6833175913|G|better|4|60.03
+6 results feed:
+2|7|2|0|t
+0|0
+forbidden
+7 buy:
+forbidden
+forbidden
+not_found
+that listing is not an EVO cover this job quoted for this order
+that listing is not an EVO cover this job quoted for this order
+{"error": "invalid", "detail": "this order is not in our copy of the order books with these seats, quantity and sale price; alert us with the order number only"}
+this order is not in our copy of the order books with these seats, quantity and sale price; alert us with the order number only
+7b a sale already bought outside this API:
+this order is not in our copy of the order books with these seats, quantity and sale price; alert us with the order number only
+8 buy shows on the order + moved the sync cursor:
+||["evo", "gotickets", "seatgeek"]
+9 timeout settles with what we have:
+8
+done
+10 dup order numbers in one job cannot be bought:
+conflict
