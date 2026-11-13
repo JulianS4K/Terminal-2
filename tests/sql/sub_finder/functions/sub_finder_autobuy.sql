@@ -14,6 +14,7 @@ DECLARE
   v_spent numeric;
   v_n     integer := 0;
   v_today date := (now() AT TIME ZONE 'America/New_York')::date;
+  v_loss  numeric;                  -- the loss this order may be bought at, % of the sale; NULL = profit only
 BEGIN
   SELECT * INTO c FROM public.sub_finder_config;
   IF c.auto_buy_enabled THEN
@@ -24,10 +25,13 @@ BEGIN
             WHERE job_id = p_job_id AND watching AND buy_id IS NULL AND state = 'cover' ORDER BY idx
   LOOP
     v_buy := NULL;
-    -- the best EVO one-to-one this may take: a profit, breakeven, or a gate 2 loss inside the limit;
+    -- 20261113320000: a loss is allowed only on a need2buy order, up to the CRM's limit for the
+    -- marketplace it sold on (5% unless set); every other order is bought at a profit only
+    v_loss := public.sub_finder_max_loss_pct(o.site, o.via_need2buy OR public.sub_finder_order_is_need2buy(o.order_number));
+    -- the best one-to-one this may take: a profit, or (need2buy orders) breakeven or a gate 2 loss inside the limit;
     -- our own feed, exact quantity, clear view. Covers are ordered gate first, then cheapest.
     SELECT x INTO cv FROM jsonb_array_elements(o.covers) WITH ORDINALITY t(x, n)
-     WHERE public.sub_finder_cover_buyable(o.order_number, x) AND x->>'source' = 'native' AND public.sub_finder_autobuy_gate(x)
+     WHERE public.sub_finder_cover_buyable(o.order_number, x) AND x->>'source' = 'native' AND public.sub_finder_autobuy_gate(x, v_loss)
        AND (x->>'spare')::int = 0 AND x->>'view' IS DISTINCT FROM 'obstructed'
        AND jsonb_array_length(public.sub_finder_cover_flags(x)) = 0     -- a flagged cover waits for the CRM
        AND ((x->>'gate')::int = 2      -- a gate 2 cover is already inside the loss limit (sub_finder_autobuy_gate)
@@ -37,17 +41,17 @@ BEGIN
       WHEN NOT c.auto_buy_enabled THEN 'auto_buy_off'
       WHEN cv IS NOT NULL THEN NULL
       WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.covers) x
-                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND x->>'source' = 'native' AND public.sub_finder_autobuy_gate(x))
+                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND x->>'source' = 'native' AND public.sub_finder_autobuy_gate(x, v_loss))
         THEN 'no_evo_one_to_one'
       WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.covers) x
-                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND public.sub_finder_autobuy_gate(x) AND (x->>'spare')::int = 0)
+                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND public.sub_finder_autobuy_gate(x, v_loss) AND (x->>'spare')::int = 0)
         THEN 'needs_spare_ticket'
       WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.covers) x
-                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND public.sub_finder_autobuy_gate(x) AND (x->>'spare')::int = 0
+                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND public.sub_finder_autobuy_gate(x, v_loss) AND (x->>'spare')::int = 0
                          AND x->>'view' IS DISTINCT FROM 'obstructed')
         THEN 'obstructed_view'
       WHEN NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.covers) x
-                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND public.sub_finder_autobuy_gate(x) AND (x->>'spare')::int = 0
+                       WHERE public.sub_finder_cover_buyable(o.order_number, x) AND public.sub_finder_autobuy_gate(x, v_loss) AND (x->>'spare')::int = 0
                          AND x->>'view' IS DISTINCT FROM 'obstructed'
                          AND jsonb_array_length(public.sub_finder_cover_flags(x)) = 0)
         THEN 'needs_crm_confirm'

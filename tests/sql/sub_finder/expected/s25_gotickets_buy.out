@@ -17,8 +17,8 @@ G110|gotickets|9110|51001|2|90|sub finder auto (key crm)
 G111|evo|-|11101|2|80|sub finder auto (key crm)
 G112|gotickets|9112|51201|2|85|sub finder auto (key crm)
 G113|gotickets|9113|51301|2|90|sub finder auto (key crm)
-G110|gotickets|210.00
-G111|evo|210.00
+G110|gotickets|199.99
+G111|evo|199.99
 the CRM buys a GoTickets cover it was quoted (automatic buying off for this one)
 done
 {"qty": 2, "state": "requested", "market": "gotickets", "listing_id": "51401", "max_price_ea": 90, "order_number": "G114"}
@@ -34,7 +34,7 @@ GoTickets on with no ceiling of its own: the EVO order ceiling applies (100 here
 t
 G115|stopped|{over_order_cap}
 given its own ceilings: EVO spent 160 today; a 170 GoTickets day ceiling still lets a 170 GoTickets buy through
-G112|gotickets|9112|51201|210.00
+G112|gotickets|9112|51201|199.99
 bought
 the next GoTickets rows are over the GoTickets ceilings (day, then order) and stop
 t

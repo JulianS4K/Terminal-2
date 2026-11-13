@@ -543,6 +543,54 @@ def test_balances_passes_the_sql_answer_through_and_its_refusal():
     assert _client(FakeDB()).get("/api/v1/subs/balances").status_code == 401
 
 
+# ---------------------------------------------------------------- automatic buy loss limits
+
+LIMITS = {"default_max_cost_pct": 105, "by_marketplace": {"stubhub": 110}, "min": 100, "max": 200, "can_set": True}
+
+
+def test_loss_limits_are_read_and_set_through_the_sql():
+    db = FakeDB(rpc_data={"sub_finder_loss_limits": LIMITS, "sub_finder_loss_limits_set": LIMITS})
+    c = _client(db)
+    r = c.get("/api/v1/subs/settings/auto-buy-loss", headers=H)
+    assert r.status_code == 200 and r.json() == LIMITS
+    assert db.last("sub_finder_loss_limits") == {"p_key_id": 7}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.loss_limits"}
+    # only the two limit fields reach the SQL; set_by names the person
+    r = c.put("/api/v1/subs/settings/auto-buy-loss", headers=H,
+              json={"default_max_cost_pct": 105, "by_marketplace": {"stubhub": 110}, "set_by": "dana", "other": 1})
+    assert r.status_code == 200 and r.json() == LIMITS
+    sent = db.last("sub_finder_loss_limits_set")
+    assert sent["p_key_id"] == 7 and sent["p_by"] == "dana"
+    assert sent["p_body"] == {"default_max_cost_pct": 105, "by_marketplace": {"stubhub": 110}}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.loss_limits_set"}
+    # a set_by that is not text is ignored
+    c.put("/api/v1/subs/settings/auto-buy-loss", headers=H, json={"default_max_cost_pct": None, "set_by": 5})
+    assert db.last("sub_finder_loss_limits_set")["p_by"] is None
+    assert db.last("sub_finder_loss_limits_set")["p_body"] == {"default_max_cost_pct": None}
+
+
+def test_loss_limits_refusals():
+    c = _client(FakeDB())
+    assert c.get("/api/v1/subs/settings/auto-buy-loss").status_code == 401
+    assert c.put("/api/v1/subs/settings/auto-buy-loss", json={}).status_code == 401
+    # a body that is not a JSON object never reaches the SQL
+    db = FakeDB()
+    c = _client(db)
+    assert c.put("/api/v1/subs/settings/auto-buy-loss", headers=H, json=[110]).status_code == 422
+    assert c.put("/api/v1/subs/settings/auto-buy-loss", headers={**H, "content-type": "application/json"},
+                 content=b"not json").status_code == 422
+    assert not [n for n, _ in db.rpcs if n == "sub_finder_loss_limits_set"]
+    # the SQL's own refusals pick the status
+    db = FakeDB(rpc_data={"sub_finder_loss_limits_set": {"error": "forbidden", "detail": "this key may not set"},
+                          "sub_finder_loss_limits": {"error": "forbidden", "detail": "not enabled"}})
+    c = _client(db)
+    assert c.put("/api/v1/subs/settings/auto-buy-loss", headers=H, json={"default_max_cost_pct": 110}).status_code == 403
+    assert c.get("/api/v1/subs/settings/auto-buy-loss", headers=H).status_code == 403
+    db = FakeDB(rpc_data={"sub_finder_loss_limits_set": {"error": "invalid", "detail": "must be 100 to 200"}})
+    assert _client(db).put("/api/v1/subs/settings/auto-buy-loss", headers=H,
+                           json={"default_max_cost_pct": 250}).status_code == 422
+
+
 # ---------------------------------------------------------------- auto-buy results
 
 def test_autobuys_passes_the_feed_through_with_the_sync_cursor():
