@@ -97,7 +97,9 @@ FORBIDDEN_HOSTS = (
 #   * evo_buy_client.py — the N2S auto-cover buy + accept on EVO, operator-authorized
 #     2026-11-09 ("I authorize EVO only, build the live executor"). Its POST is
 #     path-pinned to /v9/orders and /v9/orders/{id}/accept by EVO_WRITE_PATHS, whose
-#     exact literal is required below (SANCTIONED_WRITE_TOKENS).
+#     exact literal is required below (SANCTIONED_WRITE_TOKENS). Operator-authorized
+#     2026-11-13 ("build the evo tax quote"): also /v9/tax_quotes, EVO's pre-purchase
+#     calculation of the total it will charge (buys, holds and changes nothing).
 #   * sale_accept_client.py — confirm OUR OWN pending sale on GoTickets / SeatGeek / Vivid /
 #     TickPick, operator-authorized 2026-11-10. Each write is pinned to (method, host, path)
 #     by SALE_ACCEPT_WRITES, whose exact literal is required below.
@@ -131,7 +133,7 @@ CLIENT_FILES = {
 SANCTIONED_WRITE_TOKENS = {
     "seatdata_client.py": 'SANCTIONED_POST_PATHS = frozenset({"v0.4/events/event-request-add"})',
     "gotickets_sub_client.py": 'GT_SUB_WRITES = (("POST", "sc.gotickets.com", r"^/rest/substitution-requests$"),)',
-    "evo_buy_client.py": 'EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\\d+/accept$")',
+    "evo_buy_client.py": 'EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\\d+/accept$", r"^/v9/tax_quotes$")',
     "sale_accept_client.py": 'SALE_ACCEPT_WRITES = (("POST", "sc.gotickets.com", r"^/rest/sales/\\d+/confirm$"), ("PATCH", "sellerdirect-api.seatgeek.com", r"^/order$"), ("POST", "brokers.vividseats.com", r"^/webservices/v1/confirmOrder$"), ("POST", "api.tickpick.com", r"^/1\\.0/orders/\\d+/confirmation$"))',
 }
 
