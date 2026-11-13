@@ -12,6 +12,11 @@ purchase and listing by id (Seller Central: a listing that answers is ours, neve
 may be added without the operator's written authorization (security-CRIT, CLAUDE.md RULE 2).
 The write is never retried: a timeout or 5xx is "unknown outcome" and the caller stops.
 
+A second caller (operator 2026-11-13: "n2s also incorporated gotickets autobuy look at how it
+functions and incorporate but modify to match how we use evo"): the manual sub buy path
+(core/manual_sub_buy.py) sends the same one write for a GoTickets cover the sub finder filed
+(mig 20261113300000; off unless manual_sub_buy_config.gt_enabled). No new write path.
+
 Payment: ``giftCardIds`` only. GoTickets lists a saved card to the API only when it is shared
 with the whole account (``global = true``); none is (GET /payment-methods answered ``[]`` on
 2026-11-13), so the buy is paid entirely from gift cards or not sent.

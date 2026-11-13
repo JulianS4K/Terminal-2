@@ -1074,28 +1074,39 @@ def test_manual_sub_buy_tick_runs_one_step_and_records(monkeypatch):
     from core import manual_sub_buy
     seen = {}
 
-    def _fake_tick(rpc, client):
-        seen["claim"], seen["client"] = rpc("manual_sub_buy_claim", {}), client
+    def _fake_tick(rpc, client, gt):
+        seen["claim"], seen["client"], seen["gt"] = rpc("manual_sub_buy_claim", {}), client, gt
         return {"action": "buy", "state": "bought"}
 
     fake = _WatchdogSb({"row": 1})
     monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", lambda: "GT")
     monkeypatch.setattr(manual_sub_buy, "tick", _fake_tick)
-    monkeypatch.setattr(manual_sub_buy, "follow", lambda rpc, client: {"action": "idle"})
+    monkeypatch.setattr(manual_sub_buy, "follow", lambda rpc, client, gt: {"action": "idle"})
     out = anyio.run(app_module._manual_sub_buy_tick)
     assert out["state"] == "bought" and seen["claim"] == {"row": 1}
     assert fake.calls == [("manual_sub_buy_claim", {})]          # never an n2s_* call
-    assert seen["client"].token == app_module.TOKEN
+    assert seen["client"].token == app_module.TOKEN and seen["gt"] == "GT"
     assert app_module._manual_sub_buy_last["result"]["state"] == "bought"
-    monkeypatch.setattr(manual_sub_buy, "tick", lambda rpc, client: {"action": "idle"})
+    monkeypatch.setattr(manual_sub_buy, "tick", lambda rpc, client, gt: {"action": "idle"})
     assert anyio.run(app_module._manual_sub_buy_tick) == {"action": "idle", "follow": {"action": "idle"}}
-    # an idle buy step still follows a bought order, with the same client
+    # an idle buy step still follows a bought order, with the same clients
     monkeypatch.setattr(manual_sub_buy, "follow",
-                        lambda rpc, client: {"action": "follow", "outcome": "confirmed",
-                                             "same_client": client.token == app_module.TOKEN})
+                        lambda rpc, client, gt: {"action": "follow", "outcome": "confirmed", "gt": gt,
+                                                 "same_client": client.token == app_module.TOKEN})
     out = anyio.run(app_module._manual_sub_buy_tick)
-    assert out["action"] == "idle" and out["follow"] == {"action": "follow", "outcome": "confirmed",
+    assert out["action"] == "idle" and out["follow"] == {"action": "follow", "outcome": "confirmed", "gt": "GT",
                                                          "same_client": True}
+
+
+def test_manual_sub_buy_runs_its_evo_side_when_the_gotickets_client_cannot_be_built(monkeypatch):
+    def _boom():
+        raise RuntimeError("vault blip")
+
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", _boom)
+    assert app_module._manual_sub_buy_gt() is None
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", lambda: "GT")
+    assert app_module._manual_sub_buy_gt() == "GT"
 
 
 def test_manual_sub_buy_loop_is_off_without_its_own_env_flag(monkeypatch):

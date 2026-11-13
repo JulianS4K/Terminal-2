@@ -1,0 +1,61 @@
+switches start off: false / false
+GoTickets ceilings start empty (= the EVO ceilings): true
+GoTickets buying off: the cover is not buyable, nothing is bought, the CRM buy is refused
+done
+G110|gotickets|1|false|buy_manually|no_evo_one_to_one
+that listing is not a cover we can buy that this job quoted for this order
+0
+one switch alone changes nothing
+f|t|f
+both switches on: the same order is bought on GoTickets at the next match
+t
+t|t|1
+G110|gotickets|true|auto_bought|-
+the cheapest one-to-one wins, whichever market; a missing GoTickets event id comes from our event map
+done
+G110|gotickets|9110|51001|2|90|sub finder auto (key crm)
+G111|evo|-|11101|2|80|sub finder auto (key crm)
+G112|gotickets|9112|51201|2|85|sub finder auto (key crm)
+G113|gotickets|9113|51301|2|90|sub finder auto (key crm)
+G110|gotickets|210.00
+G111|evo|210.00
+the CRM buys a GoTickets cover it was quoted (automatic buying off for this one)
+done
+{"qty": 2, "state": "requested", "market": "gotickets", "listing_id": "51401", "max_price_ea": 90, "order_number": "G114"}
+{"qty": 2, "state": "requested", "market": "gotickets", "listing_id": "51501", "max_price_ea": 90, "order_number": "G115"}
+a buy was already requested for this order
+the worker switch for GoTickets goes off after requests were filed: the GoTickets row stops, nothing is handed out
+t
+G110|stopped|{gotickets_buy_off}
+the worker: the EVO row is handed out with the GoTickets buyer details beside the EVO ones
+G111|evo|t|b@x.test|[28085]
+bought
+GoTickets on with no ceiling of its own: the EVO order ceiling applies (100 here), so a 180 GoTickets row stops
+t
+G115|stopped|{over_order_cap}
+given its own ceilings: EVO spent 160 today; a 170 GoTickets day ceiling still lets a 170 GoTickets buy through
+G112|gotickets|9112|51201|210.00
+bought
+the next GoTickets rows are over the GoTickets ceilings (day, then order) and stop
+t
+t
+G110|gotickets|stopped|{gotickets_buy_off}
+G111|evo|bought|{}
+G112|gotickets|bought|{}
+G113|gotickets|stopped|{over_order_cap,over_daily_cap}
+G114|gotickets|stopped|{over_order_cap}
+G115|gotickets|stopped|{over_order_cap}
+following a bought order: the claim says which market to ask
+t|70001|evo
+t|880001|gotickets
+confirmed
+what the CRM reads on each buy
+G111|evo|70001|70001|bought|pending|160|
+G112|gotickets|880001|-|bought|confirmed|170|30.00
+G113|gotickets||-|stopped|none||
+the money alert names the market
+Sub buy PLACED: EVO order 70001 for StubHub sale G111 ($160.00)
+Sub buy PLACED: GoTickets order 880001 for StubHub sale G112 ($170.00)
+an unknown outcome on a GoTickets buy stops everything and says where to look
+unknown
+t|buy N: outcome unknown, check GoTickets

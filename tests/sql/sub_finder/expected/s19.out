@@ -16,7 +16,7 @@ t
 91|buy|confirm_needed|this cover is flagged: send "confirm": true to buy it anyway
 92|offer|invalid|this sub moves the customer back: send rebate_amount (0 for none)
 93|buy|stale|this decision was made before our answer existed
-94|buy|invalid|that listing is not an EVO cover this job quoted for this order
+94|buy|invalid|that listing is not a cover we can buy that this job quoted for this order
 7090|9001|2|crm api key crm / feed / dana
 the CRM decides again: B with confirm, C with a rebate, D with a fresh instant
 t
@@ -27,5 +27,5 @@ t
 7092|5|10.00|requested
 what the CRM reads on the order
 7091|requested||null
-7094|invalid|that listing is not an EVO cover this job quoted for this order|null
+7094|invalid|that listing is not a cover we can buy that this job quoted for this order|null
 7095|||
