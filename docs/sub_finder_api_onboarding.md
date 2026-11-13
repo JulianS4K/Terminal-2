@@ -62,7 +62,7 @@ You do not have to call us to start a lookup. We already read your Need-to-Sub f
 - **What we take from the item.** Its `order_number` and `marketplace`. Everything else we look up ourselves, as for an alert. `seller_notes` becomes the order's `notes`.
 - **Reading the answer** is unchanged: `GET /api/v1/subs/orders/{order_number}` or the sync feed, with your key. Your API has no write surface, so we write nothing back to the CRM.
 - **It takes the whole path**, the automatic buy included ([§8](#8-how-matching-works-and-what-it-does-not-do)). An item in the feed that is not labelled `need2buy` is left to the Need-to-Sub pipeline as before.
-- **It stays live until one of two things is seen** (mig `20261113190000`): **the label is removed** in your feed (taken off, changed to any other status, or the item resolved: `closed_reason` `label_removed`), or **the order's status changes on its marketplace** (cancelled, delivered or rejected, read from the marketplace's own order feed: `order_cancelled` / `order_fulfilled` / `order_rejected`). Until then we keep pulling listings and re-matching it every round, except while a GoTickets offer is waiting on the customer. Labelling it again starts a fresh lookup.
+- **It stays live until one of two things is seen** (mig `20261113190000`): **the label is removed** in your feed (taken off, changed to any other status, or the item resolved: `closed_reason` `label_removed`), or **the order's status changes on its marketplace** (cancelled, delivered or rejected, read from the marketplace's own order feed: `order_cancelled` / `order_fulfilled` / `order_rejected`). `closed_by_s4k` means S4K closed the lookup by hand (a test or a dry run). Until then we keep pulling listings and re-matching it every round, except while a GoTickets offer is waiting on the customer. Labelling it again starts a fresh lookup.
 - The checkbox call above still works and can be used alongside the label.
 
 ### What we ask you to add to your N2S feed
@@ -269,7 +269,7 @@ The whole request is refused (422) if any one order carries a malformed value; `
 | `status` | Meaning |
 |---|---|
 | `pulling` | fresh EVO / GoTickets / SeatGeek listings are being fetched |
-| `pulling_td` | those are matched; TicketsData is being asked about the orders still uncovered |
+| `pulling_td` | those are matched; TicketsData is being asked (for the orders still uncovered, or more of them if S4K has widened the search) |
 | `done` | every order is answered |
 
 ```json
@@ -556,11 +556,12 @@ Parking passes and S4K's own listings are never offered.
 **Sources, in order:**
 
 1. **EVO, GoTickets, SeatGeek** — always, from a fresh pull.
-2. **TicketsData** (StubHub, Viagogo, Vivid Seats, TickPick, Gametime, Ticketmaster) — **only for orders the first three found nothing for**, and only when `ticketsdata_fallback` is on. An order that already has a cover never triggers it.
+2. **TicketsData** (StubHub, Viagogo, Vivid Seats, TickPick, Gametime, Ticketmaster) — only when `ticketsdata_fallback` is on, and by default **only for orders the first three found nothing for**. S4K can widen this (mig `20261113290000`) to orders whose best cover is not a gate 1 cover, or to every order. An order that already has a cover keeps showing it while TicketsData is asked; when the answer lands, the covers it found are added to `covers` and `best` may change. The job reads `pulling_td` until then.
 
 | `ticketsdata` | Meaning |
 |---|---|
-| null | not needed, or the fallback is off |
+| null | not asked for this order, or the fallback is off |
+| `queued` | being asked now; an order that already had a cover still shows it |
 | `searched` | asked; any covers found are in `covers` with `source: "ticketsdata"` |
 | `failed` | TicketsData did not answer usably (timeout or rate limit); submit the order again later |
 | `no_event_link` | we hold no StubHub id for this event, so it could not be asked |
@@ -570,7 +571,7 @@ Parking passes and S4K's own listings are never offered.
 - Seat numbers on covers. No listing feed carries them; they arrive on the `buy` after purchase.
 - Buying on any market other than EVO.
 - Webhooks. You poll or sync; we never call the CRM.
-- TicketsData on an order that already has a cover: the six fallback markets are searched only when EVO, GoTickets and SeatGeek found nothing.
+- TicketsData on an order that already has a cover, unless S4K has widened the search: by default the six fallback markets are searched only when EVO, GoTickets and SeatGeek found nothing.
 - Automatic buys of anything but the one-to-one EVO cover described above.
 - Prices are as listed. `price_note` flags the two markets where checkout adds buyer fees.
 
@@ -583,7 +584,7 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 1 | Apply migrations `20261112000000`, then `20261112010000` | normal migration apply |
 | 2 | Issue the CRM a key | `SELECT mcp_issue_key('crm sub finder', 'external', '<who>');` returns the key itself, once — hand it over and do not store it. Its id: `SELECT id FROM mcp_api_keys WHERE label = 'crm sub finder' AND revoked_at IS NULL;`. An external key also opens the public market-data `/mcp`, nothing internal |
 | 3 | Turn the API on for that key | `UPDATE sub_finder_config SET enabled = true, key_ids = key_ids \|\| <id>;` |
-| 4 | Optional: TicketsData fallback | `UPDATE sub_finder_config SET td_enabled = true;` — costs 12 credits + 1 report per event asked, at most `td_max_events_per_job` (6) events per job and 3 in flight |
+| 4 | Optional: TicketsData fallback | `UPDATE sub_finder_config SET td_enabled = true;` — costs 12 credits + 1 report per event asked, at most `td_max_events_per_job` (6) events per job and 3 in flight. `td_scope` (mig `20261113290000`) chooses which orders ask: `no_cover` (default: only orders with no cover), `not_one_to_one` (also orders whose best cover is not gate 1) or `all`. A wider scope asks about more events, so it spends more credits; events with a no-cover order are asked first |
 | 5 | Optional: let the key buy | `UPDATE sub_finder_config SET buy_enabled = true, buy_key_ids = buy_key_ids \|\| <id>;` |
 | 6 | Optional: automatic one-to-one buys (mig `20261113010000`) | `UPDATE sub_finder_config SET auto_buy_enabled = true;` — independent of step 5. Limits: `auto_buy_daily_cap_usd` (1000, counted per New York day over `manual_sub_buy` rows whose `requested_by` starts `sub finder auto`) and `auto_buy_min_profit_pct` (0 = breakeven or profit) and `auto_buy_max_loss_pct` (5: the biggest loss, as a percent of the sale total, a gate 2 cover may be bought at; 0 = breakeven only) |
 | 7 | Optional: GoTickets sub offers (mig `20261113020000`) | `UPDATE sub_finder_config SET gt_offer_enabled = true, gt_offer_key_ids = gt_offer_key_ids \|\| <id>;` and `GT_SUB_OFFER_LIVE=1` on the web service. `gt_offer_auto_buy = true` also buys the EVO seats once the customer accepts (needs the manual sub buy path live; counts toward `auto_buy_daily_cap_usd`). Last tick: `GET /api/admin/gt-sub-offer/status`. Rows: `sub_finder_gt_offer` |
