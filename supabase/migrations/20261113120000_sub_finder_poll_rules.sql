@@ -1,4 +1,4 @@
--- Migration 20261113120000 · level:secondary-sales · lane:D0 · writes:n2s_sg_polled,n2s_pull_events,sub_finder_offer_pending,sub_finder_submit,sub_finder_refresh,sub_finder_gt_offer_buy,sub_finder_offer_json,sub_finder_gt_offer_follow_record,sub_finder_order_json · reads:n2s_mkt_pull,sub_finder_gt_offer · pre:20261113060000
+-- Migration 20261113120000 · level:secondary-sales · lane:D0 · writes:n2s_sg_polled,n2s_pull_events,sub_finder_offer_pending,sub_finder_submit,sub_finder_refresh,sub_finder_offer_gone,sub_finder_offer_json,sub_finder_gt_offer_follow_record,sub_finder_order_json · reads:n2s_mkt_pull,sub_finder_gt_offer · pre:20261113060000
 --
 -- POLLING RULES: N2S asks SeatGeek once per event; the sub finder keeps asking; an order
 -- with a GoTickets sub offer out is not polled.
@@ -28,32 +28,38 @@
 --                     offer for go Tix is accepted resume polling and if subs on evo autobuy").
 --                     The order is still closed as before (event passed, sale over, left N2S).
 --                     Another watched order on the same event still gets that event pulled.
---   sub_finder_gt_offer_buy
---                     the buy after an acceptance no longer needs the OFFERED listing to be on
---                     EVO. If it is, that listing is bought, as before. If it is not (GoTickets
---                     / SeatGeek seats were offered), the order's fresh covers are searched for
---                     an EVO listing that delivers what the customer accepted: the same section,
---                     the same row or closer, exactly the quantity sold, not obstructed, and a
---                     total (expected tax included) no higher than the sub total the CRM said
---                     yes to. The best such cover is bought; with none, the offer's buy note is
---                     'no_evo_match' and sub_finder_refresh asks again every round while the
---                     order is watched. Every other rule is unchanged (switches, sale still
---                     live, one buy per sale, daily cap, the manual sub buy path's own ceilings).
---
+--   after an acceptance (operator: "When gotickets subs are accepted only buy if 1-1 index
+--                     conditions in cases where original quoted subs are gone, and if other
+--                     gates report back to crm and give new best subs and gate"):
+--                     * the offered seats are an EVO listing: bought at once, as before
+--                       (sub_finder_gt_offer_buy, unchanged);
+--                     * the offered seats are GONE (that buy stopped, or the listing is no
+--                       longer in the market's fresh pull): nothing else is bought on the
+--                       strength of the acceptance. The order is back in the normal re-match,
+--                       so the standing automatic one-to-one rule (sub_finder_autobuy: an EVO
+--                       cover in the ORIGINAL section, same row or better, exact quantity,
+--                       breakeven or better / inside auto_buy_max_loss_pct) is the only thing
+--                       that can buy. sub_finder_refresh releases a stopped offer buy from the
+--                       order so that rule can run;
+--                     * any other gate is reported, not bought: `sub_offer.offered_gone` is
+--                       true, `accepted_next` is 'new_sub_needed' and `new_best` carries the
+--                       new best cover and its gate (the order's `best` / `covers` too).
+--   sub_finder_offer_gone
+--                     true when the offered listing is not in its market's current pull for
+--                     the event although that market has been pulled since the acceptance.
 --   sub_finder_offer_json
---                     tells the CRM the customer accepted: `sub_offer.accepted`, `accepted_at`
---                     and `accepted_next` ('buy_requested' or 'buy_manually'). There is no
---                     call out to the CRM (it has given us no address to call): the acceptance
---                     already moves the order's updated_at, so the order comes back in the
---                     sync feed (GET /results?updated_since=) carrying these fields.
---                     The body is 20261113100000's (the rebate fields) plus these three, so
---                     the two migrations can be applied in either order.
---
+--                     the acceptance as fields the CRM reads: `accepted`, `accepted_at`,
+--                     `offered_gone`, `accepted_next` ('buy_requested' / 'buy_manually' /
+--                     'new_sub_needed') and `new_best`. No call out to the CRM: the acceptance
+--                     moves the order's updated_at, so the order comes back in the sync feed
+--                     (GET /results?updated_since=) carrying these fields. The body is
+--                     20261113100000's (the rebate fields) plus these, so the two migrations
+--                     can be applied in either order.
 --   sub_finder_order_json
---                     as 20261113080000, except `action`: after an acceptance an order whose
---                     covers still say 'offer' reads 'buy_manually' (the customer has already
---                     said yes) until the seats are bought. Everything else in the order is
---                     sent as normal: best, covers, markets, buy.
+--                     as 20261113080000, except `action`: after an acceptance, while the
+--                     offered seats are still there and nothing is bought, 'offer' reads
+--                     'buy_manually' (the customer has already said yes). Everything else in
+--                     the order is sent as normal: best, covers, markets, buy.
 --   sub_finder_gt_offer_follow_record
 --                     operator: "If offer denied check order status before repolling". When
 --                     GoTickets shows the offer DENIED or CANCELLED, the sale is checked first:
@@ -493,114 +499,57 @@ BEGIN
     v_jobs := v_jobs + 1;
   END LOOP;
 
-  -- 4. accepted GoTickets offers whose seats are not bought yet: look again for EVO seats that
-  --    deliver what the customer accepted (the buy function decides and keeps its own rules)
-  IF c.gt_offer_enabled AND c.gt_offer_auto_buy THEN
-    FOR r IN
-      SELECT g.offer_id FROM public.sub_finder_gt_offer g
-        JOIN public.sub_finder_order o ON o.job_id = g.job_id AND o.idx = g.idx
-       WHERE g.live AND g.gt_status = 'ACCEPTED' AND g.buy_id IS NULL
-         AND g.buy_note IN ('not_on_evo', 'no_evo_match') AND o.watching AND o.buy_id IS NULL
-       ORDER BY g.offer_id LIMIT 20
-    LOOP
-      PERFORM public.sub_finder_gt_offer_buy(r.offer_id);
-    END LOOP;
-  END IF;
+  -- 4. an accepted GoTickets offer whose buy of the offered EVO seats stopped (the listing went
+  --    before we could buy it): let go of that dead buy, so the standing automatic one-to-one
+  --    rule may buy for the order on a later re-match. Nothing else buys on the acceptance.
+  FOR r IN
+    SELECT g.offer_id, g.job_id, g.idx, g.buy_id FROM public.sub_finder_gt_offer g
+      JOIN public.manual_sub_buy b ON b.buy_id = g.buy_id
+     WHERE g.live AND g.gt_status = 'ACCEPTED' AND b.state = 'stopped'
+     ORDER BY g.offer_id LIMIT 20
+  LOOP
+    UPDATE public.sub_finder_gt_offer SET buy_id = NULL, buy_note = 'offered_seats_gone', updated_at = now()
+     WHERE offer_id = r.offer_id;
+    UPDATE public.sub_finder_order
+       SET buy_id = NULL, action = CASE WHEN action = 'auto_bought' THEN 'offer' ELSE action END,
+           rematch = true, updated_at = now()
+     WHERE job_id = r.job_id AND idx = r.idx AND buy_id = r.buy_id;
+  END LOOP;
   RETURN jsonb_build_object('closed', v_closed, 'events', cardinality(v_evs), 'jobs_rematched', v_jobs);
 END
 $$;
 
--- the buy after an acceptance: the offered EVO listing, or EVO seats that deliver the same
-CREATE OR REPLACE FUNCTION public.sub_finder_gt_offer_buy(p_offer_id bigint)
- RETURNS text
- LANGUAGE plpgsql
+-- Are the offered seats gone? True when the listing is not in its market's current pull for the
+-- event although that market has been pulled for it since the acceptance; NULL when unknown.
+CREATE OR REPLACE FUNCTION public.sub_finder_offer_gone(g public.sub_finder_gt_offer, p_event bigint)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE
  SECURITY DEFINER
  SET search_path = public, pg_temp
 AS $$
-DECLARE
-  c       public.sub_finder_config;
-  r       public.sub_finder_gt_offer;
-  o       public.sub_finder_order;
-  v_note  text;
-  v_buy   bigint;
-  v_spent numeric;
-  v_label text;
-  v_lid   text;      -- the EVO listing to buy, its quantity and price
-  v_qty   integer;
-  v_px    numeric;
-  cv      jsonb;
-BEGIN
-  SELECT * INTO c FROM public.sub_finder_config;
-  PERFORM pg_advisory_xact_lock(hashtext('sub_finder_autobuy'));      -- one cap check + request at a time
-  SELECT * INTO r FROM public.sub_finder_gt_offer WHERE offer_id = p_offer_id FOR UPDATE;
-  IF NOT FOUND OR r.gt_status IS DISTINCT FROM 'ACCEPTED' OR r.buy_id IS NOT NULL
-     OR r.buy_note NOT IN ('not_on_evo', 'no_evo_match') THEN         -- NULL note passes: not decided yet
-    RETURN NULL;                                                      -- not accepted, or already decided
-  END IF;
-  SELECT * INTO o FROM public.sub_finder_order WHERE job_id = r.job_id AND idx = r.idx FOR UPDATE;
-  v_note := CASE
-    -- every switch above this one must be on too: the API, GoTickets offers, and this buy
-    WHEN NOT (c.enabled AND c.gt_offer_enabled AND c.gt_offer_auto_buy) THEN 'auto_buy_off'
-    WHEN NOT o.watching
-      OR public.sub_finder_order_closed(r.order_number, 'GoTickets') IS NOT NULL
-      THEN 'order_closed'
-    WHEN r.market = 'evo' AND r.buy_qty <> r.qty THEN 'needs_spare_ticket'
-    WHEN o.buy_id IS NOT NULL
-      OR EXISTS (SELECT 1 FROM public.manual_sub_buy b WHERE b.sale_order_number = r.order_number
-                    AND b.state IN ('requested', 'buying', 'bought', 'unknown'))
-      OR EXISTS (SELECT 1 FROM public.n2s_autobuy_exec x WHERE x.order_number = r.order_number)
-      THEN 'already_bought_for_this_sale'
+  SELECT CASE
+    WHEN g.buy_note = 'offered_seats_gone' THEN true
+    WHEN g.gt_status IS DISTINCT FROM 'ACCEPTED' OR p_event IS NULL THEN NULL
+    WHEN g.market = 'evo' THEN
+      CASE WHEN EXISTS (SELECT 1 FROM public.n2s_evo_current x WHERE x.event_id = p_event
+                           AND x.tevo_ticket_group_id::text = g.listing_id) THEN false
+           WHEN EXISTS (SELECT 1 FROM public.n2s_evo_current x WHERE x.event_id = p_event
+                           AND x.pulled_at > g.final_at) THEN true END
+    WHEN g.market = 'gotickets' THEN
+      CASE WHEN EXISTS (SELECT 1 FROM public.n2s_gt_current x WHERE x.tevo_event_id = p_event
+                           AND x.gt_listing_id::text = g.listing_id) THEN false
+           WHEN EXISTS (SELECT 1 FROM public.n2s_gt_current x WHERE x.tevo_event_id = p_event
+                           AND x.pulled_at > g.final_at) THEN true END
+    WHEN g.market = 'seatgeek' THEN
+      CASE WHEN EXISTS (SELECT 1 FROM public.n2s_sg_current x WHERE x.tevo_event_id = p_event
+                           AND x.sglid::text = g.listing_id) THEN false
+           WHEN EXISTS (SELECT 1 FROM public.n2s_sg_current x WHERE x.tevo_event_id = p_event
+                           AND x.pulled_at > g.final_at) THEN true END
   END;
-  IF v_note IS NULL AND r.market = 'evo' THEN
-    v_lid := r.listing_id; v_qty := r.buy_qty; v_px := r.price_ea;   -- the offered seats themselves
-  ELSIF v_note IS NULL THEN
-    -- other seats were offered: EVO seats that deliver what the customer accepted, from the
-    -- order's current covers — same section, same row or closer, the quantity sold, a clear
-    -- view, and no dearer (expected tax included) than the sub the CRM said yes to
-    SELECT x INTO cv FROM jsonb_array_elements(coalesce(o.covers, '[]'::jsonb)) x
-     WHERE x->>'market' = 'evo' AND x->>'source' = 'native'
-       AND public.seat_section_norm(x->>'section') = public.seat_section_norm(r.section)
-       AND public.seat_row_rank(x->>'row') <= public.seat_row_rank(r.seat_row)
-       AND (x->>'buy_qty')::int = r.qty AND (x->>'spare')::int = 0
-       AND x->>'view' IS DISTINCT FROM 'obstructed'
-       AND (x->>'total')::numeric <= r.sub_total
-     ORDER BY (x->>'total')::numeric, x->>'listing_id' LIMIT 1;
-    IF cv IS NULL THEN
-      v_note := 'no_evo_match';                                       -- asked again by sub_finder_refresh
-    ELSE
-      v_lid := cv->>'listing_id'; v_qty := (cv->>'buy_qty')::int; v_px := (cv->>'price_ea')::numeric;
-    END IF;
-  END IF;
-  IF v_note IS NULL THEN
-    SELECT coalesce(sum(coalesce(b.bought_total_usd, round(b.max_price_ea * b.qty, 2))), 0) INTO v_spent
-      FROM public.manual_sub_buy b
-     WHERE b.requested_by LIKE 'sub finder auto%' AND b.state IN ('requested', 'buying', 'bought', 'unknown')
-       AND (b.created_at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date;
-    IF v_spent + v_px * v_qty > c.auto_buy_daily_cap_usd THEN v_note := 'over_daily_cap'; END IF;
-  END IF;
-  IF v_note IS NULL THEN
-    SELECT key_label INTO v_label FROM public.sub_finder_job WHERE job_id = r.job_id;
-    BEGIN
-      v_buy := public.manual_sub_buy_request(
-        'GoTickets', r.order_number, o.tevo_event_id, v_lid::bigint, v_qty, v_px, o.sold_ea,
-        o.event_name, 'sub finder auto (gotickets offer accepted, key ' || coalesce(v_label, r.key_id::text) || ')',
-        'customer accepted GoTickets substitution ' || r.gt_request_id || ' (gate ' || r.gate || '): sub '
-          || coalesce(cv->>'section', r.section) || ' row ' || coalesce(cv->>'row', r.seat_row) || ' x' || v_qty
-          || CASE WHEN cv IS NOT NULL THEN ' (EVO seats for the accepted ' || r.market || ' sub '
-                                           || r.section || ' row ' || r.seat_row || ')' ELSE '' END
-          || coalesce(', rebate ' || r.rebate_amount, ''));
-    EXCEPTION WHEN unique_violation THEN
-      v_note := 'already_bought_for_this_sale';
-    END;
-  END IF;
-  UPDATE public.sub_finder_gt_offer SET buy_id = v_buy, buy_note = v_note, updated_at = now() WHERE offer_id = p_offer_id;
-  UPDATE public.sub_finder_order
-     SET buy_id = coalesce(v_buy, buy_id), action = CASE WHEN v_buy IS NOT NULL THEN 'auto_bought' ELSE action END,
-         updated_at = now()
-   WHERE job_id = r.job_id AND idx = r.idx;
-  RETURN coalesce(v_note, 'buy_requested');
-END
 $$;
+REVOKE ALL ON FUNCTION public.sub_finder_offer_gone(public.sub_finder_gt_offer, bigint) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.sub_finder_offer_gone(public.sub_finder_gt_offer, bigint) TO service_role;
 
 -- sub_offer: as 20261113100000, plus the acceptance fields
 CREATE OR REPLACE FUNCTION public.sub_finder_offer_json(o public.sub_finder_order)
@@ -636,20 +585,32 @@ AS $$
                    'buy', CASE WHEN r.buy_id IS NOT NULL THEN 'buy_requested' ELSE r.buy_note END,
                    'final_at', r.final_at) END,
       -- the customer said yes: `accepted` flips true (the order's updated_at moves, so it comes
-      -- back in the sync feed). `accepted_next` says what happens to the seats: 'buy_requested'
-      -- (we are buying EVO seats, see the order's `buy`) or 'buy_manually' (no EVO seats that
-      -- deliver the accepted sub yet: buy them yourselves; we keep looking and buy if some appear)
+      -- back in the sync feed). `accepted_next` says what happens to the seats:
+      --   'buy_requested'   we are buying EVO seats (see the order's `buy`)
+      --   'buy_manually'    the offered seats are still listed and we cannot buy them: buy them yourselves
+      --   'new_sub_needed'  the offered seats are gone (`offered_gone`) and no one-to-one EVO cover
+      --                     was there to buy: `new_best` is the best cover now, with its gate
       'accepted', coalesce(r.gt_status = 'ACCEPTED', false),
       'accepted_at', CASE WHEN r.gt_status = 'ACCEPTED'
                           THEN to_char(r.final_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') END,
+      'offered_gone', gn.gone,
       'accepted_next', CASE WHEN r.gt_status IS DISTINCT FROM 'ACCEPTED' THEN NULL
                             WHEN r.buy_id IS NOT NULL OR o.buy_id IS NOT NULL THEN 'buy_requested'
-                            ELSE 'buy_manually' END)
+                            WHEN coalesce(gn.gone, false) THEN 'new_sub_needed'
+                            ELSE 'buy_manually' END,
+      'new_best', CASE WHEN r.gt_status = 'ACCEPTED' AND coalesce(gn.gone, false) AND o.best IS NOT NULL
+                       THEN jsonb_build_object(
+                              'market', o.best->>'market', 'listing_id', o.best->>'listing_id',
+                              'section', o.best->>'section', 'row', o.best->>'row',
+                              'gate', (o.best->>'gate')::int, 'label', o.best->>'label',
+                              'buy_qty', (o.best->>'buy_qty')::int, 'total', (o.best->>'total')::numeric,
+                              'profit', (o.best->>'profit')::numeric) END)
   END
   FROM (SELECT 1) one
   LEFT JOIN LATERAL (SELECT g.* FROM public.sub_finder_gt_offer g
                       WHERE g.order_number = o.order_number AND g.key_id = o.key_id
-                      ORDER BY g.live DESC, g.offer_id DESC LIMIT 1) r ON true;
+                      ORDER BY g.live DESC, g.offer_id DESC LIMIT 1) r ON true
+  LEFT JOIN LATERAL (SELECT public.sub_finder_offer_gone(r, o.tevo_event_id) AS gone WHERE r.offer_id IS NOT NULL) gn ON true;
 $$;
 
 -- the offer's status from GoTickets: as 20261113020000, plus the sale check after a denial
@@ -706,12 +667,14 @@ AS $$
     'section', o.section, 'row', o.seat_row, 'qty', o.qty, 'sold_ea', o.sold_ea,
     'order_source', o.order_source, 'state', o.state,
     -- what to do with the answer, and why it was not bought automatically
-    -- once a GoTickets customer has accepted the sub there is nobody left to ask: 'offer' reads
-    -- 'buy_manually' until we (or you) have bought the seats
+    -- once a GoTickets customer has accepted the sub there is nobody left to ask: while the offered
+    -- seats are still there, 'offer' reads 'buy_manually' until they are bought. If they are gone
+    -- the action is the new match's own (see sub_offer.accepted_next / new_best)
     'action', CASE WHEN o.action = 'offer' AND o.buy_id IS NULL
                         AND EXISTS (SELECT 1 FROM public.sub_finder_gt_offer g
                                      WHERE g.order_number = o.order_number AND g.key_id = o.key_id
-                                       AND g.live AND g.gt_status = 'ACCEPTED')
+                                       AND g.live AND g.gt_status = 'ACCEPTED'
+                                       AND NOT coalesce(public.sub_finder_offer_gone(g, o.tevo_event_id), false))
                    THEN 'buy_manually' ELSE o.action END,
     'auto_buy_note', o.auto_buy_note,
     -- GoTickets orders only: the sub we would offer the customer, and how that offer stands
