@@ -9,13 +9,14 @@
 --   n2s_sg_polled     one row per SeatGeek event that has had a listings pull from
 --                     n2s_pull_events (first / last time, count). n2s_mkt_pull cannot say
 --                     this: it keeps 3 days. Seeded from what n2s_mkt_pull still holds.
---   n2s_pull_events   gains p_sg_repeat (default false). Without it, a SeatGeek event already
---                     in n2s_sg_polled is skipped, whoever made that first pull. Every N2S
---                     caller (n2s_pull_all_sources, n2s_hub_quick_map, inbox_n2b_pull) uses
---                     the default, unchanged. EVO, GoTickets and TicketsData are untouched.
---                     Otherwise the body is prod's, byte for byte (checked by md5 against
---                     pg_get_functiondef on 2026-11-13). The 2-argument version is dropped
---                     (a 2-argument call resolves to this one through the default).
+--   n2s_pull_events   a 3-argument version (events, refresh, p_sg_repeat) now does the work.
+--                     With p_sg_repeat false, a SeatGeek event already in n2s_sg_polled is
+--                     skipped, whoever made that first pull. The 2-argument function every
+--                     N2S caller uses (n2s_pull_all_sources, n2s_hub_quick_map,
+--                     inbox_n2b_pull) is kept by name and now just calls it with false, so
+--                     no caller is edited and nothing is dropped. EVO, GoTickets and
+--                     TicketsData are untouched. Otherwise the body is prod's, byte for byte
+--                     (checked by md5 against pg_get_functiondef on 2026-11-13).
 --   sub_finder_submit, sub_finder_refresh
 --                     pass p_sg_repeat = true: the sub finder pulls SeatGeek on every round,
 --                     paced by pull_refresh like the other two markets.
@@ -72,8 +73,9 @@
 -- Read paths only: every request these functions send is a GET (RULE 2).
 --
 -- rollback: re-apply sub_finder_submit and sub_finder_refresh from 20261113060000;
---           DROP FUNCTION public.n2s_pull_events(bigint[], interval, boolean) and re-create the
---           2-argument version (this body without the p_sg_repeat line and the n2s_sg_polled insert);
+--           re-create the 2-argument n2s_pull_events with its own body (the 3-argument body without
+--           the p_sg_repeat line and the n2s_sg_polled insert), then DROP FUNCTION
+--           public.n2s_pull_events(bigint[], interval, boolean);
 --           DROP FUNCTION public.sub_finder_offer_pending(text, bigint); DROP TABLE public.n2s_sg_polled;
 
 CREATE TABLE IF NOT EXISTS public.n2s_sg_polled (
@@ -94,10 +96,7 @@ SELECT q.mkt_event_id, max(q.tevo_event_id), min(q.fired_at), max(q.fired_at), c
   FROM public.n2s_mkt_pull q WHERE q.source = 'seatgeek' GROUP BY q.mkt_event_id
 ON CONFLICT (sg_event_id) DO NOTHING;
 
-DROP FUNCTION IF EXISTS public.n2s_pull_events(bigint[], interval);
-
-CREATE OR REPLACE FUNCTION public.n2s_pull_events(p_events bigint[], p_refresh_after interval DEFAULT '00:05:00'::interval,
-                                                  p_sg_repeat boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION public.n2s_pull_events(p_events bigint[], p_refresh_after interval, p_sg_repeat boolean)
  RETURNS TABLE(evo_fired integer, gt_fired integer, sg_queued integer, td_queued integer, evo_skipped_fresh integer, gt_skipped_fresh integer, evo_skipped_unknown integer)
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -264,6 +263,17 @@ END $function$;
 
 REVOKE ALL ON FUNCTION public.n2s_pull_events(bigint[], interval, boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.n2s_pull_events(bigint[], interval, boolean) TO service_role;
+
+-- The 2-argument function every N2S caller uses keeps its name, arguments and grants, and now
+-- only hands over with p_sg_repeat = false: N2S asks SeatGeek once per event.
+CREATE OR REPLACE FUNCTION public.n2s_pull_events(p_events bigint[], p_refresh_after interval DEFAULT '00:05:00'::interval)
+ RETURNS TABLE(evo_fired integer, gt_fired integer, sg_queued integer, td_queued integer, evo_skipped_fresh integer, gt_skipped_fresh integer, evo_skipped_unknown integer)
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $function$
+  SELECT * FROM public.n2s_pull_events(p_events, p_refresh_after, false);
+$function$;
 
 -- Is a GoTickets sub offer out for this order and not yet accepted? (requested, sending, sent, unknown)
 CREATE OR REPLACE FUNCTION public.sub_finder_offer_pending(p_order_number text, p_key_id bigint)
