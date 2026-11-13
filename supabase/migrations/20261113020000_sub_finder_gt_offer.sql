@@ -345,7 +345,11 @@ BEGIN
   END IF;
   SELECT * INTO o FROM public.sub_finder_order WHERE job_id = r.job_id AND idx = r.idx FOR UPDATE;
   v_note := CASE
-    WHEN NOT c.gt_offer_auto_buy THEN 'auto_buy_off'
+    -- every switch above this one must be on too: the API, GoTickets offers, and this buy
+    WHEN NOT (c.enabled AND c.gt_offer_enabled AND c.gt_offer_auto_buy) THEN 'auto_buy_off'
+    WHEN NOT o.watching
+      OR EXISTS (SELECT 1 FROM public.v_sub_orders v WHERE v.order_id = r.order_number AND NOT v.is_open)
+      THEN 'order_closed'
     WHEN r.market <> 'evo' THEN 'not_on_evo'
     WHEN r.buy_qty <> r.qty THEN 'needs_spare_ticket'
     WHEN o.buy_id IS NOT NULL
