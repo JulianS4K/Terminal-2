@@ -262,7 +262,7 @@ def test_order_read():
 def test_by_order_number_routes_use_the_newest_job():
     db = FakeDB(rpc_data={"sub_finder_latest_job": JOB,
                           "sub_finder_order_read": {"count": 1, "items": [{"order_number": "82410899"}]},
-                          "sub_finder_buy": {"buy_id": 22, "state": "requested"}})
+                          "sub_finder_buy_confirmed": {"buy_id": 22, "state": "requested"}})
     c = _client(db)
     assert c.get("/api/v1/subs/orders/82410899").status_code == 401
     assert c.post("/api/v1/subs/orders/82410899/buy", json={"listing_id": "1"}).status_code == 401
@@ -271,8 +271,8 @@ def test_by_order_number_routes_use_the_newest_job():
     assert db.last("sub_finder_latest_job") == {"p_key_id": 7, "p_order_number": "82410899"}
     assert db.last("sub_finder_order_read")["p_job_id"] == JOB
     r = c.post("/api/v1/subs/orders/82410899/buy", headers=H, json={"listing_id": "6022006793"})
-    assert r.status_code == 202 and db.last("sub_finder_buy")["p_job_id"] == JOB
-    assert db.last("sub_finder_buy")["p_listing_id"] == "6022006793"
+    assert r.status_code == 202 and db.last("sub_finder_buy_confirmed")["p_job_id"] == JOB
+    assert db.last("sub_finder_buy_confirmed")["p_listing_id"] == "6022006793"
     # a stray query parameter cannot stand in for the key
     assert c.get("/api/v1/subs/orders/82410899?_key=x").status_code == 401
     # no job holds it, or the number is malformed: 404 before any read or buy
@@ -281,7 +281,7 @@ def test_by_order_number_routes_use_the_newest_job():
     assert c2.get("/api/v1/subs/orders/82410899", headers=H).status_code == 404
     assert c2.post("/api/v1/subs/orders/82410899/buy", headers=H, json={"listing_id": "1"}).status_code == 404
     assert c2.get("/api/v1/subs/orders/bad%20order", headers=H).status_code == 404
-    assert not [n for n, _ in none.rpcs if n in ("sub_finder_order_read", "sub_finder_buy")]
+    assert not [n for n, _ in none.rpcs if n in ("sub_finder_order_read", "sub_finder_buy_confirmed")]
 
 
 def test_needs_sub_alert_is_a_one_order_submit(monkeypatch):
@@ -345,15 +345,23 @@ def test_results_cursor_and_bounds():
 # ---------------------------------------------------------------- buy
 
 def test_buy_passes_through_and_maps_refusals():
-    db = FakeDB(rpc_data={"sub_finder_buy": {"buy_id": 20, "state": "requested"}})
+    db = FakeDB(rpc_data={"sub_finder_buy_confirmed": {"buy_id": 20, "state": "requested"}})
     c = _client(db)
     url = f"/api/v1/subs/jobs/{JOB}/orders/659213629/buy"
     assert c.post(url, json={"listing_id": "6833175743"}).status_code == 401
     r = c.post(url, headers=H, json={"listing_id": 6833175743, "requested_by": " dana "})
     assert r.status_code == 202 and r.json()["buy_id"] == 20
-    assert db.last("sub_finder_buy") == {
+    assert db.last("sub_finder_buy_confirmed") == {
         "p_key_id": 7, "p_key_label": "crm", "p_job_id": JOB, "p_order_number": "659213629",
-        "p_listing_id": "6833175743", "p_requested_by": "dana"}
+        "p_listing_id": "6833175743", "p_requested_by": "dana", "p_confirm": False}
+    # a flagged cover is refused until the CRM says it has seen the flags; only a real true counts
+    db.rpc_data["sub_finder_buy_confirmed"] = {"error": "confirm_needed", "flags": ["single_ticket"]}
+    r = c.post(url, headers=H, json={"listing_id": "1"})
+    assert r.status_code == 409 and r.json()["flags"] == ["single_ticket"]
+    for sent, got in ((True, True), ("true", False), (1, False)):
+        c.post(url, headers=H, json={"listing_id": "1", "confirm": sent})
+        assert db.last("sub_finder_buy_confirmed")["p_confirm"] is got
+    db.rpc_data["sub_finder_buy_confirmed"] = {"buy_id": 20, "state": "requested"}
     for body in ({}, {"listing_id": "abc"}, [1]):
         assert c.post(url, headers=H, json=body).status_code == 422
     assert c.post(url, headers=dict(H, **{"content-type": "application/json"}), content=b"{").status_code == 422
@@ -362,5 +370,70 @@ def test_buy_passes_through_and_maps_refusals():
     assert c.post("/api/v1/subs/jobs/nope/orders/659213629/buy", headers=H,
                   json={"listing_id": "1"}).status_code == 404
     for code, status in (("forbidden", 403), ("not_found", 404), ("conflict", 409), ("invalid", 422)):
-        db.rpc_data["sub_finder_buy"] = {"error": code}
+        db.rpc_data["sub_finder_buy_confirmed"] = {"error": code}
         assert c.post(url, headers=H, json={"listing_id": "1"}).status_code == status
+
+
+# ---------------------------------------------------------------- offer a sub through GoTickets
+
+def test_offer_sub_files_the_crm_yes_and_maps_refusals():
+    db = FakeDB(rpc_data={"sub_finder_gt_offer_confirmed": {"offer_id": 3, "state": "requested", "gate": 5, "rebate": 60},
+                          "sub_finder_access": {"find": True, "offer": True}})
+    c = _client(db)
+    url = "/api/v1/subs/orders/1003/offer-sub"
+    assert c.post(url, json={"listing_id": "3201"}).status_code == 401
+    r = c.post(url, headers=H, json={"listing_id": "3201", "market": "evo", "requested_by": "dana",
+                                     "rebate_amount": 45.5})
+    assert r.status_code == 202 and r.json()["rebate"] == 60
+    assert db.last("sub_finder_gt_offer_confirmed") == {
+        "p_key_id": 7, "p_key_label": "crm", "p_order_number": "1003", "p_listing_id": "3201",
+        "p_market": "evo", "p_requested_by": "dana", "p_rebate_amount": 45.5, "p_confirm": False}
+    c.post(url, headers=H, json={"listing_id": "3201", "confirm": True})
+    assert db.last("sub_finder_gt_offer_confirmed")["p_confirm"] is True
+    db.rpc_data["sub_finder_gt_offer_confirmed"] = {"error": "confirm_needed", "flags": ["zone_unverified"]}
+    assert c.post(url, headers=H, json={"listing_id": "3201"}).status_code == 409
+    db.rpc_data["sub_finder_gt_offer_confirmed"] = {"offer_id": 3, "state": "requested", "gate": 5, "rebate": 60}
+    c.post(url, headers=H, json={"listing_id": "3201"})                    # no amount sent: SQL decides
+    assert db.last("sub_finder_gt_offer_confirmed")["p_rebate_amount"] is None
+    for bad in (-1, "50", True, 100001):
+        assert c.post(url, headers=H, json={"listing_id": "3201", "rebate_amount": bad}).status_code == 422
+    assert "subs:offer" in c.get("/api/v1/subs/ping", headers=H).json()["scopes"]
+    for body in ({}, {"listing_id": "bad id"}, [1]):
+        assert c.post(url, headers=H, json=body).status_code == 422
+    assert c.post(url, headers=H, content=b"not json").status_code == 422
+    assert c.post("/api/v1/subs/orders/bad%20order/offer-sub", headers=H, json={"listing_id": "1"}).status_code == 422
+    for code, status in (("forbidden", 403), ("not_found", 404), ("conflict", 409), ("invalid", 422)):
+        db.rpc_data["sub_finder_gt_offer_confirmed"] = {"error": code}
+        assert c.post(url, headers=H, json={"listing_id": "3201"}).status_code == status
+
+
+# ---------------------------------------------------------------- the CRM's own notes
+
+def test_notes_ride_with_the_alert_and_are_trimmed():
+    row, why = s.clean_order({"order_number": "1", "notes": "  call buyer first  "}, 0)
+    assert why is None and row["notes"] == "call buyer first"
+    assert "notes" not in s.clean_order({"order_number": "1", "notes": "   "}, 0)[0]
+    assert len(s.clean_order({"order_number": "1", "notes": "x" * 900}, 0)[0]["notes"]) == 500
+    db = FakeDB(rpc_data={"sub_finder_submit": {"job_id": JOB, "status": "pulling"}})
+    c = _client(db)
+    assert c.post("/api/v1/subs/orders/82410899/needs-sub", headers=H, json={"notes": "VIP"}).status_code == 202
+    assert db.last("sub_finder_submit")["p_orders"] == [{"order_number": "82410899", "notes": "VIP"}]
+
+
+def test_notes_route_writes_clears_and_refuses():
+    db = FakeDB(rpc_data={"sub_finder_set_notes": {"order_number": "1003", "notes": "VIP"}})
+    c = _client(db)
+    url = "/api/v1/subs/orders/1003/notes"
+    assert c.post(url, json={"notes": "VIP"}).status_code == 401
+    r = c.post(url, headers=H, json={"notes": "  VIP  "})
+    assert r.status_code == 200 and r.json()["notes"] == "VIP"
+    assert db.last("sub_finder_set_notes") == {"p_key_id": 7, "p_order_number": "1003", "p_notes": "VIP"}
+    c.post(url, headers=H, json={"notes": ""})                                  # empty clears
+    assert db.last("sub_finder_set_notes")["p_notes"] == ""
+    for body in ({}, {"notes": 5}, {"notes": None}, [1], {"notes": "x" * 501}):
+        assert c.post(url, headers=H, json=body).status_code == 422
+    assert c.post(url, headers=H, content=b"not json").status_code == 422
+    assert c.post("/api/v1/subs/orders/bad%20order/notes", headers=H, json={"notes": "x"}).status_code == 422
+    for code, status in (("forbidden", 403), ("not_found", 404)):
+        db.rpc_data["sub_finder_set_notes"] = {"error": code}
+        assert c.post(url, headers=H, json={"notes": "x"}).status_code == status

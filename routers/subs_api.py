@@ -17,6 +17,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
   GET  /api/v1/subs/orders/{order_number}                   the same order, newest job, no job id
   POST /api/v1/subs/orders/{order_number}/buy               the same buy, newest job, no job id
+  POST /api/v1/subs/orders/{order_number}/offer-sub         GoTickets orders: yes, offer the customer this sub
   POST /api/v1/subs/orders/{order_number}/needs-sub         the ALERT: "this order needs a sub"
 
 The alert is the integration we ask the CRM for: one "Needs sub" checkbox on an order, which
@@ -62,7 +63,11 @@ MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per
 MAX_LIMIT = 1000           # the CRM's own page ceiling
 NEEDS_SUB_WINDOW_S = 600   # a repeated "needs sub" alert inside this window is the same lookup
 _ORDER_NO = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
-_ERROR_STATUS = {"forbidden": 403, "invalid": 422, "not_found": 404, "conflict": 409}
+_ERROR_STATUS = {"forbidden": 403, "invalid": 422, "not_found": 404, "conflict": 409,
+                 "confirm_needed": 409}   # a flagged cover: resend with "confirm": true
+
+
+NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 
 
 def _err(status: int, error: str, detail: str | None = None, **extra: Any) -> JSONResponse:
@@ -153,6 +158,9 @@ def clean_order(raw: Any, i: int) -> tuple[dict | None, str | None]:
         out["event_date"] = day
     if ev_name:
         out["event_name"] = ev_name
+    notes = _text(raw.get("notes"), NOTES_MAX)  # free text of the CRM's own, stored and shown back
+    if notes:
+        out["notes"] = notes
     return out, None
 
 
@@ -228,7 +236,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if isinstance(key, JSONResponse):
             return key
         access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
-        scopes = [s for s, on in (("subs:find", access.get("find")), ("subs:buy", access.get("buy"))) if on]
+        scopes = [s for s, on in (("subs:find", access.get("find")), ("subs:buy", access.get("buy")),
+                                  ("subs:offer", access.get("offer"))) if on]
         return {"ok": True, "key_label": key.get("label"), "scopes": scopes,
                 "max_orders_per_job": min(int(access.get("max_orders_per_job") or MAX_ORDERS), MAX_ORDERS),
                 "ticketsdata_fallback": bool(access.get("ticketsdata_fallback")),
@@ -325,6 +334,26 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             "p_idempotency_key": f"needs-sub:{row['order_number']}:{bucket}"})  # type: ignore[index]
         return _answer(out, ok_status=202)
 
+    @router.post("/orders/{order_number}/notes")
+    async def set_notes(order_number: str, request: Request):
+        """Write, replace or clear ("") the CRM's own note on an order. Stored and shown back in
+        the order's `notes`; nothing here reads it to decide anything."""
+        key = _auth(request, "notes")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        notes = body.get("notes") if isinstance(body, dict) else None
+        if not isinstance(notes, str) or not _ORDER_NO.fullmatch(order_number):
+            return _err(422, "invalid", "send {\"notes\": \"<text, up to 500 characters; empty to clear>\"}")
+        if len(notes.strip()) > NOTES_MAX:
+            return _err(422, "invalid", f"notes can be at most {NOTES_MAX} characters")
+        out = _rpc("sub_finder_set_notes", {"p_key_id": key["id"], "p_order_number": order_number,
+                                            "p_notes": notes.strip()})
+        return _answer(out)
+
     @router.post("/orders/{order_number}/buy")
     async def buy_latest(order_number: str, request: Request):
         key = _auth(request, "buy")
@@ -334,6 +363,33 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if not jid:
             return _err(404, "not_found", "no job holds this order number; submit it first")
         return await _request_buy(key, str(jid), order_number, request)
+
+    @router.post("/orders/{order_number}/offer-sub")
+    async def offer_sub(order_number: str, request: Request):
+        """The CRM's yes to `sub_offer.ask_crm`: offer the customer this cover through GoTickets.
+        Files a request only; core/gt_sub_offer.py sends it (RULE 2: this module calls no upstream)."""
+        key = _auth(request, "offer")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        if not isinstance(body, dict):
+            body = {}
+        listing = _text(body.get("listing_id"), 40)
+        if not listing or not _ORDER_NO.fullmatch(listing) or not _ORDER_NO.fullmatch(order_number):
+            return _err(422, "invalid", "send {\"listing_id\": \"<listing id from this order's sub_offer>\"}")
+        rebate = body.get("rebate_amount")  # the CRM sets the rebate; we only suggest one
+        if rebate is not None and (isinstance(rebate, bool) or not isinstance(rebate, (int, float))
+                                   or not 0 <= rebate <= 100000):
+            return _err(422, "invalid", "rebate_amount must be a number of dollars, 0 or more")
+        out = _rpc("sub_finder_gt_offer_confirmed", {
+            "p_key_id": key["id"], "p_key_label": key.get("label"), "p_order_number": order_number,
+            "p_listing_id": listing, "p_market": _text(body.get("market"), 20),
+            "p_requested_by": _text(body.get("requested_by"), 80), "p_rebate_amount": rebate,
+            "p_confirm": body.get("confirm") is True})
+        return _answer(out, ok_status=202)
 
     @router.get("/results")
     def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
@@ -369,10 +425,11 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         listing = _text(body.get("listing_id"), 20)
         if not listing or not listing.isdigit() or not _ORDER_NO.fullmatch(order_number):
             return _err(422, "invalid", "send {\"listing_id\": \"<EVO listing id from this job>\"}")
-        out = _rpc("sub_finder_buy", {
+        out = _rpc("sub_finder_buy_confirmed", {
             "p_key_id": key["id"], "p_key_label": key.get("label"), "p_job_id": jid,
             "p_order_number": order_number, "p_listing_id": listing,
-            "p_requested_by": _text(body.get("requested_by"), 80)})
+            "p_requested_by": _text(body.get("requested_by"), 80),
+            "p_confirm": body.get("confirm") is True})
         return _answer(out, ok_status=202)
 
     return router

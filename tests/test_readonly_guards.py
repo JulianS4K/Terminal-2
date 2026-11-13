@@ -493,6 +493,7 @@ def test_evo_buy_client_is_registered_with_a_pinned_path_allowlist():
 def test_evo_buy_guard_refuses_any_other_write():
     from evo_buy_client import _assert_readonly_method, EvoBuyError
     for method, path in (("POST", "/v9/orders/1/reject"), ("POST", "/v9/ticket_groups/1"),
+                         ("POST", "/v9/tax_quotes/1"), ("PUT", "/v9/tax_quotes"),
                          ("PUT", "/v9/orders/1"), ("DELETE", "/v9/orders/1"), ("PATCH", "/v9/orders")):
         with pytest.raises(EvoBuyError):
             _assert_readonly_method(method, path)
@@ -511,7 +512,7 @@ def test_audit_catches_a_widened_evo_write_allowlist(tmp_path: Path, monkeypatch
     for name in chk.CLIENT_FILES:
         src = REPO_ROOT / name
         (tmp_path / name).write_text(src.read_text())
-    widened = text.replace(r'r"^/v9/orders/\d+/accept$")', r'r"^/v9/orders/\d+/accept$", r"^/v9/orders/\d+/reject$")')
+    widened = text.replace(r'r"^/v9/tax_quotes$")', r'r"^/v9/tax_quotes$", r"^/v9/orders/\d+/reject$")')
     assert widened != text
     (tmp_path / "evo_buy_client.py").write_text(widened)
     monkeypatch.setattr(chk, "ROOT", tmp_path)
@@ -536,6 +537,14 @@ def test_sale_accept_client_registered_with_pinned_writes():
     chk = _load_check_module()
     assert chk.CLIENT_FILES["sale_accept_client.py"] == frozenset({"GET", "PATCH", "POST"})
     assert chk.SANCTIONED_WRITE_TOKENS["sale_accept_client.py"] in (REPO_ROOT / "sale_accept_client.py").read_text()
+
+
+def test_gotickets_sub_client_registered_with_its_one_pinned_write():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["gotickets_sub_client.py"] == frozenset({"GET", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["gotickets_sub_client.py"] in (REPO_ROOT / "gotickets_sub_client.py").read_text()
+    from gotickets_sub_client import GT_SUB_WRITES
+    assert GT_SUB_WRITES == (("POST", "sc.gotickets.com", r"^/rest/substitution-requests$"),)
 
 
 def test_sale_accept_guard_refuses_reject_and_other_writes():

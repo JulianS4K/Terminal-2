@@ -35,8 +35,14 @@ class Rpc:
 
 
 class Client:
-    def __init__(self, tg=TG, create=None):
-        self.tg, self.create, self.calls = tg, create, []
+    def __init__(self, tg=TG, create=None, quote=None):
+        self.tg, self.create, self.quote, self.calls = tg, create, quote, []
+
+    def tax_quote(self, tg_id, qty):
+        self.calls.append(("quote", tg_id, qty))
+        if isinstance(self.quote, Exception):
+            raise self.quote
+        return self.quote
 
     def get_ticket_group(self, tg_id):
         self.calls.append(("get", tg_id))
@@ -208,3 +214,91 @@ def test_follow_read_failure_records_nothing(err):
     out = mb.follow(rpc, OrderClient(err))
     assert out["error"] == type(err).__name__ and "outcome" not in out
     assert [n for n, _ in rpc.calls] == ["manual_sub_buy_follow_claim"]
+
+
+# ---------- the EVO tax quote (operator 2026-11-13), on only when the config says so ----------
+
+QUOTE = {"tax_signature": "sig-9", "wholesale": {"price": 88.17, "subtotal": 176.34, "tax": 9.70, "total": 186.04}}
+TAXED = {**CFG, "tax_quote": True}
+
+
+def _taxed(**kw):
+    return {"row": _row(**kw), "cfg": TAXED}
+
+
+def test_no_quote_is_asked_while_the_switch_is_off():
+    rpc, c = Rpc(_job(max_total_usd=1.0)), Client(quote=QUOTE)
+    assert mb.tick(rpc, c)["state"] == "bought"
+    assert [x[0] for x in c.calls] == ["get", "create"] and "tax_signature" not in c.calls[1][1]["orders"][0]
+
+
+def test_quote_is_recorded_and_its_signature_sent_with_the_buy():
+    rpc, c = Rpc(_taxed()), Client(quote=QUOTE)
+    out = mb.tick(rpc, c)
+    assert c.calls[1] == ("quote", 6702323811, 2)
+    assert c.calls[2][1]["orders"][0]["tax_signature"] == "sig-9"
+    assert rpc.records[0]["p_patch"] == {"state": "buying", "quote_tax_usd": 9.7, "quote_total_usd": 186.04}
+    assert out["state"] == "bought" and out["bought_total_usd"] == 186.04 and out["bought_price_ea"] == 88.17
+
+
+def test_quoted_total_within_the_ceiling_buys_and_over_it_stops():
+    rpc, c = Rpc(_taxed(max_total_usd=186.04)), Client(quote=QUOTE)
+    assert mb.tick(rpc, c)["state"] == "bought"
+    rpc, c = Rpc(_taxed(max_total_usd=186.0)), Client(quote=QUOTE)
+    out = mb.tick(rpc, c)
+    assert out["state"] == "stopped" and out["reasons"] == ["total_above_ceiling"] and out["quote_total_usd"] == 186.04
+    assert [x[0] for x in c.calls] == ["get", "quote"]            # nothing was bought
+
+
+@pytest.mark.parametrize("quote", [
+    EvoWriteRejected(403, "no"), EvoWriteUnknown("/v9/tax_quotes: HTTP 502"), requests.ConnectionError("x"),
+    {}, {"tax_signature": "s", "wholesale": None}, {"tax_signature": "s", "wholesale": {"tax": "x", "total": 1}},
+    {"tax_signature": "", "wholesale": {"tax": 0, "total": 10}},
+    {"tax_signature": "s", "wholesale": {"tax": 0, "total": 0}},
+    {"tax_signature": "s", "wholesale": {"tax": -1, "total": 10}},
+])
+def test_no_usable_quote_stops_a_row_with_a_ceiling_and_never_blocks_one_without(quote):
+    rpc, c = Rpc(_taxed(max_total_usd=500)), Client(quote=quote)
+    out = mb.tick(rpc, c)
+    assert out["state"] == "stopped" and out["reasons"] == ["tax_quote_failed"]
+    assert [x[0] for x in c.calls] == ["get", "quote"]
+    rpc, c = Rpc(_taxed()), Client(quote=quote)                    # no ceiling: bought as before, unsigned
+    out = mb.tick(rpc, c)
+    assert out["state"] == "bought" and out["bought_total_usd"] == 176.34
+    assert "tax_signature" not in c.calls[2][1]["orders"][0]
+    assert rpc.records[0]["p_patch"] == {"state": "buying"}
+
+
+# ---------- the first run is a test: EVO's answer is stored as it came, nothing else changes ----------
+
+def _test_job(**kw):
+    return {"row": _row(**kw), "cfg": {**CFG, "tax_quote_test": True}}
+
+
+@pytest.mark.parametrize("quote, raw", [
+    (QUOTE, {"ok": True, "response": QUOTE}),
+    ({"odd": "shape"}, {"ok": True, "response": {"odd": "shape"}}),
+    (EvoWriteRejected(403, "no access"), {"ok": False, "error": "EvoWriteRejected",
+                                          "detail": "EVO rejected the request (403): no access"}),
+    (EvoWriteUnknown("/v9/tax_quotes: HTTP 502"), {"ok": False, "error": "EvoWriteUnknown",
+                                                   "detail": "/v9/tax_quotes: HTTP 502"}),
+    (requests.ConnectionError("down"), {"ok": False, "error": "ConnectionError", "detail": "down"}),
+])
+def test_test_run_stores_the_raw_answer_and_buys_exactly_as_before(quote, raw):
+    rpc, c = Rpc(_test_job(max_total_usd=1.0)), Client(quote=quote)        # a ceiling it would break: ignored
+    out = mb.tick(rpc, c)
+    assert [x[0] for x in c.calls] == ["get", "quote", "create"]
+    assert rpc.records[0]["p_patch"] == {"state": "buying", "quote_raw": raw}
+    assert "tax_signature" not in c.calls[2][1]["orders"][0]
+    assert out["state"] == "bought" and out["bought_total_usd"] == 176.34
+
+
+def test_test_run_truncates_a_huge_answer_and_yields_to_the_real_switch():
+    rpc, c = Rpc(_test_job()), Client(quote={"blob": "x" * 9000})
+    mb.tick(rpc, c)
+    raw = rpc.records[0]["p_patch"]["quote_raw"]
+    assert raw["ok"] and raw["truncated"] and len(raw["text"]) == 4000
+    # with the real check on, the test flag does nothing
+    rpc, c = Rpc({"row": _row(), "cfg": {**TAXED, "tax_quote_test": True}}), Client(quote=QUOTE)
+    mb.tick(rpc, c)
+    assert "quote_raw" not in rpc.records[0]["p_patch"] and c.calls[2][1]["orders"][0]["tax_signature"] == "sig-9"

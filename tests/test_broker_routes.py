@@ -1631,6 +1631,26 @@ def test_n2s_gt_dryrun_tallies_today_from_would_buys_only(client, monkeypatch):
     assert set(fake.table_calls) == {"n2s_gt_order_dryrun"}
 
 
+def test_n2s_gt_dryrun_returns_the_seller_note(client, monkeypatch):
+    """20261112030000: the dry-run panel shows the note the dry run judged."""
+    fake = FakeSupabase(table_data={"n2s_gt_order_dryrun": [
+        _dry_row(sub_view="obstructed", sub_notes="Limited View,Mobile Xfer")]})
+    selected: list[str] = []
+    real_table = fake.table
+
+    def table(name):
+        q = real_table(name)
+        real_select = q.select
+        q.select = lambda cols, **k: (selected.append(cols), real_select(cols, **k))[1]
+        return q
+
+    fake.table = table
+    _use_db(monkeypatch, fake)
+    row = client.get("/api/broker/n2s-gt-dryrun").json()["rows"][0]
+    assert row["sub_notes"] == "Limited View,Mobile Xfer" and row["sub_view"] == "obstructed"
+    assert {"sub_view", "sub_notes"} <= set(selected[0].split(","))
+
+
 def test_n2s_gt_dryrun_rejects_unknown_decision(client, monkeypatch):
     _use_db(monkeypatch, FakeSupabase())
     assert client.get("/api/broker/n2s-gt-dryrun?decision=buy").status_code == 400

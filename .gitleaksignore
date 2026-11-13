@@ -98,3 +98,10 @@ a7dd99490b3cc1b7120c3960e8240543bb0cb36e:supabase/migrations/20261104190000_n2s_
 .claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:110
 .claude-plugins/oxylabs/skills/proxies/dedicated-datacenter.md:curl-auth-user:111
 .claude-plugins/oxylabs/skills/proxies/dedicated-isp.md:curl-auth-user:104
+# false positives in commit cd38265 (PR #1075), reverted in the next commit and never on main:
+# lines 41, 45 and 103 of the withdrawn sister-poll migration compare the settings table's key
+# column with the setting NAME n2s_sister_poll_max. No credential. Kept so the PR secret-scan over
+# the branch's earlier commits stays green.
+cd38265e306274b884382171e4278f2caabb102c:supabase/migrations/20261113020000_n2s_sister_poll.sql:generic-api-key:41
+cd38265e306274b884382171e4278f2caabb102c:supabase/migrations/20261113020000_n2s_sister_poll.sql:generic-api-key:45
+cd38265e306274b884382171e4278f2caabb102c:supabase/migrations/20261113020000_n2s_sister_poll.sql:generic-api-key:103

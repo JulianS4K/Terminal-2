@@ -11,6 +11,11 @@ Operator authorization 2026-11-11: the buy (POST /v9/orders, nothing else) may a
 the manual sub buy path (core/manual_sub_buy.py): one EVO listing the operator chose for one
 sale, kept separate from N2S. No path was added for it.
 
+Operator authorization 2026-11-13 ("build the evo tax quote"): POST /v9/tax_quotes, EVO's own
+pre-purchase calculation of what it will charge for a ticket group and quantity, tax included.
+It buys, holds and changes nothing; its ``tax_signature`` is sent with the buy so the order is
+charged what was quoted.
+
 Everything else stays read-only (CLAUDE.md RULE 2). The guard below is path-scoped like
 seatdata_client's: any method other than GET/POST raises, and a POST raises unless its path
 matches one of ``EVO_WRITE_PATHS``. There is no reject, cancel, reprice or listing write,
@@ -55,19 +60,20 @@ ALLOWED_HTTP_METHODS = frozenset({"GET", "POST"})
 
 # The ONLY paths a POST may target. Adding one is a security-CRIT change (CLAUDE.md §2)
 # that needs the operator's written authorization; check_readonly.py pins this literal.
-EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\d+/accept$")
+EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\d+/accept$", r"^/v9/tax_quotes$")
 _WRITE_RE = tuple(re.compile(p) for p in EVO_WRITE_PATHS)
 
 
 def _assert_readonly_method(method: str, path: str | None = None) -> None:
-    """GET anywhere; POST only to the buy and accept endpoints; nothing else."""
+    """GET anywhere; POST only to the buy, accept and tax-quote endpoints; nothing else."""
     m = method.upper()
     if m not in ALLOWED_HTTP_METHODS:
         raise EvoBuyError(f"READ-ONLY violation: method {method} is not allowed. "
                           "RULE 2 read-only lockdown (CLAUDE.md §2).")
     if m == "POST" and not any(r.match(path or "") for r in _WRITE_RE):
         raise EvoBuyError(f"READ-ONLY violation: POST to {path!r} is not sanctioned. EVO writes are "
-                          "limited to /v9/orders and /v9/orders/{id}/accept (RULE 2, operator 2026-11-09).")
+                          "limited to /v9/orders, /v9/orders/{id}/accept and /v9/tax_quotes (RULE 2, operator "
+                          "2026-11-09 / 2026-11-13).")
 
 
 class EvoBuyClient:
@@ -124,7 +130,14 @@ class EvoBuyClient:
     def get_order(self, order_id: Any) -> dict:
         return self._call("GET", f"/v9/orders/{int(order_id)}")
 
-    # ---------- the two authorized writes ----------
+    # ---------- the authorized POSTs ----------
+
+    def tax_quote(self, ticket_group_id: Any, quantity: int) -> dict:
+        """POST /v9/tax_quotes — what EVO will charge for this purchase, tax included, paid by
+        evopay. A calculation only: nothing is bought or held. Never retried by this client."""
+        return self._call("POST", "/v9/tax_quotes",
+                          body={"ticket_group_id": int(ticket_group_id), "quantity": int(quantity),
+                                "payment_type": "evopay"})
 
     def create_order(self, body: dict) -> dict:
         """POST /v9/orders — buy the sub. Never retried by this client."""
@@ -136,10 +149,12 @@ class EvoBuyClient:
 
 
 def buy_order_body(*, ticket_group_id: Any, quantity: int, price_ea: float, seller_office_id: int,
-                   buyer_office_id: int, shipment_type: str, email_address_id: int | None, note: str) -> dict:
+                   buyer_office_id: int, shipment_type: str, email_address_id: int | None, note: str,
+                   tax_signature: str | None = None) -> dict:
     """The Orders / Create body for a brokerage purchase paid from our EVO balance, mirroring
     the shape of Office 3's own purchase orders (evopay, a TMMobile / Eticket shipment to the
-    office email, LEAST_EXPENSIVE)."""
+    office email, LEAST_EXPENSIVE). ``tax_signature`` is the one a tax quote for this same
+    ticket group and quantity returned; EVO then charges what it quoted."""
     shipped: dict[str, Any] = {"type": shipment_type,
                                "items": [{"ticket_group_id": int(ticket_group_id), "quantity": int(quantity),
                                           "price": f"{float(price_ea):.2f}"}]}
@@ -147,12 +162,44 @@ def buy_order_body(*, ticket_group_id: Any, quantity: int, price_ea: float, sell
         shipped["email_address_id"] = int(email_address_id)
     if shipment_type == "FedEx":
         shipped["service_type"] = "LEAST_EXPENSIVE"
-    return {"orders": [{"seller_id": int(seller_office_id), "buyer_id": int(buyer_office_id),
-                        "shipped_items": [shipped], "payments": [{"type": "evopay"}],
-                        "service_fee": 0, "shipping": 0, "tax": 0, "additional_expense": 0, "discount": 0,
-                        "internal_notes": note[:250]}]}
+    order: dict[str, Any] = {"seller_id": int(seller_office_id), "buyer_id": int(buyer_office_id),
+                             "shipped_items": [shipped], "payments": [{"type": "evopay"}],
+                             "service_fee": 0, "shipping": 0, "tax": 0, "additional_expense": 0, "discount": 0,
+                             "internal_notes": note[:250]}
+    if tax_signature:
+        order["tax_signature"] = str(tax_signature)
+    return {"orders": [order]}
 
 
 # ticket_group.format → shipment type (TEvo 11.1 "Creating Orders": Physical/Paperless ship FedEx).
 SHIPMENT_FOR_FORMAT = {"Eticket": "Eticket", "TM_mobile": "TMMobile", "Flash_seats": "FlashSeats",
                        "Guest_list": "GuestList", "Physical": "FedEx", "Paperless": "FedEx"}
+
+
+def read_tax_quote(client: EvoBuyClient, ticket_group_id: Any, qty: int) -> dict | None:
+    """EVO's quote for this purchase as {signature, tax, total}, or None when it gives no
+    usable one. Nothing is bought by asking, so a failure here is never an unknown outcome."""
+    try:
+        got = client.tax_quote(ticket_group_id, qty)
+        whole = got["wholesale"]
+        quote = {"signature": str(got["tax_signature"]), "tax": round(float(whole["tax"]), 2),
+                 "total": round(float(whole["total"]), 2)}
+    except (EvoWriteRejected, EvoWriteUnknown, requests.RequestException, KeyError, TypeError, ValueError):
+        return None
+    return quote if quote["signature"] and quote["total"] > 0 and quote["tax"] >= 0 else None
+
+
+RAW_QUOTE_MAX = 4000  # characters of a test quote's answer kept
+
+
+def probe_tax_quote(client: EvoBuyClient, ticket_group_id: Any, qty: int) -> dict:
+    """The test run: EVO's tax quote answer exactly as it came, or what went wrong, for a
+    person to read. Never raises, and nothing is decided from it."""
+    try:
+        got = client.tax_quote(ticket_group_id, qty)
+    except (EvoWriteRejected, EvoWriteUnknown, requests.RequestException) as e:
+        return {"ok": False, "error": type(e).__name__, "detail": str(e)[:500]}
+    text = json.dumps(got, default=str)
+    if len(text) > RAW_QUOTE_MAX:
+        return {"ok": True, "truncated": True, "text": text[:RAW_QUOTE_MAX]}
+    return {"ok": True, "response": got}
