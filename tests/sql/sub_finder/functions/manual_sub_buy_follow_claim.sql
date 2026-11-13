@@ -9,6 +9,7 @@ DECLARE
 BEGIN
   SELECT * INTO b FROM public.manual_sub_buy
    WHERE state = 'bought' AND final_at IS NULL AND buy_order_id ~ '^\d+$'
+     AND origin = 'manual'                              -- the N2S desk follows its own buys (20261113440000)
      AND created_at > now() - interval '7 days'
      AND (status_checked_at IS NULL OR status_checked_at < now() - CASE
             WHEN status_checks < 20 THEN interval '30 seconds'

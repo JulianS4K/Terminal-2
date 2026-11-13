@@ -30,7 +30,7 @@ BEGIN
         ('unknown', b.state = 'unknown' AND b.alerted_unknown_at IS NULL),
         ('final',   b.outcome IN ('confirmed', 'rejected', 'canceled') AND b.alerted_final_at IS NULL)
       ) AS k(kind, due)
-     WHERE k.due
+     WHERE k.due AND b.origin = 'manual'               -- the N2S desk sends its own (20261113440000)
      ORDER BY b.buy_id, k.kind LIMIT 5
   LOOP
     m := public.manual_sub_buy_alert_text(e.buy, e.kind);

@@ -5,9 +5,9 @@ CREATE OR REPLACE FUNCTION public.sub_buy_evo_inflight()
  SET search_path TO 'public', 'pg_temp'
 AS $function$
   SELECT ((SELECT count(*) FROM public.manual_sub_buy b
-            WHERE b.market = 'evo'
+            WHERE b.market = 'evo'                      -- a buy filed by N2S is counted on its own row once sent
               AND (b.state = 'buying'
-                OR (b.state = 'bought' AND b.final_at IS NULL
+                OR (b.origin = 'manual' AND b.state = 'bought' AND b.final_at IS NULL
                     AND b.updated_at > now() - make_interval(mins => k.evo_inflight_minutes))))
         + (SELECT count(*) FROM public.n2s_autobuy_exec e
             WHERE e.mode = 'live' AND e.sub_source = 'tevo'

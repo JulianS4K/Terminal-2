@@ -5,7 +5,9 @@ CREATE OR REPLACE FUNCTION public.manual_sub_buy_record(p_buy_id bigint, p_token
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE
-  v_state text := p_patch->>'state';
+  v_state  text := p_patch->>'state';
+  v_origin text;
+  v_exec   bigint;
 BEGIN
   IF v_state IS NULL OR v_state NOT IN ('buying', 'bought', 'stopped', 'unknown') THEN
     RAISE EXCEPTION 'manual_sub_buy_record: bad state %', v_state;
@@ -24,11 +26,19 @@ BEGIN
          error            = COALESCE(p_patch->>'error', error),
          lease_token      = CASE WHEN v_state = 'buying' THEN lease_token END,
          updated_at       = now()
-   WHERE buy_id = p_buy_id AND state = 'buying' AND lease_token = p_token AND lease_until >= now();
+   WHERE buy_id = p_buy_id AND state = 'buying' AND lease_token = p_token AND lease_until >= now()
+  RETURNING origin, n2s_exec_id INTO v_origin, v_exec;
   IF NOT FOUND THEN
     RETURN 'lease_lost';
   END IF;
-  IF v_state = 'unknown' THEN
+  IF v_origin = 'n2s' THEN
+    -- 20261113440000: a buy filed by the N2S auto-buyer. Its result goes to the N2S desk's own
+    -- row in the same transaction (bought -> buy_sent, stopped -> stopped with the run given
+    -- back, unknown -> buy_unknown and THEIR kill switch). This path's kill switch is not touched.
+    IF v_state <> 'buying' THEN
+      PERFORM public.n2s_autobuy_queue_result(v_exec, v_state, COALESCE(p_patch->'n2s', p_patch));
+    END IF;
+  ELSIF v_state = 'unknown' THEN
     UPDATE public.manual_sub_buy_config
        SET kill_switch = true, updated_at = now(),
            kill_reason = format('buy %s: outcome unknown, %s', p_buy_id,
