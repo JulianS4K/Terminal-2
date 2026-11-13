@@ -19,7 +19,14 @@
 --   sub_finder_submit             no longer settles inline when the listings are already fresh
 --                                 (it did the same heavy match inside the POST); with the
 --                                 switch on it leaves that to the background job too.
---   cron sub_finder_settle_15s    runs it every 15 seconds with a 120 s statement timeout.
+--   sub_finder_settle_each()      the PROCEDURE the cron calls. Same queue, but it COMMITS around
+--                                 every job: the attempt is recorded and committed BEFORE the
+--                                 job is settled, so a settle that runs out of time (or a round
+--                                 that is cut off) still counts as a failure and the job moves
+--                                 to the back of the queue; and each finished job is committed
+--                                 on its own, so one slow job cannot undo the others' work. A
+--                                 round stops taking new jobs after 100 seconds.
+--   cron sub_finder_settle_15s    CALL public.sub_finder_settle_each() every 15 seconds.
 --   sub_finder_config.bg_settle_enabled
 --                                 when on, GET /jobs/{id}, GET /orders/{n} and the sync feed
 --                                 no longer settle: they return the state as it stands, so a
@@ -36,7 +43,8 @@
 --
 -- rollback: UPDATE sub_finder_config SET bg_settle_enabled = false WHERE id = true;
 --           SELECT cron.unschedule('sub_finder_settle_15s');
---           (full: re-apply the three read functions without the IF; DROP FUNCTION
+--           (full: re-apply the three read functions without the IF; DROP PROCEDURE
+--           public.sub_finder_settle_each(); DROP FUNCTION
 --           public.sub_finder_settle_pending(), public.sub_finder_bg_settle();
 --           ALTER TABLE public.sub_finder_config DROP COLUMN bg_settle_enabled.)
 
@@ -96,6 +104,43 @@ $$;
 REVOKE ALL ON FUNCTION public.sub_finder_settle_pending(), public.sub_finder_bg_settle() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sub_finder_settle_pending() TO service_role;
 
+-- What the cron runs: the same fair queue, committed job by job.
+CREATE OR REPLACE PROCEDURE public.sub_finder_settle_each()
+ LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_ids  uuid[];
+  v_id   uuid;
+  v_t0   timestamptz := clock_timestamp();
+  v_lock bigint := hashtext('cron_job:sub_finder_settle')::bigint;
+BEGIN
+  IF NOT coalesce((SELECT c.enabled FROM public.sub_finder_config c), false) THEN RETURN; END IF;
+  IF NOT pg_try_advisory_lock(v_lock) THEN RETURN; END IF;          -- one round at a time (session lock)
+  SELECT array_agg(q.job_id) INTO v_ids FROM (
+    SELECT job_id FROM public.sub_finder_job
+     WHERE status <> 'done'
+       AND (settle_fails < 5 OR settle_tried_at IS NULL OR settle_tried_at < now() - interval '5 minutes')
+     ORDER BY settle_tried_at NULLS FIRST, created_at, job_id LIMIT 25) q;
+  FOREACH v_id IN ARRAY coalesce(v_ids, '{}'::uuid[]) LOOP
+    EXIT WHEN clock_timestamp() - v_t0 > interval '100 seconds';
+    -- record the attempt first, and commit it: if the settle below never returns, the job has
+    -- still been counted and goes to the back of the queue
+    UPDATE public.sub_finder_job SET settle_tried_at = clock_timestamp(), settle_fails = settle_fails + 1
+     WHERE job_id = v_id;
+    COMMIT;
+    BEGIN
+      PERFORM public.sub_finder_settle(v_id);
+      UPDATE public.sub_finder_job SET settle_fails = 0 WHERE job_id = v_id;
+    EXCEPTION WHEN OTHERS THEN
+      NULL;                                        -- already counted above; tried again in its turn
+    END;
+    COMMIT;
+  END LOOP;
+  PERFORM pg_advisory_unlock(v_lock);
+END
+$$;
+REVOKE ALL ON PROCEDURE public.sub_finder_settle_each() FROM PUBLIC, anon, authenticated;
+
 DO $patch$
 DECLARE
   f     regprocedure;
@@ -146,10 +191,14 @@ $patch$;
 DO $cron$
 BEGIN
   IF to_regclass('cron.job') IS NULL THEN RETURN; END IF;                     -- no pg_cron here (local / CI)
+  -- a single CALL (no SET before it): a procedure may only COMMIT when it is the whole command
   EXECUTE $q$
-    SELECT cron.schedule('sub_finder_settle_15s', '15 seconds',
-                         $c$SET statement_timeout = '120s'; SELECT public.sub_finder_settle_pending();$c$)
+    SELECT cron.schedule('sub_finder_settle_15s', '15 seconds', 'CALL public.sub_finder_settle_each();')
      WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'sub_finder_settle_15s')
+  $q$;
+  EXECUTE $q$
+    SELECT cron.alter_job(jobid, command := 'CALL public.sub_finder_settle_each();')
+      FROM cron.job WHERE jobname = 'sub_finder_settle_15s' AND command <> 'CALL public.sub_finder_settle_each();'
   $q$;
 END
 $cron$;
