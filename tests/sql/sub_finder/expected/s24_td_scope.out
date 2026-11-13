@@ -1,0 +1,30 @@
+scope no_cover (default): only the order with no cover asks
+n-A|cover|1|-|evo:5001
+n-B|cover|2|-|evo:5101
+n-C|pending|-|queued
+{52}
+scope not_one_to_one: the loss cover asks too, the gate 1 cover does not
+p-A|cover|1|-|evo:5001
+p-B|cover|2|queued|evo:5101
+p-C|pending|-|queued
+{51,52}
+scope all: every order asks; the ones with a cover keep showing it, the job is not done yet
+a-A|cover|1|queued|evo:5001
+a-B|cover|2|queued|evo:5101
+a-C|pending|-|queued
+{50,51,52}
+pulling_td
+event 51 answers with cheaper StubHub seats, event 50 is rate limited, event 52 has nothing
+A keeps its EVO cover (search failed), B has EVO and StubHub, C ends with no cover:
+a-A|cover|1|failed|evo:5001
+a-B|cover|1|searched|evo:5101,stubhub:S51
+a-C|no_cover|-|searched
+done
+50|429||rate_limited
+51|200|1|-
+52|200|0|-
+more events than the limit: the event with a no-cover order is asked first
+l-A|cover|1|over_limit|evo:5001
+l-B|cover|2|over_limit|evo:5101
+l-C|pending|-|queued
+{52}
