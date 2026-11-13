@@ -242,9 +242,13 @@ def test_gift_cards_largest_first_allowlist_and_shortfall():
 def test_purchase_state_reads_gotickets_statuses():
     assert gtb.purchase_state("PENDING_CONFIRMATION") == "pending"
     assert gtb.purchase_state("CANCELLED") == "rejected"
-    for s in ("PENDING_MOBILE_FULFILLMENT", "TRANSFER_COMPLETED", "PAH_DELIVERED", "PENDING_TRANSFER_PROOF"):
+    for s in gtb.GT_CONFIRMED:
         assert gtb.purchase_state(s) == "confirmed"
-    assert gtb.purchase_state(None) == "unknown"
+    for s in ("REFUNDED", "EXPIRED", "PARTIALLY_REFUNDED", "ORDER_CANCELED_BY_SELLER"):
+        assert gtb.purchase_state(s) == "rejected"
+    # fail closed: a status we have never seen is not a confirmation
+    for s in (None, "", "ON_HOLD", "UNDER_REVIEW", "PENDING_PAYMENT", "SOMETHING_NEW"):
+        assert gtb.purchase_state(s) == "unknown"
 
 
 def test_order_id_reads_the_usual_keys():
@@ -350,6 +354,17 @@ def test_confirmed_purchase_accepts_the_evo_sale():
     out, _, _ = _tick(job, gt, evo=evo)
     assert out["phase"] == "accepted"
     assert ("accept", "555", 53658) in evo.calls
+
+
+def test_an_unrecognised_status_never_accepts_the_sale():
+    job, gt = _poll("UNDER_REVIEW")
+    evo = Evo()
+    out, _, _ = _tick(job, gt, evo=evo)
+    assert out["phase"] == "buy_sent" and out["buy_state"] == "UNDER_REVIEW"       # keeps waiting
+    job, gt = _poll("UNDER_REVIEW", sub_confirm_by=(NOW - timedelta(seconds=1)).isoformat())
+    out, _, _ = _tick(job, gt, evo=evo)
+    assert out["phase"] == "stopped" and out["reasons"] == ["sub_unconfirmed"]
+    assert not [c for c in evo.calls if c[0] == "accept"]
 
 
 def test_unconfirmed_past_the_deadline_stops():

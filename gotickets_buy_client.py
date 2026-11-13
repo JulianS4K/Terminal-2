@@ -136,20 +136,31 @@ class GoTicketsBuyClient:
 # ---------- pure helpers (no network) ----------
 
 GT_PENDING = frozenset({"PENDING_CONFIRMATION"})
-GT_REJECTED = frozenset({"CANCELLED", "CANCELED", "REJECTED", "DECLINED", "VOIDED", "FAILED"})
+GT_REJECTED = frozenset({"CANCELLED", "CANCELED", "REJECTED", "DECLINED", "VOIDED", "FAILED",
+                         "EXPIRED", "REFUNDED", "ERROR"})
+# The states that mean the seller confirmed our purchase: every non-pending, non-cancelled
+# orderStatus seen on our GoTickets purchases (Seller Central, 2026-11-13). An allowlist on
+# purpose: confirmed is what lets the worker accept the N2S sale, so a status nobody has seen
+# yet reads 'unknown' (wait, then stop with sub_unconfirmed), never 'confirmed'.
+GT_CONFIRMED = frozenset({"PENDING_MOBILE_FULFILLMENT", "PENDING_TRANSFER_PROOF", "MOBILE_QR_DELIVERED",
+                          "PAH_DELIVERED", "TRANSFER_COMPLETED", "TRANSFER_RECEIPT_CONFIRMED",
+                          "TRANSFER_URL_COMPLETED", "TRANSFER_WALLET_URL_COMPLETED"})
 
 
 def purchase_state(order_status: Any) -> str:
     """GoTickets orderStatus as the live worker reads a sub: 'pending' until the seller confirms,
-    'rejected' when cancelled, 'confirmed' for every later state (fulfilment / transfer / delivered)."""
+    'rejected' when cancelled / refunded / expired, 'confirmed' only for a state in GT_CONFIRMED,
+    and 'unknown' for anything else (so the sale is never accepted on a status we do not know)."""
     s = str(order_status or "").strip().upper()
     if not s:
         return "unknown"
     if s in GT_PENDING:
         return "pending"
-    if s in GT_REJECTED or "CANCEL" in s or "REJECT" in s:
+    if s in GT_REJECTED or any(w in s for w in ("CANCEL", "REJECT", "REFUND", "EXPIRE")):
         return "rejected"
-    return "confirmed"
+    if s in GT_CONFIRMED:
+        return "confirmed"
+    return "unknown"
 
 
 def pick_delivery(listing: dict) -> dict | None:
