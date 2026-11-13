@@ -336,7 +336,7 @@ A "zone" is a set of sections we have mapped as equivalent for that team and ven
 
 Parking passes and S4K's own listings are never offered.
 
-**What we buy automatically.** When the operator has it switched on, an order that is still being watched and has no purchase gets ONE cover bought for it when all of this is true: the cover is on EVO, gate 1 (`Index`), for exactly the quantity sold, with no obstructed view, with a profit of at least 10% of its cost, the order is not one the Need-to-Sub desk is already working, and the day's automatic buys stay under $1,000. The order then shows `action: "auto_bought"` and a `buy` to follow as in [§7](#7-buy-an-evo-cover). Anything else is never bought by us: you get the results and buy outside this API.
+**What we buy automatically.** When the operator has it switched on, an order that is still being watched and has no purchase gets ONE cover bought for it when all of this is true: the cover is on EVO, gate 1 (`Index`), for exactly the quantity sold, with no obstructed view, with a profit of at least 10% of its cost, the order is not in the Need-to-Sub book, the order is in our own copy of the marketplace order book with the same event, seats, quantity and sale price the cover was matched on, and the day's automatic buys stay under $1,000. The order then shows `action: "auto_bought"` and a `buy` to follow as in [§7](#7-buy-an-evo-cover). Anything else is never bought by us: you get the results and buy outside this API.
 
 | `auto_buy_note` | Why it was not bought |
 |---|---|
@@ -345,7 +345,9 @@ Parking passes and S4K's own listings are never offered.
 | `needs_spare_ticket` | the only EVO lot has one ticket more than the sale; we never buy extra |
 | `obstructed_view` | the only one has an obstructed view |
 | `profit_too_thin` | the profit is under the minimum (EVO can add fees at checkout) |
-| `n2s_order` | the order belongs to the Need-to-Sub desk, which buys for it separately |
+| `n2s_order` | the order is in the Need-to-Sub book, which is handled separately |
+| `not_in_our_books` | we could not find the order in our own copy of the order book, so we will not spend on it |
+| `differs_from_our_books` | the details sent with the order differ from our copy; alert us with the order number only |
 | `over_daily_cap` | it would take the day's automatic buys over the cap |
 | `already_bought_for_this_sale` | a purchase already exists for this order |
 

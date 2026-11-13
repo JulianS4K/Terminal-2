@@ -45,8 +45,15 @@
 --      * profit is at least auto_buy_min_profit_pct of the cost (default 10%: EVO has added
 --        5-9% on top of the listed price on some orders, which would turn a thin profit into
 --        a loss; set it to 0 for "any profit")
---      * the order is not N2S's: no open-timer N2S item and no N2S auto-buy row for it
+--      * the order is not N2S's: it has no row in the N2S book (n2s_items, whatever its timer
+--        or state) and no N2S auto-buy row — "always excluded"
+--      * the order is in our own mirror of the marketplace order book (v_s4kcs_orders) and its
+--        event, section, row, quantity and sale price there are the ones the cover was matched
+--        on. What a caller sends can steer a search, never a purchase: an order we cannot
+--        verify, or one sent with details that differ from our book, is results only
 --      * today's automatic buys plus this one stay within auto_buy_daily_cap_usd ($1,000)
+--    The cap check and the request are serialized by an advisory lock, so two jobs settling
+--    at once cannot both spend the last of the day's cap.
 --    It adds NO write path: it files a manual_sub_buy request, exactly as an operator buy
 --    does, so that path's own switch, kill switch, per-order ceiling, one-live-request-per-sale
 --    rule and fresh re-read of the listing (gone / dearer than quoted = no buy) all still apply.
@@ -299,8 +306,12 @@ DECLARE
   v_spent numeric;
   v_n     integer := 0;
   v_today date := (now() AT TIME ZONE 'America/New_York')::date;
+  bk      record;
 BEGIN
   SELECT * INTO c FROM public.sub_finder_config;
+  IF c.auto_buy_enabled THEN
+    PERFORM pg_advisory_xact_lock(hashtext('sub_finder_autobuy'));   -- one cap check + request at a time
+  END IF;
   SELECT * INTO j FROM public.sub_finder_job WHERE job_id = p_job_id;
   FOR o IN SELECT * FROM public.sub_finder_order
             WHERE job_id = p_job_id AND watching AND buy_id IS NULL AND state = 'cover' ORDER BY idx
@@ -328,11 +339,31 @@ BEGIN
       ELSE 'profit_too_thin' END;
     IF v_note IS NULL AND (
          EXISTS (SELECT 1 FROM public.n2s_items n
-                 WHERE (n.order_number = o.order_number OR n.n2s_order_key = o.order_number)
-                   AND NOT coalesce(n.is_terminal, false)
-                   AND public.n2s_timer_open(n.timer_expires_at, n.timer_expired, n.alert_at))
+                 WHERE n.order_number = o.order_number OR n.n2s_order_key = o.order_number)
          OR EXISTS (SELECT 1 FROM public.n2s_autobuy_exec x WHERE x.order_number = o.order_number)) THEN
-      v_note := 'n2s_order';                           -- N2S's own orders are never bought here
+      v_note := 'n2s_order';                           -- anything in the N2S book is never bought here
+    END IF;
+    IF v_note IS NULL AND EXISTS (
+         SELECT 1 FROM public.manual_sub_buy b
+          WHERE b.sale_order_number = o.order_number
+            AND b.state IN ('requested', 'buying', 'bought', 'unknown')) THEN
+      v_note := 'already_bought_for_this_sale';        -- whatever site name the other request used
+    END IF;
+    IF v_note IS NULL THEN
+      -- the purchase is decided on OUR copy of the order, not on what the caller sent
+      SELECT v.tevo_event_id, v.section, v.row, v.quantity, v.price_per_ticket INTO bk
+        FROM public.v_s4kcs_orders v WHERE v.s4k_order_id = o.order_number
+       ORDER BY v.pulled_at DESC NULLS LAST LIMIT 1;
+      IF NOT FOUND THEN
+        v_note := 'not_in_our_books';
+      ELSIF bk.tevo_event_id IS DISTINCT FROM o.tevo_event_id
+         OR public.seat_section_norm(bk.section) IS DISTINCT FROM public.seat_section_norm(o.section)
+         OR upper(btrim(bk.row)) IS DISTINCT FROM upper(btrim(o.seat_row))
+         OR bk.quantity IS DISTINCT FROM o.qty
+         OR bk.price_per_ticket IS NULL OR o.sold_ea IS NULL
+         OR abs(bk.price_per_ticket - o.sold_ea) > 0.01 THEN
+        v_note := 'differs_from_our_books';
+      END IF;
     END IF;
     IF v_note IS NULL THEN
       SELECT coalesce(sum(coalesce(b.bought_total_usd, round(b.max_price_ea * b.qty, 2))), 0) INTO v_spent
