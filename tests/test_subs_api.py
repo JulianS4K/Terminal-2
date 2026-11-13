@@ -437,3 +437,82 @@ def test_notes_route_writes_clears_and_refuses():
     for code, status in (("forbidden", 403), ("not_found", 404)):
         db.rpc_data["sub_finder_set_notes"] = {"error": code}
         assert c.post(url, headers=H, json={"notes": "x"}).status_code == status
+
+
+# ---------------------------------------------------------------- the guide, served to the CRM
+
+DOC_TEXT = """# Guide
+
+> **Doc version:** v1.2.3 (2026-11-13) — newest change. · v1.2.2 (2026-11-12) — older.
+
+Code: `routers/subs_api.py` · SQL: migrations.
+
+**Contents:** [8 Rules](#8-rules) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+
+## 8. Rules
+
+for the CRM
+
+## 9. For S4K operators: switching it on
+
+UPDATE sub_finder_config SET enabled = true;
+
+## 10. Troubleshooting
+
+still here
+"""
+
+
+def test_render_crm_doc_keeps_one_version_and_drops_the_operator_section():
+    doc = s.render_crm_doc(DOC_TEXT)
+    assert doc["version"] == "1.2.3" and doc["updated"] == "2026-11-13"
+    md = doc["markdown"]
+    assert "> **Doc version:** v1.2.3 (2026-11-13)\n" in md and "older" not in md
+    assert "sub_finder_config" not in md and "For S4K operators" not in md and "Code:" not in md
+    assert "for the CRM" in md and "## 10. Troubleshooting" in md and "still here" in md
+    assert "**Contents:** [8 Rules](#8-rules) · [10 Troubleshooting](#10-troubleshooting)\n" in md
+    # a guide without a version line still renders
+    bare = s.render_crm_doc("# Guide\n\n> **Doc version:** to be set\n\ntext\n")
+    assert bare["version"] is None and bare["updated"] is None
+    assert "> **Doc version:** unknown\n" in bare["markdown"] and "text" in bare["markdown"]
+
+
+def test_ping_names_the_guide_version_and_docs_serves_it(tmp_path, monkeypatch):
+    path = tmp_path / "guide.md"
+    path.write_text(DOC_TEXT, encoding="utf-8")
+    monkeypatch.setattr(s, "DOC_PATH", path)
+    s.crm_doc.cache_clear()
+    db = FakeDB(rpc_data={"sub_finder_access": {"find": True}})
+    c = _client(db)
+    assert c.get("/api/v1/subs/ping", headers=H).json()["docs"] == {
+        "version": "1.2.3", "updated": "2026-11-13", "url": "/api/v1/subs/docs"}
+    r = c.get("/api/v1/subs/docs", headers=H)
+    body = r.json()
+    assert r.status_code == 200 and body["version"] == "1.2.3" and body["format"] == "markdown"
+    assert "for the CRM" in body["markdown"] and "sub_finder_config" not in body["markdown"]
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.docs"}
+    r = c.get("/api/v1/subs/docs?format=md", headers=H)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/markdown")
+    assert r.headers["x-doc-version"] == "1.2.3" and r.text.startswith("# Guide")
+    # the guide needs the key like every other route
+    assert c.get("/api/v1/subs/docs").status_code == 401
+    s.crm_doc.cache_clear()
+
+
+def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
+    monkeypatch.setattr(s, "DOC_PATH", tmp_path / "missing.md")
+    s.crm_doc.cache_clear()
+    c = _client(FakeDB())
+    assert c.get("/api/v1/subs/ping", headers=H).json()["docs"] == {
+        "version": None, "updated": None, "url": "/api/v1/subs/docs"}
+    r = c.get("/api/v1/subs/docs", headers=H)
+    assert r.status_code == 404 and r.json()["error"] == "not_found"
+    s.crm_doc.cache_clear()
+
+
+def test_the_shipped_guide_renders_with_a_version():
+    s.crm_doc.cache_clear()
+    doc = s.crm_doc(s.DOC_PATH)
+    assert doc and doc["version"] and "## 10. Troubleshooting" in doc["markdown"]
+    assert "For S4K operators" not in doc["markdown"] and "mcp_issue_key" not in doc["markdown"]
+    assert "9 Operators" not in doc["markdown"]
