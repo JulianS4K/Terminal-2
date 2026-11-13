@@ -201,3 +201,64 @@ def test_callback_reports_refused_write_scope_and_hides_db_errors(monkeypatch):
     r = _client(FakeDB(rpc_exc=Exception("relation secret_thing does not exist"))).get(
         f"/api/stubhub/oauth/callback?code=x&state={GOOD_STATE}")
     assert r.status_code == 502 and "secret_thing" not in r.text
+
+
+# ---------- coverage of the remaining client + router branches ----------
+
+def test_explicit_env_choice_overrides_env_var(monkeypatch):
+    monkeypatch.setenv("STUBHUB_API_ENABLED", "1")
+    monkeypatch.setenv("STUBHUB_ENV", "sandbox")
+    assert shc.StubHubClient(access_token="t", sandbox=False).base_url == shc.StubHubClient.PROD_BASE_URL
+    monkeypatch.setenv("STUBHUB_ENV", "production")
+    assert shc.StubHubClient(access_token="t", sandbox=True).base_url == shc.StubHubClient.SANDBOX_BASE_URL
+
+
+def test_network_error_and_non_json_body(monkeypatch):
+    monkeypatch.setenv("STUBHUB_API_ENABLED", "1")
+
+    def boom(*_a, **_k):
+        raise shc.requests.ConnectionError("down")
+
+    monkeypatch.setattr(shc.requests, "get", boom)
+    with pytest.raises(shc.StubHubError) as exc:
+        shc.StubHubClient(access_token="t").sales()
+    assert "network error" in str(exc.value)
+
+    class _Text(_Resp):
+        def json(self):
+            raise ValueError("not json")
+
+    monkeypatch.setattr(shc.requests, "get", lambda *a, **k: _Text(200))
+    assert shc.StubHubClient(access_token="t").sales() == {"raw_text": ""}
+
+
+def test_recent_updates_and_single_listing_paths(monkeypatch):
+    monkeypatch.setenv("STUBHUB_API_ENABLED", "1")
+    monkeypatch.delenv("STUBHUB_ENV", raising=False)
+    seen = []
+    monkeypatch.setattr(shc.requests, "get", lambda url, **_k: seen.append(url) or _Resp(200, {}))
+    c = shc.StubHubClient(access_token="t")
+    c.sales_recent_updates()
+    c.seller_listing(42)
+    assert seen == ["https://api.stubhub.net/v2/sales/recentupdates",
+                    "https://api.stubhub.net/v2/sellerlistings/42"]
+
+
+def test_vault_lookup_failure_is_reported_without_the_value(monkeypatch, capsys):
+    monkeypatch.setenv("STUBHUB_API_ENABLED", "1")
+    monkeypatch.delenv("STUBHUB_ACCESS_TOKEN", raising=False)
+
+    class _BadDB:
+        def rpc(self, *_a, **_k):
+            raise PermissionError("secret STUBHUB_ACCESS_TOKEN is not in the app whitelist")
+
+    with pytest.raises(shc.StubHubError):
+        shc.StubHubClient(db=_BadDB())
+    out = capsys.readouterr().out
+    assert "vault lookup failed: PermissionError" in out and "whitelist" not in out
+
+
+def test_connect_rejects_a_non_https_authorize_url(monkeypatch):
+    monkeypatch.setenv("STUBHUB_API_ENABLED", "1")
+    r = _client(FakeDB(rpc_data=None)).get("/api/admin/stubhub/connect")
+    assert r.status_code == 502
