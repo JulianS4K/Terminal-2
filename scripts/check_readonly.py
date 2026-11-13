@@ -132,7 +132,7 @@ CLIENT_FILES = {
     "paciolan_client.py": frozenset({"GET"}),
     "s4kcs_client.py": frozenset({"GET"}),
     # StubHub API — our own seller account's sales/listings, GET-only; the OAuth logins run in
-    # SQL (mig 20261113250000), never in Python. Operator 2026-11-13: "keep … read only".
+    # SQL (mig 20261113250040), never in Python. Operator 2026-11-13: "keep … read only".
     "stubhub_client.py": frozenset({"GET"}),
 }
 
@@ -344,7 +344,7 @@ def check_ts_writes() -> list[str]:
 #   - TickPick OAuth2 password grant (2026-11-10): refreshes TICKPICK_API_TOKEN from vault creds.
 #   - StubHub OAuth2 token endpoint (2026-11-13, "wire the api but keep turned off and read only"):
 #     authorization_code + refresh_token grants for OUR seller account, read:* scopes only
-#     (stubhub_oauth_complete / stubhub_token_refresh, mig 20261113250000). Prod + sandbox.
+#     (stubhub_oauth_complete / stubhub_token_refresh, mig 20261113250040). Prod + sandbox.
 # A sanctioned URL is blanked out of the scanned window, so any OTHER forbidden-host URL near the
 # same POST still fails the build.
 SANCTIONED_PLPGSQL_WRITE_URLS = (

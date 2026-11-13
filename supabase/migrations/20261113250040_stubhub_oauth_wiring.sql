@@ -1,4 +1,4 @@
--- Migration 20261113250000 · level:data-collection · lane:A1 · writes:stubhub_api_config,stubhub_token_state,stubhub_oauth_state,vault.secrets(STUBHUB_ACCESS_TOKEN,STUBHUB_REFRESH_TOKEN),cron:stubhub_token_refresh_10min · reads:vault.decrypted_secrets(STUBHUB_CLIENT_ID,STUBHUB_CLIENT_SECRET) · pre:20261113240000
+-- Migration 20261113250040 · level:data-collection · lane:A1 · writes:stubhub_api_config,stubhub_token_state,stubhub_oauth_state,vault.secrets(STUBHUB_ACCESS_TOKEN,STUBHUB_REFRESH_TOKEN),cron:stubhub_token_refresh_10min · reads:vault.decrypted_secrets(STUBHUB_CLIENT_ID,STUBHUB_CLIENT_SECRET) · pre:20261113250000
 --
 -- StubHub API — OAuth wiring for OUR seller account, READ-ONLY and SWITCHED OFF.
 --
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS public.stubhub_api_config (
 INSERT INTO public.stubhub_api_config (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
 COMMENT ON TABLE public.stubhub_api_config IS
   'StubHub API switch + OAuth settings (single row). enabled=false until the operator has '
-  'app credentials and has connected the account. scopes must be read:* only. Mig 20261113250000.';
+  'app credentials and has connected the account. scopes must be read:* only. Mig 20261113250040.';
 
 CREATE TABLE IF NOT EXISTS public.stubhub_token_state (
   id               boolean PRIMARY KEY DEFAULT true CHECK (id),
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS public.stubhub_token_state (
 );
 INSERT INTO public.stubhub_token_state (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
 COMMENT ON TABLE public.stubhub_token_state IS
-  'StubHub OAuth token status (no secrets — the tokens live in Vault). Mig 20261113250000.';
+  'StubHub OAuth token status (no secrets — the tokens live in Vault). Mig 20261113250040.';
 
 CREATE TABLE IF NOT EXISTS public.stubhub_oauth_state (
   state       text PRIMARY KEY,
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS public.stubhub_oauth_state (
   used_at     timestamptz
 );
 COMMENT ON TABLE public.stubhub_oauth_state IS
-  'One-time OAuth state values for the StubHub connect flow (15-minute lifetime). Mig 20261113250000.';
+  'One-time OAuth state values for the StubHub connect flow (15-minute lifetime). Mig 20261113250040.';
 
 ALTER TABLE public.stubhub_api_config  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stubhub_token_state ENABLE ROW LEVEL SECURITY;

@@ -561,7 +561,7 @@ def test_sale_accept_guard_refuses_reject_and_other_writes():
 def test_audit_allows_only_the_sanctioned_token_logins_from_plpgsql(tmp_path: Path, monkeypatch):
     chk = _load_check_module()
     # Each entry is an OAuth token login that writes none of our data (TickPick 2026-11-10;
-    # StubHub prod + sandbox 2026-11-13, mig 20261113250000). Extending this is security-CRIT.
+    # StubHub prod + sandbox 2026-11-13, mig 20261113250040). Extending this is security-CRIT.
     assert chk.SANCTIONED_PLPGSQL_WRITE_URLS == (
         "https://api.tickpick.com/1.0/token",
         "https://account.stubhub.com/oauth2/token",

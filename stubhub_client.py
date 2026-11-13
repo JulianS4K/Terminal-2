@@ -5,7 +5,7 @@ Hosts:  https://api.stubhub.net/v2           (production)
 Auth:   OAuth2 bearer token for OUR StubHub seller account, obtained with the
         user-login (authorization code) flow and kept fresh by the refresh-token
         grant. Both logins happen in SQL (`stubhub_oauth_complete`,
-        `stubhub_token_refresh`, mig 20261113250000) with the app's client id +
+        `stubhub_token_refresh`, mig 20261113250040) with the app's client id +
         secret read from Supabase Vault — this module never sees the client
         secret and never POSTs anything. Token resolution: arg → env
         `STUBHUB_ACCESS_TOKEN` → Vault `STUBHUB_ACCESS_TOKEN` (via get_app_secret;

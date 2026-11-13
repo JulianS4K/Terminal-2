@@ -6,7 +6,7 @@ Routes:
   GET /api/stubhub/oauth/callback   StubHub redirects here with ?code&state after the approval
 
 Both the code→token swap and the refresh run in SQL (stubhub_oauth_complete /
-stubhub_token_refresh, mig 20261113250000) with the app's client secret read from
+stubhub_token_refresh, mig 20261113250040) with the app's client secret read from
 Vault, so this router never sees a secret or a token: it only passes the one-time
 `state` and the `code` through. Scopes are read:* only (see stubhub_client.READ_SCOPES).
 
