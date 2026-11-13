@@ -56,4 +56,5 @@ stub_50_alerts.sql
 stub_60_n2s_live.sql
 20261113430000_sub_buy_control.sql
 20261113440000_sub_buy_queue.sql
+20261113450000_sub_finder_row_review_flags.sql
 STEPS

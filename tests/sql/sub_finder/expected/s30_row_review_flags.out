@@ -1,0 +1,36 @@
+what counts: single against double letters either way round; exactly one wheelchair row
+AA / H: letters differ true, wheelchair false
+H / AA: letters differ true, wheelchair false
+H / C: letters differ false, wheelchair false
+AA / BB: letters differ false, wheelchair false
+WC / C: letters differ false, wheelchair true
+C / WC: letters differ false, wheelchair true
+WC / WC: letters differ false, wheelchair false
+WC1 / C: letters differ false, wheelchair true
+ADA / C: letters differ false, wheelchair true
+Wheelchair / C: letters differ false, wheelchair true
+W / C: letters differ false, wheelchair false
+12 / 8: letters differ false, wheelchair false
+12 / B: letters differ false, wheelchair false
+the lookups: sold row, the cover row, how it is labelled, and whether we bought it ourselves
+done
+R201|AA|H|Index row letters differ|unknown|["row_letter_mismatch"]|true|buy_manually|needs_crm_confirm
+R202|H|AA|Index row letters differ|unknown|["row_letter_mismatch"]|true|buy_manually|needs_crm_confirm
+R203|WC|C|Index wheelchair row|unknown|["wheelchair_row"]|true|buy_manually|needs_crm_confirm
+R204|C|-|no cover|-|-|-|none|-
+R205|WC|WC|Index|same|[]|false|auto_bought|-
+R206|BB|AA|Index|better|[]|false|auto_bought|-
+R207|H|C|Index|better|[]|false|auto_bought|-
+R208|AA|H|Index row letters differ single ticket|unknown|["row_letter_mismatch", "single_ticket_row_differs"]|true|offer|needs_crm_confirm
+R209|12|8|Index|better|[]|false|auto_bought|-
+bought by ourselves: only the unflagged ones
+R205, R206, R207, R209
+the CRM buys a flagged cover only with a confirmation
+{"error": "confirm_needed", "flags": ["row_letter_mismatch"]}
+requested
+{"error": "confirm_needed", "flags": ["wheelchair_row"]}
+requested
+R201|20101|crm api key crm / dana
+R203|20301|crm api key crm / dana
+a cover stored before the flags existed is read from its label
+["wheelchair_row"]|["row_letter_mismatch"]|[]

@@ -22,11 +22,17 @@ BEGIN
            l.*, false AS moved,
            CASE WHEN o.qty = ANY (l.sp) OR l.quantity = o.qty THEN o.qty
                 WHEN l.quantity = o.qty + 1 THEN o.qty + 1 END AS buy_qty,
-           public.seat_row_rank(l.seat_row) - public.seat_row_rank(o.seat_row) AS row_delta
+           public.seat_row_rank(l.seat_row) - public.seat_row_rank(o.seat_row) AS row_delta,
+           -- 20261113450000: rows whose order cannot be trusted. A person reviews these.
+           public.sub_finder_row_letters_differ(o.seat_row, l.seat_row) AS letters_differ,
+           public.sub_finder_row_is_wheelchair(o.seat_row) <> public.sub_finder_row_is_wheelchair(l.seat_row) AS wc_differs
     FROM o JOIN _sf_l l ON l.eid = o.tevo_event_id
      AND public.seat_section_norm(l.section) = public.seat_section_norm(o.section)
      AND public.seat_row_kind(l.seat_row) = public.seat_row_kind(o.seat_row)
-     AND public.seat_row_rank(l.seat_row) <= public.seat_row_rank(o.seat_row) + v_back
+     -- a single-letter row against a double-letter one is shown either way round: venues
+     -- disagree on whether AA sits in front of A or behind Z
+     AND (public.seat_row_rank(l.seat_row) <= public.seat_row_rank(o.seat_row) + v_back
+          OR public.sub_finder_row_letters_differ(o.seat_row, l.seat_row))
     WHERE l.px > 0 AND l.quantity > 0
   ), strict_ok AS (
     -- orders that HAVE "a buy in that same section, same row or better" (gate 1 or 2)
@@ -90,14 +96,17 @@ BEGIN
            l.*, true AS moved,
            CASE WHEN n.qty = ANY (l.sp) OR l.quantity = n.qty THEN n.qty
                 WHEN l.quantity = n.qty + 1 THEN n.qty + 1 END AS buy_qty,
-           public.seat_row_rank(l.seat_row) - public.seat_row_rank(n.seat_row) AS row_delta
+           public.seat_row_rank(l.seat_row) - public.seat_row_rank(n.seat_row) AS row_delta,
+           public.sub_finder_row_letters_differ(n.seat_row, l.seat_row) AS letters_differ,
+           public.sub_finder_row_is_wheelchair(n.seat_row) <> public.sub_finder_row_is_wheelchair(l.seat_row) AS wc_differs
     FROM need n
     JOIN oz ON oz.job_id = n.job_id AND oz.idx = n.idx AND oz.z IS NOT NULL
     JOIN lz ON lz.eid = n.tevo_event_id AND lz.z = oz.z
     JOIN _sf_l l ON l.eid = lz.eid AND l.section = lz.section AND l.seat_row = lz.seat_row
      AND public.seat_section_norm(l.section) <> public.seat_section_norm(n.section)
      AND public.seat_row_kind(l.seat_row) = public.seat_row_kind(n.seat_row)
-     AND public.seat_row_rank(l.seat_row) <= public.seat_row_rank(n.seat_row) + v_back
+     AND (public.seat_row_rank(l.seat_row) <= public.seat_row_rank(n.seat_row) + v_back
+          OR public.sub_finder_row_letters_differ(n.seat_row, l.seat_row))
     WHERE l.px > 0 AND l.quantity > 0
   ), cand AS (
     SELECT * FROM same_sec UNION ALL SELECT * FROM zone_sec
@@ -120,9 +129,10 @@ BEGIN
     SELECT p.*,
            CASE
              WHEN NOT p.within_200 THEN NULL
-             WHEN NOT p.moved AND p.row_delta <= 0 THEN CASE WHEN p.profitable THEN 1 ELSE 2 END
+             -- letters_differ: which row is in front is not known, so it is not called rows back
+             WHEN NOT p.moved AND (p.row_delta <= 0 OR p.letters_differ) THEN CASE WHEN p.profitable THEN 1 ELSE 2 END
              WHEN p.has_strict THEN NULL                      -- not widened: gates 3-6 do not apply
-             WHEN p.moved AND p.row_delta <= 0 THEN CASE WHEN p.profitable THEN 3 ELSE 4 END
+             WHEN p.moved AND (p.row_delta <= 0 OR p.letters_differ) THEN CASE WHEN p.profitable THEN 3 ELSE 4 END
              -- rows back: the same zone, or no zone on either side (then it is flagged)
              WHEN p.row_delta > 0 AND (p.moved OR p.o_zone IS NOT DISTINCT FROM p.l_zone)
                THEN CASE WHEN p.profitable THEN 5 ELSE 6 END
@@ -131,7 +141,7 @@ BEGIN
   ), kept_rows AS (
     -- what is shown: any gated cover, plus a same-section same-or-better cover above 200%
     SELECT g.* FROM gated g
-    WHERE g.gate IS NOT NULL OR (NOT g.moved AND g.row_delta <= 0)
+    WHERE g.gate IS NOT NULL OR (NOT g.moved AND (g.row_delta <= 0 OR g.letters_differ))
   ), ranked AS (
     SELECT k.*, row_number() OVER (PARTITION BY k.job_id, k.idx, k.market
                                    ORDER BY k.gate NULLS LAST, k.total, k.lid) AS rn
@@ -143,13 +153,16 @@ BEGIN
              'price_ea', px, 'subtotal', round(buy_qty * px, 2), 'tax_pct', tax_pct,
              'tax_est', round(total - buy_qty * px, 2), 'total', round(total, 2),   -- total includes the expected tax
              'profit', profit, 'price_note', price_note,
-             'row_relation', CASE WHEN row_delta < 0 THEN 'better' WHEN row_delta = 0 THEN 'same' ELSE 'back' END,
+             'row_relation', CASE WHEN letters_differ OR wc_differs THEN 'unknown'
+                                  WHEN row_delta < 0 THEN 'better' WHEN row_delta = 0 THEN 'same' ELSE 'back' END,
              'gate', gate,
              'label', CASE gate WHEN 1 THEN 'Index' WHEN 2 THEN 'S4KTrading' WHEN 3 THEN 'Index offer subs'
                                 WHEN 4 THEN 'offer subs s4ktrading' WHEN 5 THEN 'Index Down offer subs'
                                 WHEN 6 THEN 'Down offer subs S4KTrading' ELSE 'over 200% of sale' END
                       || CASE WHEN gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL THEN ' zone unverified' ELSE '' END
                       || CASE WHEN view_note = 'obstructed' THEN ' obstructed view' ELSE '' END
+                      || CASE WHEN wc_differs THEN ' wheelchair row' ELSE '' END
+                      || CASE WHEN letters_differ THEN ' row letters differ' ELSE '' END
                       || CASE WHEN qty = 1 THEN ' single ticket' ELSE '' END
                       || CASE WHEN buy_qty > qty THEN ' repost single' ELSE '' END
                       || CASE WHEN sold_ea IS NULL AND gate IS NOT NULL THEN ' no sale price' ELSE '' END,
@@ -160,11 +173,14 @@ BEGIN
              'flags', to_jsonb(array_remove(ARRAY[
                         CASE WHEN gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL THEN 'zone_unverified' END,
                         CASE WHEN view_note = 'obstructed' THEN 'obstructed_view' END,
+                        CASE WHEN wc_differs THEN 'wheelchair_row' END,
+                        CASE WHEN letters_differ THEN 'row_letter_mismatch' END,
                         CASE WHEN qty = 1 AND row_delta <> 0 THEN 'single_ticket_row_differs' END,
                         CASE WHEN buy_qty > qty THEN 'repost_single' END,
                         CASE WHEN sold_ea IS NULL AND gate IS NOT NULL THEN 'no_sale_price' END], NULL)),
              'confirm_needed', (gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL)
                                OR view_note IS NOT DISTINCT FROM 'obstructed' OR (qty = 1 AND row_delta <> 0)
+                               OR wc_differs OR letters_differ
                                OR buy_qty > qty OR (sold_ea IS NULL AND gate IS NOT NULL),
              'zone', l_zone, 'view', view_note,
              'link', link, 'buyable', public.sub_finder_market_buyable(market), 'listing_seen_at', pulled_at) AS cover
