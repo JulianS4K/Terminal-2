@@ -34,3 +34,14 @@ R201|20101|crm api key crm / dana
 R203|20301|crm api key crm / dana
 a cover stored before the flags existed is read from its label
 ["wheelchair_row"]|["row_letter_mismatch"]|[]
+the N2S auto-buyer skips the same pairs (mig 20261113460000): sold row / sub row -> skip reasons
+WC / AA -> wheelchair_row
+WC / C -> row_letter_mismatch, wheelchair_row
+C / WC -> row_letter_mismatch, wheelchair_row
+WC / WC -> not skipped
+WC1 / 12 -> wheelchair_row
+AA / H -> row_letter_mismatch
+H / C -> not skipped
+12 / 8 -> not skipped
+ADA / B -> row_letter_mismatch, wheelchair_row
+no queue row -> not skipped

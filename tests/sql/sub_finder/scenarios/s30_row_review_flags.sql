@@ -45,3 +45,11 @@ SELECT sale_order_number, ticket_group_id, requested_by FROM manual_sub_buy WHER
 
 \echo a cover stored before the flags existed is read from its label
 SELECT sub_finder_cover_flags('{"label":"Index wheelchair row"}'), sub_finder_cover_flags('{"label":"S4KTrading row letters differ"}'), sub_finder_cover_flags('{"label":"Index"}');
+
+\echo the N2S auto-buyer skips the same pairs (mig 20261113460000): sold row / sub row -> skip reasons
+INSERT INTO n2s_cover_queue (n2s_id, sub_source, sub_listing_id, order_row, sub_row) VALUES
+ (1,'tevo','1','WC','AA'), (2,'tevo','2','WC','C'), (3,'tevo','3','C','WC'), (4,'tevo','4','WC','WC'), (5,'tevo','5','WC1','12'),
+ (6,'tevo','6','AA','H'), (7,'tevo','7','H','C'), (8,'tevo','8','12','8'), (9,'tevo','9','ADA','B');
+SELECT q.order_row || ' / ' || q.sub_row || ' -> ' || coalesce(nullif(array_to_string(n2s_dryrun_extra_reasons(q.n2s_id, 'tevo', q.sub_listing_id, '101', '101', NULL), ', '), ''), 'not skipped')
+  FROM n2s_cover_queue q ORDER BY q.n2s_id;
+SELECT 'no queue row -> ' || coalesce(nullif(array_to_string(n2s_dryrun_extra_reasons(99, 'tevo', '99', '101', '101', NULL), ', '), ''), 'not skipped');
