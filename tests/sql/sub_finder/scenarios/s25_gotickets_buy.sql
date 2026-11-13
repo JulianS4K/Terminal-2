@@ -17,6 +17,7 @@ INSERT INTO n2s_mkt_pull (source, tevo_event_id, resolved_at) SELECT 'evo', g, n
 INSERT INTO v_s4kcs_orders (source,s4k_order_id,tevo_event_id,section,row,quantity,price_per_ticket) SELECT 'StubHub','G'||g,g,'101','2',2,100 FROM generate_series(110,115) g;
 UPDATE sub_finder_config SET enabled=true, key_ids='{7}', settle_min_s=0, auto_buy_enabled=true, buy_enabled=true, buy_key_ids='{7}' WHERE id;
 SELECT 'switches start off: ' || (SELECT gt_buy_enabled FROM sub_finder_config) || ' / ' || (SELECT gt_enabled FROM manual_sub_buy_config);
+SELECT 'GoTickets ceilings start empty (= the EVO ceilings): ' || (SELECT (gt_per_order_cap_usd IS NULL AND gt_daily_cap_usd IS NULL)::text FROM manual_sub_buy_config);
 
 \echo GoTickets buying off: the cover is not buyable, nothing is bought, the CRM buy is refused
 CREATE TEMP TABLE j1 AS SELECT (sub_finder_submit(7,'crm','[{"order_number":"G110"}]')->>'job_id')::uuid id;
@@ -60,8 +61,13 @@ CREATE TEMP TABLE c1 AS SELECT manual_sub_buy_claim() j;
 SELECT j->'row'->>'sale_order_number', j->'row'->>'market', j->'cfg' ? 'evo_buyer_office_id', j->'cfg'->>'gt_buyer_email', j->'cfg'->'gt_gift_card_ids' FROM c1;
 SELECT manual_sub_buy_record((j->'row'->>'buy_id')::bigint, (j->'row'->>'lease_token')::uuid, '{"state":"bought","buy_order_id":"70001","bought_price_ea":80,"bought_total_usd":160}') FROM c1;
 
-\echo GoTickets on: its own ceilings. EVO spent 160 today; a 170 GoTickets day ceiling still lets a 170 GoTickets buy through
-UPDATE manual_sub_buy_config SET gt_enabled=true, gt_daily_cap_usd=170, gt_per_order_cap_usd=175 WHERE id;
+\echo GoTickets on with no ceiling of its own: the EVO order ceiling applies (100 here), so a 180 GoTickets row stops
+UPDATE manual_sub_buy_config SET gt_enabled=true, per_order_cap_usd=100 WHERE id;
+UPDATE manual_sub_buy SET created_at = created_at - interval '1 hour' WHERE sale_order_number='G115';
+SELECT manual_sub_buy_claim() IS NULL;
+SELECT sale_order_number, state, reasons FROM manual_sub_buy WHERE sale_order_number='G115';
+\echo given its own ceilings: EVO spent 160 today; a 170 GoTickets day ceiling still lets a 170 GoTickets buy through
+UPDATE manual_sub_buy_config SET per_order_cap_usd=750, gt_daily_cap_usd=170, gt_per_order_cap_usd=175 WHERE id;
 CREATE TEMP TABLE c2 AS SELECT manual_sub_buy_claim() j;
 SELECT j->'row'->>'sale_order_number', j->'row'->>'market', j->'row'->>'gt_event_id', j->'row'->>'ticket_group_id', j->'row'->>'max_total_usd' FROM c2;
 SELECT manual_sub_buy_record((j->'row'->>'buy_id')::bigint, (j->'row'->>'lease_token')::uuid, '{"state":"bought","buy_order_id":"880001","buy_state":"PENDING_CONFIRMATION","bought_price_ea":85,"bought_total_usd":170}') FROM c2;

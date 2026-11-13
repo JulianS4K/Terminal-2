@@ -26,9 +26,11 @@
 -- A GoTickets cover reads `buyable: true`, and a request is filed, only while BOTH are on, so
 -- one switch alone changes nothing. If the worker's switch goes off after a request was filed,
 -- that row stops with 'gotickets_buy_off' and nothing is sent.
--- Limits: GoTickets has its own per-order and per-day ceilings
--- (manual_sub_buy_config.gt_per_order_cap_usd / gt_daily_cap_usd, 666 each), counted apart from
--- EVO's. The automatic buy's own daily cap (sub_finder_config.auto_buy_daily_cap_usd) counts
+-- Limits (operator 2026-11-13: "gotix celing here matches evo"): GoTickets uses the same
+-- per-order and per-day ceilings as EVO (manual_sub_buy_config.per_order_cap_usd /
+-- daily_cap_usd). gt_per_order_cap_usd / gt_daily_cap_usd are empty; a number there overrides
+-- EVO's for GoTickets only. Each market's spend is counted against its own day ceiling. The
+-- automatic buy's own daily cap (sub_finder_config.auto_buy_daily_cap_usd) counts
 -- both markets together. Every other rule is the EVO rule: exact quantity, no flags, a profit
 -- or a loss inside the limit, never an N2S or PED order, our copy of the order must agree, the
 -- sale must still be live, one buy per sale.
@@ -50,8 +52,8 @@ ALTER TABLE public.manual_sub_buy
 
 ALTER TABLE public.manual_sub_buy_config
   ADD COLUMN IF NOT EXISTS gt_enabled           boolean NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS gt_per_order_cap_usd numeric NOT NULL DEFAULT 666,
-  ADD COLUMN IF NOT EXISTS gt_daily_cap_usd     numeric NOT NULL DEFAULT 666,
+  ADD COLUMN IF NOT EXISTS gt_per_order_cap_usd numeric,          -- NULL = the EVO ceiling
+  ADD COLUMN IF NOT EXISTS gt_daily_cap_usd     numeric,          -- NULL = the EVO ceiling
   ADD COLUMN IF NOT EXISTS gt_buyer_email       text,
   ADD COLUMN IF NOT EXISTS gt_buyer_phone       text,
   ADD COLUMN IF NOT EXISTS gt_billing_address   jsonb,
@@ -209,17 +211,20 @@ BEGIN
 END
 $function$;
 
--- the worker's claim: GoTickets has its own switch and its own ceilings, and gets its buyer details
+-- the worker's claim: GoTickets has its own switch, EVO's ceilings unless it is given its own,
+-- and gets its buyer details
 SELECT pg_temp._sf_patch('public.manual_sub_buy_claim()'::regprocedure, 'gt_per_order_cap_usd', ARRAY[
   [$o$WHERE state IN ('bought', 'unknown') AND (updated_at AT TIME ZONE 'America/New_York')::date = v_today;$o$,
    $n$WHERE state IN ('bought', 'unknown') AND (updated_at AT TIME ZONE 'America/New_York')::date = v_today
      AND market = b.market;                             -- each market spends against its own ceiling$n$, '1'],
   [$o$IF v_total > c.per_order_cap_usd          THEN r := r || 'over_order_cap'::text; END IF;$o$,
    $n$IF b.market = 'gotickets' AND NOT c.gt_enabled THEN r := r || 'gotickets_buy_off'::text; END IF;
-  IF v_total > (CASE b.market WHEN 'gotickets' THEN c.gt_per_order_cap_usd ELSE c.per_order_cap_usd END)
+  IF v_total > (CASE b.market WHEN 'gotickets' THEN coalesce(c.gt_per_order_cap_usd, c.per_order_cap_usd)
+                              ELSE c.per_order_cap_usd END)
     THEN r := r || 'over_order_cap'::text; END IF;$n$, '1'],
   [$o$IF v_spent + v_total > c.daily_cap_usd    THEN r := r || 'over_daily_cap'::text; END IF;$o$,
-   $n$IF v_spent + v_total > (CASE b.market WHEN 'gotickets' THEN c.gt_daily_cap_usd ELSE c.daily_cap_usd END)
+   $n$IF v_spent + v_total > (CASE b.market WHEN 'gotickets' THEN coalesce(c.gt_daily_cap_usd, c.daily_cap_usd)
+                                        ELSE c.daily_cap_usd END)
     THEN r := r || 'over_daily_cap'::text; END IF;$n$, '1'],
   [$o$'tax_quote', c.tax_quote,$o$,
    $n$'tax_quote', c.tax_quote,
