@@ -1,4 +1,4 @@
--- Migration 20261113120000 · level:secondary-sales · lane:D0 · writes:n2s_sg_polled,n2s_pull_events,sub_finder_offer_pending,sub_finder_submit,sub_finder_refresh,sub_finder_gt_offer_buy,sub_finder_offer_json · reads:n2s_mkt_pull,sub_finder_gt_offer · pre:20261113060000
+-- Migration 20261113120000 · level:secondary-sales · lane:D0 · writes:n2s_sg_polled,n2s_pull_events,sub_finder_offer_pending,sub_finder_submit,sub_finder_refresh,sub_finder_gt_offer_buy,sub_finder_offer_json,sub_finder_gt_offer_follow_record · reads:n2s_mkt_pull,sub_finder_gt_offer · pre:20261113060000
 --
 -- POLLING RULES: N2S asks SeatGeek once per event; the sub finder keeps asking; an order
 -- with a GoTickets sub offer out is not polled.
@@ -48,6 +48,15 @@
 --                     sync feed (GET /results?updated_since=) carrying these fields.
 --                     The body is 20261113100000's (the rebate fields) plus these three, so
 --                     the two migrations can be applied in either order.
+--
+--   sub_finder_gt_offer_follow_record
+--                     operator: "If offer denied check order status before repolling". When
+--                     GoTickets shows the offer DENIED or CANCELLED, the sale is checked first:
+--                     the worker reads it fresh from GoTickets (a GET, core/gt_sub_offer.py)
+--                     and sends 'sale_closed' when it is cancelled or delivered; our own copy
+--                     of the order (sub_finder_order_closed) is checked too. A sale that is
+--                     over closes the lookup (order_cancelled / order_fulfilled) and is not
+--                     polled again; a live sale goes back to the normal polling.
 --
 -- Read paths only: every request these functions send is a GET (RULE 2).
 --
@@ -636,4 +645,45 @@ AS $$
   LEFT JOIN LATERAL (SELECT g.* FROM public.sub_finder_gt_offer g
                       WHERE g.order_number = o.order_number AND g.key_id = o.key_id
                       ORDER BY g.live DESC, g.offer_id DESC LIMIT 1) r ON true;
+$$;
+
+-- the offer's status from GoTickets: as 20261113020000, plus the sale check after a denial
+CREATE OR REPLACE FUNCTION public.sub_finder_gt_offer_follow_record(p_offer_id bigint, p_patch jsonb)
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = public, pg_temp
+AS $$
+DECLARE
+  r        public.sub_finder_gt_offer;
+  v_status text := upper(nullif(btrim(p_patch->>'gt_status'), ''));
+  v_closed text;
+BEGIN
+  IF v_status IS NULL THEN RETURN NULL; END IF;
+  SELECT * INTO r FROM public.sub_finder_gt_offer WHERE offer_id = p_offer_id AND state = 'sent' FOR UPDATE;
+  IF NOT FOUND OR r.gt_status IS NOT DISTINCT FROM v_status THEN RETURN v_status; END IF;
+  UPDATE public.sub_finder_gt_offer
+     SET gt_status = v_status, denial_reason = p_patch->>'denial_reason',
+         final_at = CASE WHEN v_status IN ('ACCEPTED', 'DENIED', 'CANCELLED') THEN now() END,
+         live = (v_status NOT IN ('DENIED', 'CANCELLED')),
+         updated_at = now()
+   WHERE offer_id = p_offer_id;
+  -- The offer ended without a sub: check the sale before the order is polled again. The worker's
+  -- fresh read of the sale comes first; our own copy of the order book is checked either way
+  -- (it is all there is when the read failed). A sale that is over closes the lookup.
+  IF v_status IN ('DENIED', 'CANCELLED') THEN
+    v_closed := coalesce(
+      CASE WHEN p_patch->>'sale_closed' IN ('cancelled', 'fulfilled') THEN p_patch->>'sale_closed' END,
+      public.sub_finder_order_closed(r.order_number, 'GoTickets'));
+  END IF;
+  UPDATE public.sub_finder_order
+     SET updated_at = now(),
+         feed_checked_at = CASE WHEN v_status IN ('DENIED', 'CANCELLED') THEN now() ELSE feed_checked_at END,
+         watching      = CASE WHEN v_closed IS NOT NULL THEN false ELSE watching END,
+         closed_reason = CASE WHEN v_closed IS NOT NULL AND watching THEN 'order_' || v_closed ELSE closed_reason END,
+         closed_at     = CASE WHEN v_closed IS NOT NULL AND watching THEN now() ELSE closed_at END
+   WHERE job_id = r.job_id AND idx = r.idx;
+  IF v_status = 'ACCEPTED' THEN PERFORM public.sub_finder_gt_offer_buy(p_offer_id); END IF;
+  RETURN v_status;
+END
 $$;
