@@ -74,6 +74,12 @@ FORBIDDEN_HOSTS = (
     # Python client). Bare host substring-matches api.twitterapi.io and any
     # future subdomain, same as seatdata.io / axs.com.
     "twitterapi.io",
+    # StubHub API (our seller account, stubhub_client.py — GET-only, OFF by default). The data
+    # API has listing/sale write endpoints that must never be touched; the only sanctioned write
+    # is the OAuth token login (SANCTIONED_PLPGSQL_WRITE_URLS). "stubhub.net" covers api. and
+    # sandbox.api.; "account.stubhub.com" covers the login host and its sandbox.* twin.
+    "stubhub.net",
+    "account.stubhub.com",
     # AXS has order/hold endpoints that must never be touched. All sanctioned
     # AXS traffic proxies through ticketsdata.com (covered above); a direct
     # call to axs.com is forbidden outright. Bare "axs.com" substring-matches
@@ -125,6 +131,9 @@ CLIENT_FILES = {
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
     "s4kcs_client.py": frozenset({"GET"}),
+    # StubHub API — our own seller account's sales/listings, GET-only; the OAuth logins run in
+    # SQL (mig 20261113250000), never in Python. Operator 2026-11-13: "keep … read only".
+    "stubhub_client.py": frozenset({"GET"}),
 }
 
 # Exact path-allowlist literals a write-capable client must declare. Widening either
@@ -333,9 +342,16 @@ def check_ts_writes() -> list[str]:
 # The ONLY write URLs a plpgsql migration may POST to on a forbidden host. Each is a login that
 # writes none of our data (operator-authorized; security-CRIT to extend):
 #   - TickPick OAuth2 password grant (2026-11-10): refreshes TICKPICK_API_TOKEN from vault creds.
+#   - StubHub OAuth2 token endpoint (2026-11-13, "wire the api but keep turned off and read only"):
+#     authorization_code + refresh_token grants for OUR seller account, read:* scopes only
+#     (stubhub_oauth_complete / stubhub_token_refresh, mig 20261113250000). Prod + sandbox.
 # A sanctioned URL is blanked out of the scanned window, so any OTHER forbidden-host URL near the
 # same POST still fails the build.
-SANCTIONED_PLPGSQL_WRITE_URLS = ("https://api.tickpick.com/1.0/token",)
+SANCTIONED_PLPGSQL_WRITE_URLS = (
+    "https://api.tickpick.com/1.0/token",
+    "https://account.stubhub.com/oauth2/token",
+    "https://sandbox.account.stubhub.com/oauth2/token",
+)
 
 
 def check_plpgsql_writes() -> list[str]:

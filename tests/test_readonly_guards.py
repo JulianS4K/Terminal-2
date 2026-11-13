@@ -558,9 +558,15 @@ def test_sale_accept_guard_refuses_reject_and_other_writes():
             _assert_readonly_method(m, u)
 
 
-def test_audit_allows_only_the_tickpick_token_login_from_plpgsql(tmp_path: Path, monkeypatch):
+def test_audit_allows_only_the_sanctioned_token_logins_from_plpgsql(tmp_path: Path, monkeypatch):
     chk = _load_check_module()
-    assert chk.SANCTIONED_PLPGSQL_WRITE_URLS == ("https://api.tickpick.com/1.0/token",)
+    # Each entry is an OAuth token login that writes none of our data (TickPick 2026-11-10;
+    # StubHub prod + sandbox 2026-11-13, mig 20261113250000). Extending this is security-CRIT.
+    assert chk.SANCTIONED_PLPGSQL_WRITE_URLS == (
+        "https://api.tickpick.com/1.0/token",
+        "https://account.stubhub.com/oauth2/token",
+        "https://sandbox.account.stubhub.com/oauth2/token",
+    )
     mig = tmp_path / "supabase" / "migrations"
     mig.mkdir(parents=True)
     (mig / "1_ok.sql").write_text(
@@ -570,7 +576,42 @@ def test_audit_allows_only_the_tickpick_token_login_from_plpgsql(tmp_path: Path,
     (mig / "3_bad.sql").write_text(
         "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/token', NULL, 'x', ''));\n"
         "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/pro/orders', NULL, NULL, '{}'));\n")
+    (mig / "4_ok.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://account.stubhub.com/oauth2/token', NULL, 'x', 'grant_type=refresh_token'));\n")
+    (mig / "5_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.stubhub.net/v2/sellerlistings', NULL, NULL, '{}'));\n")
+    (mig / "6_bad.sql").write_text(
+        "SELECT extensions.http(('PATCH', 'https://api.stubhub.net/v2/sales/1', NULL, NULL, '{}'));\n")
     monkeypatch.setattr(chk, "ROOT", tmp_path)
     out = chk.check_plpgsql_writes()
-    assert not any("1_ok.sql" in v for v in out)
+    assert not any("1_ok.sql" in v for v in out) and not any("4_ok.sql" in v for v in out)
     assert any("2_bad.sql" in v for v in out) and any("3_bad.sql" in v for v in out)
+    assert any("5_bad.sql" in v for v in out) and any("6_bad.sql" in v for v in out)
+
+
+# ---------- stubhub_client (our seller account; OFF by default, GET-only) ----------
+
+def test_stubhub_assert_readonly_raises_on_post():
+    from stubhub_client import _assert_readonly_method, StubHubReadOnlyError
+    with pytest.raises(StubHubReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_stubhub_assert_readonly_raises_on_put_patch_delete():
+    from stubhub_client import _assert_readonly_method, StubHubReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE"):
+        with pytest.raises(StubHubReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_stubhub_assert_readonly_allows_get():
+    from stubhub_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_stubhub_allowlist_constant_is_get_only_and_scopes_read_only():
+    from stubhub_client import ALLOWED_HTTP_METHODS, READ_SCOPES
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+    assert READ_SCOPES and all(s.startswith("read:") for s in READ_SCOPES)
