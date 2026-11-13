@@ -14,13 +14,25 @@ web workers can never act on the same row. This module does the market steps:
   poll   read our purchase: accepted → read the sale, still pending → accept it (reviewer
          53658); rejected → stop; not accepted by sub_confirm_by → stop, sale NOT accepted
 
+GoTickets subs (operator 2026-11-13: "wire in gotickets similar to evo and set same limits and
+same one buy condition"; its own single live run and its own $666 caps, kept by the database):
+
+  buy    the same guards → read the listing fresh on the Pro API (still listed, not ours per
+         Seller Central's GET /rest/listings/{id}, enough tickets, a split that fits, an
+         electronic delivery method) → GoTickets' own total (display price,
+         delivery fee, tax) no higher than our quote and inside this source's caps → enough gift
+         card balance → POST /rest/pro/api/orders once, paid by gift cards (gotickets_buy_client)
+  poll   read our purchase on Seller Central: PENDING_CONFIRMATION = waiting, CANCELLED =
+         rejected, any later state = the seller confirmed → the sale is accepted as above
+
 Never retried: a write that fails is recorded and the row stops. A write whose outcome is
-unknown (timeout / 5xx) stops the row AND flips the kill switch until a person checks EVO.
+unknown (timeout / 5xx) stops the row AND flips the kill switch until a person checks the market.
 Never rejects a sale (operator: "dont auto reject"). Only a database call is retried, once, and
 only when the connection dropped (:func:`retrying`); a repeated record is a no-op in the DB.
 """
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -28,10 +40,8 @@ from typing import Any
 import httpx
 import requests
 
-import time
-
+import gotickets_buy_client as gtb
 from core.n2s_autobuy_exec import SUB_REJECTED, _ts, buy_guards, next_action
-from sale_accept_client import PENDING, SaleAcceptClient
 from evo_buy_client import (
     SHIPMENT_FOR_FORMAT,
     EvoBuyClient,
@@ -40,6 +50,7 @@ from evo_buy_client import (
     buy_order_body,
     read_tax_quote,
 )
+from sale_accept_client import PENDING, SaleAcceptClient
 
 OUR_BROKERAGE_ID = 1768  # S4K Entertainment
 VERIFY_DELAY_S = 3.0      # pause before re-reading the sale after an accept (operator 2026-11-10)
@@ -127,7 +138,105 @@ def seller_time_checks(tg: dict, row: dict, *, now: datetime, floor_s: int) -> l
     return []
 
 
-def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: dict, now: datetime) -> dict:
+def gt_profile(cfg: dict) -> dict | None:
+    """The buyer details GoTickets requires on every order (email, phone, billing address, and the
+    recipient a Mobile Transfer / PDF is sent to), from the config; None when any is missing."""
+    billing, recipient = cfg.get("gt_billing_address") or {}, cfg.get("gt_recipient") or {}
+    if not (cfg.get("gt_buyer_email") and cfg.get("gt_buyer_phone")):
+        return None
+    if not all(billing.get(k) for k in ("firstName", "lastName", "address1", "city", "state", "postalCode", "country")):
+        return None
+    if not all(recipient.get(k) for k in ("firstName", "lastName", "email", "phoneNumber")):
+        return None
+    return {"email": cfg["gt_buyer_email"], "phone": cfg["gt_buyer_phone"], "billing": billing, "recipient": recipient}
+
+
+def _buy_gt(rpc: Rpc, gt: gtb.GoTicketsBuyClient | None, job: dict, now: datetime, guard_row: dict) -> dict:
+    """A GoTickets sub (operator 2026-11-13): read the listing fresh, price the order with GoTickets'
+    own formula, re-run every money guard on that total, pay it from gift cards, POST /orders once.
+    Everything before the POST only reads; a stop there gives the GoTickets live run back."""
+    row, cfg = job["row"], job["cfg"]
+    qty = int(row["qty"])
+    if gt is None or not gt.ready():
+        return _record(rpc, job, phase="stopped", reasons=["no_gt_buy_client"])
+    profile = gt_profile(cfg)
+    if profile is None:
+        return _record(rpc, job, phase="stopped", reasons=["gt_buyer_profile_missing"])
+    if not row.get("gt_event_id"):
+        return _record(rpc, job, phase="stopped", reasons=["no_gt_event_id"])
+    try:
+        listing = gt.get_listing(row["gt_event_id"], row["sub_listing_id"])
+    except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:  # nothing was sent; the row stops (no retry)
+        return _record(rpc, job, phase="stopped", reasons=["listing_read_failed"], live_error=str(e)[:300])
+    if listing is None:
+        return _record(rpc, job, phase="stopped", reasons=["listing_gone"])
+    try:  # operator 2026-11-13: Seller Central GET /rest/listings/{id} answers only for OUR listings
+        if gt.is_own_listing(row["sub_listing_id"]):
+            return _record(rpc, job, phase="stopped", reasons=["our_own_listing"])
+    except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:  # fail closed: never buy what may be ours
+        return _record(rpc, job, phase="stopped", reasons=["own_listing_check_failed"], live_error=str(e)[:300])
+    reasons = []
+    if int(listing.get("quantity") or 0) < qty:
+        reasons.append("short_quantity")
+    if listing.get("validSplitQuantities") and qty not in listing["validSplitQuantities"]:
+        reasons.append("split_not_allowed")
+    delivery = gtb.pick_delivery(listing)
+    if delivery is None:
+        reasons.append("no_electronic_delivery")
+    if listing.get("displayPrice") is None:
+        reasons.append("price_unknown")
+    if reasons or delivery is None:  # (delivery None is already a reason; the test narrows the type)
+        return _record(rpc, job, phase="stopped", reasons=reasons)
+    total = gtb.expected_total(listing, qty, delivery)
+    quoted = float(row["sub_total_usd"])
+    if total > round(quoted + 0.01, 2):
+        return _record(rpc, job, phase="stopped", reasons=["price_rose"],
+                       live_error=f"GoTickets total ${total:.2f} is above the quoted ${quoted:.2f}")
+    # every money guard again, on the real total (tax and delivery included) and this source's caps
+    reasons = buy_guards({**guard_row, "sub_total_usd": total, "est_tax_usd": 0}, now=now,
+                         spend_today=float(row.get("spend_today_before") or 0), buys_today=0, failures_today=0,
+                         project_spent=float(row.get("project_spent_before") or 0), cfg=cfg)
+    reasons += seller_time_checks(listing, row, now=now, floor_s=int(cfg["min_confirm_window_s"]))
+    if reasons:
+        return _record(rpc, job, phase="stopped", reasons=reasons, live_error=f"GoTickets total ${total:.2f}")
+    try:
+        cards = gt.get_gift_cards()
+    except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:
+        return _record(rpc, job, phase="stopped", reasons=["gift_card_read_failed"], live_error=str(e)[:300])
+    # GoTickets accepts an actual total up to $0.01 per ticket above expectedTotal: cover that too
+    cards_used = gtb.pick_gift_cards(cards, total + 0.01 * qty, cfg.get("gt_gift_card_ids"))
+    if not cards_used:
+        return _record(rpc, job, phase="stopped", reasons=["gift_card_balance_short"],
+                       live_error=f"gift cards cannot cover ${total:.2f}")
+    body = gtb.order_body(event_id=row["gt_event_id"], listing_id=row["sub_listing_id"], qty=qty, expected=total,
+                          delivery_id=delivery["id"], email=profile["email"], phone=profile["phone"],
+                          billing=profile["billing"], recipient=profile["recipient"], gift_card_ids=cards_used,
+                          note=f"N2S auto-cover for {row.get('sell_market')} sale {row.get('sale_order_key')} "
+                               f"(n2s {row['n2s_id']})")
+    if not _hold(rpc, job, "buying"):
+        return {"phase": "lease_lost"}  # nothing sent; the claim sweep decides what happens to the row
+    try:
+        resp = gt.create_order(body)
+    except EvoWriteRejected as e:
+        return _record(rpc, job, phase="stopped", reasons=["buy_failed"], live_error=str(e))
+    except EvoWriteUnknown as e:
+        return _record(rpc, job, phase="buy_unknown", reasons=["buy_unknown"], live_error=str(e))
+    try:  # the buy was sent: anything going wrong from here is an unknown outcome, never a silent one
+        oid = gtb.order_id(resp)
+        if not oid:
+            raise ValueError("no purchase id in the GoTickets response")
+        charged = resp.get("orderTotal")
+        note = None if charged is None or float(charged) <= total + 0.01 * qty else \
+            f"GoTickets total ${charged} is above the expected ${total:.2f}"
+        return _record(rpc, job, phase="buy_sent", buy_order_id=oid, buy_state=resp.get("orderStatus"),
+                       live_error=note)
+    except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy
+        return _record(rpc, job, phase="buy_unknown", reasons=["buy_unknown"],
+                       live_error=f"{type(e).__name__}: {e}"[:300])
+
+
+def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: dict, now: datetime,
+         gt: gtb.GoTicketsBuyClient | None = None) -> dict:
     row, cfg = job["row"], job["cfg"]
     market = row.get("sell_market")
     if market != "evo" and not (sales and sales.has_market(market)):
@@ -150,6 +259,8 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
             return _record(rpc, job, phase="stopped", reasons=["sale_read_failed"], live_error=type(e).__name__)
         if sale not in PENDING[market]:
             return _record(rpc, job, phase="stopped", sale_state=sale, reasons=["sale_not_pending"])
+    if row.get("sub_source") == "gotickets":
+        return _buy_gt(rpc, gt, job, now, guard_row)
     try:
         tg = client.get_ticket_group(row["sub_listing_id"])
     except EvoWriteRejected as e:
@@ -215,13 +326,25 @@ def _sale_state(client: EvoBuyClient, sales: SaleAcceptClient | None, market: st
     return st, st in PENDING[market]
 
 
-def _poll(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: dict, now: datetime) -> dict:
+def _sub_status(client: EvoBuyClient, gt: gtb.GoTicketsBuyClient | None, row: dict) -> tuple[Any, str | None]:
+    """(our purchase's state as its market reports it, that state as next_action reads it)."""
+    if row.get("sub_source") == "gotickets":
+        if gt is None:  # a sent GoTickets buy must keep being followed: fail the tick, never stop the row
+            raise RuntimeError("GoTickets client missing for a GoTickets purchase")
+        raw = gt.get_purchase(row["buy_order_id"]).get("orderStatus")
+        return raw, gtb.purchase_state(raw)
+    st = client.get_order(row["buy_order_id"]).get("state")
+    return st, st
+
+
+def _poll(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: dict, now: datetime,
+          gt: gtb.GoTicketsBuyClient | None = None) -> dict:
     row, cfg = job["row"], job["cfg"]
     market = row.get("sell_market") or "evo"
     st = row.get("buy_state")
     if row["phase"] == "buy_sent":
-        st = client.get_order(row["buy_order_id"]).get("state")
-        step = next_action(row, now=now, sub_status=st)
+        st, read_as = _sub_status(client, gt, row)
+        step = next_action(row, now=now, sub_status=read_as)
         if step["action"] == "wait_sub":
             return _record(rpc, job, phase="buy_sent", buy_state=st)
         if step["action"] == "stop":
@@ -258,11 +381,11 @@ def _poll(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: d
 
 
 def tick(rpc: Rpc, client: EvoBuyClient, now: datetime | None = None,
-         sales: SaleAcceptClient | None = None) -> dict:
+         sales: SaleAcceptClient | None = None, gt: gtb.GoTicketsBuyClient | None = None) -> dict:
     """Claim at most one row and take its next step. Returns what was recorded."""
     now = now or datetime.now(timezone.utc)
     job = rpc("n2s_autobuy_live_claim", {})
     if not job:
         return {"action": "idle"}
     step = _buy if job["action"] == "buy" else _poll
-    return {"action": job["action"], "exec_id": job["row"]["exec_id"], **step(rpc, client, sales, job, now)}
+    return {"action": job["action"], "exec_id": job["row"]["exec_id"], **step(rpc, client, sales, job, now, gt=gt)}
