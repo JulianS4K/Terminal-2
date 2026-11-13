@@ -1,4 +1,4 @@
--- Migration 20261113130000 · level:secondary-sales · lane:D0 · writes:sub_finder_match,sub_finder_autobuy,sub_finder_cover_flags,sub_finder_buy_confirmed,sub_finder_gt_offer_confirmed · reads:sub_finder_order · pre:20261113120000
+-- Migration 20261113130000 · level:secondary-sales · lane:D0 · writes:sub_finder_match,sub_finder_autobuy,sub_finder_cover_flags,sub_finder_buy_confirmed,sub_finder_gt_offer_confirmed,sub_finder_offer_json,sub_finder_gt_offer_request · reads:sub_finder_order · pre:20261113120000
 --
 -- SUB FINDER: suffixed covers go through to the CRM, and the CRM confirms them.
 --
@@ -7,7 +7,8 @@
 -- A cover's label can end in a suffix that says something is off about it:
 --   ' zone unverified'   rows back, and neither seat has a curated zone      -> zone_unverified
 --   ' obstructed view'                                                        -> obstructed_view
---   ' single ticket'     the order is for one ticket                          -> single_ticket
+--   ' single ticket'     the order is for one ticket: flagged only when the sub is NOT in
+--                        the row that was sold                                -> single_ticket_row_differs
 --   ' repost single'     the listing forces one more ticket than was sold     -> repost_single
 --   ' no sale price'     we do not know what the order sold for               -> no_sale_price
 -- These covers were always sent, with the suffix inside the label text. Now:
@@ -16,7 +17,13 @@
 --      `confirm_needed` (true when there is any flag);
 --   2. nothing is done automatically with a flagged cover: sub_finder_autobuy skips it and
 --      says why (auto_buy_note 'needs_crm_confirm'). Obstructed and spare-ticket covers were
---      already skipped; the new case is single_ticket;
+--      already skipped; the new case is a single ticket in another row (2a);
+--  2a. SINGLE TICKETS (operator: "Single auto buy only if row is exact but need to offer if not
+--      but allow CRM to bipass offer as an option"). A one-ticket order is bought automatically
+--      only into the exact row that was sold. A same-section cover in a better row is an OFFER:
+--      the order's action reads 'offer', the cover says needs_buyer_ok and offer_bypass, and on a
+--      GoTickets order it can be offered to the customer like a gate 3-5 cover (sub_offer /
+--      offer-sub). The CRM may skip the offer: the buy route with "confirm": true buys it;
 --   3. the CRM's yes for a flagged cover must say it has seen the flags: the buy and offer-sub
 --      routes now go through sub_finder_buy_confirmed / sub_finder_gt_offer_confirmed, which
 --      answer 'confirm_needed' with the flags unless p_confirm is true, and otherwise hand over
@@ -44,34 +51,43 @@ AS $$
               ELSE to_jsonb(array_remove(ARRAY[
                      CASE WHEN cv->>'label' LIKE '% zone unverified%' THEN 'zone_unverified' END,
                      CASE WHEN cv->>'label' LIKE '% obstructed view%' THEN 'obstructed_view' END,
-                     CASE WHEN cv->>'label' LIKE '% single ticket%'   THEN 'single_ticket' END,
+                     CASE WHEN cv->>'label' LIKE '% single ticket%' AND cv->>'row_relation' IS DISTINCT FROM 'same'
+                          THEN 'single_ticket_row_differs' END,
                      CASE WHEN cv->>'label' LIKE '% repost single%'   THEN 'repost_single' END,
                      CASE WHEN cv->>'label' LIKE '% no sale price%'   THEN 'no_sale_price' END], NULL)) END;
 $$;
 REVOKE ALL ON FUNCTION public.sub_finder_cover_flags(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sub_finder_cover_flags(jsonb) TO service_role;
 
--- 1. the match: every cover says its flags
+-- 1. the match: every cover says its flags; a single ticket in another row is an offer
 DO $patch$
 DECLARE
-  v_def text := pg_get_functiondef('public.sub_finder_match(uuid, boolean)'::regprocedure);
-  v_old text := $o$'needs_buyer_ok', coalesce(gate >= 3, false),$o$;
-  v_new text := $n$'needs_buyer_ok', coalesce(gate >= 3, false),
+  v_def  text := pg_get_functiondef('public.sub_finder_match(uuid, boolean)'::regprocedure);
+  v_old  text := $o$'needs_buyer_ok', coalesce(gate >= 3, false),$o$;
+  v_new  text := $n$'needs_buyer_ok', coalesce(gate >= 3, false) OR (qty = 1 AND row_delta <> 0),
+             -- a one-ticket order moved to another row of its own section: offer it, or buy it
+             -- anyway with "confirm": true
+             'offer_bypass', coalesce(gate IN (1, 2), false) AND qty = 1 AND row_delta <> 0,
              'flags', to_jsonb(array_remove(ARRAY[
                         CASE WHEN gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL THEN 'zone_unverified' END,
                         CASE WHEN view_note = 'obstructed' THEN 'obstructed_view' END,
-                        CASE WHEN qty = 1 THEN 'single_ticket' END,
+                        CASE WHEN qty = 1 AND row_delta <> 0 THEN 'single_ticket_row_differs' END,
                         CASE WHEN buy_qty > qty THEN 'repost_single' END,
                         CASE WHEN sold_ea IS NULL AND gate IS NOT NULL THEN 'no_sale_price' END], NULL)),
              'confirm_needed', (gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL)
-                               OR view_note IS NOT DISTINCT FROM 'obstructed' OR qty = 1 OR buy_qty > qty
-                               OR (sold_ea IS NULL AND gate IS NOT NULL),$n$;
+                               OR view_note IS NOT DISTINCT FROM 'obstructed' OR (qty = 1 AND row_delta <> 0)
+                               OR buy_qty > qty OR (sold_ea IS NULL AND gate IS NOT NULL),$n$;
+  v_old2 text := $o$WHEN (p.covers -> 0 ->> 'gate')::int IN (1, 2) THEN 'buy_manually'$o$;
+  v_new2 text := $n$WHEN (p.covers -> 0 ->> 'gate')::int IN (1, 2)
+                         AND (p.covers -> 0 -> 'flags') ? 'single_ticket_row_differs' THEN 'offer'
+                    WHEN (p.covers -> 0 ->> 'gate')::int IN (1, 2) THEN 'buy_manually'$n$;
 BEGIN
   IF position($t$'confirm_needed'$t$ IN v_def) > 0 THEN RETURN; END IF;       -- already patched
-  IF (length(v_def) - length(replace(v_def, v_old, ''))) / length(v_old) <> 1 THEN
-    RAISE EXCEPTION 'sub_finder_match: the cover line to patch was not found exactly once';
+  IF (length(v_def) - length(replace(v_def, v_old, ''))) / length(v_old) <> 1
+     OR (length(v_def) - length(replace(v_def, v_old2, ''))) / length(v_old2) <> 1 THEN
+    RAISE EXCEPTION 'sub_finder_match: the lines to patch were not each found exactly once';
   END IF;
-  EXECUTE replace(v_def, v_old, v_new);
+  EXECUTE replace(replace(v_def, v_old, v_new), v_old2, v_new2);
 END
 $patch$;
 
@@ -138,7 +154,8 @@ AS $$
 DECLARE
   v_flags jsonb;
 BEGIN
-  SELECT public.sub_finder_cover_flags(c.x) INTO v_flags
+  -- offering IS the careful path for a single ticket in another row, so that flag needs no confirm here
+  SELECT public.sub_finder_cover_flags(c.x) - 'single_ticket_row_differs' INTO v_flags
     FROM (SELECT o.covers FROM public.sub_finder_order o
            WHERE o.key_id = p_key_id AND o.order_number = p_order_number AND o.watching
            ORDER BY o.updated_at DESC LIMIT 1) w,
@@ -156,3 +173,44 @@ END
 $$;
 REVOKE ALL ON FUNCTION public.sub_finder_gt_offer_confirmed(bigint, text, text, text, text, text, numeric, boolean) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sub_finder_gt_offer_confirmed(bigint, text, text, text, text, text, numeric, boolean) TO service_role;
+
+-- An offer row may now be for a gate 1 or 2 cover (a single ticket moved to another row).
+ALTER TABLE public.sub_finder_gt_offer DROP CONSTRAINT IF EXISTS sub_finder_gt_offer_gate_check;
+ALTER TABLE public.sub_finder_gt_offer ADD CONSTRAINT sub_finder_gt_offer_gate_check CHECK (gate IN (1, 2, 3, 4, 5));
+
+-- 4. GoTickets: a one-ticket cover in another row of the same section can be offered to the
+--    customer like a gate 3-5 cover (it is gate 1 or 2, which otherwise need no offer)
+DO $patch$
+DECLARE
+  v_def  text := pg_get_functiondef('public.sub_finder_offer_json(public.sub_finder_order)'::regprocedure);
+  v_old1 text := $o$WHEN r.offer_id IS NULL AND coalesce((o.best->>'gate')::int, 0) < 3 THEN NULL$o$;
+  v_new1 text := $n$WHEN r.offer_id IS NULL AND coalesce((o.best->>'gate')::int, 0) < 3
+         AND NOT (public.sub_finder_cover_flags(o.best) ? 'single_ticket_row_differs') THEN NULL$n$;
+  v_old2 text := $o$AND (o.best->>'gate')::int IN (3, 4, 5),$o$;
+  v_new2 text := $n$AND ((o.best->>'gate')::int IN (3, 4, 5)
+                      OR public.sub_finder_cover_flags(o.best) ? 'single_ticket_row_differs'),
+      -- true: you may skip the offer and buy the cover outright (buy route, "confirm": true)
+      'bypass_allowed', r.offer_id IS NULL AND coalesce((o.best->>'offer_bypass')::boolean, false),$n$;
+BEGIN
+  IF position('bypass_allowed' IN v_def) > 0 THEN RETURN; END IF;             -- already patched
+  IF (length(v_def) - length(replace(v_def, v_old1, ''))) / length(v_old1) <> 1
+     OR (length(v_def) - length(replace(v_def, v_old2, ''))) / length(v_old2) <> 1 THEN
+    RAISE EXCEPTION 'sub_finder_offer_json: the lines to patch were not each found exactly once';
+  END IF;
+  EXECUTE replace(replace(v_def, v_old1, v_new1), v_old2, v_new2);
+END
+$patch$;
+
+DO $patch$
+DECLARE
+  v_def text := pg_get_functiondef('public.sub_finder_gt_offer_request(bigint, text, text, text, text, text, numeric)'::regprocedure);
+  v_old text := $o$IF v_gate IS NULL OR v_gate < 3 THEN$o$;
+  v_new text := $n$IF v_gate IS NULL OR (v_gate < 3 AND NOT (public.sub_finder_cover_flags(cv) ? 'single_ticket_row_differs')) THEN$n$;
+BEGIN
+  IF position('single_ticket_row_differs' IN v_def) > 0 THEN RETURN; END IF;  -- already patched
+  IF (length(v_def) - length(replace(v_def, v_old, ''))) / length(v_old) <> 1 THEN
+    RAISE EXCEPTION 'sub_finder_gt_offer_request: the gate line to patch was not found exactly once';
+  END IF;
+  EXECUTE replace(v_def, v_old, v_new);
+END
+$patch$;
