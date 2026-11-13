@@ -23,8 +23,10 @@
 --      revisited.
 --
 -- THE FIX (deliberately narrow; the shared resolver and match_to_aq_event_id are untouched —
--- every source goes through them, and the CRM book's own UTC-date cases depend on today's
--- behaviour, see s4kcs_fix_wrong_night):
+-- every source goes through them, so changing them is a separate, measured change. Note: a
+-- 2026-11-13 read-only audit of ~36k orders found the CRM's event_date is the venue-local
+-- show date in all but 18 placeholder/rescheduled cases, so s4kcs_fix_wrong_night's
+-- "the CRM sends a UTC date" premise does not hold; do not schedule it as written):
 --   n2s_fix_wrong_performance(p_apply) re-points an OPEN n2s_items row when
 --     · its mapped event's local start (to the minute) differs from event_dt, AND
 --     · EXACTLY ONE event at the same TEvo venue with the same normalised name
