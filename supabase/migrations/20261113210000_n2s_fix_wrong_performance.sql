@@ -133,7 +133,15 @@ BEGIN
          AND coalesce(rr.crm_method, '') !~ '^(order_id_|catalog_identity|night_corrected_order_id_)' THEN
         UPDATE public.s4kcs_orders
            SET tevo_event_id = rr.alt_id, map_method = 'n2s_event_dt_corrected',
-               map_confidence = 0.97, mapped_at = now()
+               map_confidence = 0.97, mapped_at = now(),
+               -- the old night's market ids: the 15-min linkers are fill-only, so clear them
+               -- for re-derivation (the sub finder reads them)
+               aq_short_event_id = NULL,
+               gt_event_id = NULL, gt_mapped_via = NULL, gt_mapped_at = NULL,
+               tdev_id = NULL, tdev_mapped_via = NULL, tdev_mapped_at = NULL,
+               vivid_event_id = NULL, sh_event_id = NULL, sg_event_id = NULL, tm_event_id = NULL,
+               tp_event_id = NULL, paciolan_event_id = NULL,
+               market_ids_via = NULL, market_ids_at = NULL
          WHERE s4k_order_id = rr.n2s_order_key AND tevo_event_id = rr.crm_tevo;
         GET DIAGNOSTICS v_crm = ROW_COUNT;
       END IF;
