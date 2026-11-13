@@ -1354,6 +1354,8 @@ def build_broker_router(
         cols = ("dryrun_id,captured_at,order_number,s4k_source,event_name,event_date,"
                 "sold_section,sold_row,sold_qty,sold_ea,sub_section,sub_row,sub_qty,"
                 "quoted_ea,quoted_total,cover_cost,cover_gate,cover_label,"
+                # 20261112030000: the seller's note on the sub, and our reading of it
+                "sub_view,sub_notes,"
                 "decision,skip_reasons,payload")
         q = db.table("n2s_gt_order_dryrun").select(cols)
         if decision:

@@ -152,7 +152,7 @@
       )}">obstructed</span>`;
     } else if (r.sub_view === 'unknown') {
       out += ` <span class="n2s-gate n2s-gate-noview" title="${esc(
-        'This source publishes no view data, so the seat has NOT been checked. '
+        'No seller note or view data for this listing, so the seat has NOT been checked. '
         + 'Unknown is not the same as clear.'
       )}">view ?</span>`;
     }
@@ -169,6 +169,19 @@
       )}">single ticket</span>`;
     }
     return out;
+  }
+
+  // The seller's own note on the substitute, as text under the listing
+  // (20261112030000). Before, it only rode in the "obstructed" chip's tooltip,
+  // and EVO subs had none at all. The chip is our regex; this is their words,
+  // so a disclosure the regex misses is still in front of whoever buys.
+  const NOTES_MAX = 140;
+  function notesLine(notes, view) {
+    const t = String(notes || '').trim();
+    if (!t) return '';
+    const short = t.length > NOTES_MAX ? t.slice(0, NOTES_MAX - 1) + '…' : t;
+    const cls = view === 'obstructed' ? 'n2s-sub-notes-obstructed' : 'muted';
+    return `<div class="small ${cls} n2s-sub-notes" title="${esc(t)}">notes: ${esc(short)}</div>`;
   }
 
   function coverFp(r) {
@@ -283,7 +296,8 @@
       const buy = ref && /^https:\/\//.test(ref.buy_url || '') ? ref.buy_url : null;
       const listing = seat(r.sub_section, r.sub_row, r.sub_qty, r.quoted_ea) +
         ` <span class="muted small">= ${money(r.quoted_total)}</span>` +
-        (buy ? ` <a href="${esc(buy)}" target="_blank" rel="noopener noreferrer">GT&nbsp;↗</a>` : '');
+        (buy ? ` <a href="${esc(buy)}" target="_blank" rel="noopener noreferrer">GT&nbsp;↗</a>` : '') +
+        notesLine(r.sub_notes, r.sub_view);
       return `<tr>
         <td class="muted small">${esc(when)}</td>
         <td>${esc(r.s4k_source || '—')}<div class="muted small">${esc(r.order_number || '')}</div></td>
@@ -465,6 +479,7 @@
       })();
       const cov = r.has_cover
         ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}${lot}`
+          + notesLine(r.sub_notes, r.sub_view)
         : (() => {
             const w = WHY[r.no_cover_reason] || ['no sub', 'no cover allocated'];
             // A closed order is history, not work: show the last cover we

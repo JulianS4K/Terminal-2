@@ -39,7 +39,7 @@ _BOOK_COLS = (
     "timer_expires_at,timer_expired,event_live,in_window,event_name,event_date,event_dt,venue,tevo_event_id,gt_event_id,"
     "section,order_row,quantity,sold_ea,sold_total,has_cover,no_cover_reason,sub_source,"
     "sub_listing_id,sub_section,sub_row,sub_qty,sub_avail,sub_ea,sub_total,cover_cost,cover_gate,"
-    "cover_label,sub_view,buy_url,refreshed_at,last_sub_source,last_sub_section,last_sub_row,"
+    "cover_label,sub_view,sub_notes,buy_url,refreshed_at,last_sub_source,last_sub_section,last_sub_row,"
     "last_cover_cost,last_cover_at")
 
 
@@ -159,7 +159,8 @@ def n2s_health(db) -> dict:
 _GT_DRYRUN_COLS = (
     "dryrun_id,captured_at,n2s_id,order_number,s4k_source,event_name,event_date,"
     "sold_section,sold_row,sold_qty,sold_ea,sub_section,sub_row,sub_qty,quoted_ea,quoted_total,"
-    "cover_cost,cover_gate,cover_label,live_price_ea,live_qty,sub_view,decision,skip_reasons,payload")
+    "cover_cost,cover_gate,cover_label,live_price_ea,live_qty,sub_view,sub_notes,decision,skip_reasons,"
+    "payload")
 
 
 def _level_word(s: Any) -> str:
@@ -175,7 +176,7 @@ def _gt_dryrun_row(r: dict) -> dict:
         "dryrun_id", "captured_at", "order_number", "s4k_source", "event_name", "event_date",
         "sold_section", "sold_row", "sold_qty", "sold_ea", "sub_section", "sub_row", "sub_qty",
         "quoted_ea", "quoted_total", "cover_gate", "cover_label", "decision", "skip_reasons",
-        "sub_view")}
+        "sub_view", "sub_notes")}
     out["profit"] = None if cost is None else round(-float(cost), 2)
     out["ped"] = (r.get("n2s_id") or 0) < 0
     out["level_mismatch"] = r.get("cover_gate") == 1 and bool(a) and bool(b) and a != b
