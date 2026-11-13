@@ -34,8 +34,8 @@ forbidden
 forbidden
 forbidden
 not_found
-that listing is not an EVO cover this job quoted for this order
-that listing is not an EVO cover this job quoted for this order
+that listing is not a cover we can buy that this job quoted for this order
+that listing is not a cover we can buy that this job quoted for this order
 {"error": "invalid", "detail": "this order is not in our copy of the order books with these seats, quantity and sale price; alert us with the order number only"}
 this order is not in our copy of the order books with these seats, quantity and sale price; alert us with the order number only
 7b a sale already bought outside this API:

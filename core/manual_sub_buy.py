@@ -1,4 +1,4 @@
-"""MANUAL sub buy worker — buys one EVO listing the operator chose for one sale.
+"""MANUAL sub buy worker — buys one EVO (or GoTickets) listing chosen for one sale.
 
 Operator 2026-11-11: "build the path so i can auto buy these if i choose outside of set
 conditions but keep separate from n2s". This is that path. It shares nothing with the N2S
@@ -26,6 +26,20 @@ doubled purchase:
   follow  afterwards, GET /v9/orders/{id} (a read) until the seller has confirmed or rejected
           the order, storing its state, what EVO charged and the seat numbers (mig 20261112000000)
 
+GoTickets rows (operator 2026-11-13: "n2s also incorporated gotickets autobuy look at how it
+functions and incorporate but modify to match how we use evo"; mig 20261113300000). A row whose
+``market`` is 'gotickets' takes the same steps with GoTickets' own reads and its one write:
+
+  read    the listing from the Pro API, fresh: still listed, NOT one of ours (Seller Central
+          answers only for our own listings; if that check cannot be made the row stops), enough
+          tickets, a split that fits, an electronic delivery method
+  price   GoTickets' own total (display price, delivery fee, tax): never above what was quoted
+          (max_price_ea x qty, a cent of rounding allowed), nor above the row's total ceiling
+  pay     gift cards only, enough balance on the cards this path may use
+  buy     POST /rest/pro/api/orders, once, through gotickets_buy_client (path-pinned; RULE 2)
+  follow  GET /rest/purchases/{id} until GoTickets shows the seller confirmed or the purchase
+          was cancelled / refunded
+
 Never retried. A rejected buy stops the row. A buy whose outcome is unknown (timeout / 5xx /
 unreadable answer) is recorded as 'unknown', which flips this path's kill switch until a
 person has checked EVO.
@@ -37,6 +51,7 @@ from typing import Any
 
 import requests
 
+import gotickets_buy_client as gtb
 from evo_buy_client import (
     SHIPMENT_FOR_FORMAT,
     EvoBuyClient,
@@ -80,12 +95,111 @@ def listing_checks(tg: dict, *, qty: int, max_price_ea: float) -> list[str]:
     return reasons
 
 
-def tick(rpc: Rpc, client: EvoBuyClient) -> dict:
+def gt_profile(cfg: dict) -> dict | None:
+    """The buyer details GoTickets requires on every order, from this path's own config;
+    None when any is missing (the row then stops, nothing is sent)."""
+    billing, recipient = cfg.get("gt_billing_address") or {}, cfg.get("gt_recipient") or {}
+    if not (cfg.get("gt_buyer_email") and cfg.get("gt_buyer_phone")):
+        return None
+    if not all(billing.get(k) for k in ("firstName", "lastName", "address1", "city", "state", "postalCode", "country")):
+        return None
+    if not all(recipient.get(k) for k in ("firstName", "lastName", "email", "phoneNumber")):
+        return None
+    return {"email": cfg["gt_buyer_email"], "phone": cfg["gt_buyer_phone"], "billing": billing, "recipient": recipient}
+
+
+def gt_listing_checks(listing: dict, *, qty: int) -> list[str]:
+    """Reasons the fresh GoTickets listing read says NOT to buy (empty = go on to pricing)."""
+    reasons = []
+    if int(listing.get("quantity") or 0) < qty:
+        reasons.append("short_quantity")
+    if listing.get("validSplitQuantities") and qty not in listing["validSplitQuantities"]:
+        reasons.append("split_not_allowed")
+    if gtb.pick_delivery(listing) is None:
+        reasons.append("no_electronic_delivery")
+    if listing.get("displayPrice") is None:
+        reasons.append("price_unknown")
+    return reasons
+
+
+def _buy_gt(rpc: Rpc, gt: gtb.GoTicketsBuyClient | None, job: dict) -> dict:
+    """One GoTickets row: read, check, price, pay from gift cards, POST once. Everything before
+    the POST only reads, and a stop there has sent nothing."""
+    row, cfg = job["row"], job["cfg"]
+    out = {"action": "buy", "buy_id": row["buy_id"], "market": "gotickets"}
+    qty = int(row["qty"])
+    if gt is None or not gt.ready():
+        return {**out, **_record(rpc, job, state="stopped", reasons=["no_gt_buy_client"])}
+    profile = gt_profile(cfg)
+    if profile is None:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["gt_buyer_profile_missing"])}
+    if not row.get("gt_event_id"):
+        return {**out, **_record(rpc, job, state="stopped", reasons=["no_gt_event_id"])}
+    listing_id = row["ticket_group_id"]
+    try:
+        listing = gt.get_listing(row["gt_event_id"], listing_id)
+    except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:  # nothing was sent; the row stops (no retry)
+        return {**out, **_record(rpc, job, state="stopped", reasons=["listing_read_failed"], error=str(e)[:300])}
+    if listing is None:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["listing_gone"])}
+    try:
+        if gt.is_own_listing(listing_id):
+            return {**out, **_record(rpc, job, state="stopped", reasons=["our_own_listing"])}
+    except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:  # fail closed: never buy what may be ours
+        return {**out, **_record(rpc, job, state="stopped", reasons=["own_listing_check_failed"],
+                                 error=str(e)[:300])}
+    reasons = gt_listing_checks(listing, qty=qty)
+    if reasons:
+        return {**out, **_record(rpc, job, state="stopped", reasons=reasons)}
+    delivery = gtb.pick_delivery(listing) or {}
+    total = gtb.expected_total(listing, qty, delivery)
+    quoted = {"quote_total_usd": total}
+    if total > round(float(row["max_price_ea"]) * qty + 0.01, 2):
+        return {**out, **_record(rpc, job, state="stopped", reasons=["price_above_ceiling"], **quoted)}
+    ceiling = row.get("max_total_usd")
+    if ceiling is not None and total > float(ceiling) + 0.005:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["total_above_ceiling"], **quoted)}
+    try:
+        cards = gt.get_gift_cards()
+    except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["gift_card_read_failed"], error=str(e)[:300])}
+    # GoTickets accepts an actual total up to $0.01 per ticket above expectedTotal: cover that too
+    cards_used = gtb.pick_gift_cards(cards, total + 0.01 * qty, cfg.get("gt_gift_card_ids"))
+    if not cards_used:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["gift_card_balance_short"], **quoted)}
+    body = gtb.order_body(event_id=row["gt_event_id"], listing_id=listing_id, qty=qty, expected=total,
+                          delivery_id=delivery["id"], email=profile["email"], phone=profile["phone"],
+                          billing=profile["billing"], recipient=profile["recipient"], gift_card_ids=cards_used)
+    # re-check the lease right before the write: only the worker that still holds the row may buy
+    if _record(rpc, job, state="buying", **quoted)["recorded"] != "buying":
+        return {**out, "state": "lease_lost"}
+    try:
+        resp = gt.create_order(body)
+    except EvoWriteRejected as e:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["buy_failed"], error=str(e))}
+    except EvoWriteUnknown as e:
+        return {**out, **_record(rpc, job, state="unknown", reasons=["buy_unknown"], error=str(e))}
+    try:  # the buy was sent: anything going wrong from here is an unknown outcome, never a silent one
+        oid = gtb.order_id(resp)
+        if not oid:
+            raise ValueError("no purchase id in the GoTickets response")
+        charged = resp.get("orderTotal")
+        return {**out, **_record(rpc, job, state="bought", buy_order_id=oid, buy_state=resp.get("orderStatus"),
+                                 bought_price_ea=float(listing["displayPrice"]),
+                                 bought_total_usd=round(float(charged), 2) if charged is not None else total)}
+    except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy
+        return {**out, **_record(rpc, job, state="unknown", reasons=["buy_unknown"],
+                                 error=f"{type(e).__name__}: {e}"[:300])}
+
+
+def tick(rpc: Rpc, client: EvoBuyClient, gt: gtb.GoTicketsBuyClient | None = None) -> dict:
     """Claim at most one requested buy and carry it out. Returns what was recorded."""
     job = rpc("manual_sub_buy_claim", {})
     if not job:
         return {"action": "idle"}
     row, cfg = job["row"], job["cfg"]
+    if row.get("market") == "gotickets":
+        return _buy_gt(rpc, gt, job)
     out = {"action": "buy", "buy_id": row["buy_id"]}
     qty = int(row["qty"])
     try:
@@ -155,15 +269,32 @@ def order_status(order: dict) -> dict:
             "bought_row": tg.get("row"), "seats": seats, "rejection_reason": reason}
 
 
-def follow(rpc: Rpc, client: EvoBuyClient) -> dict:
+GT_SELLER_STATE = {"confirmed": "accepted", "rejected": "rejected"}
+
+
+def gt_purchase_status(purchase: dict) -> dict:
+    """What a fresh GoTickets purchase read says, in the shape manual_sub_buy_follow_record stores.
+    The seller counts as confirmed only on a status in gotickets_buy_client.GT_CONFIRMED; a status
+    nobody has seen yet leaves the buy pending."""
+    raw = purchase.get("orderStatus")
+    return {"order_state": raw, "seller_state": GT_SELLER_STATE.get(gtb.purchase_state(raw)),
+            "order_total_usd": purchase.get("orderTotal")}
+
+
+def follow(rpc: Rpc, client: EvoBuyClient, gt: gtb.GoTicketsBuyClient | None = None) -> dict:
     """Re-read at most one bought order that is due a status check. Reads only (GET)."""
     job = rpc("manual_sub_buy_follow_claim", {})
     if not job:
         return {"action": "idle"}
     out = {"action": "follow", "buy_id": job["buy_id"], "buy_order_id": job["buy_order_id"]}
     try:
-        order = client.get_order(job["buy_order_id"])
-    except (EvoWriteRejected, requests.RequestException, ValueError) as e:
+        if job.get("market") == "gotickets":
+            if gt is None or not gt.ready():
+                return {**out, "error": "no_gt_buy_client"}  # it comes round again once the client is back
+            patch = gt_purchase_status(gt.get_purchase(job["buy_order_id"]))
+        else:
+            patch = order_status(client.get_order(job["buy_order_id"]))
+    except (EvoWriteRejected, gtb.GoTicketsBuyError, requests.RequestException, ValueError) as e:
         return {**out, "error": type(e).__name__}  # the claim already stamped the check; it comes round again
-    outcome = rpc("manual_sub_buy_follow_record", {"p_buy_id": job["buy_id"], "p_patch": order_status(order)})
+    outcome = rpc("manual_sub_buy_follow_record", {"p_buy_id": job["buy_id"], "p_patch": patch})
     return {**out, "outcome": outcome}

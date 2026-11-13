@@ -2061,10 +2061,22 @@ def autobuy_live_status(_=Depends(require_auth)):
 # tables and config (manual_sub_buy*), its own kill switch. Off unless
 # MANUAL_SUB_BUY_LIVE=1 on this service AND manual_sub_buy_config.enabled is true.
 # Each tick claims at most one requested row and buys it once via core/manual_sub_buy.py →
-# evo_buy_client.py (the path-pinned EVO write client).
+# evo_buy_client.py (the path-pinned EVO write client), or, for a row whose market is
+# 'gotickets' (operator 2026-11-13, mig 20261113300000; off unless manual_sub_buy_config.gt_enabled),
+# gotickets_buy_client.py (the path-pinned GoTickets buy).
 # ---------------------------------------------------------------------------
 _MANUAL_SUB_BUY_INTERVAL_S = float(os.environ.get("MANUAL_SUB_BUY_INTERVAL_SECONDS", "15"))
 _manual_sub_buy_last: dict = {"at": None, "result": None, "error": None}
+
+
+def _manual_sub_buy_gt():
+    """The GoTickets buy client for a 'gotickets' row (the same Vault key pair the N2S buyer uses).
+    None when it cannot be built: EVO rows still run, a GoTickets row stops with no_gt_buy_client."""
+    try:
+        return _autobuy_gt_buy_client()
+    except Exception as e:  # noqa: BLE001 - a Vault blip must not stop the EVO side of this worker
+        _log.warning("manual_sub_buy: GoTickets client unavailable: %s", type(e).__name__)
+        return None
 
 
 async def _manual_sub_buy_tick():
@@ -2075,9 +2087,10 @@ async def _manual_sub_buy_tick():
         def rpc(name, params):
             return require_sb().rpc(name, params).execute().data
         client = EvoBuyClient(TOKEN, SECRET)
-        out = manual_sub_buy.tick(rpc, client)
+        gt = _manual_sub_buy_gt()
+        out = manual_sub_buy.tick(rpc, client, gt)
         # then follow one already-bought order toward confirmed / rejected (a GET, never a write)
-        return {**out, "follow": manual_sub_buy.follow(rpc, client)}
+        return {**out, "follow": manual_sub_buy.follow(rpc, client, gt)}
 
     out = await asyncio.to_thread(_call)
     _manual_sub_buy_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)

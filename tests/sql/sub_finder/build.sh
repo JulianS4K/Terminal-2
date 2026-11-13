@@ -49,4 +49,5 @@ stub_50_alerts.sql
 20261113250000_sub_finder_ped_report_only.sql
 20261113260000_sub_finder_background_settle.sql
 20261113270000_account_balances_hourly.sql
+20261113300000_sub_finder_gotickets_buy.sql
 STEPS
