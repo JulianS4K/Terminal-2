@@ -148,11 +148,16 @@ def _buy_gt(rpc: Rpc, gt: gtb.GoTicketsBuyClient | None, job: dict) -> dict:
     except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:  # fail closed: never buy what may be ours
         return {**out, **_record(rpc, job, state="stopped", reasons=["own_listing_check_failed"],
                                  error=str(e)[:300])}
-    reasons = gt_listing_checks(listing, qty=qty)
+    try:  # a listing we cannot read as numbers is a stop, never a crash that leaves the row mid-buy
+        reasons = gt_listing_checks(listing, qty=qty)
+        delivery = gtb.pick_delivery(listing) or {}
+        total = gtb.expected_total(listing, qty, delivery) if not reasons else 0.0
+        delivery_id = int(delivery["id"]) if not reasons else 0
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["listing_unreadable"],
+                                 error=f"{type(e).__name__}: {e}"[:300])}
     if reasons:
         return {**out, **_record(rpc, job, state="stopped", reasons=reasons)}
-    delivery = gtb.pick_delivery(listing) or {}
-    total = gtb.expected_total(listing, qty, delivery)
     quoted = {"quote_total_usd": total}
     if total > round(float(row["max_price_ea"]) * qty + 0.01, 2):
         return {**out, **_record(rpc, job, state="stopped", reasons=["price_above_ceiling"], **quoted)}
@@ -163,12 +168,15 @@ def _buy_gt(rpc: Rpc, gt: gtb.GoTicketsBuyClient | None, job: dict) -> dict:
         cards = gt.get_gift_cards()
     except (EvoWriteRejected, gtb.GoTicketsBuyError) as e:
         return {**out, **_record(rpc, job, state="stopped", reasons=["gift_card_read_failed"], error=str(e)[:300])}
-    # GoTickets accepts an actual total up to $0.01 per ticket above expectedTotal: cover that too
-    cards_used = gtb.pick_gift_cards(cards, total + 0.01 * qty, cfg.get("gt_gift_card_ids"))
+    try:  # GoTickets accepts an actual total up to $0.01 per ticket above expectedTotal: cover that too
+        cards_used = gtb.pick_gift_cards(cards, total + 0.01 * qty, cfg.get("gt_gift_card_ids"))
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
+        return {**out, **_record(rpc, job, state="stopped", reasons=["gift_card_read_failed"],
+                                 error=f"{type(e).__name__}: {e}"[:300])}
     if not cards_used:
         return {**out, **_record(rpc, job, state="stopped", reasons=["gift_card_balance_short"], **quoted)}
     body = gtb.order_body(event_id=row["gt_event_id"], listing_id=listing_id, qty=qty, expected=total,
-                          delivery_id=delivery["id"], email=profile["email"], phone=profile["phone"],
+                          delivery_id=delivery_id, email=profile["email"], phone=profile["phone"],
                           billing=profile["billing"], recipient=profile["recipient"], gift_card_ids=cards_used)
     # re-check the lease right before the write: only the worker that still holds the row may buy
     if _record(rpc, job, state="buying", **quoted)["recorded"] != "buying":
@@ -269,16 +277,15 @@ def order_status(order: dict) -> dict:
             "bought_row": tg.get("row"), "seats": seats, "rejection_reason": reason}
 
 
-GT_SELLER_STATE = {"confirmed": "accepted", "rejected": "rejected"}
-
-
 def gt_purchase_status(purchase: dict) -> dict:
     """What a fresh GoTickets purchase read says, in the shape manual_sub_buy_follow_record stores.
-    The seller counts as confirmed only on a status in gotickets_buy_client.GT_CONFIRMED; a status
-    nobody has seen yet leaves the buy pending."""
+    Both final answers come from exact lists (gotickets_buy_client.GT_CONFIRMED / GT_REJECTED):
+    'rejected' releases the sale for another buy, so a status that only resembles a cancellation
+    (or one nobody has seen yet) leaves the buy pending for a person to read."""
     raw = purchase.get("orderStatus")
-    return {"order_state": raw, "seller_state": GT_SELLER_STATE.get(gtb.purchase_state(raw)),
-            "order_total_usd": purchase.get("orderTotal")}
+    status = str(raw or "").strip().upper()
+    seller = "accepted" if status in gtb.GT_CONFIRMED else "rejected" if status in gtb.GT_REJECTED else None
+    return {"order_state": raw, "seller_state": seller, "order_total_usd": purchase.get("orderTotal")}
 
 
 def follow(rpc: Rpc, client: EvoBuyClient, gt: gtb.GoTicketsBuyClient | None = None) -> dict:

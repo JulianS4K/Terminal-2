@@ -280,4 +280,5 @@ SELECT pg_temp._sf_patch('public.sub_finder_order_json(public.sub_finder_order)'
 SELECT pg_temp._sf_patch('public.sub_finder_buy_confirmed(bigint, text, uuid, text, text, text, boolean)'::regprocedure,
   'sub_finder_market_buyable', ARRAY[
   [$o$AND x->>'market' = 'evo' AND x->>'listing_id' = p_listing_id$o$,
-   $n$AND public.sub_finder_market_buyable(x->>'market') AND x->>'listing_id' = p_listing_id$n$, '1']]);
+   $n$AND public.sub_finder_market_buyable(x->>'market') AND x->>'listing_id' = p_listing_id
+   ORDER BY (x->>'market' = 'evo') DESC                -- the same cover sub_finder_buy will take$n$, '1']]);

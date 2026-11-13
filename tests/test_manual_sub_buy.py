@@ -402,6 +402,12 @@ def test_a_gotickets_answer_without_a_total_records_our_own_total():
     (GtClient(listing={**GT_LISTING, "displayPrice": None}), "price_unknown"),
     (GtClient(listing={**GT_LISTING, "displayPrice": 85.01}), "price_above_ceiling"),
     (GtClient(cards=gtb.GoTicketsBuyError("x")), "gift_card_read_failed"),
+    (GtClient(cards=[{"id": "not-a-number", "amountRemaining": 500.0}]), "gift_card_read_failed"),
+    (GtClient(listing={**GT_LISTING, "displayPrice": "n/a"}), "listing_unreadable"),
+    (GtClient(listing={**GT_LISTING, "quantity": "two"}), "listing_unreadable"),
+    (GtClient(listing={**GT_LISTING, "deliveryMethods": [{"id": "x", "price": 1.0}]}), "listing_unreadable"),
+    (GtClient(listing={**GT_LISTING, "deliveryMethods": [{"id": 7, "price": "free"}]}), "listing_unreadable"),
+    (GtClient(listing={**GT_LISTING, "tax": {"amount": 1}}), "listing_unreadable"),
     (GtClient(cards=[{"id": 28085, "amountRemaining": 100.0}, {"id": 5, "amountRemaining": 9000.0}]),
      "gift_card_balance_short"),
 ])
@@ -454,6 +460,10 @@ def test_gt_purchase_status_maps_the_seller_state_from_the_allowlist():
     assert mb.gt_purchase_status({"orderStatus": "MOBILE_QR_DELIVERED", "orderTotal": 178.5}) == {
         "order_state": "MOBILE_QR_DELIVERED", "seller_state": "accepted", "order_total_usd": 178.5}
     assert mb.gt_purchase_status({"orderStatus": "REFUNDED"})["seller_state"] == "rejected"
+    assert mb.gt_purchase_status({"orderStatus": " cancelled "})["seller_state"] == "rejected"
+    # a status that only resembles a cancellation is not final: it would release the sale for another buy
+    assert mb.gt_purchase_status({"orderStatus": "PENDING_CANCELLATION_REVIEW"})["seller_state"] is None
+    assert mb.gt_purchase_status({"orderStatus": "PARTIALLY_REFUNDED"})["seller_state"] is None
     assert mb.gt_purchase_status({"orderStatus": "PENDING_CONFIRMATION"})["seller_state"] is None
     assert mb.gt_purchase_status({"orderStatus": "SOMETHING_NEW"})["seller_state"] is None   # never 'accepted'
     assert mb.gt_purchase_status({}) == {"order_state": None, "seller_state": None, "order_total_usd": None}
