@@ -57,10 +57,14 @@ class _Limiter:
         return self.allow
 
 
-def _client(db, limiter=None):
+def _app(db, limiter=None):
     app = FastAPI()
     app.include_router(s.make_router(lambda: db, limiter=limiter))
-    return TestClient(app)
+    return app
+
+
+def _client(db, limiter=None):
+    return TestClient(_app(db, limiter))
 
 
 H = {"x-api-key": KEY}
@@ -531,3 +535,58 @@ def test_balances_passes_the_sql_answer_through_and_its_refusal():
     db = FakeDB(rpc_data={"sub_finder_balances": {"error": "forbidden", "detail": "this key may not read balances"}})
     assert _client(db).get("/api/v1/subs/balances", headers=H).status_code == 403
     assert _client(FakeDB()).get("/api/v1/subs/balances").status_code == 401
+
+
+# ---------------------------------------------------------------- a dropped connection
+
+class TransportError(Exception):
+    """Stands in for httpx.TransportError (matched by class name, so httpx is not imported)."""
+
+
+class ReadError(TransportError):
+    pass
+
+
+class _FlakyDB(FakeDB):
+    """Raises the given error on the first call of each named RPC, then answers."""
+
+    def __init__(self, flaky, **kw):
+        super().__init__(**kw)
+        self.flaky = dict(flaky)
+
+    def rpc(self, name, args):
+        if name in self.flaky:
+            exc = self.flaky.pop(name)
+            self.rpcs.append((name, args))
+            return type("Q", (), {"execute": lambda _self: (_ for _ in ()).throw(exc)})()
+        return super().rpc(name, args)
+
+
+def test_dropped_connection_is_recognised_by_class_name():
+    assert s.dropped_connection(ReadError("reset")) and s.dropped_connection(TransportError("x"))
+    assert not s.dropped_connection(RuntimeError("statement timeout"))
+
+
+def test_a_read_is_sent_again_once_when_the_connection_drops():
+    row = {"count": 1, "items": [{"order_number": "659213629"}]}
+    db = _FlakyDB({"mcp_verify_key": ReadError("reset"), "sub_finder_order_read": ReadError("reset")},
+                  rpc_data={"sub_finder_latest_job": JOB, "sub_finder_order_read": row})
+    r = _client(db).get("/api/v1/subs/orders/659213629", headers=H)
+    assert r.status_code == 200 and r.json() == row
+    assert [n for n, _ in db.rpcs].count("mcp_verify_key") == 2
+    assert [n for n, _ in db.rpcs].count("sub_finder_order_read") == 2
+
+
+def test_a_write_or_another_error_is_never_sent_twice():
+    # a buy whose connection dropped may have gone through: it is not repeated
+    db = _FlakyDB({"sub_finder_buy_confirmed": ReadError("reset")},
+                  rpc_data={"sub_finder_latest_job": JOB})
+    c = TestClient(_app(db), raise_server_exceptions=False)
+    r = c.post("/api/v1/subs/orders/659213629/buy", headers=H, json={"listing_id": "6833175743"})
+    assert r.status_code == 500 and [n for n, _ in db.rpcs].count("sub_finder_buy_confirmed") == 1
+    # a read that failed for another reason (a database error) is not repeated either
+    db = _FlakyDB({"sub_finder_order_read": RuntimeError("statement timeout")},
+                  rpc_data={"sub_finder_latest_job": JOB})
+    c = TestClient(_app(db), raise_server_exceptions=False)
+    assert c.get("/api/v1/subs/orders/659213629", headers=H).status_code == 500
+    assert [n for n, _ in db.rpcs].count("sub_finder_order_read") == 1
