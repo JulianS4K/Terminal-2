@@ -1139,6 +1139,71 @@ def test_manual_sub_buy_status_route(client, monkeypatch):
     assert r.status_code == 200 and r.json()["enabled"] is True
 
 
+# ---- GoTickets sub offer worker loop (D0, operator 2026-11-13) --------------
+
+def test_gt_sub_offer_tick_offers_then_follows(monkeypatch):
+    import anyio
+    import core.vault as vault
+    from core import gt_sub_offer
+    creds = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": "b"}
+    fake = _WatchdogSb({"offer_id": 1})
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    monkeypatch.setattr(vault, "vault_secret", lambda db, name: creds[name])
+    seen = {}
+
+    def _fake_tick(rpc, client):
+        seen["claim"], seen["ready"] = rpc("sub_finder_gt_offer_claim", {}), client.ready()
+        return {"action": "offer", "state": "sent"}
+
+    monkeypatch.setattr(gt_sub_offer, "tick", _fake_tick)
+    monkeypatch.setattr(gt_sub_offer, "follow", lambda rpc, client: {"action": "idle"})
+    out = anyio.run(app_module._gt_sub_offer_tick)
+    assert out == {"action": "offer", "state": "sent", "follow": {"action": "idle"}}
+    assert seen == {"claim": {"offer_id": 1}, "ready": True}
+    assert fake.calls == [("sub_finder_gt_offer_claim", {})]
+    assert app_module._gt_sub_offer_last["result"]["state"] == "sent"
+    monkeypatch.setattr(gt_sub_offer, "tick", lambda rpc, client: {"action": "idle"})
+    assert anyio.run(app_module._gt_sub_offer_tick) == {"action": "idle", "follow": {"action": "idle"}}
+    creds["GOTICKETS_API_SECRET"] = None                          # no credentials: nothing is claimed
+    assert anyio.run(app_module._gt_sub_offer_tick)["action"] == "no_credentials"
+
+
+def test_gt_sub_offer_loop_off_by_default_then_ticks_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.delenv("GT_SUB_OFFER_LIVE", raising=False)
+    monkeypatch.setenv("MANUAL_SUB_BUY_LIVE", "1")               # another worker's flag does not turn this on
+    anyio.run(app_module._gt_sub_offer_loop)  # returns at once
+    monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("db blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_gt_sub_offer_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._gt_sub_offer_loop)
+    assert ticks["n"] == 2 and app_module._gt_sub_offer_last["error"] == "db blip"
+
+
+def test_gt_sub_offer_status_route(client, monkeypatch):
+    monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")
+    r = client.get("/api/admin/gt-sub-offer/status")
+    assert r.status_code == 200 and r.json()["enabled"] is True
+
+
 def test_autobuy_sale_client_caches_only_when_every_token_is_there(monkeypatch):
     import core.vault as vault
     vals = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": "b", "SEATGEEK_API_TOKEN": None, "VIVID_API_TOKEN": "v",

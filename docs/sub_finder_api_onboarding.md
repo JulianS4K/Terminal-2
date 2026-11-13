@@ -1,6 +1,6 @@
 # S4K Sub Finder API — onboarding
 
-> **Doc version:** v1.4.0 (2026-11-13) — every cover now carries the N2S **gate** and label; other sections in the same zone are searched when the order's own section has nothing ([§8](#8-how-matching-works-and-what-it-does-not-do)); each order says what to do next in `action`; the clean one-to-one EVO cover can be **bought automatically** (off by default, $1,000 a day). · v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
+> **Doc version:** v1.5.0 (2026-11-13) — GoTickets orders: `sub_offer` on the order and `POST /orders/{n}/offer-sub`, the CRM's yes to offering the customer a gate 3–5 sub through GoTickets ([§7a](#7a-offer-a-sub-to-a-gotickets-customer)). · v1.4.0 (2026-11-13) — every cover now carries the N2S **gate** and label; other sections in the same zone are searched when the order's own section has nothing ([§8](#8-how-matching-works-and-what-it-does-not-do)); each order says what to do next in `action`; the clean one-to-one EVO cover can be **bought automatically** (off by default, $1,000 a day). · v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
 
 For the CRM team. You send us orders that need a substitute ("sub"); we pull fresh listings, and you read back the best replacement tickets for each order. If you are allowed to, you can also ask us to buy an EVO replacement and then follow that purchase until the seller confirms or rejects it.
 
@@ -194,6 +194,7 @@ Suggested polling: every 10 seconds; expect `done` in 20 seconds to 3 minutes, a
 | `tevo_event_id`, `event_name`, `event_date` | the event we matched it to |
 | `state` | `pending` (not answered yet) · `cover` · `no_cover` · `unmapped` (event not recognised) |
 | `action` | what to do with the answer: `auto_bought` (we bought it, see `buy`) · `buy_manually` (a same-section, same-or-better cover exists: buy it yourselves) · `offer` (only a move to another section or rows back was found: ask the buyer first, then buy it yourselves) · `review` (the only cover costs more than twice the sale) · `none` |
+| `sub_offer` | GoTickets orders only: the sub we can offer the customer and how that offer stands ([§7a](#7a-offer-a-sub-to-a-gotickets-customer)); otherwise null |
 | `auto_buy_note` | why we did not buy it automatically ([§8](#8-how-matching-works-and-what-it-does-not-do)); null when we did |
 | `best` | the recommended cover: lowest gate first, then cheapest total. Null without a cover |
 | `covers` | up to 3 covers per market, best first |
@@ -311,6 +312,35 @@ Follow it by polling `GET /api/v1/subs/orders/{order_number}` every 15 to 30 sec
 - Buying a cover with `spare: 1` buys the extra ticket too; nothing here relists it.
 - Nothing here accepts, rejects or reprices the customer's order on its marketplace.
 
+## 7a. Offer a sub to a GoTickets customer
+
+For an order sold on **GoTickets**, when the only covers move the buyer (gates 3 to 6, see [§8](#8-how-matching-works-and-what-it-does-not-do)), the order carries a `sub_offer`:
+
+```json
+"sub_offer": {"via": "gotickets", "ask_crm": true, "results_only": false, "gate": 5,
+              "market": "evo", "listing_id": "3201", "section": "102", "row": "4",
+              "rebate": 60.00, "request": null}
+```
+
+| Gate | What we do |
+|---|---|
+| 1, 2 | nothing to offer: the seats are in the same section, same or better row. `sub_offer` is null |
+| 3, 4 | `ask_crm: true`. On your yes we offer the customer those seats |
+| 5 | `ask_crm: true`, with `rebate` = sale total − sub total (a gate 5 sub is always cheaper). On your yes we offer the seats with that rebate |
+| 6 | `results_only: true`. Never offered; you only get the results |
+
+**Say yes:** `POST /api/v1/subs/orders/{order_number}/offer-sub` with `{"listing_id": "<sub_offer.listing_id>"}` (optional `market`, `requested_by`). You may name another cover of the same order instead, as long as it is gate 3, 4 or 5. Answers 202 `{"offer_id", "state": "requested", "gate", "section", "row", "rebate"}`. Saying nothing means no offer is made.
+
+We then send GoTickets one substitution request for that order and keep reading its status. Re-read the order: `sub_offer.request` shows `state` (`requested` → `sent`, or `stopped` with `reasons`, or `unknown`) and GoTickets' own `status` (`PENDING`, `CUSTOMER_REVIEW`, `ACCEPTED`, `DENIED`, `CANCELLED`, with `denial_reason`).
+
+Rules:
+- Needs the scope `subs:offer` (see `ping`). Without it the route answers 403.
+- The order must be in our own copy of the GoTickets order book with the same seats and quantity. Alert us with the order number only; an order sent with its own details cannot be offered.
+- One live offer per order. After a denial or a stop you may confirm another cover.
+- We do not buy the replacement seats. Buy them yourselves once the customer accepts; the listing can sell in the meantime.
+- Before sending we re-read the sale: a cancelled or already delivered sale, a different quantity, or a request already open stops the offer (`reasons`).
+- `unknown` means we could not tell whether GoTickets received the offer. Check Seller Central; no second offer is sent for that order until S4K clears it.
+
 ## 8. How matching works, and what it does not do
 
 **A cover is** a listing with:
@@ -384,16 +414,17 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 4 | Optional: TicketsData fallback | `UPDATE sub_finder_config SET td_enabled = true;` — costs 12 credits + 1 report per event asked, at most `td_max_events_per_job` (6) events per job and 3 in flight |
 | 5 | Optional: let the key buy | `UPDATE sub_finder_config SET buy_enabled = true, buy_key_ids = buy_key_ids \|\| <id>;` |
 | 6 | Optional: automatic one-to-one buys (mig `20261113010000`) | `UPDATE sub_finder_config SET auto_buy_enabled = true;` — independent of step 5. Limits: `auto_buy_daily_cap_usd` (1000, counted per New York day over `manual_sub_buy` rows whose `requested_by` starts `sub finder auto`) and `auto_buy_min_profit_pct` (10; 0 = any profit) |
+| 7 | Optional: GoTickets sub offers (mig `20261113020000`) | `UPDATE sub_finder_config SET gt_offer_enabled = true, gt_offer_key_ids = gt_offer_key_ids \|\| <id>;` and `GT_SUB_OFFER_LIVE=1` on the web service. Last tick: `GET /api/admin/gt-sub-offer/status`. Rows: `sub_finder_gt_offer` |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys, automatic buys and operator buys together. An `unknown` outcome flips its kill switch and stops **all** manual buys until someone has checked EVO.
 
 Other settings: `max_orders_per_job` (200), `pull_refresh` (2 minutes: a listing pull newer than this is reused), `settle_min_s` (20), `settle_timeout_s` (180: match with whatever has arrived), `rows_back` (5), `td_timeout_s` (150).
 
-**To stop it:** `enabled = false` stops everything; `buy_enabled = false` stops new buy requests only; `auto_buy_enabled = false` stops automatic buys; `td_enabled = false` stops TicketsData spend. Revoke a key with `SELECT mcp_revoke_key(<id>);`.
+**To stop it:** `enabled = false` stops everything; `buy_enabled = false` stops new buy requests only; `auto_buy_enabled = false` stops automatic buys; `gt_offer_enabled = false` stops new GoTickets offers (ones already sent are still followed); `td_enabled = false` stops TicketsData spend. Revoke a key with `SELECT mcp_revoke_key(<id>);`.
 
 **Where to look:** `sub_finder_job` / `sub_finder_order` (what was asked and answered), `sub_finder_td_pull` (each TicketsData call and how it ended), `manual_sub_buy` (every purchase, with `requested_by` naming the key and the person), `mcp_usage_daily` (calls per key; tools are named `subs.*`).
 
-RULE 2 note: this API adds no upstream write. Its only way to spend money is a row in `manual_sub_buy`, bought by `core/manual_sub_buy.py` through the path-pinned `evo_buy_client.py`. The order follow-up and every listing pull are GETs.
+RULE 2 note: the one upstream write this API can cause besides the EVO buy is the GoTickets substitution request (`POST /rest/substitution-requests`, `gotickets_sub_client.py`, path-pinned, operator-authorized 2026-11-13), sent only after the CRM's yes. Its only way to spend money is a row in `manual_sub_buy`, bought by `core/manual_sub_buy.py` through the path-pinned `evo_buy_client.py`. The order follow-up and every listing pull are GETs.
 
 ## 10. Troubleshooting
 

@@ -364,3 +364,26 @@ def test_buy_passes_through_and_maps_refusals():
     for code, status in (("forbidden", 403), ("not_found", 404), ("conflict", 409), ("invalid", 422)):
         db.rpc_data["sub_finder_buy"] = {"error": code}
         assert c.post(url, headers=H, json={"listing_id": "1"}).status_code == status
+
+
+# ---------------------------------------------------------------- offer a sub through GoTickets
+
+def test_offer_sub_files_the_crm_yes_and_maps_refusals():
+    db = FakeDB(rpc_data={"sub_finder_gt_offer_request": {"offer_id": 3, "state": "requested", "gate": 5, "rebate": 60},
+                          "sub_finder_access": {"find": True, "offer": True}})
+    c = _client(db)
+    url = "/api/v1/subs/orders/1003/offer-sub"
+    assert c.post(url, json={"listing_id": "3201"}).status_code == 401
+    r = c.post(url, headers=H, json={"listing_id": "3201", "market": "evo", "requested_by": "dana"})
+    assert r.status_code == 202 and r.json()["rebate"] == 60
+    assert db.last("sub_finder_gt_offer_request") == {
+        "p_key_id": 7, "p_key_label": "crm", "p_order_number": "1003", "p_listing_id": "3201",
+        "p_market": "evo", "p_requested_by": "dana"}
+    assert "subs:offer" in c.get("/api/v1/subs/ping", headers=H).json()["scopes"]
+    for body in ({}, {"listing_id": "bad id"}, [1]):
+        assert c.post(url, headers=H, json=body).status_code == 422
+    assert c.post(url, headers=H, content=b"not json").status_code == 422
+    assert c.post("/api/v1/subs/orders/bad%20order/offer-sub", headers=H, json={"listing_id": "1"}).status_code == 422
+    for code, status in (("forbidden", 403), ("not_found", 404), ("conflict", 409), ("invalid", 422)):
+        db.rpc_data["sub_finder_gt_offer_request"] = {"error": code}
+        assert c.post(url, headers=H, json={"listing_id": "3201"}).status_code == status

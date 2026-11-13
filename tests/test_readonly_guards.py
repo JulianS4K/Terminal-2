@@ -538,6 +538,14 @@ def test_sale_accept_client_registered_with_pinned_writes():
     assert chk.SANCTIONED_WRITE_TOKENS["sale_accept_client.py"] in (REPO_ROOT / "sale_accept_client.py").read_text()
 
 
+def test_gotickets_sub_client_registered_with_its_one_pinned_write():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["gotickets_sub_client.py"] == frozenset({"GET", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["gotickets_sub_client.py"] in (REPO_ROOT / "gotickets_sub_client.py").read_text()
+    from gotickets_sub_client import GT_SUB_WRITES
+    assert GT_SUB_WRITES == (("POST", "sc.gotickets.com", r"^/rest/substitution-requests$"),)
+
+
 def test_sale_accept_guard_refuses_reject_and_other_writes():
     from sale_accept_client import _assert_readonly_method, SaleAcceptError
     for m, u in (("POST", "https://brokers.vividseats.com/webservices/v1/rejectOrder"),
