@@ -213,6 +213,41 @@ def test_client_write_outcomes():
     assert s.calls[0][2]["json"] == {"listingId": 1}
 
 
+def _unreadable(status=200):
+    def boom():
+        raise ValueError("not json")
+    return SimpleNamespace(status_code=status, text="<html>", json=boom)
+
+
+def test_client_read_failures_raise_and_never_look_like_a_write_outcome():
+    c = gtb.GoTicketsBuyClient("gid", "gsec", session=Session(requests.ConnectionError("down")))
+    with pytest.raises(gtb.GoTicketsBuyError):
+        c.get_gift_cards()
+    c = gtb.GoTicketsBuyClient("gid", "gsec", session=Session(_unreadable()))
+    with pytest.raises(gtb.GoTicketsBuyError):
+        c.get_purchase(8337008)
+
+
+def test_a_2xx_buy_we_cannot_read_is_an_unknown_outcome():
+    c = gtb.GoTicketsBuyClient("gid", "gsec", session=Session(_unreadable()))
+    with pytest.raises(EvoWriteUnknown):
+        c.create_order({})
+    c = gtb.GoTicketsBuyClient("gid", "gsec", session=Session(_resp(data=[{"id": 1}])))
+    with pytest.raises(EvoWriteUnknown):                         # an answer that is not an order
+        c.create_order({})
+
+
+def test_client_gift_cards_and_purchase_shapes():
+    s = Session(_resp(data=[{"id": 28085, "amountRemaining": 1.0}, "junk"]), _resp(data={"cards": []}),
+                _resp(data={"id": 8337008, "orderStatus": "CANCELLED"}), _resp(data=["junk"]))
+    c = gtb.GoTicketsBuyClient("gid", "gsec", session=s)
+    assert c.get_gift_cards() == [{"id": 28085, "amountRemaining": 1.0}]
+    assert c.get_gift_cards() == []                               # not a list: no cards
+    assert c.get_purchase(8337008)["orderStatus"] == "CANCELLED"
+    assert c.get_purchase(8337008) == {}                          # not an object: nothing read
+    assert s.calls[2][1] == "https://sc.gotickets.com/rest/purchases/8337008"
+
+
 # ------------------------------------------------------------------ pure helpers
 
 def test_expected_total_is_gotickets_formula_without_card_rate():
@@ -228,6 +263,12 @@ def test_pick_delivery_needs_an_electronic_method_with_an_id():
     assert gtb.pick_delivery({"deliveryMethods": [{"price": 0, "physicalDelivery": False}]}) is None
     cheap = gtb.pick_delivery({"deliveryMethods": [{"id": 1, "price": 6}, {"id": 3, "price": 0}]})
     assert cheap["id"] == 3
+
+
+def test_gift_card_balance_reads_the_documented_name_too():
+    assert gtb.gift_card_balance({"remainingBalance": 12.5}) == 12.5
+    assert gtb.gift_card_balance({"amountRemaining": 0, "remainingBalance": 99}) == 0.0
+    assert gtb.gift_card_balance({}) == 0.0
 
 
 def test_gift_cards_largest_first_allowlist_and_shortfall():
@@ -283,6 +324,10 @@ def test_buys_once_from_gift_cards_and_records_the_purchase():
     ({"listing": {**LISTING, "displayPrice": 99.0}}, {}, {}, "price_rose"),            # 198 + 6 > 200
     ({"cards": [{"id": 1, "amountRemaining": 100}]}, {}, {}, "gift_card_balance_short"),
     ({}, {}, {"gt_recipient": None}, "gt_buyer_profile_missing"),
+    ({}, {}, {"gt_buyer_phone": None}, "gt_buyer_profile_missing"),
+    ({}, {}, {"gt_billing_address": {**PROFILE["gt_billing_address"], "postalCode": ""}}, "gt_buyer_profile_missing"),
+    ({"listing": {**LISTING, "displayPrice": None}}, {}, {}, "price_unknown"),
+    ({"cards": gtb.GoTicketsBuyError("timeout")}, {}, {}, "gift_card_read_failed"),
     ({}, {"gt_event_id": None}, {}, "no_gt_event_id"),
     ({}, {}, {"per_order_cap_usd": 150}, "over_per_order_cap"),                       # GoTickets' own cap
     ({}, {"spend_today_before": 500}, {}, "over_daily_cap"),
