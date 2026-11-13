@@ -227,7 +227,8 @@ def _buy_gt(rpc: Rpc, gt: gtb.GoTicketsBuyClient | None, job: dict, now: datetim
         note = None if charged is None or float(charged) <= total + 0.01 * qty else \
             f"GoTickets total ${charged} is above the expected ${total:.2f}"
         return _record(rpc, job, phase="buy_sent", buy_order_id=oid, buy_state=resp.get("orderStatus"),
-                       live_error=note)
+                       live_error=note,  # 20261113410000: what GoTickets charged, else what we priced
+                       buy_total_usd=round(float(charged), 2) if charged is not None else total)
     except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy
         return _record(rpc, job, phase="buy_unknown", reasons=["buy_unknown"],
                        live_error=f"{type(e).__name__}: {e}"[:300])
@@ -309,7 +310,8 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
         note = None if total is None or float(total) <= quoted + 0.01 else \
             f"EVO total ${total} is above the quoted ${quoted:.2f}"
         return _record(rpc, job, phase="buy_sent", buy_order_id=str(order["id"]), buy_state=order.get("state"),
-                       live_error=note)
+                       live_error=note,  # 20261113410000: what EVO charged, else the quoted total with tax
+                       buy_total_usd=round(float(total), 2) if total is not None else quoted)
     except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy
         return _record(rpc, job, phase="buy_unknown", reasons=["buy_unknown"],
                        live_error=f"{type(e).__name__}: {e}"[:300])
