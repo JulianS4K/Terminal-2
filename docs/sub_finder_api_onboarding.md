@@ -78,6 +78,30 @@ The label starts a lookup. With the additions below, the rest of the conversatio
 | `sub_rebate_amount` | dollars, `0` allowed | `rebate_amount` | sent with a GoTickets offer; required when the sub is rows back |
 | `sub_decided_by`, `sub_decided_at` | who, and a UTC instant | `requested_by` | we act **once per `sub_decided_at`**, so a decision is never carried out twice; change the instant to decide again |
 
+**Which answer each gate and suffix needs.** These are the only responses we need from you; everything else we decide or do ourselves.
+
+| What the best cover is | What we do by ourselves | The answer we need in your feed |
+|---|---|---|
+| Gate 1 `Index`, on EVO, no suffix (a one-ticket order: exact row) | buy it | none |
+| Gate 2 `S4KTrading`, on EVO, loss of 5% of the sale or less, no suffix | buy it | none |
+| Gate 1 or 2 that we did not buy (loss over 5%, or over a spending limit) | nothing | `sub_decision: buy` + `sub_listing_id` |
+| Gate 1 or 2 on GoTickets / SeatGeek / TicketsData markets | nothing: we can only buy on EVO | none; a person buys it through `link` |
+| Gate 3 `Index offer subs` / gate 4 `offer subs s4ktrading` | nothing | GoTickets order: `sub_decision: offer` + `sub_listing_id`. Other marketplaces: you ask the buyer, then `sub_decision: buy` if the cover is on EVO |
+| Gate 5 `Index Down offer subs` | nothing | as gate 3–4, plus `sub_rebate_amount` (`0` allowed) |
+| Gate 6 `Down offer subs S4KTrading` | nothing | none: shown to you only, never offered or bought on an answer |
+| `over 200% of sale` | nothing | `sub_decision: buy` + `sub_listing_id` if a person accepts the cost |
+
+| Suffix on the label (`flags` code) | What it adds to the answer above |
+|---|---|
+| `single ticket` in a different row (`single_ticket_row_differs`) | either `sub_decision: offer` (no confirm needed), or to skip the offer `sub_decision: buy` + `sub_confirm: true` |
+| `single ticket` in the exact row (no flag) | nothing: bought as gate 1 / 2 |
+| `repost single` (`repost_single`) | `sub_confirm: true`: one more ticket than was sold will be bought |
+| `obstructed view` (`obstructed_view`) | `sub_confirm: true` |
+| `zone unverified` (`zone_unverified`) | `sub_confirm: true`: we could not check the seats are in the same area |
+| `no sale price` (`no_sale_price`) | `sub_confirm: true`: profit could not be worked out |
+
+After a GoTickets customer accepts and the offered seats are gone (`accepted_next: "new_sub_needed"`), the same tables apply to `new_best`: send a new answer with a new `sub_decided_at`.
+
 **C. So we stop sooner and match better**
 
 | Field on the item | Why |
