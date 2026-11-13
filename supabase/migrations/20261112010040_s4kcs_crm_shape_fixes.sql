@@ -1,4 +1,4 @@
--- Migration 20261112010000 · level:secondary-sales · lane:A1 (CRM ingest) + D7 (N2B intake) · writes:s4kcs_orders_pending,n2s_items(s4k_source of gmail rows) · reads:s4kcs_orders,v_s4kcs_orders,vivid_orders,gotickets_sales,n2s_items · pre:20261111020000
+-- Migration 20261112010040 · level:secondary-sales · lane:A1 (CRM ingest) + D7 (N2B intake) · writes:s4kcs_orders_pending,n2s_items(s4k_source of gmail rows) · reads:s4kcs_orders,v_s4kcs_orders,vivid_orders,gotickets_sales,n2s_items · pre:20261112010000
 --
 -- S4K CRM (crm.s4kcs.com) feed — four shape gaps found reading what the API actually returns
 -- (operator 2026-11-11: "look at its shape", then "fix vivid and anything else").
@@ -133,7 +133,7 @@ BEGIN
            pc.cover_label, pc.cover_gate, pc.profit AS cover_profit, pc.buy_url,
            pc.sub_section, pc.sub_row, pc.sub_qty, pc.sub_view
       FROM req2 r
-      -- mig 20261112010000: the view, not the raw table — the CRM ships Vivid prices empty.
+      -- mig 20261112010040: the view, not the raw table — the CRM ships Vivid prices empty.
       LEFT JOIN public.v_s4kcs_orders c
              ON c.source = r.crm_source AND c.s4k_order_id = r.id
       LEFT JOIN feed f ON f.source = r.crm_source
@@ -302,7 +302,7 @@ BEGIN
            c.source AS c_source,
            c.tevo_event_id AS c_ev, c.event_name AS c_name, c.event_date AS c_date, c.venue_name AS c_venue,
            c.section AS c_sec, c."row" AS c_row, c.quantity AS c_qty,
-           -- mig 20261112010000: the view's per-ticket price (same basis rule as
+           -- mig 20261112010040: the view's per-ticket price (same basis rule as
            -- s4kcs_price_per_ticket, plus the vivid_orders / gotickets_sales repair).
            c.price_per_ticket AS c_ea,
            c.price_source AS c_price_source,
@@ -375,7 +375,7 @@ ALTER TABLE public.s4kcs_orders_pending
   ADD COLUMN IF NOT EXISTS retry_of bigint;
 COMMENT ON COLUMN public.s4kcs_orders_pending.retry_of IS
   'For a single-market retry (query_str retry:<market>): the s4kcs_orders_pending.id of the full '
-  'fetch that came back without that market. NULL on full fetches. Mig 20261112010000.';
+  'fetch that came back without that market. NULL on full fetches. Mig 20261112010040.';
 CREATE INDEX IF NOT EXISTS s4kcs_orders_pending_retry_of_idx
   ON public.s4kcs_orders_pending (retry_of) WHERE retry_of IS NOT NULL;
 
@@ -475,7 +475,7 @@ $function$;
 COMMENT ON FUNCTION public.n2s_market_canon(text) IS
   'One spelling per market for n2s_items.s4k_source (the CRM''s names). N2B Gmail labels spell '
   'them Seatgeek / Tickpick / Gametime.Co; exact-match readers (n2s_sg_queue, n2s_map_events) '
-  'missed those rows. Unknown names pass through trimmed. Mig 20261112010000.';
+  'missed those rows. Unknown names pass through trimmed. Mig 20261112010040.';
 
 CREATE OR REPLACE FUNCTION public.n2b_ingest_from_apps_script(p_items jsonb, p_shared_secret text, p_full_sync boolean DEFAULT false)
  RETURNS jsonb
@@ -530,7 +530,7 @@ BEGIN
       s.nid,
       COALESCE(s.site_order, s.it->>'pos_order'),
       s.site,
-      public.n2s_market_canon(s.site),   -- mig 20261112010000 (was a 3-name CASE)
+      public.n2s_market_canon(s.site),   -- mig 20261112010040 (was a 3-name CASE)
       s.st,
       CASE s.st WHEN 'n2b' THEN 'N2B' WHEN 'n2b_cancelled' THEN 'N2B cancelled' ELSE 'N2B closed' END,
       s.st <> 'n2b', 'gmail',

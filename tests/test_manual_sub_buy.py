@@ -137,3 +137,74 @@ def test_a_sent_buy_with_an_unreadable_answer_is_unknown():
     assert out["state"] == "unknown" and "no order id" in out["error"]
     out = mb.tick(Rpc(_job(), boom={"bought"}), Client())
     assert out["state"] == "unknown" and "db blip" in out["error"]
+
+
+# ---- follow: re-read a bought order until the seller confirms or rejects it ----
+
+ORDER = {"id": 19429767, "state": "completed", "seller_state": "completed", "total": "246.17",
+         "seller_rejection_reason": None,
+         "items": [{"seats": [12], "quantity": 1,
+                    "ticket_group": {"section": "140", "row": "13", "seats": ["12"]}}]}
+
+
+class FollowRpc:
+    def __init__(self, job):
+        self.job, self.calls = job, []
+
+    def __call__(self, name, params):
+        self.calls.append((name, params))
+        return self.job if name == "manual_sub_buy_follow_claim" else "confirmed"
+
+
+class OrderClient:
+    def __init__(self, order):
+        self.order, self.calls = order, []
+
+    def get_order(self, order_id):
+        self.calls.append(order_id)
+        if isinstance(self.order, Exception):
+            raise self.order
+        return self.order
+
+    def create_order(self, body):  # pragma: no cover - a follow must never reach a write
+        raise AssertionError("follow sent a buy")
+
+
+def test_order_status_reads_state_total_and_real_seats():
+    assert mb.order_status(ORDER) == {
+        "order_state": "completed", "seller_state": "completed", "order_total_usd": "246.17",
+        "bought_section": "140", "bought_row": "13", "seats": ["12"], "rejection_reason": None}
+    # EVO sends 0 for a seat the seller has not assigned yet: that is "unknown", not seat 0
+    pending = {"state": "pending", "seller_state": "pending",
+               "items": [{"seats": [0, 0, 0, 0], "ticket_group": {"section": "134", "row": "G", "seats": []}}]}
+    assert mb.order_status(pending)["seats"] == []
+    # seats can sit on the ticket group only; a rejection reason is carried
+    rej = {"state": "rejected", "seller_state": "rejected", "seller_rejection_reason": "Tickets sold",
+           "items": [{"ticket_group": {"seats": ["7", "8"]}}]}
+    got = mb.order_status(rej)
+    assert got["seats"] == ["7", "8"] and got["rejection_reason"] == "Tickets sold"
+    assert mb.order_status({})["seats"] == [] and mb.order_status({"items": [None]})["bought_row"] is None
+
+
+def test_follow_idle_when_nothing_is_due():
+    rpc, client = FollowRpc(None), OrderClient(ORDER)
+    assert mb.follow(rpc, client) == {"action": "idle"}
+    assert client.calls == [] and [n for n, _ in rpc.calls] == ["manual_sub_buy_follow_claim"]
+
+
+def test_follow_reads_the_order_and_records_it():
+    rpc, client = FollowRpc({"buy_id": 18, "buy_order_id": "19429767"}), OrderClient(ORDER)
+    assert mb.follow(rpc, client) == {"action": "follow", "buy_id": 18, "buy_order_id": "19429767",
+                                      "outcome": "confirmed"}
+    assert client.calls == ["19429767"]
+    name, params = rpc.calls[-1]
+    assert name == "manual_sub_buy_follow_record" and params["p_buy_id"] == 18
+    assert params["p_patch"]["seller_state"] == "completed" and params["p_patch"]["seats"] == ["12"]
+
+
+@pytest.mark.parametrize("err", [EvoWriteRejected(503, "down"), requests.ConnectionError("x"), ValueError("json")])
+def test_follow_read_failure_records_nothing(err):
+    rpc = FollowRpc({"buy_id": 18, "buy_order_id": "19429767"})
+    out = mb.follow(rpc, OrderClient(err))
+    assert out["error"] == type(err).__name__ and "outcome" not in out
+    assert [n for n, _ in rpc.calls] == ["manual_sub_buy_follow_claim"]
