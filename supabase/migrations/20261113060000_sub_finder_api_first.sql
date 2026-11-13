@@ -47,12 +47,28 @@ ALTER TABLE public.sub_finder_config
 ALTER TABLE public.sub_finder_order
   ADD COLUMN IF NOT EXISTS in_n2s boolean NOT NULL DEFAULT false;   -- was in the CRM's N2S book when looked up
 
--- 'Go Tickets' = 'GoTickets', 'Tickpick' = 'TickPick', 'Vivid Seats' = 'vividseats' ...
+-- One key per marketplace, however a source spells it: 'Go Tickets' = 'GoTickets' = gotickets,
+-- 'Vivid' = 'Vivid Seats' = vivid, 'EVO' = 'TEvo' = 'Ticket Evolution' = evo, 'Stubhub 2.0' = stubhub,
+-- 'Gametime.Co' = gametime. An unknown name keeps its letters; NULL stays NULL.
 CREATE OR REPLACE FUNCTION public.sub_finder_site_norm(p text)
  RETURNS text
  LANGUAGE sql
  IMMUTABLE
-AS $$ SELECT nullif(lower(regexp_replace(coalesce(p, ''), '[^A-Za-z]', '', 'g')), '') $$;
+AS $$
+  SELECT CASE
+    WHEN k IS NULL THEN NULL
+    WHEN k LIKE 'gotick%' OR k = 'gotix' THEN 'gotickets'
+    WHEN k LIKE 'tickpick%' THEN 'tickpick'
+    WHEN k LIKE 'vivid%' THEN 'vivid'
+    WHEN k LIKE 'seatgeek%' THEN 'seatgeek'
+    WHEN k IN ('evo', 'tevo') OR k LIKE 'ticketevo%' THEN 'evo'
+    WHEN k LIKE 'stubhub%' THEN 'stubhub'
+    WHEN k LIKE 'gametime%' THEN 'gametime'
+    WHEN k LIKE 'viagogo%' THEN 'viagogo'
+    WHEN k LIKE 'ticketmaster%' THEN 'ticketmaster'
+    ELSE k END
+  FROM (SELECT nullif(lower(regexp_replace(coalesce(p, ''), '[^A-Za-z]', '', 'g')), '') AS k) q;
+$$;
 
 -- Every row we hold for one order number, best source first (rnk 1 = the marketplace's feed).
 CREATE OR REPLACE FUNCTION public.sub_finder_lookup(p_order text)
@@ -159,10 +175,12 @@ AS $$
   FROM top;
 $$;
 
--- Is this order, as we hold it, the one in our own records? A row from one of p_books on the
--- order's own marketplace must carry the same seats and quantity (and the same sale price when
--- p_need_price), and a row on that marketplace must carry the same event. What a caller sent
--- that differs from our records fails here, so it can steer a search but never a purchase.
+-- Is this order, as we hold it, the one in our own records? ONE row — the newest we hold in
+-- one of p_books, on the order's own marketplace — must carry the same event, section, row and
+-- quantity (and the same sale price when p_need_price). And the number must belong to a single
+-- marketplace across everything we hold: a number that sits on two is never verified. What a
+-- caller sent that differs from our records fails here, so it can steer a search but never a
+-- purchase or an offer.
 CREATE OR REPLACE FUNCTION public.sub_finder_order_verified(o public.sub_finder_order, p_books text[], p_need_price boolean)
  RETURNS boolean
  LANGUAGE sql
@@ -170,20 +188,26 @@ CREATE OR REPLACE FUNCTION public.sub_finder_order_verified(o public.sub_finder_
  SECURITY DEFINER
  SET search_path = public, pg_temp
 AS $$
-  WITH l AS MATERIALIZED (
-    SELECT * FROM public.sub_finder_lookup(o.order_number) x
-     WHERE public.sub_finder_site_norm(x.site) = public.sub_finder_site_norm(o.site))
+  WITH l AS MATERIALIZED (SELECT * FROM public.sub_finder_lookup(o.order_number)),
+  newest AS (
+    SELECT DISTINCT ON (l.book) l.* FROM l
+     WHERE l.book = ANY (p_books)
+       AND public.sub_finder_site_norm(l.site) = public.sub_finder_site_norm(o.site)
+     ORDER BY l.book, l.pulled_at DESC NULLS LAST)
   SELECT o.tevo_event_id IS NOT NULL
-     AND EXISTS (SELECT 1 FROM l WHERE l.tevo_event_id = o.tevo_event_id)
-     AND EXISTS (SELECT 1 FROM l
-                  WHERE l.book = ANY (p_books)
-                    AND public.seat_section_norm(l.section) = public.seat_section_norm(o.section)
-                    AND upper(btrim(l.seat_row)) = upper(btrim(o.seat_row)) AND l.qty = o.qty
-                    AND (NOT p_need_price OR abs(l.sold_ea - o.sold_ea) <= 0.01));
+     AND public.sub_finder_site_norm(o.site) IS NOT NULL
+     AND (SELECT count(DISTINCT coalesce(public.sub_finder_site_norm(l.site), '?')) FROM l) = 1
+     AND EXISTS (SELECT 1 FROM newest n
+                  WHERE n.tevo_event_id = o.tevo_event_id
+                    AND public.seat_section_norm(n.section) = public.seat_section_norm(o.section)
+                    AND upper(btrim(n.seat_row)) = upper(btrim(o.seat_row)) AND n.qty = o.qty
+                    AND (NOT p_need_price OR abs(n.sold_ea - o.sold_ea) <= 0.01));
 $$;
 
 -- 'fulfilled' / 'cancelled' / 'rejected' when the marketplace's feed (or, failing that, our
 -- mirror of the CRM marketplace book) says the sale is over; NULL while it is live or unknown.
+-- Fails closed: a finished row counts unless it is clearly another marketplace's order (both
+-- marketplace names known and different).
 CREATE OR REPLACE FUNCTION public.sub_finder_order_closed(p_order text, p_site text)
  RETURNS text
  LANGUAGE sql
@@ -193,7 +217,7 @@ CREATE OR REPLACE FUNCTION public.sub_finder_order_closed(p_order text, p_site t
 AS $$
   SELECT l.status FROM public.sub_finder_lookup(p_order) l
    WHERE NOT l.is_open AND l.book <> 'n2s' AND l.status IN ('fulfilled', 'cancelled', 'rejected')
-     AND (public.sub_finder_site_norm(p_site) IS NULL
+     AND (public.sub_finder_site_norm(p_site) IS NULL OR public.sub_finder_site_norm(l.site) IS NULL
           OR public.sub_finder_site_norm(l.site) = public.sub_finder_site_norm(p_site))
    ORDER BY l.rnk, l.pulled_at DESC NULLS LAST LIMIT 1;
 $$;
@@ -383,11 +407,10 @@ BEGIN
     IF v_note IS NULL THEN
       -- the purchase is decided on OUR copy of the order, not on what the caller sent
       -- (the marketplace's own order feed, or our mirror of the CRM marketplace book; never N2S's)
-      IF (SELECT count(DISTINCT public.sub_finder_site_norm(l.site))
-            FROM public.sub_finder_lookup(o.order_number) l WHERE l.book <> 'n2s') > 1 THEN
-        v_note := 'not_in_our_books';                  -- the number is on two marketplaces: not sure which
-      ELSIF NOT public.sub_finder_order_verified(o, ARRAY['api', 'marketplace'], true) THEN
-        v_note := CASE WHEN EXISTS (SELECT 1 FROM public.sub_finder_lookup(o.order_number) l WHERE l.book <> 'n2s')
+      IF NOT public.sub_finder_order_verified(o, ARRAY['api', 'marketplace'], true) THEN
+        v_note := CASE WHEN (SELECT count(DISTINCT public.sub_finder_site_norm(l.site))
+                               FROM public.sub_finder_lookup(o.order_number) l) = 1
+                        AND EXISTS (SELECT 1 FROM public.sub_finder_lookup(o.order_number) l WHERE l.book <> 'n2s')
                        THEN 'differs_from_our_books' ELSE 'not_in_our_books' END;
       -- the sale must still be live on its marketplace
       ELSIF public.sub_finder_order_closed(o.order_number, o.site) IS NOT NULL THEN
