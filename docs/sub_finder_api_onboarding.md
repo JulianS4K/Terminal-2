@@ -6,7 +6,7 @@ For the CRM team. You send us orders that need a substitute ("sub"); we pull fre
 
 Code: `routers/subs_api.py` · SQL: migrations `20261112000000` (buy follow-up) and `20261112010000` (the API) · operator switches: [§9](#9-for-s4k-operators-switching-it-on).
 
-**Contents:** [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c Auto-buys](#6c-n2s-auto-buys) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+**Contents:** [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
 
 ## Keeping this guide current
 
@@ -46,11 +46,12 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 | `GET /orders/{n}`, `GET /jobs/{id}`, `GET /results` | the order object ([§5](#5-the-order-object)): state, recommended action, gate, label and flags, the covers with their links, what was searched, the purchase (`buy`), the GoTickets offer (`sub_offer`), your feed decision's outcome (`feed_decision`) |
 | `GET /results?updated_since=` | the same orders as a sync feed: everything that changed since your cursor ([§6](#6-keep-in-sync)) |
 | `GET /balances` | S4K's EVO balances and GoTickets gift cards, read hourly ([§6b](#6b-balances)) |
-| `GET /autobuys?updated_since=` | every purchase S4K's Need-to-Sub auto-buyer placed, as a sync feed ([§6c](#6c-n2s-auto-buys)) |
+| `GET /buys?updated_since=` | **every purchase S4K placed to cover an order, by either buyer, as one sync feed** ([§6c](#6c-what-we-bought)) |
+| `GET /autobuys?updated_since=` | only the purchases S4K's Need-to-Sub auto-buyer placed (the same items as in `/buys`; kept for callers already using it) |
 | `GET /settings/auto-buy-loss` | the automatic buy's loss limits as they stand ([§6d](#6d-the-automatic-buys-loss-limits)) |
 | `GET /ping`, `GET /docs` | your scopes, and this guide with its version |
 
-**Two buyers, two feeds.** A purchase made through this API (the automatic one-to-one buy, your buy call or feed decision, or seats a GoTickets customer accepted) is on the order's `buy`. A purchase made by S4K's separate Need-to-Sub auto-buyer is in `/autobuys`. The same sale is never bought by both.
+**Two buyers, one feed.** S4K has two buyers: this API's (the automatic one-to-one buy, your buy call or feed decision, or seats a GoTickets customer accepted) and S4K's separate Need-to-Sub auto-buyer. `GET /buys` lists what both bought, each item marked with its `buyer`. A purchase made through this API is also on the order's `buy`. The same sale is never bought by both.
 
 ## The one thing we ask you to build: a "Needs sub" checkbox
 
@@ -441,13 +442,16 @@ curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 
 This is information only: nothing here changes what can be bought, and this API does not buy on GoTickets.
 
-## 6c. N2S auto-buys
+## 6c. What we bought
 
-**`GET /api/v1/subs/autobuys?updated_since=&limit=&offset=`** — every purchase S4K's **Need-to-Sub auto-buyer** placed to cover an order: what we bought (on EVO or GoTickets), which order it covers, the seats and the money. This is the N2S desk's own buyer, not the buys you ask for in [§7](#7-buy-a-cover); those stay on the order's `buy`. A row appears as soon as the purchase is placed and comes back each time it changes (seller confirms, the sale is accepted, or it stops). It is a sync feed exactly like [§6](#6-keep-in-sync): same envelope, feed each answer's `generated_at` back as the next `updated_since`. Only keys S4K has allowed for it get an answer; others get 403 `forbidden`.
+**`GET /api/v1/subs/buys?updated_since=&limit=&offset=`** — every purchase S4K placed to cover an order, by either of its two buyers, in one feed: what we bought (on EVO or GoTickets), which order it covers, the seats and the money. Each item says who bought it: `buyer` is `n2s_auto` (S4K's **Need-to-Sub auto-buyer**, the N2S desk's own buyer) or `sub_finder` (a buy made through this API: the automatic one-to-one buy, your buy in [§7](#7-buy-a-cover), or seats a GoTickets customer accepted; these are also on the order's `buy`). A row appears as soon as the purchase is placed and comes back each time it changes (seller confirms, the sale is accepted, or it stops). It is a sync feed exactly like [§6](#6-keep-in-sync): same envelope, feed each answer's `generated_at` back as the next `updated_since`. Only keys S4K has allowed for it get an answer; others get 403 `forbidden`.
+
+**`GET /api/v1/subs/autobuys`** takes the same parameters and returns only the Need-to-Sub auto-buyer's purchases, without the `buyer` field. It is unchanged; if you already read it you may keep doing so, or move to `/buys` and get both.
 
 ```json
 {"count": 1, "total": 1, "limit": 200, "offset": 0, "generated_at": "2026-11-13T20:30:00.000000Z",
  "items": [{
+   "buyer": "n2s_auto",
    "buy_ref": "gotickets-8400001", "bought_on": "gotickets", "bought_order_number": "8400001",
    "for_order": {"order_number": "82482253", "ref": "vivid-82482253", "sold_on": "vivid",
                  "section": "345", "row": "7", "qty": 4, "sold_total_usd": 650.00, "state": "accepted"},
@@ -463,12 +467,15 @@ This is information only: nothing here changes what can be bought, and this API 
 
 | Field | Meaning |
 |---|---|
+| `buyer` | `n2s_auto` or `sub_finder` (above). Only in `/buys` |
 | `buy_ref` | `<market we bought on>-<that market's order number>`: `evo-<EVO order id>` or `gotickets-<GoTickets purchase id>`. Also split into `bought_on` and `bought_order_number` |
 | `for_order` | the order this purchase covers: your `order_number`, `ref` = `<market it sold on>-<order number>`, the seats that were sold, the sale total, and the sale's state on that market (`accepted` once we confirmed it) |
 | `status` | `pending` (bought; waiting for the seller to confirm our purchase, then we accept your sale) · `went_through` (seller confirmed and the sale was accepted) · `stopped` (the seller rejected or did not confirm in time, so the sale was **not** accepted; `reasons` says why, e.g. `sub_rejected`, `sub_unconfirmed`) · `check_manually` (a market answer we could not read; S4K checks by hand). `went_through` is the same as `status == "went_through"` |
 | `bought` | the listing we bought, its seats and quantity, and our purchase's state on the market we bought on (`state`: EVO's order state, or GoTickets' `orderStatus`) |
 | `totals` | `quoted_usd` what we priced it at when we decided to buy (EVO: with the sales tax we expect at the venue) · `charged_usd` what the market charged (null when it did not say) · `sold_usd` the sale total · `margin_usd` sold minus charged (minus quoted when `charged_usd` is null) |
 | `bought_at`, `updated_at` | when the buy started and when the row last changed (the sync cursor) |
+
+A `sub_finder` item reads the same way, with these differences: `status` is `went_through` as soon as the seller confirms our purchase (this buyer does not accept the sale; `for_order.state` is null); `phase` is the buy's `request_state` from [§7](#7-buy-a-cover); `bought` also carries the `seats` once the market gives them; `event.start_utc` is null.
 
 How S4K buys on GoTickets, for reading these rows: paid from S4K's GoTickets gift cards (watch them in [§6b](#6b-balances)), Mobile Transfer or another electronic delivery, the buyer and recipient are S4K's own office, and nothing is written to the seller about your order. Every auto-buy has hard limits per market (one live buy at a time while it is being proven, $666 per order, per day and in total) and is only placed at a profit.
 
@@ -534,7 +541,7 @@ That is a request, not a purchase yet. What happens next, and what you see in th
 
 | `buy.request_state` | `buy.outcome` | Meaning |
 |---|---|---|
-| `requested` | `none` | queued; our buyer picks it up within about 15 seconds |
+| `requested` | `none` | queued; our buyer picks it up within about 15 seconds. An EVO buy can wait here longer: S4K sends at most 3 EVO purchases at a time and holds the next until a seller answers one of them (usually seconds, at most an hour). A GoTickets buy does not wait for that |
 | `buying` | `none` | being sent to the market |
 | `bought` | `pending` | the market took the order; waiting for the seller. `order_id` is set |
 | `bought` | `confirmed` | the seller accepted. **This is the one that means you are covered** |
@@ -574,7 +581,7 @@ Follow it by polling `GET /api/v1/subs/orders/{order_number}` every 15 to 30 sec
 | `price_above_ceiling` | the price rose above what the job quoted (on GoTickets: its total with delivery fee and tax came to more than the quoted price × quantity); submit again for a fresh quote |
 | `short_quantity`, `split_not_allowed` | the listing can no longer supply that quantity |
 | `our_own_listing` | it is S4K's own inventory |
-| `over_order_cap`, `over_daily_cap` | over S4K's spend ceilings; ask S4K |
+| `over_order_cap`, `over_daily_cap`, `over_shared_ceiling` | over S4K's spend ceilings (per order, per day for this buyer, or per day across both of S4K's buyers); ask S4K |
 | `unknown_format`, `no_seller_office`, `listing_read_failed`, `buy_failed` | the market would not sell it as listed |
 | `tax_quote_failed`, `total_above_ceiling` | an automatic EVO buy only: EVO gave no usable total before the buy, or its total with tax was over the automatic buy's loss limit. Nothing was bought; buy it with this call if a person accepts the cost |
 | `no_electronic_delivery`, `price_unknown`, `listing_unreadable`, `own_listing_check_failed` | GoTickets only: the listing has no mobile / PDF delivery, shows no price, or could not be read or checked safely |
@@ -721,6 +728,7 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 12 | Optional: buy GoTickets covers too (mig `20261113300000`) | Two switches, both off, and both must be on: `UPDATE sub_finder_config SET gt_buy_enabled = true WHERE id;` lets the sub finder pick a GoTickets cover (automatic buy, CRM buy, accepted-offer buy, under the same rules as EVO), and `UPDATE manual_sub_buy_config SET gt_enabled = true WHERE id;` lets the worker send the buy. A GoTickets cover reads `buyable` only while both are on. GoTickets uses the same ceilings as EVO (`per_order_cap_usd` / `daily_cap_usd`); `gt_per_order_cap_usd` / `gt_daily_cap_usd` are empty and a number there overrides EVO's for GoTickets only. Each market's spend counts against its own day ceiling; `auto_buy_daily_cap_usd` counts both markets. Paid from gift cards only (`gt_gift_card_ids`; `/balances` shows them). The buyer details are in `manual_sub_buy_config.gt_*`, copied once from the N2S buyer. If the worker switch goes off after a request was filed, that request stops with `gotickets_buy_off` |
 | 13 | Optional: move on to the next cover when a buy stops (mig `20261113310000`) | `UPDATE sub_finder_config SET buy_fallback_enabled = true WHERE id;` — once a minute `sub_finder_release_stopped()` lets go of a stopped buy whose reasons are all about the listing (`sub_finder_stop_is_listing`), so the automatic buy can take the next cover. `buy_fallback_max` (3) attempts per order per New York day; a listing that stopped for an order is not picked again for it for `buy_fallback_retry` (12 hours). A stop about a ceiling, gift cards or setup, and any `unknown`, is never released |
 | 14 | Optional: let a key set the automatic buy's loss limits (mig `20261113320000`) | `UPDATE sub_finder_config SET loss_limit_key_ids = loss_limit_key_ids \|\| <id> WHERE id;` — the limits are rows in `sub_finder_loss_limit` (`site`, `max_cost_pct` 100–200; `*` = the default for every other marketplace; no row = `100 + auto_buy_max_loss_pct`). They apply to `need2buy` orders only (`sub_finder_max_loss_pct`); every other order is profit-only. Every change: `sub_finder_loss_limit_log`. Reading the limits needs no extra switch |
+| 15 | The control over both buyers (mig `20261113430000`) | One row, `sub_buy_control`, above the sub finder's buyer and the N2S auto-buyer; each keeps its own switches and ceilings. **In force:** `evo_inflight_max` (3) = at most that many EVO buys, from both buyers, waiting for a seller; the next waits (`requested`) until one is confirmed or rejected, or has gone `evo_inflight_minutes` (60) unanswered. `UPDATE sub_buy_control SET evo_inflight_max = NULL WHERE id = true;` removes the limit. **Off until `enforce = true`:** `stop` (neither buyer starts a new buy; buys already placed are still followed) and `daily_ceiling_usd` (both buyers, both markets, per New York day; a sub finder buy over it stops with `over_shared_ceiling`, an N2S buy waits). `SELECT sub_buy_evo_inflight(), sub_buy_spent_today();` shows where both stand. The feed of both buyers' purchases is `sub_finder_buys()`, same keys as row 11 |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys, automatic buys and operator buys together; EVO spend and GoTickets spend are each counted against the day ceiling on their own. An `unknown` outcome flips its kill switch and stops **all** buys on both markets until someone has checked the market named in `kill_reason`.
 

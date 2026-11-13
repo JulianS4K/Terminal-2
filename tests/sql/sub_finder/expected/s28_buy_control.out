@@ -1,0 +1,62 @@
+starts: enforce false, stop false, ceiling none, EVO in flight at most 3 (an unanswered buy counts for 60 min)
+three EVO buys go out, one per tick
+E1 bought on evo
+E2 bought on evo
+E3 bought on evo
+EVO buys waiting for a seller: 3
+the fourth EVO buy waits; the GoTickets buy behind it goes; then nothing
+G1 bought on gotickets
+nothing handed out
+E1|evo|bought|
+E2|evo|bought|
+E3|evo|bought|
+E4|evo|requested|
+E5|evo|requested|
+G1|gotickets|bought|
+a seller confirms one: the next EVO buy goes
+confirmed
+E4 bought on evo
+nothing handed out
+a seller rejects one: that also frees a place
+rejected
+E5 bought on evo
+a buy no seller answered stops counting after the window
+waiting: 2
+EVO buys by the N2S buyer count in the same limit; its GoTickets buys do not
+waiting: 4, an EVO buy now: evo_inflight_full, a GoTickets buy now: may go
+no limit when it is cleared
+may go
+the shared stop and ceiling are ignored while enforce is off
+may go
+enforce on, stop on: neither buyer starts a new buy; the waiting rows are untouched
+nothing handed out
+nothing handed out, EVO runs used 0
+E6|requested
+N3|not started
+a buy already placed is still followed while the stop is on
+poll N1, EVO runs used 0
+stop off, a ceiling 50 above what both have spent today: neither 100 buy fits
+spent today by both buyers: 810
+nothing handed out, EVO runs used 0
+nothing handed out
+E6|stopped|over_shared_ceiling
+a buy with no known total never passes a ceiling
+over_shared_ceiling
+ceiling raised: the N2S buy is handed out and spends its run
+buy N3, EVO runs used 1
+one feed of what both buyers bought
+this key may not read buy results
+count 8, total 8
+n2s_auto|evo-7001|pending|vivid-N1|2||50.00|[]
+n2s_auto|gotickets-8001|pending|vivid-N2|2||50.00|[]
+sub_finder|evo-9001|went_through|vivid-E1|2|100|20.00|[]
+sub_finder|evo-9002|stopped|vivid-E2|2|100|20.00|["seller_rejected"]
+sub_finder|evo-9003|pending|vivid-E3|2|100|20.00|[]
+sub_finder|evo-9004|pending|vivid-E4|2|100|20.00|[]
+sub_finder|evo-9005|pending|vivid-E5|2|100|20.00|[]
+sub_finder|gotickets-G-1|pending|vivid-G1|2|100|20.00|[]
+Game|2026-12-01T19:00:00|101|bought
+a confirmation by the seller moves changed_at (the cursor of the feed), not updated_at (the spend day)
+t
+changed since a minute from now: 0
+page of 2 from the third: 2 of 8

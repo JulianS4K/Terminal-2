@@ -25,7 +25,8 @@ psql -q -X -At -F '|' -d "$DB" -c "
                            ELSE '' END
     FROM pg_proc p
    WHERE p.pronamespace = 'public'::regnamespace AND p.prokind IN ('f', 'p')
-     AND (p.proname LIKE 'sub\_finder%' OR p.proname LIKE 'manual\_sub\_buy%' OR p.proname LIKE 'account\_balance%')
+     AND (p.proname LIKE 'sub\_finder%' OR p.proname LIKE 'manual\_sub\_buy%' OR p.proname LIKE 'account\_balance%'
+          OR p.proname LIKE 'sub\_buy%')
    ORDER BY 2" > "$TMP/list"
 while IFS='|' read -r oid name; do
   psql -q -X -At -d "$DB" -c "SELECT pg_get_functiondef($oid)" > "$TMP/$name.sql"

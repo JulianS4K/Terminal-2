@@ -10,6 +10,7 @@ DECLARE
   v_total  numeric;
   v_spent  numeric;
   v_today  date := (now() AT TIME ZONE 'America/New_York')::date;
+  v_gate   text;
   r        text[] := '{}';
 BEGIN
   -- FOR UPDATE serializes claims, so two workers see each other's spend and never share a row.
@@ -33,8 +34,15 @@ BEGIN
     RETURN NULL;                                        -- one at a time; nothing while one is unresolved
   END IF;
 
+  -- 20261113430000: the control over both buyers (sub_buy_control). Asked with no amount first:
+  -- that answers the shared stop and whether EVO is at its in-flight limit. A waiting buy
+  -- stays 'requested' and is looked at again on the next tick.
+  v_gate := public.sub_buy_gate('evo', 0);
+  IF v_gate = 'shared_stop' THEN RETURN NULL; END IF;
+
   SELECT * INTO b FROM public.manual_sub_buy
-   WHERE state = 'requested' ORDER BY created_at, buy_id LIMIT 1 FOR UPDATE SKIP LOCKED;
+   WHERE state = 'requested' AND (market <> 'evo' OR v_gate IS DISTINCT FROM 'evo_inflight_full')
+   ORDER BY created_at, buy_id LIMIT 1 FOR UPDATE SKIP LOCKED;
   IF NOT FOUND THEN RETURN NULL; END IF;
 
   v_total := round(b.max_price_ea * b.qty, 2);
@@ -49,6 +57,8 @@ BEGIN
   IF v_spent + v_total > (CASE b.market WHEN 'gotickets' THEN coalesce(c.gt_daily_cap_usd, c.daily_cap_usd)
                                         ELSE c.daily_cap_usd END)
     THEN r := r || 'over_daily_cap'::text; END IF;
+  IF public.sub_buy_gate(b.market, v_total) = 'over_shared_ceiling'
+    THEN r := r || 'over_shared_ceiling'::text; END IF;  -- both buyers' spend today, every market
   IF cardinality(r) > 0 THEN
     UPDATE public.manual_sub_buy SET state = 'stopped', reasons = r, updated_at = now() WHERE buy_id = b.buy_id;
     RETURN NULL;

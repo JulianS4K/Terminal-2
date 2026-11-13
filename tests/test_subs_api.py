@@ -622,6 +622,31 @@ def test_autobuys_read_is_retried_once_on_a_dropped_connection():
     assert "sub_finder_autobuys" in s.RETRY_ONCE_RPCS
 
 
+def test_buys_passes_the_one_feed_through_with_the_sync_cursor():
+    out = {"count": 2, "total": 2, "limit": 50, "offset": 0, "generated_at": "2026-11-13T23:30:00Z",
+           "items": [{"buyer": "n2s_auto", "buy_ref": "gotickets-8400001", "status": "went_through"},
+                     {"buyer": "sub_finder", "buy_ref": "evo-19300001", "status": "pending"}]}
+    db = FakeDB(rpc_data={"sub_finder_buys": out})
+    r = _client(db).get("/api/v1/subs/buys?updated_since=2026-11-13T20:00:00Z&limit=50&offset=10", headers=H)
+    assert r.status_code == 200 and r.json() == out
+    assert db.last("sub_finder_buys") == {"p_key_id": 7, "p_updated_since": "2026-11-13T20:00:00+00:00",
+                                          "p_limit": 50, "p_offset": 10}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.buys"}
+    _client(db).get("/api/v1/subs/buys", headers=H)
+    assert db.last("sub_finder_buys") == {"p_key_id": 7, "p_updated_since": None, "p_limit": 200, "p_offset": 0}
+    assert "sub_finder_buys" in s.RETRY_ONCE_RPCS
+
+
+def test_buys_refusals_and_bad_input_never_reach_sql():
+    db = FakeDB(rpc_data={"sub_finder_buys": {"error": "forbidden", "detail": "this key may not read buy results"}})
+    assert _client(db).get("/api/v1/subs/buys", headers=H).status_code == 403
+    assert _client(FakeDB()).get("/api/v1/subs/buys").status_code == 401
+    for q in ("updated_since=yesterday", "limit=0", "limit=1001", "offset=-1"):
+        db = FakeDB()
+        r = _client(db).get(f"/api/v1/subs/buys?{q}", headers=H)
+        assert r.status_code == 422 and not [n for n, _ in db.rpcs if n == "sub_finder_buys"]
+
+
 # ---------------------------------------------------------------- a dropped connection
 
 class TransportError(Exception):
