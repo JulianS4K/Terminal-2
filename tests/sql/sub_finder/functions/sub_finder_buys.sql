@@ -23,7 +23,7 @@ BEGIN
       UNION ALL
       SELECT b.changed_at, 2, b.buy_id
         FROM public.manual_sub_buy b
-       WHERE b.buy_order_id IS NOT NULL
+       WHERE b.buy_order_id IS NOT NULL AND b.origin = 'manual'   -- a buy filed by N2S is the n2s_auto item above
          AND (p_updated_since IS NULL OR b.changed_at >= p_updated_since)
     ), page AS (
       SELECT * FROM f ORDER BY at, src, id LIMIT v_limit OFFSET v_off
