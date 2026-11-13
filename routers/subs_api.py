@@ -20,6 +20,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/orders/{order_number}/offer-sub         GoTickets orders: yes, offer the customer this sub
   POST /api/v1/subs/orders/{order_number}/needs-sub         the ALERT: "this order needs a sub"
   GET  /api/v1/subs/docs                                    the onboarding guide, current version
+  GET  /api/v1/subs/balances                                our EVO balances + GoTickets gift cards, read hourly
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us").
@@ -314,6 +315,15 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                                      headers={"X-Doc-Version": str(doc["version"])})
         return {"version": doc["version"], "updated": doc["updated"], "format": "markdown",
                 "markdown": doc["markdown"]}
+
+    @router.get("/balances")
+    def balances(request: Request):
+        """Our EVO office balances and GoTickets gift cards as last read (hourly, mig
+        20261113270000). Only for keys in `sub_finder_config.balances_key_ids`."""
+        key = _auth(request, "balances")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_balances", {"p_key_id": key["id"]}))
 
     @router.post("/jobs")
     async def submit(request: Request):
