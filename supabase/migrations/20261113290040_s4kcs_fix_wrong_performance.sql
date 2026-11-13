@@ -1,4 +1,4 @@
--- 20261113290040_s4kcs_fix_wrong_performance.sql
+-- Migration 20261113290040 · level:secondary-sales · lane:A1 (CRM book) · writes:s4kcs_orders(tevo_event_id,map_method,market ids),s4kcs_performance_correction_log,cron:s4kcs_fix_wrong_performance_30min · reads:events,gotickets_sales,vivid_orders,tickpick_orders,seatgeek_orders,n2s_items,manual_sub_buy · pre:20261113270000
 -- A1 · CRM book (s4kcs_orders): re-point future orders mapped to the wrong performance, using the
 -- show time from our own order books. Operator 2026-11-13: "Repair + review list".
 --
