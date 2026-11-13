@@ -1965,12 +1965,13 @@ def scheduler_watchdog_status(_=Depends(require_auth)):
 
 
 # ---------------------------------------------------------------------------
-# N2S auto-buy LIVE worker (D7) — EVO only, one live run (operator 2026-11-09).
+# N2S auto-buy LIVE worker (D7) — EVO subs, one live run (operator 2026-11-09); GoTickets subs,
+# their own one live run and caps (operator 2026-11-13).
 #
 # Off unless N2S_AUTOBUY_LIVE=1 on this service AND n2s_autobuy_config.mode = 'live'.
 # Each tick claims at most one row through n2s_autobuy_live_claim() (a row lock + lease,
 # so several web workers never act on the same row) and runs one market step via
-# core/n2s_autobuy_live.py → evo_buy_client.py (the path-pinned EVO write client).
+# core/n2s_autobuy_live.py → evo_buy_client.py / gotickets_buy_client.py (path-pinned writes).
 # ---------------------------------------------------------------------------
 _AUTOBUY_LIVE_INTERVAL_S = float(os.environ.get("N2S_AUTOBUY_LIVE_INTERVAL_SECONDS", "15"))
 _autobuy_live_last: dict = {"at": None, "result": None, "error": None}
@@ -1995,6 +1996,22 @@ def _autobuy_sale_client():
     return _autobuy_sales_client[0]
 
 
+_autobuy_gt_client: list = []  # the GoTickets buy client, built once per process from Vault
+
+
+def _autobuy_gt_buy_client():
+    """GoTickets buy client (operator 2026-11-13): same Vault key pair as the sale accept."""
+    if not _autobuy_gt_client:
+        from core.vault import vault_secret
+        from gotickets_buy_client import GoTicketsBuyClient
+        db = require_sb()
+        c = GoTicketsBuyClient(vault_secret(db, "GOTICKETS_ACCESS_ID"), vault_secret(db, "GOTICKETS_API_SECRET"))
+        if not c.ready():
+            return c  # a key is missing (or Vault blipped): don't cache, re-read next tick
+        _autobuy_gt_client.append(c)
+    return _autobuy_gt_client[0]
+
+
 async def _autobuy_live_tick():
     from core import n2s_autobuy_live
     from evo_buy_client import EvoBuyClient
@@ -2004,7 +2021,7 @@ async def _autobuy_live_tick():
             return require_sb().rpc(name, params).execute().data
         # one retry when the DB connection dropped ("Server disconnected"; 20261112020000)
         return n2s_autobuy_live.tick(n2s_autobuy_live.retrying(rpc), EvoBuyClient(TOKEN, SECRET),
-                                     sales=_autobuy_sale_client())
+                                     sales=_autobuy_sale_client(), gt=_autobuy_gt_buy_client())
 
     out = await asyncio.to_thread(_call)
     _autobuy_live_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
