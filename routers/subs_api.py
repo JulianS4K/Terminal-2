@@ -353,10 +353,14 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         listing = _text(body.get("listing_id"), 40)
         if not listing or not _ORDER_NO.fullmatch(listing) or not _ORDER_NO.fullmatch(order_number):
             return _err(422, "invalid", "send {\"listing_id\": \"<listing id from this order's sub_offer>\"}")
+        rebate = body.get("rebate_amount")  # the CRM sets the rebate; we only suggest one
+        if rebate is not None and (isinstance(rebate, bool) or not isinstance(rebate, (int, float))
+                                   or not 0 <= rebate <= 100000):
+            return _err(422, "invalid", "rebate_amount must be a number of dollars, 0 or more")
         out = _rpc("sub_finder_gt_offer_request", {
             "p_key_id": key["id"], "p_key_label": key.get("label"), "p_order_number": order_number,
             "p_listing_id": listing, "p_market": _text(body.get("market"), 20),
-            "p_requested_by": _text(body.get("requested_by"), 80)})
+            "p_requested_by": _text(body.get("requested_by"), 80), "p_rebate_amount": rebate})
         return _answer(out, ok_status=202)
 
     @router.get("/results")
