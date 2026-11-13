@@ -1,6 +1,6 @@
 # S4K Sub Finder API — onboarding
 
-> **Doc version:** v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
+> **Doc version:** v1.3.0 (2026-11-13) — live. Answers are kept fresh until the order closes (`watching`, `refreshed_at`, `closed_reason`); an alert for an order whose game is already being polled is answered in the same call; operator switches for refresh added. · v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
 
 For the CRM team. You send us orders that need a substitute ("sub"); we pull fresh listings, and you read back the best replacement tickets for each order. If you are allowed to, you can also ask us to buy an EVO replacement and then follow that purchase until the seller confirms or rejects it.
 
@@ -28,9 +28,9 @@ curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/<order_number>
 
 | The order's `state` | Show the agent |
 |---|---|
-| `pending` | "Looking for a sub..." — read again in 10 seconds (answers take 20 seconds to 3 minutes) |
+| `pending` | "Looking for a sub..." — read again in 10 seconds (often the alert itself already answers `"status": "done"`; otherwise 20 seconds to 3 minutes) |
 | `cover` | the `best` cover: market, section, row, quantity, price, profit or loss, and its `link`. A **Buy** button if `best.buyable` is true and your key may buy ([§7](#7-buy-an-evo-cover)) |
-| `no_cover` | "No sub found" — offer **Check again** (the same alert call) |
+| `no_cover` | "No sub found yet" — we keep looking; re-read the order and it becomes `cover` when a listing appears |
 | `unmapped` | "Event not recognised" — S4K needs to map it; tell us the order number |
 
 **How we would like to be alerted — please follow these.**
@@ -39,9 +39,21 @@ curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/<order_number>
 2. **Alert only orders that actually need a sub.** Do not send the whole book. Each alert pulls live listings from several marketplaces.
 3. **Send the order number, nothing else.** If the order is too new for our mirror (the call answers 404 `not_found`), retry once after a minute; only then send the CRM's row as the JSON body, unchanged.
 4. **Ticking twice is safe.** A repeat within 10 minutes returns the same lookup. After that, a new tick is a fresh search — which is exactly what **Check again** should do.
-5. **Unticking needs no call.** We hold nothing open: an alert is a one-off search, not a subscription. Just stop reading the order.
+5. **Unticking needs no call.** Just stop reading the order. We keep the answer fresh on our side until the order closes (below), which costs you nothing.
 6. **Do not poll every order forever.** Read an order while its `state` is `pending`, or while a purchase on it is unconfirmed. For anything broader use the sync feed ([§6](#6-keep-in-sync)).
 7. **If the CRM auto-creates N2S items from failed-order alerts,** fire the same call when it does, so the agent opens the order to a sub already found.
+
+**We keep the answer fresh.** After the first answer the order stays `watching: true`: we re-match it against new EVO, GoTickets and SeatGeek listings as our polling brings them in, whether or not it has a cover yet. `refreshed_at` is the last re-check, and the order's `updated_at` (and so the sync feed) moves only when its covers really change. Watching stops by itself, with a `closed_reason`:
+
+| `closed_reason` | Meaning |
+|---|---|
+| `left_crm_n2s` | the order is no longer open in the CRM's Need-to-Sub book |
+| `order_fulfilled`, `order_cancelled`, `order_rejected` | one of our order feeds shows the sale is over |
+| `event_passed` | the event date has gone |
+| `superseded` | the same order was alerted again; the newer lookup carries on |
+| `unmapped` | the event was never recognised, so there is nothing to refresh |
+
+A market whose latest pull failed keeps the covers it had, so a cover does not vanish because of one bad pull. TicketsData covers are not re-checked.
 
 That is all the CRM has to build: one checkbox, one call when it is ticked, one read to show the answer.
 
@@ -181,7 +193,7 @@ The whole request is refused (422) if any one order carries a malformed value; `
  "items": [ { "...order object..." } ]}
 ```
 
-Suggested polling: every 10 seconds; expect `done` in 20 seconds to 3 minutes, a little longer when TicketsData is involved. Results are a snapshot from that moment: listings sell, so act on them soon, and submit again for a fresh look.
+Suggested polling: every 10 seconds while `pending`; expect `done` at once when we already hold fresh listings for the game, otherwise in 20 seconds to 3 minutes (a little longer when TicketsData is involved). After that the order is kept fresh while `watching` is true, so re-read it rather than submitting it again.
 
 **`GET /api/v1/subs/jobs/{job_id}/orders/{order_number}`** — the same single-order read, pinned to one job (for when you submitted the same order more than once and want an older answer).
 
@@ -197,6 +209,7 @@ Suggested polling: every 10 seconds; expect `done` in 20 seconds to 3 minutes, a
 | `covers` | up to 3 covers per market, best first |
 | `markets_searched` | which sources were searched for this order |
 | `ticketsdata` | the fallback's status for this order (see [§8](#8-how-matching-works-and-what-it-does-not-do)); null when it was not needed |
+| `watching`, `refreshed_at`, `closed_reason` | whether we still re-check the order, when we last did, and why we stopped |
 | `buy` | the purchase, if one was requested ([§7](#7-buy-an-evo-cover)); otherwise null |
 | `updated_at` | last change to this order — the sync cursor field |
 
@@ -343,12 +356,13 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 1 | Apply migrations `20261112000000`, then `20261112010000` | normal migration apply |
 | 2 | Issue the CRM a key | `SELECT mcp_issue_key('crm sub finder', 'external', '<who>');` returns the key itself, once — hand it over and do not store it. Its id: `SELECT id FROM mcp_api_keys WHERE label = 'crm sub finder' AND revoked_at IS NULL;`. An external key also opens the public market-data `/mcp`, nothing internal |
 | 3 | Turn the API on for that key | `UPDATE sub_finder_config SET enabled = true, key_ids = key_ids \|\| <id>;` |
+| 3b | Optional: keep answers fresh | `UPDATE sub_finder_config SET refresh_enabled = true;` — the one-minute job `sub_finder_refresh_1min` then re-matches watched orders from the listings our polling already brings in. It fires no pull itself unless `refresh_pull = true`. **Know the gap:** the N2S pipeline only polls orders whose sale timer is still open, so an order past its timer is re-checked only if `refresh_pull` is on (it then pulls the watched events, each market at most every `pull_refresh`) |
 | 4 | Optional: TicketsData fallback | `UPDATE sub_finder_config SET td_enabled = true;` — costs 12 credits + 1 report per event asked, at most `td_max_events_per_job` (6) events per job and 3 in flight |
 | 5 | Optional: let the key buy | `UPDATE sub_finder_config SET buy_enabled = true, buy_key_ids = buy_key_ids \|\| <id>;` |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys and operator buys together. An `unknown` outcome flips its kill switch and stops **all** manual buys until someone has checked EVO.
 
-Other settings: `max_orders_per_job` (200), `pull_refresh` (2 minutes: a listing pull newer than this is reused), `settle_min_s` (20), `settle_timeout_s` (180: match with whatever has arrived), `rows_back` (5), `td_timeout_s` (150).
+Other settings: `refresh_fresh` (10 minutes: listings this recent count as "already polled", so a lookup fires no pull and answers at once), `refresh_max_events` (40 per tick), `max_orders_per_job` (200), `pull_refresh` (2 minutes: a listing pull newer than this is reused), `settle_min_s` (20), `settle_timeout_s` (180: match with whatever has arrived), `rows_back` (5), `td_timeout_s` (150).
 
 **To stop it:** `enabled = false` stops everything; `buy_enabled = false` stops new buy requests only; `td_enabled = false` stops TicketsData spend. Revoke a key with `SELECT mcp_revoke_key(<id>);`.
 
