@@ -1,4 +1,4 @@
--- Migration 20261113120000 · level:secondary-sales · lane:D0 · writes:n2s_sg_polled,n2s_pull_events,sub_finder_offer_pending,sub_finder_submit,sub_finder_refresh,sub_finder_gt_offer_buy · reads:n2s_mkt_pull,sub_finder_gt_offer · pre:20261113060000
+-- Migration 20261113120000 · level:secondary-sales · lane:D0 · writes:n2s_sg_polled,n2s_pull_events,sub_finder_offer_pending,sub_finder_submit,sub_finder_refresh,sub_finder_gt_offer_buy,sub_finder_offer_json · reads:n2s_mkt_pull,sub_finder_gt_offer · pre:20261113060000
 --
 -- POLLING RULES: N2S asks SeatGeek once per event; the sub finder keeps asking; an order
 -- with a GoTickets sub offer out is not polled.
@@ -39,6 +39,15 @@
 --                     'no_evo_match' and sub_finder_refresh asks again every round while the
 --                     order is watched. Every other rule is unchanged (switches, sale still
 --                     live, one buy per sale, daily cap, the manual sub buy path's own ceilings).
+--
+--   sub_finder_offer_json
+--                     tells the CRM the customer accepted: `sub_offer.accepted`, `accepted_at`
+--                     and `accepted_next` ('buy_requested' or 'buy_manually'). There is no
+--                     call out to the CRM (it has given us no address to call): the acceptance
+--                     already moves the order's updated_at, so the order comes back in the
+--                     sync feed (GET /results?updated_since=) carrying these fields.
+--                     The body is 20261113100000's (the rebate fields) plus these three, so
+--                     the two migrations can be applied in either order.
 --
 -- Read paths only: every request these functions send is a GET (RULE 2).
 --
@@ -577,4 +586,54 @@ BEGIN
    WHERE job_id = r.job_id AND idx = r.idx;
   RETURN coalesce(v_note, 'buy_requested');
 END
+$$;
+
+-- sub_offer: as 20261113100000, plus the acceptance fields
+CREATE OR REPLACE FUNCTION public.sub_finder_offer_json(o public.sub_finder_order)
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE
+ SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN lower(regexp_replace(coalesce(o.site, ''), '[^A-Za-z]', '', 'g')) <> 'gotickets' THEN NULL
+    WHEN r.offer_id IS NULL AND coalesce((o.best->>'gate')::int, 0) < 3 THEN NULL
+    ELSE jsonb_build_object(
+      'via', 'gotickets',
+      -- true: tell us yes with POST /orders/{n}/offer-sub and this listing_id
+      'ask_crm', r.offer_id IS NULL AND o.watching AND o.order_source IN ('api', 'n2s', 'marketplace')
+                 AND (o.best->>'gate')::int IN (3, 4, 5),
+      'results_only', r.offer_id IS NULL AND (o.best->>'gate')::int = 6,
+      'gate', coalesce(r.gate, (o.best->>'gate')::int),
+      'market', coalesce(r.market, o.best->>'market'),
+      'listing_id', coalesce(r.listing_id, o.best->>'listing_id'),
+      'section', coalesce(r.section, o.best->>'section'), 'row', coalesce(r.seat_row, o.best->>'row'),
+      -- the rebate is yours to set: `rebate` is what was offered; before that, `rebate_needed`
+      -- says an amount must come with the yes (rows back) and `rebate_suggested` is sale - sub
+      'rebate', r.rebate_amount,
+      'rebate_needed', r.offer_id IS NULL AND (o.best->>'gate')::int = 5,
+      'rebate_suggested', CASE WHEN r.offer_id IS NULL AND (o.best->>'gate')::int IN (3, 4, 5)
+                               THEN greatest((o.best->>'profit')::numeric, 0) END,
+      'request', CASE WHEN r.offer_id IS NOT NULL THEN jsonb_build_object(
+                   'offer_id', r.offer_id, 'state', r.state, 'reasons', r.reasons,
+                   'gotickets_request_id', r.gt_request_id, 'status', r.gt_status,
+                   'denial_reason', r.denial_reason, 'status_checked_at', r.status_checked_at,
+                   -- after ACCEPTED: 'buy_requested' (see the order's `buy`) or why we did not buy
+                   'buy', CASE WHEN r.buy_id IS NOT NULL THEN 'buy_requested' ELSE r.buy_note END,
+                   'final_at', r.final_at) END,
+      -- the customer said yes: `accepted` flips true (the order's updated_at moves, so it comes
+      -- back in the sync feed). `accepted_next` says what happens to the seats: 'buy_requested'
+      -- (we are buying EVO seats, see the order's `buy`) or 'buy_manually' (no EVO seats that
+      -- deliver the accepted sub yet: buy them yourselves; we keep looking and buy if some appear)
+      'accepted', coalesce(r.gt_status = 'ACCEPTED', false),
+      'accepted_at', CASE WHEN r.gt_status = 'ACCEPTED'
+                          THEN to_char(r.final_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') END,
+      'accepted_next', CASE WHEN r.gt_status IS DISTINCT FROM 'ACCEPTED' THEN NULL
+                            WHEN r.buy_id IS NOT NULL OR o.buy_id IS NOT NULL THEN 'buy_requested'
+                            ELSE 'buy_manually' END)
+  END
+  FROM (SELECT 1) one
+  LEFT JOIN LATERAL (SELECT g.* FROM public.sub_finder_gt_offer g
+                      WHERE g.order_number = o.order_number AND g.key_id = o.key_id
+                      ORDER BY g.live DESC, g.offer_id DESC LIMIT 1) r ON true;
 $$;
