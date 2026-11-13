@@ -41,6 +41,7 @@ from evo_buy_client import (
     EvoWriteRejected,
     EvoWriteUnknown,
     buy_order_body,
+    read_tax_quote,
 )
 
 OUR_BROKERAGE_ID = 1768  # S4K Entertainment
@@ -76,19 +77,6 @@ def listing_checks(tg: dict, *, qty: int, max_price_ea: float) -> list[str]:
     return reasons
 
 
-def tax_quote(client: EvoBuyClient, ticket_group_id: Any, qty: int) -> dict | None:
-    """EVO's quote for this purchase as {signature, tax, total}, or None when it gives no
-    usable one. Nothing is bought by asking, so a failure here is never an unknown outcome."""
-    try:
-        got = client.tax_quote(ticket_group_id, qty)
-        whole = got["wholesale"]
-        quote = {"signature": str(got["tax_signature"]), "tax": round(float(whole["tax"]), 2),
-                 "total": round(float(whole["total"]), 2)}
-    except (EvoWriteRejected, EvoWriteUnknown, requests.RequestException, KeyError, TypeError, ValueError):
-        return None
-    return quote if quote["signature"] and quote["total"] > 0 and quote["tax"] >= 0 else None
-
-
 def tick(rpc: Rpc, client: EvoBuyClient) -> dict:
     """Claim at most one requested buy and carry it out. Returns what was recorded."""
     job = rpc("manual_sub_buy_claim", {})
@@ -109,7 +97,7 @@ def tick(rpc: Rpc, client: EvoBuyClient) -> dict:
         return {**out, **_record(rpc, job, state="stopped", reasons=reasons)}
     price = float(tg["wholesale_price"])
     ceiling = row.get("max_total_usd")
-    quote = tax_quote(client, tg["id"], qty) if cfg.get("tax_quote") else None
+    quote = read_tax_quote(client, tg["id"], qty) if cfg.get("tax_quote") else None
     quoted: dict[str, Any] = {}
     if quote:
         quoted = {"quote_tax_usd": quote["tax"], "quote_total_usd": quote["total"]}

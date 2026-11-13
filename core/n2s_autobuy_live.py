@@ -38,6 +38,7 @@ from evo_buy_client import (
     EvoWriteRejected,
     EvoWriteUnknown,
     buy_order_body,
+    read_tax_quote,
 )
 
 OUR_BROKERAGE_ID = 1768  # S4K Entertainment
@@ -160,11 +161,27 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
     reasons += seller_time_checks(tg, row, now=now, floor_s=int(cfg["min_confirm_window_s"]))
     if reasons:
         return _record(rpc, job, phase="stopped", reasons=reasons)
+    # Pre-check 3 (operator 2026-11-13, when the config's tax_quote is on): EVO's own total for
+    # this purchase, tax included (POST /v9/tax_quotes: a calculation, nothing is bought). Every
+    # money guard is run again on that total in place of our venue estimate; no quote, no buy.
+    quote = None
+    if cfg.get("tax_quote"):
+        quote = read_tax_quote(client, tg["id"], int(row["qty"]))
+        if not quote:
+            return _record(rpc, job, phase="stopped", reasons=["tax_quote_failed"])
+        real_tax = round(quote["total"] - float(row["sub_total_usd"]), 2)
+        reasons = buy_guards({**guard_row, "est_tax_usd": real_tax}, now=now,
+                             spend_today=float(row.get("spend_today_before") or 0), buys_today=0, failures_today=0,
+                             project_spent=float(row.get("project_spent_before") or 0), cfg=cfg)
+        if reasons:
+            return _record(rpc, job, phase="stopped", reasons=reasons,
+                           live_error=f"EVO quoted ${quote['total']:.2f} with tax")
     body = buy_order_body(ticket_group_id=tg["id"], quantity=int(row["qty"]), price_ea=float(tg["wholesale_price"]),
                           seller_office_id=tg["office"]["id"], buyer_office_id=int(cfg["evo_buyer_office_id"]),
                           shipment_type=SHIPMENT_FOR_FORMAT[tg["format"]],
                           email_address_id=cfg.get("evo_email_address_id"),
-                          note=f"N2S auto-cover for {market} sale {row.get('sale_order_key')} (n2s {row['n2s_id']})")
+                          note=f"N2S auto-cover for {market} sale {row.get('sale_order_key')} (n2s {row['n2s_id']})",
+                          tax_signature=quote["signature"] if quote else None)
     if not _hold(rpc, job, "buying"):
         return {"phase": "lease_lost"}  # nothing sent; the claim sweep decides what happens to the row
     try:
@@ -178,7 +195,8 @@ def _buy(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: di
         if not order.get("id"):
             raise ValueError("no order id in the EVO response")
         total = order.get("total")
-        quoted = round(float(row["sub_total_usd"]) + float(row.get("est_tax_usd") or 0), 2)  # with tax
+        quoted = quote["total"] if quote else \
+            round(float(row["sub_total_usd"]) + float(row.get("est_tax_usd") or 0), 2)  # with tax
         note = None if total is None or float(total) <= quoted + 0.01 else \
             f"EVO total ${total} is above the quoted ${quoted:.2f}"
         return _record(rpc, job, phase="buy_sent", buy_order_id=str(order["id"]), buy_state=order.get("state"),

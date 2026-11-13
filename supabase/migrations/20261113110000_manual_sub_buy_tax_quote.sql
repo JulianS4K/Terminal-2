@@ -1,4 +1,4 @@
--- Migration 20261113110000 · level:secondary-sales · lane:D0 · writes:manual_sub_buy_config,manual_sub_buy,manual_sub_buy_total_ceiling,manual_sub_buy_claim,manual_sub_buy_record · reads:sub_finder_config · pre:20261113080000
+-- Migration 20261113110000 · level:secondary-sales · lane:D0 · writes:manual_sub_buy_config,manual_sub_buy,manual_sub_buy_total_ceiling,manual_sub_buy_claim,manual_sub_buy_record,n2s_autobuy_config,n2s_autobuy_live_claim · reads:sub_finder_config · pre:20261113080000
 --
 -- MANUAL SUB BUY: ask EVO what it will charge, tax included, before buying.
 --
@@ -25,12 +25,22 @@
 -- without one is bought as before, without a signature (EVO charges the tax either way).
 -- A failed quote never flips the kill switch: nothing was bought.
 --
--- tax_quote is OFF by default: nothing changes until the operator turns it on.
+-- N2S AUTO-BUY, same call as a third pre-buy check (operator 2026-11-13: "Add tax as new evo
+-- call to precheck"): with n2s_autobuy_config.tax_quote on, core/n2s_autobuy_live.py asks for
+-- the quote after the fresh listing read and the seller-time check, runs every money guard
+-- again (order / day / project caps, approval, profit) on EVO's quoted total in place of our
+-- venue-tax estimate, and buys nothing without a usable quote ('tax_quote_failed'). The claim
+-- only gains the 'tax_quote' key in the cfg it hands the worker: it is patched in place
+-- (the function is long and prod is the source of truth), and the patch fails loudly if the
+-- one line it edits is not there exactly once.
+--
+-- Both tax_quote switches are OFF by default: nothing changes until the operator turns one on.
 --
 -- rollback: re-apply manual_sub_buy_claim and manual_sub_buy_record from 20261111020000;
 --           DROP FUNCTION public.manual_sub_buy_total_ceiling(public.manual_sub_buy);
 --           ALTER TABLE public.manual_sub_buy DROP COLUMN max_total_usd, DROP COLUMN quote_tax_usd, DROP COLUMN quote_total_usd;
 --           ALTER TABLE public.manual_sub_buy_config DROP COLUMN tax_quote;
+--           re-apply n2s_autobuy_live_claim from 20261112020000; ALTER TABLE public.n2s_autobuy_config DROP COLUMN tax_quote;
 
 ALTER TABLE public.manual_sub_buy_config
   ADD COLUMN IF NOT EXISTS tax_quote boolean NOT NULL DEFAULT false;
@@ -158,3 +168,24 @@ BEGIN
   END IF;
   RETURN v_state;
 END $function$;
+
+-- ── N2S auto-buy: the same quote as a pre-buy check ────────────────────────────────────────
+ALTER TABLE public.n2s_autobuy_config
+  ADD COLUMN IF NOT EXISTS tax_quote boolean NOT NULL DEFAULT false;
+
+DO $patch$
+DECLARE
+  v_def text := pg_get_functiondef('public.n2s_autobuy_live_claim()'::regprocedure);
+  v_old text := $o$'evo_email_address_id', c.evo_email_address_id));$o$;
+  v_new text := $n$'evo_email_address_id', c.evo_email_address_id,
+      'tax_quote', c.tax_quote));$n$;
+BEGIN
+  IF position($t$'tax_quote', c.tax_quote$t$ IN v_def) > 0 THEN
+    RETURN;                                             -- already patched
+  END IF;
+  IF (length(v_def) - length(replace(v_def, v_old, ''))) / length(v_old) <> 1 THEN
+    RAISE EXCEPTION 'n2s_autobuy_live_claim: the cfg line to patch was not found exactly once';
+  END IF;
+  EXECUTE replace(v_def, v_old, v_new);
+END
+$patch$;

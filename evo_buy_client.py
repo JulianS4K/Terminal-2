@@ -174,3 +174,16 @@ def buy_order_body(*, ticket_group_id: Any, quantity: int, price_ea: float, sell
 # ticket_group.format → shipment type (TEvo 11.1 "Creating Orders": Physical/Paperless ship FedEx).
 SHIPMENT_FOR_FORMAT = {"Eticket": "Eticket", "TM_mobile": "TMMobile", "Flash_seats": "FlashSeats",
                        "Guest_list": "GuestList", "Physical": "FedEx", "Paperless": "FedEx"}
+
+
+def read_tax_quote(client: EvoBuyClient, ticket_group_id: Any, qty: int) -> dict | None:
+    """EVO's quote for this purchase as {signature, tax, total}, or None when it gives no
+    usable one. Nothing is bought by asking, so a failure here is never an unknown outcome."""
+    try:
+        got = client.tax_quote(ticket_group_id, qty)
+        whole = got["wholesale"]
+        quote = {"signature": str(got["tax_signature"]), "tax": round(float(whole["tax"]), 2),
+                 "total": round(float(whole["total"]), 2)}
+    except (EvoWriteRejected, EvoWriteUnknown, requests.RequestException, KeyError, TypeError, ValueError):
+        return None
+    return quote if quote["signature"] and quote["total"] > 0 and quote["tax"] >= 0 else None
