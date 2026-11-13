@@ -1,4 +1,4 @@
--- Migration 20261113020000 · level:secondary-sales · lane:D0 · writes:sub_finder_config,sub_finder_gt_offer,sub_finder_access,sub_finder_gt_offer_request,sub_finder_gt_offer_claim,sub_finder_gt_offer_record,sub_finder_gt_offer_follow_claim,sub_finder_gt_offer_follow_record,sub_finder_offer_json,sub_finder_order_json · reads:sub_finder_order,n2s_items,v_s4kcs_orders,manual_sub_buy · pre:20261113010000
+-- Migration 20261113020000 · level:secondary-sales · lane:D0 · writes:sub_finder_config,sub_finder_gt_offer,sub_finder_gt_offer_buy,sub_finder_access,sub_finder_gt_offer_request,sub_finder_gt_offer_claim,sub_finder_gt_offer_record,sub_finder_gt_offer_follow_claim,sub_finder_gt_offer_follow_record,sub_finder_offer_json,sub_finder_order_json · reads:sub_finder_order,n2s_items,v_s4kcs_orders,manual_sub_buy · pre:20261113010000
 --
 -- SUB FINDER: offer a sub to the customer through GoTickets, when the CRM says yes.
 --
@@ -27,23 +27,35 @@
 --      path-pinned gotickets_sub_client.py (RULE 2 carve-out, operator-authorized 2026-11-13).
 --      Then it follows the request (GET) until the customer accepts or it is denied.
 --
--- No SQL here calls GoTickets. Nothing is bought: the replacement seats are bought by a person
+--   4. Operator 2026-11-13: "If gotickets subs are accepted and seats are in evo autobuy". When
+--      GoTickets reports the offer ACCEPTED and the offered cover is an EVO listing,
+--      sub_finder_gt_offer_buy files ONE manual_sub_buy request for it (the same path as every
+--      other sub finder buy: fresh re-read, gone / dearer than quoted = no buy, never retried).
+--      Only for exactly the quantity sold ("never buy extra automatically"), only when no
+--      purchase exists for the order (ours, or an N2S auto-buy row), and inside the automatic
+--      daily cap (auto_buy_daily_cap_usd, shared with the gate 1 buys). Off until
+--      gt_offer_auto_buy. An accepted offer on GoTickets / SeatGeek seats is bought by a person.
+--
+-- No SQL here calls GoTickets. Otherwise nothing is bought: the replacement seats are bought by a person
 -- outside this path. Off until sub_finder_config.gt_offer_enabled, the key is in
 -- gt_offer_key_ids, and GT_SUB_OFFER_LIVE=1 on the web service.
 --
 -- rollback: DROP FUNCTION public.sub_finder_gt_offer_request(bigint, text, text, text, text, text),
 --             public.sub_finder_gt_offer_claim(), public.sub_finder_gt_offer_record(bigint, uuid, jsonb),
---             public.sub_finder_gt_offer_follow_claim(), public.sub_finder_gt_offer_follow_record(bigint, jsonb);
+--             public.sub_finder_gt_offer_follow_claim(), public.sub_finder_gt_offer_follow_record(bigint, jsonb),
+--             public.sub_finder_gt_offer_buy(bigint);
 --           re-apply sub_finder_order_json and sub_finder_access from 20261113010000 / 20261112010000;
 --           DROP FUNCTION public.sub_finder_offer_json(public.sub_finder_order); DROP TABLE public.sub_finder_gt_offer;
 --           ALTER TABLE public.sub_finder_config DROP COLUMN gt_offer_enabled, DROP COLUMN gt_offer_key_ids,
---             DROP COLUMN gt_offer_lease_s, DROP COLUMN gt_offer_recheck;
+--             DROP COLUMN gt_offer_lease_s, DROP COLUMN gt_offer_recheck,
+--             DROP COLUMN gt_offer_auto_buy;
 
 ALTER TABLE public.sub_finder_config
   ADD COLUMN IF NOT EXISTS gt_offer_enabled boolean  NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS gt_offer_key_ids bigint[] NOT NULL DEFAULT '{}',   -- keys allowed to confirm an offer
   ADD COLUMN IF NOT EXISTS gt_offer_lease_s integer  NOT NULL DEFAULT 120,
-  ADD COLUMN IF NOT EXISTS gt_offer_recheck interval NOT NULL DEFAULT interval '5 minutes';
+  ADD COLUMN IF NOT EXISTS gt_offer_recheck interval NOT NULL DEFAULT interval '5 minutes',
+  ADD COLUMN IF NOT EXISTS gt_offer_auto_buy boolean  NOT NULL DEFAULT false;   -- buy the EVO seats once accepted
 
 CREATE TABLE IF NOT EXISTS public.sub_finder_gt_offer (
   offer_id          bigserial PRIMARY KEY,
@@ -61,6 +73,10 @@ CREATE TABLE IF NOT EXISTS public.sub_finder_gt_offer (
   section           text    NOT NULL,
   seat_row          text    NOT NULL,
   qty               integer NOT NULL,
+  buy_qty           integer NOT NULL,          -- what the listing makes us buy (qty, or qty + 1)
+  price_ea          numeric NOT NULL,          -- quoted; the ceiling for a buy after acceptance
+  buy_id            bigint,                    -- manual_sub_buy row filed once accepted (EVO only)
+  buy_note          text,                      -- why no buy was filed after acceptance
   order_total       numeric,
   sub_total         numeric,
   rebate_amount     numeric CHECK (rebate_amount IS NULL OR rebate_amount > 0),
@@ -173,11 +189,11 @@ BEGIN
   BEGIN
     INSERT INTO public.sub_finder_gt_offer
       (job_id, idx, key_id, requested_by, order_number, gt_order_id, gate, market, listing_id, section, seat_row,
-       qty, order_total, sub_total, rebate_amount, notes)
+       qty, buy_qty, price_ea, order_total, sub_total, rebate_amount, notes)
     VALUES (o.job_id, o.idx, p_key_id,
             'crm api key ' || coalesce(p_key_label, p_key_id::text) || coalesce(' / ' || nullif(btrim(p_requested_by), ''), ''),
             o.order_number, o.order_number::bigint, v_gate, cv->>'market', cv->>'listing_id', cv->>'section', cv->>'row',
-            o.qty, round(o.sold_ea * o.qty, 2), (cv->>'total')::numeric,
+            o.qty, (cv->>'buy_qty')::int, (cv->>'price_ea')::numeric, round(o.sold_ea * o.qty, 2), (cv->>'total')::numeric,
             CASE WHEN v_gate = 5 THEN (cv->>'profit')::numeric END,       -- sale total - sub total
             CASE WHEN v_gate = 5
                  THEN 'Replacement seats in the same area, ' || v_back || ' row' || CASE WHEN v_back = 1 THEN '' ELSE 's' END
@@ -299,7 +315,71 @@ BEGIN
          updated_at = now()
    WHERE offer_id = p_offer_id;
   UPDATE public.sub_finder_order SET updated_at = now() WHERE job_id = r.job_id AND idx = r.idx;
+  IF v_status = 'ACCEPTED' THEN PERFORM public.sub_finder_gt_offer_buy(p_offer_id); END IF;
   RETURN v_status;
+END
+$$;
+
+-- The customer accepted: buy the offered seats when they are an EVO listing. Files a
+-- manual_sub_buy request (no upstream call here) or records why not in buy_note.
+CREATE OR REPLACE FUNCTION public.sub_finder_gt_offer_buy(p_offer_id bigint)
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = public, pg_temp
+AS $$
+DECLARE
+  c       public.sub_finder_config;
+  r       public.sub_finder_gt_offer;
+  o       public.sub_finder_order;
+  v_note  text;
+  v_buy   bigint;
+  v_spent numeric;
+  v_label text;
+BEGIN
+  SELECT * INTO c FROM public.sub_finder_config;
+  PERFORM pg_advisory_xact_lock(hashtext('sub_finder_autobuy'));      -- one cap check + request at a time
+  SELECT * INTO r FROM public.sub_finder_gt_offer WHERE offer_id = p_offer_id FOR UPDATE;
+  IF NOT FOUND OR r.gt_status IS DISTINCT FROM 'ACCEPTED' OR r.buy_id IS NOT NULL OR r.buy_note IS NOT NULL THEN
+    RETURN NULL;                                                      -- not accepted, or already decided
+  END IF;
+  SELECT * INTO o FROM public.sub_finder_order WHERE job_id = r.job_id AND idx = r.idx FOR UPDATE;
+  v_note := CASE
+    WHEN NOT c.gt_offer_auto_buy THEN 'auto_buy_off'
+    WHEN r.market <> 'evo' THEN 'not_on_evo'
+    WHEN r.buy_qty <> r.qty THEN 'needs_spare_ticket'
+    WHEN o.buy_id IS NOT NULL
+      OR EXISTS (SELECT 1 FROM public.manual_sub_buy b WHERE b.sale_order_number = r.order_number
+                    AND b.state IN ('requested', 'buying', 'bought', 'unknown'))
+      OR EXISTS (SELECT 1 FROM public.n2s_autobuy_exec x WHERE x.order_number = r.order_number)
+      THEN 'already_bought_for_this_sale'
+  END;
+  IF v_note IS NULL THEN
+    SELECT coalesce(sum(coalesce(b.bought_total_usd, round(b.max_price_ea * b.qty, 2))), 0) INTO v_spent
+      FROM public.manual_sub_buy b
+     WHERE b.requested_by LIKE 'sub finder auto%' AND b.state IN ('requested', 'buying', 'bought', 'unknown')
+       AND (b.created_at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date;
+    IF v_spent + r.price_ea * r.buy_qty > c.auto_buy_daily_cap_usd THEN v_note := 'over_daily_cap'; END IF;
+  END IF;
+  IF v_note IS NULL THEN
+    SELECT key_label INTO v_label FROM public.sub_finder_job WHERE job_id = r.job_id;
+    BEGIN
+      v_buy := public.manual_sub_buy_request(
+        'GoTickets', r.order_number, o.tevo_event_id, r.listing_id::bigint, r.buy_qty, r.price_ea, o.sold_ea,
+        o.event_name, 'sub finder auto (gotickets offer accepted, key ' || coalesce(v_label, r.key_id::text) || ')',
+        'customer accepted GoTickets substitution ' || r.gt_request_id || ' (gate ' || r.gate || '): sub '
+          || r.section || ' row ' || r.seat_row || ' x' || r.buy_qty
+          || coalesce(', rebate ' || r.rebate_amount, ''));
+    EXCEPTION WHEN unique_violation THEN
+      v_note := 'already_bought_for_this_sale';
+    END;
+  END IF;
+  UPDATE public.sub_finder_gt_offer SET buy_id = v_buy, buy_note = v_note, updated_at = now() WHERE offer_id = p_offer_id;
+  UPDATE public.sub_finder_order
+     SET buy_id = coalesce(v_buy, buy_id), action = CASE WHEN v_buy IS NOT NULL THEN 'auto_bought' ELSE action END,
+         updated_at = now()
+   WHERE job_id = r.job_id AND idx = r.idx;
+  RETURN coalesce(v_note, 'buy_requested');
 END
 $$;
 
@@ -330,6 +410,8 @@ AS $$
                    'offer_id', r.offer_id, 'state', r.state, 'reasons', r.reasons,
                    'gotickets_request_id', r.gt_request_id, 'status', r.gt_status,
                    'denial_reason', r.denial_reason, 'status_checked_at', r.status_checked_at,
+                   -- after ACCEPTED: 'buy_requested' (see the order's `buy`) or why we did not buy
+                   'buy', CASE WHEN r.buy_id IS NOT NULL THEN 'buy_requested' ELSE r.buy_note END,
                    'final_at', r.final_at) END)
   END
   FROM (SELECT 1) one
@@ -379,6 +461,8 @@ REVOKE ALL ON FUNCTION public.sub_finder_gt_offer_record(bigint, uuid, jsonb) FR
 REVOKE ALL ON FUNCTION public.sub_finder_gt_offer_follow_claim() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_gt_offer_follow_record(bigint, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sub_finder_offer_json(public.sub_finder_order) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.sub_finder_gt_offer_buy(bigint) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.sub_finder_gt_offer_buy(bigint) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_gt_offer_request(bigint, text, text, text, text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_gt_offer_claim() TO service_role;
 GRANT EXECUTE ON FUNCTION public.sub_finder_gt_offer_record(bigint, uuid, jsonb) TO service_role;

@@ -337,7 +337,8 @@ Rules:
 - Needs the scope `subs:offer` (see `ping`). Without it the route answers 403.
 - The order must be in our own copy of the GoTickets order book with the same seats and quantity. Alert us with the order number only; an order sent with its own details cannot be offered.
 - One live offer per order. After a denial or a stop you may confirm another cover.
-- We do not buy the replacement seats. Buy them yourselves once the customer accepts; the listing can sell in the meantime.
+- **When the customer accepts and the offered seats are an EVO listing, we buy them** (when S4K has this switched on): exactly the quantity sold, at no more than the quoted price, inside the daily automatic-buy cap. The order then shows `action: "auto_bought"` and a `buy` to follow as in [§7](#7-buy-an-evo-cover); `sub_offer.request.buy` says `buy_requested`, or why we did not buy (`auto_buy_off`, `not_on_evo`, `needs_spare_ticket`, `already_bought_for_this_sale`, `over_daily_cap`). The listing can sell while the customer decides; then the buy stops and you are told.
+- Accepted seats on GoTickets or SeatGeek are not bought by us. Buy them yourselves.
 - Before sending we re-read the sale: a cancelled or already delivered sale, a different quantity, or a request already open stops the offer (`reasons`).
 - `unknown` means we could not tell whether GoTickets received the offer. Check Seller Central; no second offer is sent for that order until S4K clears it.
 
@@ -414,7 +415,7 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 4 | Optional: TicketsData fallback | `UPDATE sub_finder_config SET td_enabled = true;` — costs 12 credits + 1 report per event asked, at most `td_max_events_per_job` (6) events per job and 3 in flight |
 | 5 | Optional: let the key buy | `UPDATE sub_finder_config SET buy_enabled = true, buy_key_ids = buy_key_ids \|\| <id>;` |
 | 6 | Optional: automatic one-to-one buys (mig `20261113010000`) | `UPDATE sub_finder_config SET auto_buy_enabled = true;` — independent of step 5. Limits: `auto_buy_daily_cap_usd` (1000, counted per New York day over `manual_sub_buy` rows whose `requested_by` starts `sub finder auto`) and `auto_buy_min_profit_pct` (10; 0 = any profit) |
-| 7 | Optional: GoTickets sub offers (mig `20261113020000`) | `UPDATE sub_finder_config SET gt_offer_enabled = true, gt_offer_key_ids = gt_offer_key_ids \|\| <id>;` and `GT_SUB_OFFER_LIVE=1` on the web service. Last tick: `GET /api/admin/gt-sub-offer/status`. Rows: `sub_finder_gt_offer` |
+| 7 | Optional: GoTickets sub offers (mig `20261113020000`) | `UPDATE sub_finder_config SET gt_offer_enabled = true, gt_offer_key_ids = gt_offer_key_ids \|\| <id>;` and `GT_SUB_OFFER_LIVE=1` on the web service. `gt_offer_auto_buy = true` also buys the EVO seats once the customer accepts (needs the manual sub buy path live; counts toward `auto_buy_daily_cap_usd`). Last tick: `GET /api/admin/gt-sub-offer/status`. Rows: `sub_finder_gt_offer` |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys, automatic buys and operator buys together. An `unknown` outcome flips its kill switch and stops **all** manual buys until someone has checked EVO.
 
