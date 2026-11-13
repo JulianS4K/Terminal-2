@@ -32,6 +32,7 @@ Rpc = Callable[[str, dict], Any]
 
 OPEN_REQUEST = frozenset({"PENDING", "CUSTOMER_REVIEW", "ACCEPTED"})
 DELIVERED = frozenset({"COMPLETED", "PENDING_TRANSFER_PROOF", "PENDING_PROOF_OF_PICKUP"})
+ENDED_WITHOUT_A_SUB = frozenset({"DENIED", "CANCELLED"})   # the offer is over and the sale still needs a sub
 
 
 def _record(rpc: Rpc, row: dict, **patch: Any) -> dict:
@@ -52,6 +53,15 @@ def sale_checks(sale: dict, existing: list[dict], *, qty: int | None) -> list[st
     if any(r.get("status") in OPEN_REQUEST for r in existing):
         reasons.append("request_already_open")
     return reasons
+
+
+def sale_closed(sale: dict) -> str | None:
+    """'cancelled' / 'fulfilled' when a fresh sale read says the sale is over, else None."""
+    if sale.get("cancelReason"):
+        return "cancelled"
+    if sale.get("fulfilled") or sale.get("sellerStatus") in DELIVERED:
+        return "fulfilled"
+    return None
 
 
 def offer_body(row: dict, sale: dict) -> dict:
@@ -111,7 +121,18 @@ def follow(rpc: Rpc, client: GoTicketsSubClient) -> dict:
         return {**out, "error": type(e).__name__}  # the claim stamped the check; it comes round again
     if mine is None:
         return {**out, "error": "request_not_listed"}
-    status = rpc("sub_finder_gt_offer_follow_record",
-                 {"p_offer_id": job["offer_id"],
-                  "p_patch": {"gt_status": mine.get("status"), "denial_reason": mine.get("denialReason")}})
+    patch = {"gt_status": mine.get("status"), "denial_reason": mine.get("denialReason")}
+    if str(mine.get("status") or "").upper() in ENDED_WITHOUT_A_SUB:
+        # Operator 2026-11-13: "If offer denied check order status before repolling". The sale is
+        # read fresh (a GET): a sale that is over closes the lookup instead of being polled again.
+        # A failed read sends nothing; the database then falls back to our own copy of the order.
+        try:
+            closed = sale_closed(client.get_sale(job["gt_order_id"]))
+            patch["sale_checked"] = True
+            if closed:
+                patch["sale_closed"] = closed
+        except (EvoWriteRejected, GoTicketsSubError, requests.RequestException, ValueError, TypeError,
+                AttributeError):
+            pass
+    status = rpc("sub_finder_gt_offer_follow_record", {"p_offer_id": job["offer_id"], "p_patch": patch})
     return {**out, "status": status}

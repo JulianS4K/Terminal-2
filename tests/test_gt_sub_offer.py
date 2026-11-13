@@ -185,3 +185,33 @@ def test_follow_reads_the_request_status():
                              {"p_offer_id": 4, "p_patch": {"gt_status": "DENIED", "denial_reason": "CUSTOMER_REJECTED"}})
     assert w.follow(Rpc(follow=job), Client(existing=[]))["error"] == "request_not_listed"
     assert w.follow(Rpc(follow=job), Client(existing=requests.Timeout("t")))["error"] == "Timeout"
+
+
+# ---------- a denied offer: the sale is read before the order is polled again ----------
+
+@pytest.mark.parametrize("sale, extra", [
+    ({"quantity": 2}, {"sale_checked": True}),                                             # still live
+    ({"cancelReason": "BUYER"}, {"sale_checked": True, "sale_closed": "cancelled"}),
+    ({"fulfilled": True}, {"sale_checked": True, "sale_closed": "fulfilled"}),
+    ({"sellerStatus": "COMPLETED"}, {"sale_checked": True, "sale_closed": "fulfilled"}),
+    (requests.Timeout("t"), {}),                                                           # unread: DB decides
+    (None, {}),
+])
+def test_follow_reads_the_sale_when_the_offer_ended_without_a_sub(sale, extra):
+    job = {"offer_id": 4, "gt_order_id": 1001, "gt_request_id": 900}
+    for status in ("DENIED", "cancelled"):
+        rpc = Rpc(follow=job)
+        w.follow(rpc, Client(sale=sale, existing=[{"id": 900, "status": status}]))
+        assert rpc.calls[-1][1]["p_patch"] == {"gt_status": status, "denial_reason": None, **extra}
+
+
+def test_follow_does_not_read_the_sale_for_other_statuses():
+    class NoSale(Client):
+        def get_sale(self, _id):
+            raise AssertionError("the sale is read only after a denial or cancellation")
+
+    job = {"offer_id": 4, "gt_order_id": 1001, "gt_request_id": 900}
+    for status in ("PENDING", "ACCEPTED", None):
+        rpc = Rpc(follow=job)
+        w.follow(rpc, NoSale(existing=[{"id": 900, "status": status}]))
+        assert rpc.calls[-1][1]["p_patch"] == {"gt_status": status, "denial_reason": None}
