@@ -57,10 +57,14 @@ class _Limiter:
         return self.allow
 
 
-def _client(db, limiter=None):
+def _app(db, limiter=None):
     app = FastAPI()
     app.include_router(s.make_router(lambda: db, limiter=limiter))
-    return TestClient(app)
+    return app
+
+
+def _client(db, limiter=None):
+    return TestClient(_app(db, limiter))
 
 
 H = {"x-api-key": KEY}
@@ -437,3 +441,152 @@ def test_notes_route_writes_clears_and_refuses():
     for code, status in (("forbidden", 403), ("not_found", 404)):
         db.rpc_data["sub_finder_set_notes"] = {"error": code}
         assert c.post(url, headers=H, json={"notes": "x"}).status_code == status
+
+
+# ---------------------------------------------------------------- the guide, served to the CRM
+
+DOC_TEXT = """# Guide
+
+> **Doc version:** v1.2.3 (2026-11-13) — newest change. · v1.2.2 (2026-11-12) — older.
+
+Code: `routers/subs_api.py` · SQL: migrations.
+
+**Contents:** [8 Rules](#8-rules) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+
+## 8. Rules
+
+for the CRM
+
+## 9. For S4K operators: switching it on
+
+UPDATE sub_finder_config SET enabled = true;
+
+## 10. Troubleshooting
+
+still here
+"""
+
+
+def test_render_crm_doc_keeps_one_version_and_drops_the_operator_section():
+    doc = s.render_crm_doc(DOC_TEXT)
+    assert doc["version"] == "1.2.3" and doc["updated"] == "2026-11-13"
+    md = doc["markdown"]
+    assert "> **Doc version:** v1.2.3 (2026-11-13)\n" in md and "older" not in md
+    assert "sub_finder_config" not in md and "For S4K operators" not in md and "Code:" not in md
+    assert "for the CRM" in md and "## 10. Troubleshooting" in md and "still here" in md
+    assert "**Contents:** [8 Rules](#8-rules) · [10 Troubleshooting](#10-troubleshooting)\n" in md
+    # a guide without a version line still renders
+    bare = s.render_crm_doc("# Guide\n\n> **Doc version:** to be set\n\ntext\n")
+    assert bare["version"] is None and bare["updated"] is None
+    assert "> **Doc version:** unknown\n" in bare["markdown"] and "text" in bare["markdown"]
+
+
+def test_ping_names_the_guide_version_and_docs_serves_it(tmp_path, monkeypatch):
+    path = tmp_path / "guide.md"
+    path.write_text(DOC_TEXT, encoding="utf-8")
+    monkeypatch.setattr(s, "DOC_PATH", path)
+    s.crm_doc.cache_clear()
+    db = FakeDB(rpc_data={"sub_finder_access": {"find": True}})
+    c = _client(db)
+    assert c.get("/api/v1/subs/ping", headers=H).json()["docs"] == {
+        "version": "1.2.3", "updated": "2026-11-13", "url": "/api/v1/subs/docs"}
+    r = c.get("/api/v1/subs/docs", headers=H)
+    body = r.json()
+    assert r.status_code == 200 and body["version"] == "1.2.3" and body["format"] == "markdown"
+    assert "for the CRM" in body["markdown"] and "sub_finder_config" not in body["markdown"]
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.docs"}
+    r = c.get("/api/v1/subs/docs?format=md", headers=H)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/markdown")
+    assert r.headers["x-doc-version"] == "1.2.3" and r.text.startswith("# Guide")
+    # the guide needs the key like every other route
+    assert c.get("/api/v1/subs/docs").status_code == 401
+    s.crm_doc.cache_clear()
+
+
+def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
+    monkeypatch.setattr(s, "DOC_PATH", tmp_path / "missing.md")
+    s.crm_doc.cache_clear()
+    c = _client(FakeDB())
+    assert c.get("/api/v1/subs/ping", headers=H).json()["docs"] == {
+        "version": None, "updated": None, "url": "/api/v1/subs/docs"}
+    r = c.get("/api/v1/subs/docs", headers=H)
+    assert r.status_code == 404 and r.json()["error"] == "not_found"
+    s.crm_doc.cache_clear()
+
+
+def test_the_shipped_guide_renders_with_a_version():
+    s.crm_doc.cache_clear()
+    doc = s.crm_doc(s.DOC_PATH)
+    assert doc and doc["version"] and "## 10. Troubleshooting" in doc["markdown"]
+    assert "For S4K operators" not in doc["markdown"] and "mcp_issue_key" not in doc["markdown"]
+    assert "9 Operators" not in doc["markdown"]
+
+
+# ---------------------------------------------------------------- balances
+
+def test_balances_passes_the_sql_answer_through_and_its_refusal():
+    out = {"evo": {"total_spendable": 220575.53, "accounts": [{"office_id": "42029"}]},
+           "gotickets_gift_cards": {"total_remaining": 0, "cards": []}, "generated_at": "2026-11-13T19:07:00Z"}
+    db = FakeDB(rpc_data={"sub_finder_balances": out})
+    r = _client(db).get("/api/v1/subs/balances", headers=H)
+    assert r.status_code == 200 and r.json() == out
+    assert db.last("sub_finder_balances") == {"p_key_id": 7}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.balances"}
+    db = FakeDB(rpc_data={"sub_finder_balances": {"error": "forbidden", "detail": "this key may not read balances"}})
+    assert _client(db).get("/api/v1/subs/balances", headers=H).status_code == 403
+    assert _client(FakeDB()).get("/api/v1/subs/balances").status_code == 401
+
+
+# ---------------------------------------------------------------- a dropped connection
+
+class TransportError(Exception):
+    """Stands in for httpx.TransportError (matched by class name, so httpx is not imported)."""
+
+
+class ReadError(TransportError):
+    pass
+
+
+class _FlakyDB(FakeDB):
+    """Raises the given error on the first call of each named RPC, then answers."""
+
+    def __init__(self, flaky, **kw):
+        super().__init__(**kw)
+        self.flaky = dict(flaky)
+
+    def rpc(self, name, args):
+        if name in self.flaky:
+            exc = self.flaky.pop(name)
+            self.rpcs.append((name, args))
+            return type("Q", (), {"execute": lambda _self: (_ for _ in ()).throw(exc)})()
+        return super().rpc(name, args)
+
+
+def test_dropped_connection_is_recognised_by_class_name():
+    assert s.dropped_connection(ReadError("reset")) and s.dropped_connection(TransportError("x"))
+    assert not s.dropped_connection(RuntimeError("statement timeout"))
+
+
+def test_a_read_is_sent_again_once_when_the_connection_drops():
+    row = {"count": 1, "items": [{"order_number": "659213629"}]}
+    db = _FlakyDB({"mcp_verify_key": ReadError("reset"), "sub_finder_order_read": ReadError("reset")},
+                  rpc_data={"sub_finder_latest_job": JOB, "sub_finder_order_read": row})
+    r = _client(db).get("/api/v1/subs/orders/659213629", headers=H)
+    assert r.status_code == 200 and r.json() == row
+    assert [n for n, _ in db.rpcs].count("mcp_verify_key") == 2
+    assert [n for n, _ in db.rpcs].count("sub_finder_order_read") == 2
+
+
+def test_a_write_or_another_error_is_never_sent_twice():
+    # a buy whose connection dropped may have gone through: it is not repeated
+    db = _FlakyDB({"sub_finder_buy_confirmed": ReadError("reset")},
+                  rpc_data={"sub_finder_latest_job": JOB})
+    c = TestClient(_app(db), raise_server_exceptions=False)
+    r = c.post("/api/v1/subs/orders/659213629/buy", headers=H, json={"listing_id": "6833175743"})
+    assert r.status_code == 500 and [n for n, _ in db.rpcs].count("sub_finder_buy_confirmed") == 1
+    # a read that failed for another reason (a database error) is not repeated either
+    db = _FlakyDB({"sub_finder_order_read": RuntimeError("statement timeout")},
+                  rpc_data={"sub_finder_latest_job": JOB})
+    c = TestClient(_app(db), raise_server_exceptions=False)
+    assert c.get("/api/v1/subs/orders/659213629", headers=H).status_code == 500
+    assert [n for n, _ in db.rpcs].count("sub_finder_order_read") == 1
