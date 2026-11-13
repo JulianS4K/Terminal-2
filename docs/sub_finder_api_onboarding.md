@@ -1,6 +1,6 @@
 # S4K Sub Finder API — onboarding
 
-> **Doc version:** v1.4.0 (2026-11-13) — every cover now carries the N2S **gate** and label; other sections in the same zone are searched when the order's own section has nothing ([§8](#8-how-matching-works-and-what-it-does-not-do)); each order says what to do next in `action`; the clean one-to-one EVO cover can be **bought automatically** (off by default, $1,000 a day). · v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
+> **Doc version:** v1.4.1 (2026-11-13) — a confirmed buy ([§7](#7-buy-an-evo-cover)) is checked against our own order books first. · v1.4.0 (2026-11-13) — every cover now carries the N2S **gate** and label; other sections in the same zone are searched when the order's own section has nothing ([§8](#8-how-matching-works-and-what-it-does-not-do)); each order says what to do next in `action`; the clean one-to-one EVO cover can be **bought automatically** (off by default, $1,000 a day). · v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
 
 For the CRM team. You send us orders that need a substitute ("sub"); we pull fresh listings, and you read back the best replacement tickets for each order. If you are allowed to, you can also ask us to buy an EVO replacement and then follow that purchase until the seller confirms or rejects it.
 
@@ -248,7 +248,9 @@ Calling the feed also moves your open jobs forward, so a client that only ever s
 
 ## 7. Buy an EVO cover
 
-Needs the `subs:buy` scope. Only covers with `"buyable": true` can be bought, and only one this job quoted for that order.
+Needs the `subs:buy` scope. Only covers with `"buyable": true` can be bought, and only one this job quoted for that order. This is how you confirm a sub as good to buy: we buy automatically only a gate 1 (`Index`) cover; any other EVO cover is bought only on this call.
+
+Before buying we check the order against **our own copy of the order books** (mig `20261113030000`): it must be there with the same event, section, row, quantity and sale price, or the call answers 422. So alert us with the order number only; an order sent with its own details can be searched but not bought. A buy is also refused (409) when the Need-to-Sub auto-buy already has the order, or one of our order feeds marks the sale fulfilled, cancelled or rejected.
 
 **`POST /api/v1/subs/orders/{order_number}/buy`** (newest job holding that order) or **`POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy`** (a specific job)
 
