@@ -89,6 +89,12 @@ def _buy_job(**kw):
     return {"action": "buy", "row": _row(**kw), "cfg": CFG}
 
 
+def test_buy_total_falls_back_to_the_quoted_total_with_tax():
+    # 20261113410000: EVO answered no total: record what we priced the buy at, tax included
+    out, recs, _ = _tick(_buy_job(est_tax_usd=11.0), Client(create={"orders": [{"id": 9003, "state": "pending"}]}))
+    assert out["phase"] == "buy_sent" and recs[-1]["p_patch"]["buy_total_usd"] == 211.0
+
+
 def test_idle_when_nothing_to_claim():
     assert lv.tick(Rpc(None), Client(), now=NOW) == {"action": "idle"}
 
@@ -108,7 +114,8 @@ def test_buy_happy_path_sends_one_order():
     assert body["shipped_items"][0]["items"] == [{"ticket_group_id": 6744480374, "quantity": 2, "price": "100.00"}]
     assert [r["p_patch"]["phase"] for r in recs] == ["buying", "buy_sent"]
     assert recs[1] == {"p_exec_id": 7, "p_token": "tok-1", "p_patch": {"phase": "buy_sent", "buy_order_id": "9001",
-                                                                       "buy_state": "pending", "live_error": None}}
+                                                                       "buy_state": "pending", "live_error": None,
+                                                                       "buy_total_usd": 200.0}}  # EVO's total
     assert out["recorded"] == "buy_sent"
 
 

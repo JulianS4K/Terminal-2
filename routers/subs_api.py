@@ -21,6 +21,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/orders/{order_number}/needs-sub         the ALERT: "this order needs a sub"
   GET  /api/v1/subs/docs                                    the onboarding guide, current version
   GET  /api/v1/subs/balances                                our EVO balances + GoTickets gift cards, read hourly
+  GET  /api/v1/subs/autobuys?updated_since=&limit=&offset=  N2S auto-buys placed: what we bought, for which order, totals
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us").
@@ -80,7 +81,8 @@ NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 # connection to the database API dropped under the first (about 1 call in 30 did, 2026-11-13).
 # A buy, an offer, a submit or a note is never repeated: the first may have gone through.
 RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
-                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results"})
+                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
+                             "sub_finder_autobuys"})
 
 
 def dropped_connection(exc: BaseException) -> bool:
@@ -324,6 +326,25 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if isinstance(key, JSONResponse):
             return key
         return _answer(_rpc("sub_finder_balances", {"p_key_id": key["id"]}))
+
+    @router.get("/autobuys")
+    def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
+        """Every N2S auto-buy that placed a purchase (operator 2026-11-13): `buy_ref` =
+        '<market we bought on>-<its order number>', `for_order` = the order the sub covers, the
+        seats bought and the totals. A sync feed like /results (mig 20261113410000); only for keys
+        in `sub_finder_config.autobuys_key_ids`. Reads our own tables; calls no market."""
+        key = _auth(request, "autobuys")
+        if isinstance(key, JSONResponse):
+            return key
+        since, ok = parse_instant(updated_since)
+        if not ok:
+            return _err(422, "invalid", "updated_since must be an ISO-8601 instant")
+        if not 1 <= limit <= MAX_LIMIT:
+            return _err(422, "invalid", f"limit must be between 1 and {MAX_LIMIT}")
+        if offset < 0:
+            return _err(422, "invalid", "offset must not be negative")
+        return _answer(_rpc("sub_finder_autobuys", {"p_key_id": key["id"], "p_updated_since": since,
+                                                    "p_limit": limit, "p_offset": offset}))
 
     @router.post("/jobs")
     async def submit(request: Request):
