@@ -17,7 +17,7 @@
 --   account_balances_pull()   one run: both GETs, each on its own so one failing does not lose
 --                             the other; a row in account_balance_run, and one row per account
 --                             / card in account_balance. A gift card's emailAddress is not
---                             stored. Runs older than 90 days are deleted.
+--                             stored. Every reading is kept (about 500 small rows a day).
 --   cron account_balances_hourly   minute 7 of every hour.
 --   sub_finder_balances(key)  what the CRM reads through GET /api/v1/subs/balances: the newest
 --                             good reading of each source, with totals and `stale` when a
@@ -131,7 +131,6 @@ BEGIN
   UPDATE public.account_balance_run
      SET evo_http = v_evo_http, evo_rows = v_evo, gt_http = v_gt_http, gt_rows = v_gt, error = v_err
    WHERE run_id = v_run;
-  DELETE FROM public.account_balance_run WHERE taken_at < now() - interval '90 days';
   RETURN jsonb_build_object('run_id', v_run, 'evo_http', v_evo_http, 'evo_rows', v_evo,
                             'gt_http', v_gt_http, 'gt_rows', v_gt, 'error', v_err);
 END
