@@ -516,3 +516,18 @@ def test_the_shipped_guide_renders_with_a_version():
     assert doc and doc["version"] and "## 10. Troubleshooting" in doc["markdown"]
     assert "For S4K operators" not in doc["markdown"] and "mcp_issue_key" not in doc["markdown"]
     assert "9 Operators" not in doc["markdown"]
+
+
+# ---------------------------------------------------------------- balances
+
+def test_balances_passes_the_sql_answer_through_and_its_refusal():
+    out = {"evo": {"total_spendable": 220575.53, "accounts": [{"office_id": "42029"}]},
+           "gotickets_gift_cards": {"total_remaining": 0, "cards": []}, "generated_at": "2026-11-13T19:07:00Z"}
+    db = FakeDB(rpc_data={"sub_finder_balances": out})
+    r = _client(db).get("/api/v1/subs/balances", headers=H)
+    assert r.status_code == 200 and r.json() == out
+    assert db.last("sub_finder_balances") == {"p_key_id": 7}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.balances"}
+    db = FakeDB(rpc_data={"sub_finder_balances": {"error": "forbidden", "detail": "this key may not read balances"}})
+    assert _client(db).get("/api/v1/subs/balances", headers=H).status_code == 403
+    assert _client(FakeDB()).get("/api/v1/subs/balances").status_code == 401

@@ -235,6 +235,9 @@ class GoTicketsProClient:
       - POST /orders           order creation / purchase — FORBIDDEN, never add
       - GET /payment-methods   wallet endpoints that exist only to feed the
       - GET /gift-cards        forbidden checkout flow; no read-only use for us
+                             (2026-11-13: the gift cards ARE read hourly now, for their
+                             balances only, by SQL account_balances_pull(), mig
+                             20261113270000 — still not by this client)
 
     The purchase half is locked out MECHANICALLY, not just by omission: the
     module-level RULE-2 guard (``_assert_readonly_method``) raises on any
