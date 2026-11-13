@@ -2198,6 +2198,15 @@ from routers.developers import build_developers_router  # noqa: E402
 
 app.include_router(build_developers_router(STATIC_DIR, get_require_sb=lambda: require_sb))
 
+# ---------- StubHub OAuth (our seller account, read-only, OFF by default) ----------
+#
+# /api/admin/stubhub/{status,connect} + /api/stubhub/oauth/callback -> routers/stubhub_oauth.py.
+# The code→token swap and refresh run in SQL (mig 20261113250040); answers 503 until
+# STUBHUB_API_ENABLED=1 and stubhub_api_config.enabled (operator 2026-11-13).
+from routers.stubhub_oauth import build_stubhub_oauth_router  # noqa: E402
+
+app.include_router(build_stubhub_oauth_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+
 
 # ---------- MCP server (/mcp) ----------
 #
