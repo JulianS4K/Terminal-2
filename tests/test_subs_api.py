@@ -405,3 +405,35 @@ def test_offer_sub_files_the_crm_yes_and_maps_refusals():
     for code, status in (("forbidden", 403), ("not_found", 404), ("conflict", 409), ("invalid", 422)):
         db.rpc_data["sub_finder_gt_offer_confirmed"] = {"error": code}
         assert c.post(url, headers=H, json={"listing_id": "3201"}).status_code == status
+
+
+# ---------------------------------------------------------------- the CRM's own notes
+
+def test_notes_ride_with_the_alert_and_are_trimmed():
+    row, why = s.clean_order({"order_number": "1", "notes": "  call buyer first  "}, 0)
+    assert why is None and row["notes"] == "call buyer first"
+    assert "notes" not in s.clean_order({"order_number": "1", "notes": "   "}, 0)[0]
+    assert len(s.clean_order({"order_number": "1", "notes": "x" * 900}, 0)[0]["notes"]) == 500
+    db = FakeDB(rpc_data={"sub_finder_submit": {"job_id": JOB, "status": "pulling"}})
+    c = _client(db)
+    assert c.post("/api/v1/subs/orders/82410899/needs-sub", headers=H, json={"notes": "VIP"}).status_code == 202
+    assert db.last("sub_finder_submit")["p_orders"] == [{"order_number": "82410899", "notes": "VIP"}]
+
+
+def test_notes_route_writes_clears_and_refuses():
+    db = FakeDB(rpc_data={"sub_finder_set_notes": {"order_number": "1003", "notes": "VIP"}})
+    c = _client(db)
+    url = "/api/v1/subs/orders/1003/notes"
+    assert c.post(url, json={"notes": "VIP"}).status_code == 401
+    r = c.post(url, headers=H, json={"notes": "  VIP  "})
+    assert r.status_code == 200 and r.json()["notes"] == "VIP"
+    assert db.last("sub_finder_set_notes") == {"p_key_id": 7, "p_order_number": "1003", "p_notes": "VIP"}
+    c.post(url, headers=H, json={"notes": ""})                                  # empty clears
+    assert db.last("sub_finder_set_notes")["p_notes"] == ""
+    for body in ({}, {"notes": 5}, {"notes": None}, [1], {"notes": "x" * 501}):
+        assert c.post(url, headers=H, json=body).status_code == 422
+    assert c.post(url, headers=H, content=b"not json").status_code == 422
+    assert c.post("/api/v1/subs/orders/bad%20order/notes", headers=H, json={"notes": "x"}).status_code == 422
+    for code, status in (("forbidden", 403), ("not_found", 404)):
+        db.rpc_data["sub_finder_set_notes"] = {"error": code}
+        assert c.post(url, headers=H, json={"notes": "x"}).status_code == status
