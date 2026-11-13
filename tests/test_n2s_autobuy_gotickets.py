@@ -312,6 +312,7 @@ def test_buys_once_from_gift_cards_and_records_the_purchase():
     assert "buyerNotes" not in body                # may be shown to the seller: nothing about the sale
     assert body["recipient"] == PROFILE["gt_recipient"] and body["billingAddress"] == PROFILE["gt_billing_address"]
     assert [r["p_patch"]["phase"] for r in recs] == ["buying", "buy_sent"]   # lease held right before the POST
+    assert recs[-1]["p_patch"]["buy_total_usd"] == 186.0                     # GoTickets' orderTotal
     assert ("own", "7531654667") in calls
 
 
@@ -371,6 +372,12 @@ def test_a_charge_above_expected_is_noted():
     gt = Gt(create={"id": 8400001, "orderTotal": 190.0})
     out, _, _ = _tick(_job(), gt)
     assert out["phase"] == "buy_sent" and "above the expected" in out["live_error"]
+    assert out["buy_total_usd"] == 190.0                                       # what GoTickets charged
+
+
+def test_no_order_total_records_the_total_we_priced():
+    out, _, _ = _tick(_job(), Gt(create={"id": 8400001, "orderStatus": "PENDING_CONFIRMATION"}))
+    assert out["phase"] == "buy_sent" and out["buy_total_usd"] == 186.0 and out["live_error"] is None
 
 
 # ------------------------------------------------------------------ the worker: follow + accept
