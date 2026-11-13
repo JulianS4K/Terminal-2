@@ -12,7 +12,9 @@
 --   * GoTickets requires the buyer's email, phone, billing address and (Mobile Transfer / PDF)
 --     a recipient on every order. Those live in the config (gt_buyer_email, gt_buyer_phone,
 --     gt_billing_address, gt_recipient), never in code; until all are set no GoTickets row is
---     enqueued as a buy ('gt_buyer_profile_missing').
+--     enqueued as a buy ('gt_buyer_profile_missing'). Operator 2026-11-13: "use the
+--     tu@s4kent.com office info from evo as the buyer details" + "use julian G": set below from
+--     EVO office 42029 (Office 3: tu@s4kent.com, 212-913-9751, 362 5th Ave, New York NY 10001).
 --
 --   1. n2s_autobuy_config: gt_live_runs_allowed (1) / gt_live_runs_used, gt_per_order_cap_usd /
 --      gt_daily_cap_usd / gt_project_cap_usd (666 each), gt_project_stopped (+ at / reason),
@@ -63,6 +65,20 @@ COMMENT ON COLUMN public.n2s_autobuy_config.gt_gift_card_ids IS
 UPDATE public.n2s_autobuy_config
    SET buy_sources = buy_sources || 'gotickets'::text, updated_at = now()
  WHERE id AND NOT ('gotickets' = ANY (buy_sources));
+
+-- The buyer profile (operator 2026-11-13): EVO office 42029's contact details, name Julian G.
+-- Only fills fields that are still empty, so a later edit in the config is never overwritten.
+UPDATE public.n2s_autobuy_config
+   SET gt_buyer_email     = COALESCE(gt_buyer_email, 'tu@s4kent.com'),
+       gt_buyer_phone     = COALESCE(gt_buyer_phone, '212-913-9751'),
+       gt_billing_address = COALESCE(gt_billing_address, jsonb_build_object(
+         'firstName', 'Julian', 'lastName', 'G', 'address1', '362 5th Ave', 'city', 'New York',
+         'state', 'NY', 'postalCode', '10001', 'country', 'US')),
+       gt_recipient       = COALESCE(gt_recipient, jsonb_build_object(
+         'firstName', 'Julian', 'lastName', 'G', 'email', 'tu@s4kent.com', 'phoneNumber', '212-913-9751',
+         'address1', '362 5th Ave', 'city', 'New York', 'state', 'NY', 'postalCode', '10001', 'country', 'US')),
+       updated_at         = now()
+ WHERE id;
 
 -- Every GoTickets field the Pro API requires on an order is present.
 CREATE OR REPLACE FUNCTION public.n2s_autobuy_gt_profile_ok(c public.n2s_autobuy_config)
