@@ -537,6 +537,37 @@ def test_balances_passes_the_sql_answer_through_and_its_refusal():
     assert _client(FakeDB()).get("/api/v1/subs/balances").status_code == 401
 
 
+# ---------------------------------------------------------------- auto-buy results
+
+def test_autobuys_passes_the_feed_through_with_the_sync_cursor():
+    out = {"count": 1, "total": 1, "limit": 50, "offset": 0, "generated_at": "2026-11-13T20:30:00Z",
+           "items": [{"buy_ref": "gotickets-8400001", "for_order": {"order_number": "82482253"},
+                      "status": "went_through", "totals": {"charged_usd": 554.64, "sold_usd": 650.0}}]}
+    db = FakeDB(rpc_data={"sub_finder_autobuys": out})
+    r = _client(db).get("/api/v1/subs/autobuys?updated_since=2026-11-13T20:00:00Z&limit=50", headers=H)
+    assert r.status_code == 200 and r.json() == out
+    assert db.last("sub_finder_autobuys") == {"p_key_id": 7, "p_updated_since": "2026-11-13T20:00:00+00:00",
+                                              "p_limit": 50, "p_offset": 0}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.autobuys"}
+    _client(db).get("/api/v1/subs/autobuys", headers=H)
+    assert db.last("sub_finder_autobuys") == {"p_key_id": 7, "p_updated_since": None, "p_limit": 200, "p_offset": 0}
+
+
+def test_autobuys_refusals_and_bad_input_never_reach_sql():
+    db = FakeDB(rpc_data={"sub_finder_autobuys": {"error": "forbidden",
+                                                  "detail": "this key may not read auto-buy results"}})
+    assert _client(db).get("/api/v1/subs/autobuys", headers=H).status_code == 403
+    assert _client(FakeDB()).get("/api/v1/subs/autobuys").status_code == 401
+    for q in ("updated_since=yesterday", "limit=0", "limit=1001", "offset=-1"):
+        db = FakeDB()
+        r = _client(db).get(f"/api/v1/subs/autobuys?{q}", headers=H)
+        assert r.status_code == 422 and not [n for n, _ in db.rpcs if n == "sub_finder_autobuys"]
+
+
+def test_autobuys_read_is_retried_once_on_a_dropped_connection():
+    assert "sub_finder_autobuys" in s.RETRY_ONCE_RPCS
+
+
 # ---------------------------------------------------------------- a dropped connection
 
 class TransportError(Exception):
