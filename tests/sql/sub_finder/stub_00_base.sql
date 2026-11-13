@@ -10,8 +10,13 @@ CREATE TABLE n2s_sg_current (tevo_event_id bigint, sg_event_id bigint, display_i
 CREATE TABLE sg_events_canonical (sg_event_id bigint primary key, sg_url text);
 CREATE TABLE n2s_mkt_pull (request_id bigserial, source text, tevo_event_id bigint, mkt_event_id text, fired_at timestamptz default now(), resolved_at timestamptz, status_code int, rows_persisted int);
 CREATE FUNCTION seat_section_norm(p text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT lower(regexp_replace(p,'\s+','','g')) $$;
-CREATE FUNCTION seat_row_kind(p text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN p ~ '^\d+$' THEN 'n' ELSE 'a' END $$;
-CREATE FUNCTION seat_row_rank(p text) RETURNS int LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN p ~ '^\d+$' THEN p::int ELSE ascii(upper(p))-64 END $$;
+-- as in production: digits, or one or two letters (anything else has no kind and is never matched); AA ranks behind Z
+CREATE FUNCTION seat_row_kind(p_row text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN p_row ~ '^[0-9]+$' THEN 'n' WHEN p_row ~ '^[A-Za-z]{1,2}$' THEN 'a' END $$;
+CREATE FUNCTION seat_row_rank(p_row text) RETURNS int LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE WHEN p_row ~ '^[0-9]+$' THEN p_row::integer
+              WHEN p_row ~ '^[A-Za-z]$' THEN ascii(upper(p_row)) - 64
+              WHEN p_row ~ '^[A-Za-z]{2}$' THEN (ascii(upper(left(p_row,1))) - 64) * 26 + (ascii(upper(right(p_row,1))) - 64) END $$;
 CREATE FUNCTION n2s_pull_events(p_events bigint[], p_refresh_after interval DEFAULT '5 min') RETURNS TABLE(evo_fired int) LANGUAGE plpgsql AS $$
 BEGIN INSERT INTO n2s_mkt_pull(source, tevo_event_id) SELECT 'evo', e FROM unnest(p_events) e; RETURN QUERY SELECT 1; END $$;
 CREATE TABLE aq_event_map (id bigserial, tevo_event_id bigint, sh_event_id bigint);

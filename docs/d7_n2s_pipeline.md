@@ -380,6 +380,9 @@ name **different levels** (`level_mismatch`, via `n2s_section_level`), or when a
 already has a would_buy on the **same listing** (`listing_taken`).
 Since 2026-11-04 (`20261104170000`) they also skip a **single-letter vs double-letter row** pair
 (`row_letter_mismatch`, e.g. sold AA, sub H).
+Since 2026-11-13 (`20261113460000`, operator "add the wc rule to n2s too") they also skip a pair
+where exactly one of the two rows is a **wheelchair row** (`wheelchair_row`: WC, wheelchair,
+accessible, ADA, handicap, via `sub_finder_row_is_wheelchair`); WC against WC is not skipped.
 Since 2026-11-13 (`20261113050000`, operator "Yes" to limiting N2S to Automatiq items) both take
 only **Automatiq** items (`n2s_items.item_source = 'automatiq'`): the failed-order alerts with an
 alert time and the 10-minute timer. The CRM intake also brings in items agents add by hand
