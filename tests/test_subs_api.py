@@ -374,11 +374,16 @@ def test_offer_sub_files_the_crm_yes_and_maps_refusals():
     c = _client(db)
     url = "/api/v1/subs/orders/1003/offer-sub"
     assert c.post(url, json={"listing_id": "3201"}).status_code == 401
-    r = c.post(url, headers=H, json={"listing_id": "3201", "market": "evo", "requested_by": "dana"})
+    r = c.post(url, headers=H, json={"listing_id": "3201", "market": "evo", "requested_by": "dana",
+                                     "rebate_amount": 45.5})
     assert r.status_code == 202 and r.json()["rebate"] == 60
     assert db.last("sub_finder_gt_offer_request") == {
         "p_key_id": 7, "p_key_label": "crm", "p_order_number": "1003", "p_listing_id": "3201",
-        "p_market": "evo", "p_requested_by": "dana"}
+        "p_market": "evo", "p_requested_by": "dana", "p_rebate_amount": 45.5}
+    c.post(url, headers=H, json={"listing_id": "3201"})                    # no amount sent: SQL decides
+    assert db.last("sub_finder_gt_offer_request")["p_rebate_amount"] is None
+    for bad in (-1, "50", True, 100001):
+        assert c.post(url, headers=H, json={"listing_id": "3201", "rebate_amount": bad}).status_code == 422
     assert "subs:offer" in c.get("/api/v1/subs/ping", headers=H).json()["scopes"]
     for body in ({}, {"listing_id": "bad id"}, [1]):
         assert c.post(url, headers=H, json=body).status_code == 422
