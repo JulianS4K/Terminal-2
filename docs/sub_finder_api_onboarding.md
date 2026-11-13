@@ -1,6 +1,6 @@
 # S4K Sub Finder API — onboarding
 
-> **Doc version:** v1.6.10 (2026-11-13) — §9: `tax_quote_test`, the tax quote's first run only stores EVO's raw answer (mig `20261113150000`). · v1.6.9 (2026-11-13) — §6a: a `notes` field the CRM can write on an order, with the alert or through `POST /orders/{n}/notes` (mig `20261113140000`). · v1.6.8 (2026-11-13) — covers carry `flags` / `confirm_needed`; a flagged cover is never bought automatically and the CRM's yes needs `"confirm": true`; a single ticket auto-buys only into the exact row, another row is an offer the CRM may bypass (mig `20261113130000`). · v1.6.7 (2026-11-13) — the buy path can ask EVO for its total, tax included, before buying (`manual_sub_buy_config.tax_quote`, mig `20261113110000`): an automatic buy stops when that total breaks its rule. · v1.6.6 (2026-11-13) — while a GoTickets sub offer waits for the customer we stop pulling listings and re-matching the order; once accepted, polling resumes and matching EVO seats are bought; SeatGeek is pulled on every round for watched orders (mig `20261113120000`). · v1.6.4 (2026-11-13) — GoTickets offers: the rebate amount is now yours to send (`rebate_amount`); we only suggest one. · v1.6.2 (2026-11-13) — the automatic buy also takes a same-section cover at a loss of 5% of the sale or less; a finished buy shows `profit_actual` / `gate_actual`. · v1.6.1 (2026-11-13) — an EVO cover's `total` and `profit` now include the sales tax we expect at that venue (`subtotal`, `tax_pct`, `tax_est` on the cover). · v1.6.0 (2026-11-13) — order details, sale price and live status now come from the marketplace's own order feed first (GoTickets, TickPick, Vivid, SeatGeek, EVO), the CRM's books second; `order_source` gains `api`. · v1.5.1 (2026-11-13) — the automatic buy takes a cover at breakeven or profit; the 10% minimum is gone. · v1.5.0 (2026-11-13) — GoTickets orders: `sub_offer` on the order and `POST /orders/{n}/offer-sub`, the CRM's yes to offering the customer a gate 3–5 sub through GoTickets ([§7a](#7a-offer-a-sub-to-a-gotickets-customer)). · v1.4.1 (2026-11-13) — a confirmed buy ([§7](#7-buy-an-evo-cover)) is checked against our own order books first. · v1.4.0 (2026-11-13) — every cover now carries the N2S **gate** and label; other sections in the same zone are searched when the order's own section has nothing ([§8](#8-how-matching-works-and-what-it-does-not-do)); each order says what to do next in `action`; the clean one-to-one EVO cover can be **bought automatically** (off by default, $1,000 a day). · v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
+> **Doc version:** v1.6.12 (2026-11-13) — the fields we ask the CRM to add to its N2S feed (decision, confirm, rebate, order status); the CRM can start a lookup by labelling an item `need2buy` in its own N2S feed, which we already poll (mig `20261113160000`). · v1.6.10 (2026-11-13) — §9: `tax_quote_test`, the tax quote's first run only stores EVO's raw answer (mig `20261113150000`). · v1.6.9 (2026-11-13) — §6a: a `notes` field the CRM can write on an order, with the alert or through `POST /orders/{n}/notes` (mig `20261113140000`). · v1.6.8 (2026-11-13) — covers carry `flags` / `confirm_needed`; a flagged cover is never bought automatically and the CRM's yes needs `"confirm": true`; a single ticket auto-buys only into the exact row, another row is an offer the CRM may bypass (mig `20261113130000`). · v1.6.7 (2026-11-13) — the buy path can ask EVO for its total, tax included, before buying (`manual_sub_buy_config.tax_quote`, mig `20261113110000`): an automatic buy stops when that total breaks its rule. · v1.6.6 (2026-11-13) — while a GoTickets sub offer waits for the customer we stop pulling listings and re-matching the order; once accepted, polling resumes and matching EVO seats are bought; SeatGeek is pulled on every round for watched orders (mig `20261113120000`). · v1.6.4 (2026-11-13) — GoTickets offers: the rebate amount is now yours to send (`rebate_amount`); we only suggest one. · v1.6.2 (2026-11-13) — the automatic buy also takes a same-section cover at a loss of 5% of the sale or less; a finished buy shows `profit_actual` / `gate_actual`. · v1.6.1 (2026-11-13) — an EVO cover's `total` and `profit` now include the sales tax we expect at that venue (`subtotal`, `tax_pct`, `tax_est` on the cover). · v1.6.0 (2026-11-13) — order details, sale price and live status now come from the marketplace's own order feed first (GoTickets, TickPick, Vivid, SeatGeek, EVO), the CRM's books second; `order_source` gains `api`. · v1.5.1 (2026-11-13) — the automatic buy takes a cover at breakeven or profit; the 10% minimum is gone. · v1.5.0 (2026-11-13) — GoTickets orders: `sub_offer` on the order and `POST /orders/{n}/offer-sub`, the CRM's yes to offering the customer a gate 3–5 sub through GoTickets ([§7a](#7a-offer-a-sub-to-a-gotickets-customer)). · v1.4.1 (2026-11-13) — a confirmed buy ([§7](#7-buy-an-evo-cover)) is checked against our own order books first. · v1.4.0 (2026-11-13) — every cover now carries the N2S **gate** and label; other sections in the same zone are searched when the order's own section has nothing ([§8](#8-how-matching-works-and-what-it-does-not-do)); each order says what to do next in `action`; the clean one-to-one EVO cover can be **bought automatically** (off by default, $1,000 a day). · v1.2.0 (2026-11-12) — the integration we ask for is now one **"Needs sub" checkbox** that alerts us with the order number (`POST /orders/{n}/needs-sub`); the doc leads with it. · v1.1.0 (2026-11-12) — simplified around how the CRM holds orders: send just order numbers or the CRM's own rows, and read / buy by order number with no job id. · v1.0.0 (2026-11-12) — first version: find substitutes for any order (EVO, GoTickets, SeatGeek, then TicketsData as a fallback), sync results with `updated_since`, ask for an EVO cover to be bought and follow it to confirmed / rejected with seat numbers.
 
 For the CRM team. You send us orders that need a substitute ("sub"); we pull fresh listings, and you read back the best replacement tickets for each order. If you are allowed to, you can also ask us to buy an EVO replacement and then follow that purchase until the seller confirms or rejects it.
 
@@ -44,6 +44,74 @@ curl -s -H "X-API-Key: $KEY" $HOST/api/v1/subs/orders/<order_number>
 7. **If the CRM auto-creates N2S items from failed-order alerts,** fire the same call when it does, so the agent opens the order to a sub already found.
 
 That is all the CRM has to build: one checkbox, one call when it is ticked, one read to show the answer.
+
+## The other way in: label the item `need2buy` in your N2S feed
+
+You do not have to call us to start a lookup. We already read your Need-to-Sub feed (`GET /api/v1/n2s/items` on the CRM) every 30 seconds. **Label an item `need2buy` there and we start the sub finder on it by ourselves**, within about a minute and a half (mig `20261113160000`). One feed, one poller.
+
+- **The label.** Set the item's `status` (or `status_label`, or `label_status`) to `need2buy`. Spacing, case and punctuation do not matter (`Need2Buy`, `need-2-buy`, `need_to_buy`, `N2B` all count).
+- **What we take from the item.** Its `order_number` and `marketplace`. Everything else we look up ourselves, as for an alert. `seller_notes` becomes the order's `notes`.
+- **Reading the answer** is unchanged: `GET /api/v1/subs/orders/{order_number}` or the sync feed, with your key. Your API has no write surface, so we write nothing back to the CRM.
+- **It takes the whole path**, the automatic buy included ([§8](#8-how-matching-works-and-what-it-does-not-do)). An item in the feed that is not labelled `need2buy` is left to the Need-to-Sub pipeline as before.
+- **Taking the label off** (or resolving the item) stops the watch: `closed_reason` `left_crm_n2s`. Labelling it again starts a fresh lookup.
+- The checkbox call above still works and can be used alongside the label.
+
+### What we ask you to add to your N2S feed
+
+The label starts a lookup. With the additions below, the rest of the conversation could run through the same feed, and you would not have to call us for anything except reading the answer. They are in the order that helps most. **None of these is read yet except where it says "read today"**: tell S4K which you can add and under what names, and we wire each one as it appears.
+
+**A. So we see a labelled item quickly**
+
+| Ask | Why |
+|---|---|
+| `need2buy` as a real status in `GET /n2s/meta`, usable as `GET /n2s/items?status=need2buy` | we could ask for exactly the labelled items instead of scanning the book |
+| newest change first by default, or `sort=updated_at&order=desc` honoured on `GET /n2s/items` | our 30-second poll reads the first 150 items; a newly labelled item must be among them |
+| `updated_since=<instant>` on `GET /n2s/items` | lets us ask only for what changed, however large the book is |
+
+**B. So your decision reaches us without a call**
+
+| Field on the item | Values | Replaces | What we would do |
+|---|---|---|---|
+| `sub_decision` | `buy` · `offer` · `none` | the buy and offer-sub calls | `buy`: buy the listing named below. `offer`: send the GoTickets substitution. `none`: do nothing |
+| `sub_listing_id`, `sub_market` | the `listing_id` and `market` of the cover you chose, exactly as we returned them | `listing_id` in those calls | act only on a cover we quoted for that order |
+| `sub_confirm` | `true` when a person has seen the cover's `flags` and accepts them | `"confirm": true` | required for a flagged cover, and for buying a one-ticket cover in another row instead of offering it |
+| `sub_rebate_amount` | dollars, `0` allowed | `rebate_amount` | sent with a GoTickets offer; required when the sub is rows back |
+| `sub_decided_by`, `sub_decided_at` | who, and a UTC instant | `requested_by` | we act **once per `sub_decided_at`**, so a decision is never carried out twice; change the instant to decide again |
+
+**Which answer each gate and suffix needs.** These are the only responses we need from you; everything else we decide or do ourselves.
+
+| What the best cover is | What we do by ourselves | The answer we need in your feed |
+|---|---|---|
+| Gate 1 `Index`, on EVO, no suffix (a one-ticket order: exact row) | buy it | none |
+| Gate 2 `S4KTrading`, on EVO, loss of 5% of the sale or less, no suffix | buy it | none |
+| Gate 1 or 2 that we did not buy (loss over 5%, or over a spending limit) | nothing | `sub_decision: buy` + `sub_listing_id` |
+| Gate 1 or 2 on GoTickets / SeatGeek / TicketsData markets | nothing: we can only buy on EVO | none; a person buys it through `link` |
+| Gate 3 `Index offer subs` / gate 4 `offer subs s4ktrading` | nothing | GoTickets order: `sub_decision: offer` + `sub_listing_id`. Other marketplaces: you ask the buyer, then `sub_decision: buy` if the cover is on EVO |
+| Gate 5 `Index Down offer subs` | nothing | as gate 3–4, plus `sub_rebate_amount` (`0` allowed) |
+| Gate 6 `Down offer subs S4KTrading` | nothing | none: shown to you only, never offered or bought on an answer |
+| `over 200% of sale` | nothing | `sub_decision: buy` + `sub_listing_id` if a person accepts the cost |
+
+| Suffix on the label (`flags` code) | What it adds to the answer above |
+|---|---|
+| `single ticket` in a different row (`single_ticket_row_differs`) | either `sub_decision: offer` (no confirm needed), or to skip the offer `sub_decision: buy` + `sub_confirm: true` |
+| `single ticket` in the exact row (no flag) | nothing: bought as gate 1 / 2 |
+| `repost single` (`repost_single`) | `sub_confirm: true`: one more ticket than was sold will be bought |
+| `obstructed view` (`obstructed_view`) | `sub_confirm: true` |
+| `zone unverified` (`zone_unverified`) | `sub_confirm: true`: we could not check the seats are in the same area |
+| `no sale price` (`no_sale_price`) | `sub_confirm: true`: profit could not be worked out |
+
+After a GoTickets customer accepts and the offered seats are gone (`accepted_next: "new_sub_needed"`), the same tables apply to `new_best`: send a new answer with a new `sub_decided_at`.
+
+**C. So we stop sooner and match better**
+
+| Field on the item | Why |
+|---|---|
+| `order_status` (`open` · `cancelled` · `delivered` · `rejected`) | we stop watching the moment you know the sale is over, instead of waiting for the marketplace's feed |
+| `marketplace_order_id` when it differs from `order_number` | GoTickets substitutions are sent against GoTickets' own order id |
+| `in_hand_date`, `delivery_type` (read today when present) | so we do not suggest tickets that cannot be delivered in time |
+| `seller_notes` (**read today**: becomes the order's `notes`) | your notes travel with the order |
+
+**What stays as it is.** We cannot write to the CRM, so you still read our answer from us: `GET /api/v1/subs/orders/{order_number}` or the sync feed. If you would rather we called you when an answer changes, give S4K a URL and we can add that.
 
 ## 1. Quick start (5 minutes)
 
@@ -457,6 +525,7 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 5 | Optional: let the key buy | `UPDATE sub_finder_config SET buy_enabled = true, buy_key_ids = buy_key_ids \|\| <id>;` |
 | 6 | Optional: automatic one-to-one buys (mig `20261113010000`) | `UPDATE sub_finder_config SET auto_buy_enabled = true;` — independent of step 5. Limits: `auto_buy_daily_cap_usd` (1000, counted per New York day over `manual_sub_buy` rows whose `requested_by` starts `sub finder auto`) and `auto_buy_min_profit_pct` (0 = breakeven or profit) and `auto_buy_max_loss_pct` (5: the biggest loss, as a percent of the sale total, a gate 2 cover may be bought at; 0 = breakeven only) |
 | 7 | Optional: GoTickets sub offers (mig `20261113020000`) | `UPDATE sub_finder_config SET gt_offer_enabled = true, gt_offer_key_ids = gt_offer_key_ids \|\| <id>;` and `GT_SUB_OFFER_LIVE=1` on the web service. `gt_offer_auto_buy = true` also buys the EVO seats once the customer accepts (needs the manual sub buy path live; counts toward `auto_buy_daily_cap_usd`). Last tick: `GET /api/admin/gt-sub-offer/status`. Rows: `sub_finder_gt_offer` |
+| 8 | Optional: take in `need2buy` items from the CRM's N2S feed (mig `20261113160000`) | `UPDATE sub_finder_config SET n2b_intake_enabled = true, n2b_key_id = <id> WHERE id;` — the lookups are filed under that key, which must be in `key_ids`. Up to `n2b_batch` (20) items a minute. What was handed over: `sub_finder_n2b_seen`. Our own Gmail-labelled N2B rows are not taken in |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys, automatic buys and operator buys together. An `unknown` outcome flips its kill switch and stops **all** manual buys until someone has checked EVO.
 
