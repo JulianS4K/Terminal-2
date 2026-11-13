@@ -18,6 +18,8 @@ doubled purchase:
           it will charge, tax included; buys nothing). A row with a total ceiling
           (max_total_usd: the sub finder's automatic buys) stops when the quoted total is over
           it, or when EVO gives no usable quote; a row without one is bought either way
+          (tax_quote_test: on the first buy only, the quote is asked and its raw answer stored
+          for a person to read; it decides nothing and no signature is sent)
   buy     POST /v9/orders, once, through evo_buy_client (path-pinned; RULE 2), with the
           quote's tax_signature when there is one
 
@@ -41,6 +43,7 @@ from evo_buy_client import (
     EvoWriteRejected,
     EvoWriteUnknown,
     buy_order_body,
+    probe_tax_quote,
     read_tax_quote,
 )
 
@@ -106,6 +109,10 @@ def tick(rpc: Rpc, client: EvoBuyClient) -> dict:
             return {**out, **_record(rpc, job, state="stopped", reasons=["tax_quote_failed"])}
         if quote["total"] > float(ceiling) + 0.005:
             return {**out, **_record(rpc, job, state="stopped", reasons=["total_above_ceiling"], **quoted)}
+    if cfg.get("tax_quote_test") and not cfg.get("tax_quote"):
+        # the first run is a test (operator 2026-11-13): keep EVO's answer as it came so its shape
+        # can be confirmed. Nothing is decided from it and no signature is sent.
+        quoted = {"quote_raw": probe_tax_quote(client, tg["id"], qty)}
     body = buy_order_body(ticket_group_id=tg["id"], quantity=qty, price_ea=price,
                           seller_office_id=tg["office"]["id"], buyer_office_id=int(cfg["evo_buyer_office_id"]),
                           shipment_type=SHIPMENT_FOR_FORMAT[tg["format"]],

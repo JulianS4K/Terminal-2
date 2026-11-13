@@ -187,3 +187,19 @@ def read_tax_quote(client: EvoBuyClient, ticket_group_id: Any, qty: int) -> dict
     except (EvoWriteRejected, EvoWriteUnknown, requests.RequestException, KeyError, TypeError, ValueError):
         return None
     return quote if quote["signature"] and quote["total"] > 0 and quote["tax"] >= 0 else None
+
+
+RAW_QUOTE_MAX = 4000  # characters of a test quote's answer kept
+
+
+def probe_tax_quote(client: EvoBuyClient, ticket_group_id: Any, qty: int) -> dict:
+    """The test run: EVO's tax quote answer exactly as it came, or what went wrong, for a
+    person to read. Never raises, and nothing is decided from it."""
+    try:
+        got = client.tax_quote(ticket_group_id, qty)
+    except (EvoWriteRejected, EvoWriteUnknown, requests.RequestException) as e:
+        return {"ok": False, "error": type(e).__name__, "detail": str(e)[:500]}
+    text = json.dumps(got, default=str)
+    if len(text) > RAW_QUOTE_MAX:
+        return {"ok": True, "truncated": True, "text": text[:RAW_QUOTE_MAX]}
+    return {"ok": True, "response": got}
