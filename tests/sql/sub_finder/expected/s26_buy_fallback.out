@@ -1,0 +1,69 @@
+the cheapest one-to-one cover is requested for each order
+F130|auto_bought|-|13001:requested|1
+F131|auto_bought|-|13101:requested|1
+F132|auto_bought|-|13201:requested|1
+F133|auto_bought|-|13301:requested|1
+the four buys end differently: listing gone / listing gone / over a spend ceiling / bought, then the seller rejects
+F130 listing 13001 -> stopped
+F131 listing 13101 -> stopped
+F132 listing 13201 -> stopped
+bought
+rejected
+t|t|f|f|f
+switch off: nothing is released, the stopped buys stay on their orders
+t|0
+F130|auto_bought|-|13001:stopped|1
+F131|auto_bought|-|13101:stopped|1
+F132|auto_bought|-|13201:stopped|1
+F133|auto_bought|-|13301:stopped|1
+a person may still buy a different cover for an order whose buy stopped (F131), and the dead listing is named
+requested|13102|
+F130|13001|["listing_gone"]|stopped
+F131|13101|["listing_gone"]|requested
+F132|13201|["over_daily_cap"]|stopped
+F133|13301|["seller_rejected"]|stopped
+F131 listing 13102 -> stopped
+switch on: the listing stops are released (F130, F131, F133); the spend-ceiling stop is not (F132)
+3
+F130|review|-|no buy|1
+F131|review|-|no buy|2
+F132|auto_bought|-|13201:stopped|1
+F133|review|-|no buy|1
+the next match takes the next cover, never the listing that stopped
+t
+F130|auto_bought|-|13002:requested|2
+F131|buy_manually|no_evo_one_to_one|no buy|2
+F132|auto_bought|-|13201:stopped|1
+F133|auto_bought|-|13302:requested|2
+F130|13001|stopped|{listing_gone}
+F130|13002|requested|{}
+F131|13101|stopped|{listing_gone}
+F131|13102|stopped|{listing_gone}
+F132|13201|stopped|{over_daily_cap}
+F133|13301|stopped|{seller_rejected}
+F133|13302|requested|{}
+the second cover stops too: with no untried cover left nothing more is requested
+F130 listing 13002 -> stopped
+F133 listing 13302 -> stopped
+2
+t
+F130|buy_manually|no_evo_one_to_one|no buy|2
+F131|buy_manually|no_evo_one_to_one|no buy|2
+F132|auto_bought|-|13201:stopped|1
+F133|buy_manually|no_evo_one_to_one|no buy|2
+attempts per order per day are limited (buy_fallback_max): with the limit lowered to 2, a third stop is not released
+F130|2
+F131|2
+F132|1
+F133|2
+t
+F130|auto_bought|-|13003:requested|3
+F131|buy_manually|no_evo_one_to_one|no buy|2
+F132|auto_bought|-|13201:stopped|1
+F133|buy_manually|no_evo_one_to_one|no buy|2
+F130 listing 13003 -> stopped
+0
+F130|auto_bought|-|13003:stopped|3
+F131|buy_manually|no_evo_one_to_one|no buy|2
+F132|auto_bought|-|13201:stopped|1
+F133|buy_manually|no_evo_one_to_one|no buy|2
