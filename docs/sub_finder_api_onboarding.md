@@ -102,13 +102,27 @@ You do not have to call us to start a lookup. We already read your Need-to-Sub f
 
 The label starts a lookup. With the additions below, the rest of the conversation could run through the same feed, and you would not have to call us for anything except reading the answer. They are in the order that helps most. **Group B is read today and is switched on** (mig `20261113170000`, on since 2026-11-13), under exactly the names below: a `buy` decision in your feed spends money with no call from you, so test with one order first and tell S4K before you do. Groups A and C are requests: tell S4K which you can add.
 
-**A. So we see a labelled item quickly**
+**A. The primary way: tell us only what changed** (please build this first)
+
+This is how we would like to read your feed. Until it exists we keep reading it the current way, which stays the default and needs nothing from you.
+
+| | Primary way (once you have built it) | Current way (the default until then) |
+|---|---|---|
+| What we ask your feed | `GET /n2s/items?status=need2buy&updated_since=<the instant of our last read>` | `GET /n2s/items`: the first 250 items, whatever changed |
+| What comes back | only the labelled items that changed since we last asked; usually nothing | the top of the whole book, every 30 seconds |
+| How fast a new label reaches us | the next poll, wherever the item sits in your book | only if the item is among the first 250 |
+| Cost to both sides | a tiny answer, so we can ask more often | a large answer each time; 500 items was too slow, so we read 250 |
+
+What it needs from your feed:
 
 | Ask | Why |
 |---|---|
-| `need2buy` as a real status in `GET /n2s/meta`, usable as `GET /n2s/items?status=need2buy` | we could ask for exactly the labelled items instead of scanning the book |
-| newest change first by default, or `sort=updated_at&order=desc` honoured on `GET /n2s/items` | our 30-second poll reads the first 250 items; a newly labelled item must be among them |
-| `updated_since=<instant>` on `GET /n2s/items` | lets us ask only for what changed, however large the book is |
+| `updated_since=<instant>` on `GET /n2s/items`, returning every item whose `updated_at` is later (including one whose label was just removed, or that was resolved) | lets us ask only for what changed, however large the book is. Removals must be included, or we would keep watching an order you have closed |
+| `need2buy` as a real status in `GET /n2s/meta`, usable as `GET /n2s/items?status=need2buy` | we ask for exactly the labelled items instead of scanning the book |
+| `updated_at` bumped on every change to an item, decision fields included | it is the cursor: a change that does not move it is never seen |
+| until then: newest change first by default, or `sort=updated_at&order=desc` honoured | the current way reads the first 250 items; a newly labelled item must be among them |
+
+When it is live on your side, tell S4K: we switch our reader over and confirm with you on one test item. Nothing else in this guide changes, and you read our answers exactly as before.
 
 **B. So your decision reaches us without a call (read today)**
 
@@ -333,6 +347,7 @@ Suggested polling: every 10 seconds; expect `done` in 20 seconds to 3 minutes, a
 | `markets_searched` | which sources were searched for this order |
 | `ticketsdata` | the fallback's status for this order (see [§8](#8-how-matching-works-and-what-it-does-not-do)); null when it was not needed |
 | `buy` | the purchase, if one was requested ([§7](#7-buy-a-cover)); otherwise null |
+| `last_stopped_buy` | the most recent buy that stopped for this order: `{buy_id, market, listing_id, reasons, at}`, or null. It stays after we have moved on, so you can see which listing was tried and why it stopped |
 | `updated_at` | last change to this order — the sync cursor field |
 
 **A cover:**
@@ -487,13 +502,15 @@ That is a request, not a purchase yet. What happens next, and what you see in th
 | `buying` | `none` | being sent to the market |
 | `bought` | `pending` | the market took the order; waiting for the seller. `order_id` is set |
 | `bought` | `confirmed` | the seller accepted. **This is the one that means you are covered** |
-| `stopped` | `rejected` / `canceled` | the seller rejected or the order was canceled; nothing was bought. See `rejection_reason`. You may buy a different cover |
+| `stopped` | `rejected` / `canceled` | the seller rejected or the order was canceled; nothing was bought. See `rejection_reason`. You may buy a different cover, and we may move on to the next one ourselves (below) |
 | `stopped` | `none` | we did not send it; `reasons` says why (below) |
 | `unknown` | `none` | the market did not answer clearly. A person at S4K checks; do not re-buy until told |
 
 Once the market's charge is known the `buy` also shows `profit_actual` (sale total − what was really charged, tax and fees included) and `gate_actual` / `label_actual`: `1` `Index` when the buy made a profit, `2` `S4KTrading` when tax or price turned it into breakeven or a loss.
 
 Follow it by polling `GET /api/v1/subs/orders/{order_number}` every 15 to 30 seconds, or just keep syncing: each change re-emits the order in the feed. We re-check the market every 30 seconds at first, then less often, for up to 7 days.
+
+**When a buy stops, we move on** (mig `20261113310000`). A stopped buy bought nothing. If it stopped for a reason that belongs to that listing (it sold, its price rose, the quantity changed, the market refused it, the seller rejected it), we let go of it within about a minute and match the order again: the automatic buy may then take the next cover, under exactly the same rules, never the listing that just stopped, and at most three attempts per order per day. While that is happening the order's `buy` is null again and `last_stopped_buy` names what was tried. A stop that is about S4K (a spend ceiling, gift cards, setup) is not retried by itself. Either way you may send a buy for a different cover at once: a stopped buy no longer answers 409.
 
 **The `buy` object:**
 
@@ -666,6 +683,7 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 10 | Optional: let a key read our balances (mig `20261113270000`) | `UPDATE sub_finder_config SET balances_key_ids = balances_key_ids \|\| <id> WHERE id;` — the hourly read is cron `account_balances_hourly` (`account_balances_pull()`); rows in `account_balance_run` / `account_balance` |
 | 11 | Optional: let a key read N2S auto-buy results (mig `20261113410000`) | `UPDATE sub_finder_config SET autobuys_key_ids = autobuys_key_ids \|\| <id> WHERE id;` — seeded from `balances_key_ids`. The rows are `n2s_autobuy_exec` (live mode, `buy_order_id` set), read by `sub_finder_autobuys()` |
 | 12 | Optional: buy GoTickets covers too (mig `20261113300000`) | Two switches, both off, and both must be on: `UPDATE sub_finder_config SET gt_buy_enabled = true WHERE id;` lets the sub finder pick a GoTickets cover (automatic buy, CRM buy, accepted-offer buy, under the same rules as EVO), and `UPDATE manual_sub_buy_config SET gt_enabled = true WHERE id;` lets the worker send the buy. A GoTickets cover reads `buyable` only while both are on. GoTickets uses the same ceilings as EVO (`per_order_cap_usd` / `daily_cap_usd`); `gt_per_order_cap_usd` / `gt_daily_cap_usd` are empty and a number there overrides EVO's for GoTickets only. Each market's spend counts against its own day ceiling; `auto_buy_daily_cap_usd` counts both markets. Paid from gift cards only (`gt_gift_card_ids`; `/balances` shows them). The buyer details are in `manual_sub_buy_config.gt_*`, copied once from the N2S buyer. If the worker switch goes off after a request was filed, that request stops with `gotickets_buy_off` |
+| 13 | Optional: move on to the next cover when a buy stops (mig `20261113310000`) | `UPDATE sub_finder_config SET buy_fallback_enabled = true WHERE id;` — once a minute `sub_finder_release_stopped()` lets go of a stopped buy whose reasons are all about the listing (`sub_finder_stop_is_listing`), so the automatic buy can take the next cover. `buy_fallback_max` (3) attempts per order per New York day; a listing that stopped for an order is not picked again for it for `buy_fallback_retry` (12 hours). A stop about a ceiling, gift cards or setup, and any `unknown`, is never released |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys, automatic buys and operator buys together; EVO spend and GoTickets spend are each counted against the day ceiling on their own. An `unknown` outcome flips its kill switch and stops **all** buys on both markets until someone has checked the market named in `kill_reason`.
 
@@ -675,7 +693,7 @@ Buying additionally needs the manual sub buy path live, exactly as for operator 
 
 Other settings: `bg_settle_enabled` (reads no longer settle; the cron `sub_finder_settle_15s` does, mig `20261113260000`), `max_orders_per_job` (200), `pull_refresh` (2 minutes: a listing pull newer than this is reused), `settle_min_s` (20), `settle_timeout_s` (180: match with whatever has arrived), `rows_back` (5), `td_timeout_s` (150).
 
-**To stop it:** `enabled = false` stops everything; `buy_enabled = false` stops new buy requests only; `auto_buy_enabled = false` stops automatic buys; `gt_buy_enabled = false` (or `manual_sub_buy_config.gt_enabled = false`) stops GoTickets buys; `gt_offer_enabled = false` stops new GoTickets offers (ones already sent are still followed); `td_enabled = false` stops TicketsData spend. Revoke a key with `SELECT mcp_revoke_key(<id>);`.
+**To stop it:** `enabled = false` stops everything; `buy_enabled = false` stops new buy requests only; `auto_buy_enabled = false` stops automatic buys; `gt_buy_enabled = false` (or `manual_sub_buy_config.gt_enabled = false`) stops GoTickets buys; `buy_fallback_enabled = false` stops moving on to the next cover after a stopped buy; `gt_offer_enabled = false` stops new GoTickets offers (ones already sent are still followed); `td_enabled = false` stops TicketsData spend. Revoke a key with `SELECT mcp_revoke_key(<id>);`.
 
 **EVO sales tax by venue** (mig `20261113070000`): `evo_venue_tax` holds the percent to expect per venue. Rows marked `observed` are learned hourly from our own EVO purchases (the highest tax ÷ subtotal seen there); to set one yourself: `INSERT INTO evo_venue_tax (venue_id, venue_name, tax_pct, source, note) VALUES (<tevo venue id>, '<name>', <pct>, 'manual', '<why>') ON CONFLICT (venue_id) DO UPDATE SET tax_pct = excluded.tax_pct, source = 'manual', note = excluded.note;` — a manual row is never overwritten. `sub_finder_config.evo_tax_default_pct` (0) applies to venues with no row. EVO does not tax every order at a venue, so the estimate can be high, not low.
 
@@ -695,7 +713,7 @@ RULE 2 note: the one upstream write this API can cause besides the EVO buy is th
 | 403 on a buy for one order only | it is a PED order: report-only ([§5](#5-the-order-object)) |
 | `no_cover` but you can see tickets on the site | different section spelling, a row more than 5 back, a quantity the seller will not split, or the listing appeared after the pull. Submit again |
 | `price_above_ceiling` on a buy | the listing's price rose since the quote; submit the order again and buy from the new job |
-| 409 on a buy | read the order: a buy already exists for it. If the sale was covered by hand at S4K there is nothing more to buy |
+| 409 on a buy | read the order: a live buy already exists for it (requested, being bought, bought, or unclear). A buy that stopped does not block a new one. If the sale was covered by hand at S4K there is nothing more to buy |
 | `buy.seats` stays null | the seller has not published seat numbers; check again after `confirmed`, or look at the EVO order |
 | `buy.total` is more than quoted | EVO added tax or a fee to that order; `price_ea` is still what was quoted |
 | `buy.evo_order_id` is null on a bought order | the buy was sent to GoTickets: read `buy.market` and use `buy.order_id` |
