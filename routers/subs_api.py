@@ -22,6 +22,8 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/docs                                    the onboarding guide, current version
   GET  /api/v1/subs/balances                                our EVO balances + GoTickets gift cards, read hourly
   GET  /api/v1/subs/autobuys?updated_since=&limit=&offset=  N2S auto-buys placed: what we bought, for which order, totals
+  GET  /api/v1/subs/settings/auto-buy-loss                  the automatic buy's loss limits (need2buy orders), by marketplace
+  PUT  /api/v1/subs/settings/auto-buy-loss                  set them: percent of the sale total, 100 to 200
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us").
@@ -83,7 +85,7 @@ NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 # A buy, an offer, a submit or a note is never repeated: the first may have gone through.
 RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
                              "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
-                             "sub_finder_autobuys"})
+                             "sub_finder_autobuys", "sub_finder_loss_limits"})
 
 
 def dropped_connection(exc: BaseException) -> bool:
@@ -320,6 +322,37 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                                      headers={"X-Doc-Version": str(doc["version"])})
         return {"version": doc["version"], "updated": doc["updated"], "format": "markdown",
                 "markdown": doc["markdown"]}
+
+    @router.get("/settings/auto-buy-loss")
+    def loss_limits(request: Request):
+        """The automatic buy's loss limit for need2buy orders: the default and each marketplace's
+        own, as a percent of the sale total (mig 20261113320000)."""
+        key = _auth(request, "loss_limits")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_loss_limits", {"p_key_id": key["id"]}))
+
+    @router.put("/settings/auto-buy-loss")
+    async def set_loss_limits(request: Request):
+        """Set the limits: {"default_max_cost_pct": 100-200 | null, "by_marketplace": {name: 100-200 | null}}.
+        Only for keys in `sub_finder_config.loss_limit_key_ids`; the SQL validates every value and
+        changes nothing unless all are valid. It moves no money by itself: it widens or narrows what
+        the automatic buy may take for need2buy orders, inside the same spend ceilings."""
+        key = _auth(request, "loss_limits_set")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        if not isinstance(body, dict):
+            return _err(422, "invalid", "send a JSON object: {\"default_max_cost_pct\": 105, "
+                                        "\"by_marketplace\": {\"stubhub\": 110}}")
+        by = body.get("set_by")
+        return _answer(_rpc("sub_finder_loss_limits_set", {
+            "p_key_id": key["id"], "p_key_label": key.get("label"),
+            "p_body": {k: v for k, v in body.items() if k in ("default_max_cost_pct", "by_marketplace")},
+            "p_by": by if isinstance(by, str) else None}))
 
     @router.get("/balances")
     def balances(request: Request):

@@ -59,6 +59,10 @@ AS $function$
                      'section', b.bought_section, 'row', b.bought_row, 'seats', b.seats,
                      'status_checked_at', b.status_checked_at, 'final_at', b.final_at)
             FROM public.manual_sub_buy b WHERE b.buy_id = o.buy_id),
+    -- the most an automatic buy may cost for this order, as a percent of the sale total
+    -- (100 = no loss: profit only), mig 20261113320000
+    'auto_buy_max_cost_pct', 100 + coalesce(public.sub_finder_max_loss_pct(
+        o.site, o.via_need2buy OR public.sub_finder_order_is_need2buy(o.order_number)), 0),
     'last_stopped_buy', (SELECT jsonb_build_object('buy_id', b.buy_id, 'market', b.market,
                                                     'listing_id', b.ticket_group_id::text, 'reasons', b.reasons,
                                                     'at', to_char(b.updated_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))

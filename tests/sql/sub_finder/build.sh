@@ -52,4 +52,5 @@ stub_50_alerts.sql
 20261113290000_sub_finder_td_scope.sql
 20261113300000_sub_finder_gotickets_buy.sql
 20261113310000_sub_finder_buy_fallback.sql
+20261113320000_sub_finder_loss_limits.sql
 STEPS
