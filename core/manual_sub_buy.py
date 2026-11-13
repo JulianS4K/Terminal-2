@@ -14,7 +14,12 @@ doubled purchase:
           while the config is enabled, not killed, and within its own order / day ceilings
   read    the ticket group, fresh: still listed, not ours, enough tickets, a split that fits,
           a known delivery format, and a price at or under the ceiling the operator approved
-  buy     POST /v9/orders, once, through evo_buy_client (path-pinned; RULE 2)
+  quote   when the config's tax_quote is on: POST /v9/tax_quotes (EVO's own calculation of what
+          it will charge, tax included; buys nothing). A row with a total ceiling
+          (max_total_usd: the sub finder's automatic buys) stops when the quoted total is over
+          it, or when EVO gives no usable quote; a row without one is bought either way
+  buy     POST /v9/orders, once, through evo_buy_client (path-pinned; RULE 2), with the
+          quote's tax_signature when there is one
 
   follow  afterwards, GET /v9/orders/{id} (a read) until the seller has confirmed or rejected
           the order, storing its state, what EVO charged and the seat numbers (mig 20261112000000)
@@ -36,6 +41,7 @@ from evo_buy_client import (
     EvoWriteRejected,
     EvoWriteUnknown,
     buy_order_body,
+    read_tax_quote,
 )
 
 OUR_BROKERAGE_ID = 1768  # S4K Entertainment
@@ -90,14 +96,25 @@ def tick(rpc: Rpc, client: EvoBuyClient) -> dict:
     if reasons:
         return {**out, **_record(rpc, job, state="stopped", reasons=reasons)}
     price = float(tg["wholesale_price"])
+    ceiling = row.get("max_total_usd")
+    quote = read_tax_quote(client, tg["id"], qty) if cfg.get("tax_quote") else None
+    quoted: dict[str, Any] = {}
+    if quote:
+        quoted = {"quote_tax_usd": quote["tax"], "quote_total_usd": quote["total"]}
+    if cfg.get("tax_quote") and ceiling is not None:
+        if not quote:
+            return {**out, **_record(rpc, job, state="stopped", reasons=["tax_quote_failed"])}
+        if quote["total"] > float(ceiling) + 0.005:
+            return {**out, **_record(rpc, job, state="stopped", reasons=["total_above_ceiling"], **quoted)}
     body = buy_order_body(ticket_group_id=tg["id"], quantity=qty, price_ea=price,
                           seller_office_id=tg["office"]["id"], buyer_office_id=int(cfg["evo_buyer_office_id"]),
                           shipment_type=SHIPMENT_FOR_FORMAT[tg["format"]],
                           email_address_id=cfg.get("evo_email_address_id"),
                           note=f"Manual sub for {row['sale_site']} sale {row['sale_order_number']} "
-                               f"(manual_sub_buy {row['buy_id']}, by {row['requested_by']})")
+                               f"(manual_sub_buy {row['buy_id']}, by {row['requested_by']})",
+                          tax_signature=quote["signature"] if quote else None)
     # re-check the lease right before the write: only the worker that still holds the row may buy
-    if _record(rpc, job, state="buying")["recorded"] != "buying":
+    if _record(rpc, job, state="buying", **quoted)["recorded"] != "buying":
         return {**out, "state": "lease_lost"}
     try:
         resp = client.create_order(body)
@@ -111,7 +128,7 @@ def tick(rpc: Rpc, client: EvoBuyClient) -> dict:
             raise ValueError("no order id in the EVO response")
         return {**out, **_record(rpc, job, state="bought", buy_order_id=str(order["id"]),
                                  buy_state=order.get("state"), bought_price_ea=price,
-                                 bought_total_usd=round(price * qty, 2))}
+                                 bought_total_usd=quote["total"] if quote else round(price * qty, 2))}
     except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy
         return {**out, **_record(rpc, job, state="unknown", reasons=["buy_unknown"],
                                  error=f"{type(e).__name__}: {e}"[:300])}
