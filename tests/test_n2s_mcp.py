@@ -241,7 +241,7 @@ def test_owned_lookup_per_source():
 
 
 def test_book_and_dry_run_carry_the_seller_note():
-    """20261112010000: the seller's own note on the sub rides with every suggestion."""
+    """20261112030000: the seller's own note on the sub rides with every suggestion."""
     db = FakeDB(tables={"v_n2s_orders": [{"n2s_id": 1, "has_cover": True, "cover_cost": -10,
                                           "sub_view": "obstructed", "sub_notes": "Limited View"}],
                         "n2s_gt_order_dryrun": [_dry(sub_view="obstructed", sub_notes="Limited View")]})

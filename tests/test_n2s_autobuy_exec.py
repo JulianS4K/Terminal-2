@@ -33,7 +33,7 @@ def test_spend_limits():
 
 
 def test_evo_tax_counts_in_every_cap_and_the_profit_test():
-    # 20261112000000: EVO charged 5.5% at Camp Randall; the cost is the sub plus that tax
+    # 20261112020000: EVO charged 5.5% at Camp Randall; the cost is the sub plus that tax
     assert _guards(_row(sub_total_usd=240, est_tax_usd=13.2, sold_total_usd=400)) == ["over_per_order_cap",
                                                                                      "over_daily_cap"]
     assert _guards(_row(), spend=124, cfg=None) == []                                 # 124 + 120 + 0 tax

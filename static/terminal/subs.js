@@ -172,7 +172,7 @@
   }
 
   // The seller's own note on the substitute, as text under the listing
-  // (20261112010000). Before, it only rode in the "obstructed" chip's tooltip,
+  // (20261112030000). Before, it only rode in the "obstructed" chip's tooltip,
   // and EVO subs had none at all. The chip is our regex; this is their words,
   // so a disclosure the regex misses is still in front of whoever buys.
   const NOTES_MAX = 140;

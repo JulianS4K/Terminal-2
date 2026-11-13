@@ -573,7 +573,7 @@ def test_unknown_view_renders_differently_from_clear(feed_page, live_server):
     """"Not checked" must not look like "checked and fine".
 
     A listing with no seller note and no view data reads 'unknown' (EVO rows
-    did, all of them, until 20261112010000 read n2s_evo_current). Showing
+    did, all of them, until 20261112030000 read n2s_evo_current). Showing
     nothing would let the absence of a warning read as an all-clear — the exact
     inversion this field exists to prevent.
     """
@@ -694,7 +694,7 @@ def test_all_three_suffixes_coexist_without_eating_the_gate_name(feed_page, live
     assert feed_page.locator(".n2s-gate-obstructed").count() == 1
 
 
-# ---- 20261112010000: the seller's note is text on the suggestion, not just a tooltip ----
+# ---- 20261112030000: the seller's note is text on the suggestion, not just a tooltip ----
 
 _DRYRUN_RE = re.compile(r"/api/broker/n2s-gt-dryrun\?")
 

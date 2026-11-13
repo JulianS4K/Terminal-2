@@ -1632,7 +1632,7 @@ def test_n2s_gt_dryrun_tallies_today_from_would_buys_only(client, monkeypatch):
 
 
 def test_n2s_gt_dryrun_returns_the_seller_note(client, monkeypatch):
-    """20261112010000: the dry-run panel shows the note the dry run judged."""
+    """20261112030000: the dry-run panel shows the note the dry run judged."""
     fake = FakeSupabase(table_data={"n2s_gt_order_dryrun": [
         _dry_row(sub_view="obstructed", sub_notes="Limited View,Mobile Xfer")]})
     selected: list[str] = []

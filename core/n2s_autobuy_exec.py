@@ -67,7 +67,7 @@ def buy_guards(row: dict, *, now: datetime, spend_today: float, buys_today: int,
     if total is None or float(total) <= 0:
         reasons.append("no_price")
     else:
-        # 20261112000000: the cost is the sub plus the tax EVO has charged us at this venue
+        # 20261112020000: the cost is the sub plus the tax EVO has charged us at this venue
         total = float(total) + float(row.get("est_tax_usd") or 0)
         if total > c["per_order_cap_usd"]:
             reasons.append("over_per_order_cap")

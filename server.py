@@ -2002,7 +2002,7 @@ async def _autobuy_live_tick():
     def _call():
         def rpc(name, params):
             return require_sb().rpc(name, params).execute().data
-        # one retry when the DB connection dropped ("Server disconnected"; 20261112000000)
+        # one retry when the DB connection dropped ("Server disconnected"; 20261112020000)
         return n2s_autobuy_live.tick(n2s_autobuy_live.retrying(rpc), EvoBuyClient(TOKEN, SECRET),
                                      sales=_autobuy_sale_client())
 

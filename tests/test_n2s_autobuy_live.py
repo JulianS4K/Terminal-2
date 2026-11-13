@@ -346,7 +346,7 @@ def test_buy_guards_use_the_stored_real_start():
     assert out["reasons"] == ["event_within_24h"]                                        # local-as-UTC: 8 h, blocks
 
 
-# ---- 20261112000000: seller time, EVO tax, one retry on a dropped DB connection -----------
+# ---- 20261112020000: seller time, EVO tax, one retry on a dropped DB connection -----------
 
 def test_seller_time_uses_the_window_for_the_listing_in_hand_or_not():
     left = 480                                   # _row: sub_confirm_by is NOW + 8 min

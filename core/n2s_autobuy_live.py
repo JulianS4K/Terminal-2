@@ -10,7 +10,7 @@ web workers can never act on the same row. This module does the market steps:
          read the ticket group fresh (not ours, enough tickets, a split that fits, price not
          above our quote, event further out than min_event_lead, enough time left for the
          seller to accept: the window for an in-hand listing or not, from our own EVO history,
-         20261112000000) → POST /v9/orders once
+         20261112020000) → POST /v9/orders once
   poll   read our purchase: accepted → read the sale, still pending → accept it (reviewer
          53658); rejected → stop; not accepted by sub_confirm_by → stop, sale NOT accepted
 
@@ -55,7 +55,7 @@ DB_RETRY_PAUSE_S = 0.5
 def retrying(rpc: Rpc) -> Rpc:
     """``rpc`` with one retry when the connection dropped. Safe because a repeated record of a step
     that already landed returns that phase and changes nothing (n2s_autobuy_live_record,
-    20261112000000), and a hold still needs the live lease."""
+    20261112020000), and a hold still needs the live lease."""
     def call(name: str, params: dict) -> Any:
         try:
             return rpc(name, params)
@@ -117,7 +117,7 @@ def ticket_group_checks(tg: dict, *, qty: int, sub_total: float, now: datetime, 
 def seller_time_checks(tg: dict, row: dict, *, now: datetime, floor_s: int) -> list[str]:
     """Stop when the sub's seller may not accept before we must confirm the sale. The window is our
     own EVO history at the configured percentile, stored on the row at enqueue: shorter for a
-    listing the seller holds in hand (20261112000000). Rows without windows keep the floor."""
+    listing the seller holds in hand (20261112020000). Rows without windows keep the floor."""
     in_hand = str(tg.get("in_hand")).strip().lower() == "true"
     window = row.get("seller_window_in_hand_s") if in_hand else row.get("seller_window_s")
     confirm_by = _ts(row.get("sub_confirm_by"))

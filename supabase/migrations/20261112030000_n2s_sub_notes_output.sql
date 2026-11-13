@@ -1,4 +1,4 @@
--- Migration 20261112010000 · level:secondary-sales · lane:D7 · writes:n2s_view_of,n2s_evo_notes,n2s_cover_queue_refresh,n2s_gt_order_dryrun,n2s_gt_order_dryrun_capture,n2s_evo_order_dryrun_capture,n2s_autobuy_notify_tick · reads:n2s_evo_current,n2s_gt_current,n2s_sg_current,n2s_covers,n2s_autobuy_exec · pre:20261112000000
+-- Migration 20261112030000 · level:secondary-sales · lane:D7 · writes:n2s_view_of,n2s_evo_notes,n2s_cover_queue_refresh,n2s_gt_order_dryrun,n2s_gt_order_dryrun_capture,n2s_evo_order_dryrun_capture,n2s_autobuy_notify_tick · reads:n2s_evo_current,n2s_gt_current,n2s_sg_current,n2s_covers,n2s_autobuy_exec · pre:20261112020000
 --
 -- N2S: the seller's own note on every suggested sub, in every output.
 --
@@ -48,7 +48,7 @@ AS $function$
     -- an explicit vendor flag outranks free text in both directions
     WHEN p_limited_view IS TRUE THEN 'obstructed'
     -- \m: 'limited' as a word, not inside 'unlimited' (club food notes); 'behind' only for a
-    -- stage, not "behind home bench" (20261112010000)
+    -- stage, not "behind home bench" (20261112030000)
     WHEN p_notes ~* 'obstruct|\mlimited|partial|restricted|obov|side view|behind (the )?stage|pole|no view'
       THEN 'obstructed'
     WHEN p_limited_view IS FALSE THEN 'clear'
@@ -72,7 +72,7 @@ AS $function$
 $function$;
 
 COMMENT ON FUNCTION public.n2s_evo_notes(text, text) IS
-  'The seller''s note on an EVO ticket group as one text: "View: <view_type> · <public_notes>", NULL when both are empty. Fed to n2s_view_of() and shown to people as sub_notes. 20261112010000.';
+  'The seller''s note on an EVO ticket group as one text: "View: <view_type> · <public_notes>", NULL when both are empty. Fed to n2s_view_of() and shown to people as sub_notes. 20261112030000.';
 
 REVOKE ALL ON FUNCTION public.n2s_evo_notes(text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.n2s_evo_notes(text, text) TO service_role, authenticated;
@@ -139,7 +139,7 @@ BEGIN
               AND sc.sglid::text   = q2.sub_listing_id
             LIMIT 1)
           UNION ALL
-          -- 20261112010000: EVO public_notes + view_type, as the dry run reads them
+          -- 20261112030000: EVO public_notes + view_type, as the dry run reads them
           (SELECT public.n2s_evo_notes(ec.public_notes, ec.view_type), NULL::boolean
              FROM public.n2s_evo_current ec
             WHERE q2.sub_source = 'tevo'
@@ -166,13 +166,13 @@ BEGIN
 END $function$;
 
 COMMENT ON COLUMN public.n2s_cover_queue.sub_notes IS
-  'Raw seller note the classification was drawn from (EVO: n2s_evo_notes(public_notes, view_type), since 20261112010000), kept so a human can read the actual wording rather than trusting the regex.';
+  'Raw seller note the classification was drawn from (EVO: n2s_evo_notes(public_notes, view_type), since 20261112030000), kept so a human can read the actual wording rather than trusting the regex.';
 
 -- ── 4. the dry run keeps the note it judged ────────────────────────────────
 ALTER TABLE public.n2s_gt_order_dryrun ADD COLUMN IF NOT EXISTS sub_notes text;
 
 COMMENT ON COLUMN public.n2s_gt_order_dryrun.sub_notes IS
-  'The seller''s note on the sub listing as the dry run read it (EVO: n2s_evo_notes(public_notes, view_type); GoTickets: notes). sub_view is n2s_view_of() of it. NULL on rows before 20261112010000.';
+  'The seller''s note on the sub listing as the dry run read it (EVO: n2s_evo_notes(public_notes, view_type); GoTickets: notes). sub_view is n2s_view_of() of it. NULL on rows before 20261112030000.';
 
 DO $do$
 DECLARE d text;

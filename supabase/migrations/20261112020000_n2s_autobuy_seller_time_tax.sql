@@ -1,4 +1,4 @@
--- Migration 20261112000000 · level:secondary-sales · lane:D7 · writes:n2s_autobuy_config,n2s_autobuy_exec,n2s_evo_seller_window,n2s_evo_venue_tax_rate,n2s_autobuy_enqueue_trg,n2s_autobuy_live_claim,n2s_autobuy_live_record · reads:evo_orders,events,n2s_gt_order_dryrun,n2s_items,v_n2s_market_cutoff,n2s_tickpick_seen · pre:20261111020000
+-- Migration 20261112020000 · level:secondary-sales · lane:D7 · writes:n2s_autobuy_config,n2s_autobuy_exec,n2s_evo_seller_window,n2s_evo_venue_tax_rate,n2s_autobuy_enqueue_trg,n2s_autobuy_live_claim,n2s_autobuy_live_record · reads:evo_orders,events,n2s_gt_order_dryrun,n2s_items,v_n2s_market_cutoff,n2s_tickpick_seen · pre:20261111020000
 --
 -- N2S auto-buy LIVE: time for the sub's seller, EVO's tax, the real clock, a safe retry.
 --
@@ -171,11 +171,11 @@ BEGIN
   v_price := COALESCE(NEW.live_price_ea, NEW.quoted_ea);
   v_sub   := round(v_price * v_qty, 2);
   v_sold  := round(NEW.sold_ea * NEW.sold_qty, 2);
-  -- 20261112000000: EVO adds sales tax at some venues (Camp Randall, 5.5%, 2026-11-11). The cost
+  -- 20261112020000: EVO adds sales tax at some venues (Camp Randall, 5.5%, 2026-11-11). The cost
   -- every cap and the profit test use is the sub plus the tax EVO has charged us at this venue.
   v_tax   := round(COALESCE(v_sub, 0) * public.n2s_evo_venue_tax_rate(NEW.tevo_event_id), 2);
   v_cost  := v_sub + v_tax;
-  -- 20261112000000: how long EVO's sellers take to accept our purchases (our own history, at
+  -- 20261112020000: how long EVO's sellers take to accept our purchases (our own history, at
   -- seller_window_pct): the time the sub's seller needs before we may accept the sale.
   SELECT w.window_s, w.in_hand_window_s INTO v_win, v_win_hand
     FROM public.n2s_evo_seller_window(c.seller_window_pct, c.seller_window_min_samples, c.seller_window_fallback_s) w;
@@ -258,7 +258,7 @@ BEGIN
     IF NEW.live_pulled_at IS NULL OR NEW.captured_at - NEW.live_pulled_at > make_interval(secs => c.max_read_age_s) THEN
       r := r || 'stale_live_read'::text;
     END IF;
-    -- 20261112000000: the real clock. A row from the minute tick is inserted up to a minute after
+    -- 20261112020000: the real clock. A row from the minute tick is inserted up to a minute after
     -- that transaction's now(), which made the time left look longer than it was.
     v_left := v_confirm - clock_timestamp();
     IF i.alert_at IS NULL OR v_left < make_interval(secs => c.min_confirm_window_s) THEN
@@ -344,7 +344,7 @@ BEGIN
   IF FOUND THEN
     v_act := 'poll';
   ELSIF NOT c.project_stopped AND c.live_runs_used < c.live_runs_allowed THEN
-    -- 20261112000000: handing out a buy spends the live run, so only hand one out while even a
+    -- 20261112020000: handing out a buy spends the live run, so only hand one out while even a
     -- seller with the tickets in hand still has time to accept (the window stored at enqueue).
     SELECT * INTO e FROM public.n2s_autobuy_exec
      WHERE mode = 'live' AND state IN ('live_buy', 'approved') AND phase IS NULL
@@ -382,7 +382,7 @@ END $function$;
 
 -- The worker's result for one step, only under its own unexpired lease ('lease_lost' otherwise).
 -- An unknown write outcome sets kill_switch whatever the lease says.
--- 20261112000000: the worker retries a call once when the connection drops. A repeat of a step
+-- 20261112020000: the worker retries a call once when the connection drops. A repeat of a step
 -- that already landed (same phase, same purchase id) returns that phase and changes nothing, so a
 -- retried 'buy_sent' can no longer fall into the lease-lost branch and flip kill_switch. Holds
 -- ('buying', 'sub_accepted') are excluded: they must still prove the lease before a market write.
@@ -409,7 +409,7 @@ BEGIN
      AND phase NOT IN ('accepted', 'stopped', 'buy_unknown', 'accept_failed', 'accept_unknown')
      AND lease_token = p_token AND lease_until > now();
   v_ok := FOUND;
-  -- 20261112000000: stopped while still 'buying', with no purchase id and no EVO refusal = the
+  -- 20261112020000: stopped while still 'buying', with no purchase id and no EVO refusal = the
   -- worker stopped before the buy went out: the live run was not used, give it back.
   IF v_ok AND v_prev = 'buying' AND v_phase = 'stopped' AND v_prev_order IS NULL
      AND p_patch ->> 'buy_order_id' IS NULL AND NOT COALESCE((p_patch -> 'reasons') ? 'buy_failed', false) THEN
