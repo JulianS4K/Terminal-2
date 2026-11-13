@@ -1,6 +1,6 @@
 # D0 Terminal — Onboarding Guide & Design Brief
 
-> **Doc version:** v1.0.0 (2026-07-16)
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- docs/d0_onboarding_guide.md`). Do not edit this line (README *Doc-writing rules* §5).
 > **Audience of this doc:** (1) **Claude design** — as the brief for building the first-run onboarding + guided-tour experience; (2) the terminal's in-app **HELP** tab (`static/terminal/help.html`), which renders a condensed version of Parts 2–4 below for end users.
 > **Who the terminal is for:** the S4K broker desk — signed-in `@s4kent.com` operators who buy, price, and sell event tickets. This guide describes the app **from the user's chair**, not the implementation. Build/architecture facts live in `docs/d0_terminal_build.md`; cross-source data model in `PROJECT_BIBLE.md §5`.
 

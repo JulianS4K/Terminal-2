@@ -54,6 +54,7 @@ carries the result (`buy.outcome`, EVO order number, total charged, seat numbers
 from __future__ import annotations
 
 import functools
+import hashlib
 import re
 import time
 import uuid
@@ -92,25 +93,27 @@ def dropped_connection(exc: BaseException) -> bool:
 
 DOC_PATH = Path(__file__).resolve().parent.parent / "docs" / "sub_finder_api_onboarding.md"
 DOCS_ROUTE = "/api/v1/subs/docs"
-_DOC_VERSION = re.compile(r"\*\*Doc version:\*\*\s*v([0-9]+(?:\.[0-9]+)*)\s*\((\d{4}-\d{2}-\d{2})\)")
+_DOC_VERSION_MARK = "\x00doc-version\x00"   # stands in for the fingerprint while it is being worked out
 _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL | re.MULTILINE)   # internal switches
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
 
 
 def render_crm_doc(text: str) -> dict:
-    """The onboarding guide as the CRM gets it: its version and date, the long version history
-    cut to that one version, and the operators' section (our own switches and SQL) left out."""
-    m = _DOC_VERSION.search(text)
-    version, updated = (m.group(1), m.group(2)) if m else (None, None)
+    """The onboarding guide as the CRM gets it, with the operators' section (our own switches and
+    SQL) left out. Its version is a fingerprint of exactly what is served, so it changes when,
+    and only when, the guide the CRM reads changes. Nobody numbers it by hand (the doc's version
+    line is not edited, README *Doc-writing rules* §5). `updated` is kept as a key for older
+    clients and is always None: compare `version` for equality."""
     lines = []
     for line in text.splitlines():
         if line.startswith("> **Doc version:**"):
-            line = f"> **Doc version:** v{version} ({updated})" if version else "> **Doc version:** unknown"
+            line = f"> **Doc version:** {_DOC_VERSION_MARK}"
         elif line.startswith("Code: `routers/subs_api.py`"):
             continue
         lines.append(line)
     markdown = _DOC_OPERATORS_LINK.sub("", _DOC_OPERATORS.sub("", "\n".join(lines) + "\n"))
-    return {"version": version, "updated": updated, "markdown": markdown}
+    version = hashlib.sha256(markdown.encode("utf-8")).hexdigest()[:12]
+    return {"version": version, "updated": None, "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
 
 
 @functools.lru_cache(maxsize=4)

@@ -447,7 +447,7 @@ def test_notes_route_writes_clears_and_refuses():
 
 DOC_TEXT = """# Guide
 
-> **Doc version:** v1.2.3 (2026-11-13) — newest change. · v1.2.2 (2026-11-12) — older.
+> **Doc version:** not hand-numbered — this file's history is its git history.
 
 Code: `routers/subs_api.py` · SQL: migrations.
 
@@ -467,18 +467,23 @@ still here
 """
 
 
-def test_render_crm_doc_keeps_one_version_and_drops_the_operator_section():
+def test_render_crm_doc_fingerprints_what_is_served_and_drops_the_operator_section():
     doc = s.render_crm_doc(DOC_TEXT)
-    assert doc["version"] == "1.2.3" and doc["updated"] == "2026-11-13"
+    version = doc["version"]
+    assert len(version) == 12 and int(version, 16) >= 0 and doc["updated"] is None
     md = doc["markdown"]
-    assert "> **Doc version:** v1.2.3 (2026-11-13)\n" in md and "older" not in md
+    assert f"> **Doc version:** {version}\n" in md and "git history" not in md
+    # the same guide always has the same version; a change the CRM can see changes it;
+    # a change only in the operators' section (never served) does not
+    assert s.render_crm_doc(DOC_TEXT)["version"] == version
+    assert s.render_crm_doc(DOC_TEXT.replace("for the CRM", "for the CRM, changed"))["version"] != version
+    assert s.render_crm_doc(DOC_TEXT.replace("enabled = true", "enabled = false"))["version"] == version
     assert "sub_finder_config" not in md and "For S4K operators" not in md and "Code:" not in md
     assert "for the CRM" in md and "## 10. Troubleshooting" in md and "still here" in md
     assert "**Contents:** [8 Rules](#8-rules) · [10 Troubleshooting](#10-troubleshooting)\n" in md
-    # a guide without a version line still renders
-    bare = s.render_crm_doc("# Guide\n\n> **Doc version:** to be set\n\ntext\n")
-    assert bare["version"] is None and bare["updated"] is None
-    assert "> **Doc version:** unknown\n" in bare["markdown"] and "text" in bare["markdown"]
+    # a guide without a version line still renders, and still has a version
+    bare = s.render_crm_doc("# Guide\n\ntext\n")
+    assert len(bare["version"]) == 12 and bare["markdown"] == "# Guide\n\ntext\n"
 
 
 def test_ping_names_the_guide_version_and_docs_serves_it(tmp_path, monkeypatch):
@@ -488,16 +493,17 @@ def test_ping_names_the_guide_version_and_docs_serves_it(tmp_path, monkeypatch):
     s.crm_doc.cache_clear()
     db = FakeDB(rpc_data={"sub_finder_access": {"find": True}})
     c = _client(db)
+    version = s.render_crm_doc(DOC_TEXT)["version"]
     assert c.get("/api/v1/subs/ping", headers=H).json()["docs"] == {
-        "version": "1.2.3", "updated": "2026-11-13", "url": "/api/v1/subs/docs"}
+        "version": version, "updated": None, "url": "/api/v1/subs/docs"}
     r = c.get("/api/v1/subs/docs", headers=H)
     body = r.json()
-    assert r.status_code == 200 and body["version"] == "1.2.3" and body["format"] == "markdown"
+    assert r.status_code == 200 and body["version"] == version and body["format"] == "markdown"
     assert "for the CRM" in body["markdown"] and "sub_finder_config" not in body["markdown"]
     assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.docs"}
     r = c.get("/api/v1/subs/docs?format=md", headers=H)
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/markdown")
-    assert r.headers["x-doc-version"] == "1.2.3" and r.text.startswith("# Guide")
+    assert r.headers["x-doc-version"] == version and r.text.startswith("# Guide")
     # the guide needs the key like every other route
     assert c.get("/api/v1/subs/docs").status_code == 401
     s.crm_doc.cache_clear()
