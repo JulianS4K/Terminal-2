@@ -348,6 +348,7 @@ Parking passes and S4K's own listings are never offered.
 | `n2s_order` | the order is in the Need-to-Sub book, which is handled separately |
 | `not_in_our_books` | we could not find the order in our own copy of the order book, so we will not spend on it |
 | `differs_from_our_books` | the details sent with the order differ from our copy; alert us with the order number only |
+| `order_closed` | one of our order feeds marks the sale fulfilled, cancelled or rejected |
 | `over_daily_cap` | it would take the day's automatic buys over the cap |
 | `already_bought_for_this_sale` | a purchase already exists for this order |
 

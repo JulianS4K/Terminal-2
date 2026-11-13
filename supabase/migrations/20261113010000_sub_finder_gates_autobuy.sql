@@ -51,6 +51,7 @@
 --        event, section, row, quantity and sale price there are the ones the cover was matched
 --        on. What a caller sends can steer a search, never a purchase: an order we cannot
 --        verify, or one sent with details that differ from our book, is results only
+--      * none of our order feeds (v_sub_orders) marks the sale fulfilled, cancelled or rejected
 --      * today's automatic buys plus this one stay within auto_buy_daily_cap_usd ($1,000)
 --    The cap check and the request are serialized by an advisory lock, so two jobs settling
 --    at once cannot both spend the last of the day's cap.
@@ -351,18 +352,25 @@ BEGIN
     END IF;
     IF v_note IS NULL THEN
       -- the purchase is decided on OUR copy of the order, not on what the caller sent
-      SELECT v.tevo_event_id, v.section, v.row, v.quantity, v.price_per_ticket INTO bk
+      SELECT v.source, v.tevo_event_id, v.section, v.row, v.quantity, v.price_per_ticket INTO bk
         FROM public.v_s4kcs_orders v WHERE v.s4k_order_id = o.order_number
        ORDER BY v.pulled_at DESC NULLS LAST LIMIT 1;
-      IF NOT FOUND THEN
-        v_note := 'not_in_our_books';
-      ELSIF bk.tevo_event_id IS DISTINCT FROM o.tevo_event_id
+      IF NOT FOUND OR (SELECT count(DISTINCT lower(v.source)) FROM public.v_s4kcs_orders v
+                        WHERE v.s4k_order_id = o.order_number) > 1 THEN
+        v_note := 'not_in_our_books';                  -- unknown, or the number is on two marketplaces
+      ELSIF lower(btrim(bk.source)) IS DISTINCT FROM lower(btrim(o.site))
+         OR bk.tevo_event_id IS DISTINCT FROM o.tevo_event_id
          OR public.seat_section_norm(bk.section) IS DISTINCT FROM public.seat_section_norm(o.section)
          OR upper(btrim(bk.row)) IS DISTINCT FROM upper(btrim(o.seat_row))
          OR bk.quantity IS DISTINCT FROM o.qty
          OR bk.price_per_ticket IS NULL OR o.sold_ea IS NULL
          OR abs(bk.price_per_ticket - o.sold_ea) > 0.01 THEN
         v_note := 'differs_from_our_books';
+      -- the sale must still be live: any of our order feeds marking it finished stops the buy.
+      -- (About 1.7 s per lookup, so it runs last, only for an order that would otherwise be bought.)
+      ELSIF EXISTS (SELECT 1 FROM public.v_sub_orders v
+                     WHERE v.order_id = o.order_number AND NOT v.is_open) THEN
+        v_note := 'order_closed';
       END IF;
     END IF;
     IF v_note IS NULL THEN
