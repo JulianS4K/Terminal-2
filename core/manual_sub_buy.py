@@ -16,6 +16,9 @@ doubled purchase:
           a known delivery format, and a price at or under the ceiling the operator approved
   buy     POST /v9/orders, once, through evo_buy_client (path-pinned; RULE 2)
 
+  follow  afterwards, GET /v9/orders/{id} (a read) until the seller has confirmed or rejected
+          the order, storing its state, what EVO charged and the seat numbers (mig 20261112000000)
+
 Never retried. A rejected buy stops the row. A buy whose outcome is unknown (timeout / 5xx /
 unreadable answer) is recorded as 'unknown', which flips this path's kill switch until a
 person has checked EVO.
@@ -112,3 +115,31 @@ def tick(rpc: Rpc, client: EvoBuyClient) -> dict:
     except Exception as e:  # noqa: BLE001 - fail closed on any parse / record error after a sent buy
         return {**out, **_record(rpc, job, state="unknown", reasons=["buy_unknown"],
                                  error=f"{type(e).__name__}: {e}"[:300])}
+
+
+def order_status(order: dict) -> dict:
+    """What a fresh GET /v9/orders/{id} says, in the shape manual_sub_buy_follow_record stores.
+    Seat numbers are kept only when real: EVO sends 0 for a seat the seller has not assigned."""
+    item = ((order.get("items") or [None])[0]) or {}
+    tg = item.get("ticket_group") or {}
+    seats = [str(x) for x in (item.get("seats") or tg.get("seats") or []) if str(x).strip() not in ("", "0")]
+    reason = next((str(order[k]) for k in ("seller_rejection_reason", "seller_cancellation_reason",
+                                           "buyer_cancellation_reason", "buyer_rejection_reason")
+                   if order.get(k)), None)
+    return {"order_state": order.get("state"), "seller_state": order.get("seller_state"),
+            "order_total_usd": order.get("total"), "bought_section": tg.get("section"),
+            "bought_row": tg.get("row"), "seats": seats, "rejection_reason": reason}
+
+
+def follow(rpc: Rpc, client: EvoBuyClient) -> dict:
+    """Re-read at most one bought order that is due a status check. Reads only (GET)."""
+    job = rpc("manual_sub_buy_follow_claim", {})
+    if not job:
+        return {"action": "idle"}
+    out = {"action": "follow", "buy_id": job["buy_id"], "buy_order_id": job["buy_order_id"]}
+    try:
+        order = client.get_order(job["buy_order_id"])
+    except (EvoWriteRejected, requests.RequestException, ValueError) as e:
+        return {**out, "error": type(e).__name__}  # the claim already stamped the check; it comes round again
+    outcome = rpc("manual_sub_buy_follow_record", {"p_buy_id": job["buy_id"], "p_patch": order_status(order)})
+    return {**out, "outcome": outcome}

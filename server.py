@@ -680,6 +680,7 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         ("/api/prices/",       120,  60.0),  # public price tracker (cached reads)
         ("/api/mcp/",           60,  60.0),  # developer catalog (cached)
         ("/mcp",               600,  60.0),  # MCP endpoint — per-key limits apply inside MCPApp
+        ("/api/v1/subs",       600,  60.0),  # sub finder API — per-key limits apply in routers/subs_api.py
         ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
         ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
         ("/api/admin/",          5,  60.0),  # admin write surface
@@ -2056,11 +2057,14 @@ async def _manual_sub_buy_tick():
     def _call():
         def rpc(name, params):
             return require_sb().rpc(name, params).execute().data
-        return manual_sub_buy.tick(rpc, EvoBuyClient(TOKEN, SECRET))
+        client = EvoBuyClient(TOKEN, SECRET)
+        out = manual_sub_buy.tick(rpc, client)
+        # then follow one already-bought order toward confirmed / rejected (a GET, never a write)
+        return {**out, "follow": manual_sub_buy.follow(rpc, client)}
 
     out = await asyncio.to_thread(_call)
     _manual_sub_buy_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
-    if out.get("action") != "idle":
+    if out.get("action") != "idle" or out["follow"].get("action") != "idle":
         _log.warning("manual_sub_buy: %s", out)
     return out
 
@@ -2141,6 +2145,13 @@ from routers.n2s_mcp import make_n2s_app  # noqa: E402
 
 n2s_mcp_app = make_n2s_app(lambda: require_sb(), limiter=_ip_limiter)
 app.mount("/n2s-mcp", n2s_mcp_app)
+
+# Sub finder API (/api/v1/subs, routers/subs_api.py): a CRM user sends orders and reads back
+# the best substitute per order. Same API keys as /mcp, allow-listed per key in
+# sub_finder_config; shaped like the CRM's own API (X-API-Key, updated_since cursor).
+from routers.subs_api import make_router as _make_subs_api_router  # noqa: E402
+
+app.include_router(_make_subs_api_router(lambda: require_sb(), limiter=_ip_limiter))
 _default_lifespan = app.router.lifespan_context
 
 
