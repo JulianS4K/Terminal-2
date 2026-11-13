@@ -1007,21 +1007,22 @@ def test_autobuy_live_tick_runs_one_step_and_records(monkeypatch):
     from core import n2s_autobuy_live
     seen = {}
 
-    def _fake_tick(rpc, client, sales=None):
+    def _fake_tick(rpc, client, sales=None, gt=None):
         seen["claim"] = rpc("n2s_autobuy_live_claim", {})
-        seen["client"], seen["sales"] = client, sales
+        seen["client"], seen["sales"], seen["gt"] = client, sales, gt
         return {"action": "buy", "phase": "buy_sent"}
 
     fake = _WatchdogSb({"action": "buy"})
     monkeypatch.setattr(app_module, "require_sb", lambda: fake)
     monkeypatch.setattr(n2s_autobuy_live, "tick", _fake_tick)
     monkeypatch.setattr(app_module, "_autobuy_sale_client", lambda: "SALES")
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", lambda: "GT")
     out = anyio.run(app_module._autobuy_live_tick)
     assert out["phase"] == "buy_sent" and seen["claim"] == {"action": "buy"}
     assert fake.calls == [("n2s_autobuy_live_claim", {})]
-    assert seen["client"].token == app_module.TOKEN and seen["sales"] == "SALES"
+    assert seen["client"].token == app_module.TOKEN and seen["sales"] == "SALES" and seen["gt"] == "GT"
     assert app_module._autobuy_live_last["result"]["phase"] == "buy_sent"
-    monkeypatch.setattr(n2s_autobuy_live, "tick", lambda rpc, client, sales=None: {"action": "idle"})
+    monkeypatch.setattr(n2s_autobuy_live, "tick", lambda rpc, client, sales=None, gt=None: {"action": "idle"})
     assert anyio.run(app_module._autobuy_live_tick) == {"action": "idle"}
 
 
@@ -1202,6 +1203,19 @@ def test_gt_sub_offer_status_route(client, monkeypatch):
     monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")
     r = client.get("/api/admin/gt-sub-offer/status")
     assert r.status_code == 200 and r.json()["enabled"] is True
+
+
+def test_autobuy_gt_buy_client_caches_only_with_both_keys(monkeypatch):
+    import core.vault as vault
+    vals = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": None}
+    monkeypatch.setattr(vault, "vault_secret", lambda db, name: vals[name])
+    monkeypatch.setattr(app_module, "require_sb", lambda: object())
+    monkeypatch.setattr(app_module, "_autobuy_gt_client", [])
+    c = app_module._autobuy_gt_buy_client()
+    assert not c.ready() and app_module._autobuy_gt_client == []
+    vals["GOTICKETS_API_SECRET"] = "b"
+    c2 = app_module._autobuy_gt_buy_client()
+    assert c2.ready() and app_module._autobuy_gt_client == [c2] and app_module._autobuy_gt_buy_client() is c2
 
 
 def test_autobuy_sale_client_caches_only_when_every_token_is_there(monkeypatch):
