@@ -67,6 +67,9 @@ _ERROR_STATUS = {"forbidden": 403, "invalid": 422, "not_found": 404, "conflict":
                  "confirm_needed": 409}   # a flagged cover: resend with "confirm": true
 
 
+NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
+
+
 def _err(status: int, error: str, detail: str | None = None, **extra: Any) -> JSONResponse:
     body = {"error": error, **({"detail": detail} if detail else {}), **extra}
     return JSONResponse(body, status_code=status)
@@ -155,6 +158,9 @@ def clean_order(raw: Any, i: int) -> tuple[dict | None, str | None]:
         out["event_date"] = day
     if ev_name:
         out["event_name"] = ev_name
+    notes = _text(raw.get("notes"), NOTES_MAX)  # free text of the CRM's own, stored and shown back
+    if notes:
+        out["notes"] = notes
     return out, None
 
 
@@ -327,6 +333,26 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             "p_key_id": key["id"], "p_key_label": key.get("label"), "p_orders": [row],
             "p_idempotency_key": f"needs-sub:{row['order_number']}:{bucket}"})  # type: ignore[index]
         return _answer(out, ok_status=202)
+
+    @router.post("/orders/{order_number}/notes")
+    async def set_notes(order_number: str, request: Request):
+        """Write, replace or clear ("") the CRM's own note on an order. Stored and shown back in
+        the order's `notes`; nothing here reads it to decide anything."""
+        key = _auth(request, "notes")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        notes = body.get("notes") if isinstance(body, dict) else None
+        if not isinstance(notes, str) or not _ORDER_NO.fullmatch(order_number):
+            return _err(422, "invalid", "send {\"notes\": \"<text, up to 500 characters; empty to clear>\"}")
+        if len(notes.strip()) > NOTES_MAX:
+            return _err(422, "invalid", f"notes can be at most {NOTES_MAX} characters")
+        out = _rpc("sub_finder_set_notes", {"p_key_id": key["id"], "p_order_number": order_number,
+                                            "p_notes": notes.strip()})
+        return _answer(out)
 
     @router.post("/orders/{order_number}/buy")
     async def buy_latest(order_number: str, request: Request):
