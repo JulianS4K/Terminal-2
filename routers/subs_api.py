@@ -63,7 +63,8 @@ MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per
 MAX_LIMIT = 1000           # the CRM's own page ceiling
 NEEDS_SUB_WINDOW_S = 600   # a repeated "needs sub" alert inside this window is the same lookup
 _ORDER_NO = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
-_ERROR_STATUS = {"forbidden": 403, "invalid": 422, "not_found": 404, "conflict": 409}
+_ERROR_STATUS = {"forbidden": 403, "invalid": 422, "not_found": 404, "conflict": 409,
+                 "confirm_needed": 409}   # a flagged cover: resend with "confirm": true
 
 
 def _err(status: int, error: str, detail: str | None = None, **extra: Any) -> JSONResponse:
@@ -357,10 +358,11 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if rebate is not None and (isinstance(rebate, bool) or not isinstance(rebate, (int, float))
                                    or not 0 <= rebate <= 100000):
             return _err(422, "invalid", "rebate_amount must be a number of dollars, 0 or more")
-        out = _rpc("sub_finder_gt_offer_request", {
+        out = _rpc("sub_finder_gt_offer_confirmed", {
             "p_key_id": key["id"], "p_key_label": key.get("label"), "p_order_number": order_number,
             "p_listing_id": listing, "p_market": _text(body.get("market"), 20),
-            "p_requested_by": _text(body.get("requested_by"), 80), "p_rebate_amount": rebate})
+            "p_requested_by": _text(body.get("requested_by"), 80), "p_rebate_amount": rebate,
+            "p_confirm": body.get("confirm") is True})
         return _answer(out, ok_status=202)
 
     @router.get("/results")
@@ -397,10 +399,11 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         listing = _text(body.get("listing_id"), 20)
         if not listing or not listing.isdigit() or not _ORDER_NO.fullmatch(order_number):
             return _err(422, "invalid", "send {\"listing_id\": \"<EVO listing id from this job>\"}")
-        out = _rpc("sub_finder_buy", {
+        out = _rpc("sub_finder_buy_confirmed", {
             "p_key_id": key["id"], "p_key_label": key.get("label"), "p_job_id": jid,
             "p_order_number": order_number, "p_listing_id": listing,
-            "p_requested_by": _text(body.get("requested_by"), 80)})
+            "p_requested_by": _text(body.get("requested_by"), 80),
+            "p_confirm": body.get("confirm") is True})
         return _answer(out, ok_status=202)
 
     return router
