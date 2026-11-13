@@ -309,6 +309,7 @@ def test_buys_once_from_gift_cards_and_records_the_purchase():
     assert body["eventId"] == 1356592 and body["listingId"] == 7531654667 and body["quantity"] == 2
     assert body["expectedTotal"] == 186.0 and body["deliveryMethodId"] == 1
     assert body["giftCardIds"] == [28085] and "paymentMethodToken" not in body
+    assert "buyerNotes" not in body                # may be shown to the seller: nothing about the sale
     assert body["recipient"] == PROFILE["gt_recipient"] and body["billingAddress"] == PROFILE["gt_billing_address"]
     assert [r["p_patch"]["phase"] for r in recs] == ["buying", "buy_sent"]   # lease held right before the POST
     assert ("own", "7531654667") in calls

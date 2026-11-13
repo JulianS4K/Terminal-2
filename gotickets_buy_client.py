@@ -200,13 +200,15 @@ def pick_gift_cards(cards: list[dict], need: float, allowed: list | None = None)
 
 
 def order_body(*, event_id: Any, listing_id: Any, qty: int, expected: float, delivery_id: Any,
-               email: str, phone: str, billing: dict, recipient: dict, gift_card_ids: list[int], note: str) -> dict:
-    """The POST /orders body: gift cards only (no paymentMethodToken), shipping = billing."""
+               email: str, phone: str, billing: dict, recipient: dict, gift_card_ids: list[int]) -> dict:
+    """The POST /orders body: gift cards only (no paymentMethodToken), shipping = billing.
+    No ``buyerNotes`` (operator 2026-11-13 asked whether the note is internal or external):
+    GoTickets does not say who reads it, and its purchases keep a separate ``internalNotes``,
+    so it may reach the seller. Which sale a purchase covers lives in n2s_autobuy_exec."""
     return {"eventId": int(event_id), "listingId": int(listing_id), "quantity": int(qty),
             "expectedTotal": round(float(expected), 2), "emailAddress": email, "phoneNumber": phone,
             "deliveryMethodId": int(delivery_id), "giftCardIds": [int(g) for g in gift_card_ids],
-            "billingAddress": billing, "shippingIsBilling": True, "recipient": recipient,
-            "buyerNotes": note[:250]}
+            "billingAddress": billing, "shippingIsBilling": True, "recipient": recipient}
 
 
 def order_id(resp: dict) -> str | None:

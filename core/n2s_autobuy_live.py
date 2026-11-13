@@ -210,9 +210,7 @@ def _buy_gt(rpc: Rpc, gt: gtb.GoTicketsBuyClient | None, job: dict, now: datetim
                        live_error=f"gift cards cannot cover ${total:.2f}")
     body = gtb.order_body(event_id=row["gt_event_id"], listing_id=row["sub_listing_id"], qty=qty, expected=total,
                           delivery_id=delivery["id"], email=profile["email"], phone=profile["phone"],
-                          billing=profile["billing"], recipient=profile["recipient"], gift_card_ids=cards_used,
-                          note=f"N2S auto-cover for {row.get('sell_market')} sale {row.get('sale_order_key')} "
-                               f"(n2s {row['n2s_id']})")
+                          billing=profile["billing"], recipient=profile["recipient"], gift_card_ids=cards_used)
     if not _hold(rpc, job, "buying"):
         return {"phase": "lease_lost"}  # nothing sent; the claim sweep decides what happens to the row
     try:
