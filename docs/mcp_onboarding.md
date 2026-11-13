@@ -1,6 +1,6 @@
 # S4K Market MCP — onboarding (5 minutes)
 
-> **Doc version:** v1.2.0 (2026-10-23) — +`team_report` (a team's live TEvo/SeatGeek/GoTickets inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one call), +`get_started` and the `s4k://onboarding` resource / `get_started` prompt served on connect; `price_forecast` now returns `confidence` + `warning` and anchors a no-sales estimate to the live market. · v1.1.0 (2026-10-23) — +`price_forecast` (predicted clearing price per section with a band and the signals behind it) and the "Predict a price" recipe. · v1.0.0 (2026-10-21) — first release of the self-serve external tier (14 tools, per-key limits, freshness on every answer).
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- docs/mcp_onboarding.md`). Do not edit this line (README *Doc-writing rules* §5).
 
 Live-event market data for your bot, over the [Model Context Protocol](https://modelcontextprotocol.io): event / performer / venue search, SeatGeek sales pace, price history and zone prices, the daily top-sellers chart, performer trends, multi-source price movers, competing events, prediction markets, sports state, news and weather. Read-only. Every answer tells you how fresh it is.
 

@@ -1,6 +1,6 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v2.3.0 (2026-09-26; §3: Exos (`*exos*`) migrations are authored in `JulianS4K/EXP` and share this project's version history, so prefix collisions span both repos) · v2.2.0 (2026-06-30; §14: +9 landmark rows for the TD sourcing redesign `20260630160000`–`250000`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- MIGRATION_CONVENTIONS.md`). Do not edit this line (README *Doc-writing rules* §5).
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
