@@ -41,14 +41,26 @@ SELECT pg_temp.show(job) FROM j3;
 SELECT array_agg(tevo_event_id ORDER BY tevo_event_id) FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3);
 SELECT sub_finder_job_json(7, job)->>'status' FROM j3;
 
-\echo event 51 answers with cheaper StubHub seats, event 50 is rate limited, event 52 has nothing
-INSERT INTO net._http_response (id,status_code,content) SELECT request_id, 200, '{"matches":{"stubhub":"https://www.stubhub.com/event/9051"},"fetch_results":{"normalized":{
- "stubhub":{"offers":[{"listing_id":"S51","section":"101","row":"2","quantity":2,"price_total":70,"available_lots":[2],"flags":{}}]}}}}'
+\echo event 51 answers with cheaper StubHub seats, event 50 is rate limited every time it is asked, event 52 has nothing
+-- an answer as TicketsData gives it: the match it made and how sure it is (mig 20261114000000 checks both)
+CREATE FUNCTION pg_temp.ans(p_ev bigint, p_body text) RETURNS text LANGUAGE sql AS $$
+  SELECT (jsonb_build_object('status', 'success', 'match_type', 'probable', 'match_confidence', 85,
+                             'event_details', jsonb_build_object('date', (SELECT left(occurs_at_local::text, 10) FROM events WHERE id = p_ev)))
+          || p_body::jsonb)::text $$;
+INSERT INTO net._http_response (id,status_code,content) SELECT request_id, 200, pg_temp.ans(51, '{"matches":{"stubhub":"https://www.stubhub.com/event/9051"},"fetch_results":{"normalized":{
+ "stubhub":{"offers":[{"listing_id":"S51","section":"101","row":"2","quantity":2,"price_total":70,"available_lots":[2],"flags":{}}]}}}}')
   FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3) AND tevo_event_id = 51;
+INSERT INTO net._http_response (id,status_code,content) SELECT request_id, 200, pg_temp.ans(52, '{"matches":{},"fetch_results":{"normalized":{}}}')
+  FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3) AND tevo_event_id = 52;
 INSERT INTO net._http_response (id,status_code,content) SELECT request_id, 429, 'Too Many Requests'
   FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3) AND tevo_event_id = 50;
-INSERT INTO net._http_response (id,status_code,content) SELECT request_id, 200, '{"matches":{},"fetch_results":{"normalized":{}}}'
-  FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3) AND tevo_event_id = 52;
+SELECT 'rate limited once: ' || (sub_finder_job_json(7, job)->>'status') FROM j3;
+SELECT 'asked again: ' || (request_id IS NOT NULL AND resolved_at IS NULL AND retries = 1)::text FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3) AND tevo_event_id = 50;
+INSERT INTO net._http_response (id,status_code,content) SELECT request_id, 429, 'Too Many Requests'
+  FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3) AND tevo_event_id = 50;
+SELECT 'rate limited twice: ' || (sub_finder_job_json(7, job)->>'status') FROM j3;
+INSERT INTO net._http_response (id,status_code,content) SELECT request_id, 429, 'Too Many Requests'
+  FROM sub_finder_td_pull WHERE job_id = (SELECT job FROM j3) AND tevo_event_id = 50;
 \echo A keeps its EVO cover (search failed), B has EVO and StubHub, C ends with no cover:
 SELECT pg_temp.show(job) FROM j3;
 SELECT sub_finder_job_json(7, job)->>'status' FROM j3;

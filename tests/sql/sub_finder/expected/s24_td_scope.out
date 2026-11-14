@@ -14,7 +14,10 @@ a-B|cover|2|queued|evo:5101
 a-C|pending|-|queued
 {50,51,52}
 pulling_td
-event 51 answers with cheaper StubHub seats, event 50 is rate limited, event 52 has nothing
+event 51 answers with cheaper StubHub seats, event 50 is rate limited every time it is asked, event 52 has nothing
+rate limited once: pulling_td
+asked again: true
+rate limited twice: pulling_td
 A keeps its EVO cover (search failed), B has EVO and StubHub, C ends with no cover:
 a-A|cover|1|failed|evo:5001
 a-B|cover|1|searched|evo:5101,stubhub:S51
