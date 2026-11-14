@@ -475,3 +475,60 @@ def test_no_usable_quote_means_no_buy(quote):
     out, _, calls = _tick(_taxed_job(), QuoteClient(quote))
     assert out["phase"] == "stopped" and out["reasons"] == ["tax_quote_failed"]
     assert [k[0] for k in calls] == ["tg", "quote"]
+
+
+# ------------------------------------------------------------------ the one queue (20261113470000)
+# pre_buy / n2s_result are what the sub finder's worker calls for a buy N2S filed into the one
+# queue; our own worker (above) goes through the same two functions.
+
+def test_pre_buy_only_reads_and_builds_the_one_evo_request():
+    c = Client()
+    plan = lv.pre_buy(_buy_job(est_tax_usd=11.0), evo=c, now=NOW)
+    assert plan["stop"] == [] and plan["market"] == "evo" and plan["qty"] == 2
+    assert plan["expected_total"] == 211.0                        # our quote with the venue's estimated tax
+    assert plan["body"]["orders"][0]["shipped_items"][0]["items"][0]["ticket_group_id"] == 6744480374
+    assert [k[0] for k in c.calls] == ["tg"]                       # nothing was bought
+
+
+def test_pre_buy_stop_carries_the_patch_for_our_row():
+    plan = lv.pre_buy(_buy_job(), evo=Client(tg={**TG, "available_quantity": 1}), now=NOW)
+    assert plan == {"stop": ["short_quantity"], "state": "stopped",
+                    "n2s": {"phase": "stopped", "reasons": ["short_quantity"]}}
+    plan = lv.pre_buy(_buy_job(), evo=Client(tg=EvoWriteRejected(404, "gone")), now=NOW)
+    assert plan["stop"] == ["listing_gone"] and "404" in plan["n2s"]["live_error"]
+
+
+def test_pre_buy_without_a_job_stops():
+    for job in (None, {}, {"row": None, "cfg": CFG}, {"row": _row(), "cfg": None}):
+        assert lv.pre_buy(job, evo=Client())["stop"] == ["no_job"]
+
+
+def test_pre_buy_reads_the_clock_itself():
+    # a sale on a market we hold no accept token for: stopped before any read
+    assert lv.pre_buy(_buy_job(sell_market="vivid"), evo=Client())["stop"] == ["no_sale_accept_token"]
+
+
+def test_n2s_result_reads_every_answer_and_never_stops_silently():
+    plan = {"stop": [], "market": "evo", "body": {}, "expected_total": 200.0, "qty": 2}
+    out = lv.n2s_result(plan, {"orders": [{"id": 9001, "state": "pending", "total": "205.5"}]})
+    assert out == {"state": "bought", "n2s": {"phase": "buy_sent", "buy_order_id": "9001", "buy_state": "pending",
+                                              "live_error": "EVO total $205.5 is above the quoted $200.00",
+                                              "buy_total_usd": 205.5}}
+    out = lv.n2s_result(plan, error=EvoWriteRejected(422, "sold out"))
+    assert out["state"] == "stopped" and out["n2s"]["reasons"] == ["buy_failed"]   # the run is not given back
+    assert lv.n2s_result(plan, error=EvoWriteUnknown("/v9/orders: ReadTimeout"))["n2s"] == {
+        "phase": "buy_unknown", "reasons": ["buy_unknown"], "live_error": "/v9/orders: ReadTimeout"}
+    out = lv.n2s_result(plan, error=RuntimeError("socket closed"))
+    assert out["state"] == "unknown" and out["n2s"]["live_error"] == "RuntimeError: socket closed"
+    assert lv.n2s_result(plan, None)["state"] == "unknown"                            # no answer at all
+    assert lv.n2s_result(plan, {"orders": [{"state": "pending"}]})["n2s"]["live_error"].startswith("ValueError")
+
+
+def test_a_sent_buy_we_cannot_record_keeps_its_purchase_id():
+    out, _, _ = _tick(_buy_job(), Client(create={"orders": [{"id": 9001, "state": "pending"}]}), boom={"buy_sent"})
+    assert out["phase"] == "buy_unknown" and out["buy_order_id"] == "9001"
+
+
+def test_a_refusal_we_cannot_record_is_raised_not_hidden():
+    with pytest.raises(RuntimeError):   # the tick fails; the row's lease runs out and the claim fails closed
+        _tick(_buy_job(), Client(create=EvoWriteRejected(422, "sold out")), boom={"stopped"})
