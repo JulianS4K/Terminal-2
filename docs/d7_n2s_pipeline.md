@@ -410,6 +410,27 @@ from EVO office 42029 (Office 3): tu@s4kent.com, 212-913-9751, 362 5th Ave, New 
 Julian G (operator 2026-11-13). With no GoTickets acceptance history yet, the
 seller window is `gt_seller_window_s` (540 s).
 
+**One buyer** (stage 3, mig `20261113470000`; operator 2026-11-13 "allow stage 3, n2s gets priority
+in queue"; lane D0's side is `20261113440000`). `n2s_autobuy_config.buyer` says who sends the buy:
+`'own'` (the default, as above) or `'queue'`. With `'queue'` the claim **files** a buy it would have
+handed out into the sub finder's queue (`manual_sub_buy_file_n2s`, origin `'n2s'`), spends the live
+run as before, and sets the row's phase to **`queued`**. The sub finder's worker hands N2S rows out
+first, one buy at a time across both origins, only while N2S is live, not killed and not stopped for
+that source. It never sends after `buy_by` = `sub_confirm_by` − GREATEST(`min_confirm_window_s`,
+`seller_window_in_hand_s`). Before sending it runs `core/n2s_autobuy_live.pre_buy` (every guard above,
+read fresh, and the one request) on the job `n2s_autobuy_queue_job` builds. That is the claim's own
+job, from `n2s_autobuy_job_json`. It reads the answer with `n2s_result`. The result reaches our row in
+the same transaction (`n2s_autobuy_queue_result`):
+- `bought` → `buy_sent`, then our poll and accept as for our own buy;
+- `stopped` → `stopped`, with the run given back unless the market refused the buy (`buy_failed`);
+- `unknown` (and a lease the queue lost mid-buy) → `buy_unknown` and **our** kill switch.
+
+Two cases stop the row with the run given back: a filing the queue refuses (`queue_file_refused`: the
+sale already has a live buy there, or the row cannot be filed), and a queued row whose `buy_by`
+passes unsent (`queue_expired`). A purchase reported for a row that has left the queue fails closed
+(`queue_result_late`, kill switch). Flip `buyer` to `'queue'` only after the sub finder's worker is
+deployed. `'own'` undoes it at once.
+
 ### 6. Surface — panel and feed
 - **Auto-buy results to the CRM** (mig `20261113410000`): every live purchase the auto-buyer
   placed (`n2s_autobuy_exec` with `buy_order_id`) is a sync feed in the sub finder API,
