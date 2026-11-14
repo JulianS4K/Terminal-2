@@ -1,0 +1,61 @@
+where a search can start from, best first
+60: stubhub
+61: seatgeek
+62: vivid
+63: nothing
+64: stubhub, vivid
+65: nothing
+66: stubhub (one of several), stubhub (one of several)
+67: stubhub
+68: stubhub
+69: stubhub, seatgeek
+a StubHub id, a SeatGeek link, a Vivid id, nothing, and a parking event
+event 60 | asked stubhub stubhub.com/event/9060 | tried 1 | waiting | note - | offers - | learned - | orders pending/queued
+event 61 | asked seatgeek seatgeek.com/game-61-tickets/concert/7061 | tried 1 | waiting | note - | offers - | learned - | orders pending/queued
+event 62 | asked vivid vividseats.com/production/8062 | tried 1 | waiting | note - | offers - | learned - | orders pending/queued
+orders with no search: 63 no_event_link, 65 no_event_link
+a good answer is used, charged, and teaches the map its StubHub and Vivid ids (the map refuses one: no harm)
+pulling_td
+sure enough to use (85) but not to teach the map (90): the Vivid search
+pulling_td
+not sure enough (60): its listings are not used, and with no other link the search has failed
+done
+event 60 | asked stubhub stubhub.com/event/9060 | tried 1 | answered | note - | offers 2 | learned stubhub 9060: hub_stubhub; vivid 6666: error | orders cover/searched
+event 61 | asked seatgeek seatgeek.com/game-61-tickets/concert/7061 | tried 1 | answered | note low_confidence | offers - | learned - | orders no_cover/failed
+event 62 | asked vivid vividseats.com/production/8062 | tried 1 | answered | note - | offers 1 | learned - | orders cover/searched
+event 60 covers (SeatGeek kept: our own feed has nothing for it): seatgeek:G60,stubhub:L
+event 62 covers (SeatGeek dropped: our own feed covers it): vivid:L
+event 61 covers: no cover
+the map was told: stubhub 9060 for event 60
+charged: 3 searches, 36 credits, 3 reports
+the link that gave the unsure answer is not asked again for 14 days
+https://seatgeek.com/game-61-tickets/concert/7061|low_confidence
+event 61 again: no_event_link
+another night of the run: the StubHub answer is for the next day, so the Vivid id on the other map row is asked
+event 64 | asked stubhub stubhub.com/event/9064 | tried 1 | waiting | note - | offers - | learned - | orders pending/queued
+pulling_td
+event 64 | asked vivid vividseats.com/production/8064 | tried 2 | waiting | note wrong_event | offers - | learned - | orders pending/queued
+done
+event 64 | asked vivid vividseats.com/production/8064 | tried 2 | answered | note - | offers 1 | learned vivid 8064: hub_vivid; | orders cover/searched
+event 64 covers: vivid:L
+two StubHub ids for one event: the first matches but shows nothing (a parking twin), so the second is asked
+pulling_td
+event 66 | asked stubhub stubhub.com/event/9067 | tried 2 | waiting | note no_offers | offers - | learned - | orders pending/queued
+done
+event 66 | asked stubhub stubhub.com/event/9067 | tried 2 | answered | note - | offers 1 | learned - | orders cover/searched
+a single link that matches and shows nothing is an answer, not a failure
+done
+event 67 | asked stubhub stubhub.com/event/9167 | tried 1 | answered | note - | offers 0 | learned - | orders no_cover/searched
+no credit left on the plan (402): the rest of the job is not asked
+sent: 1
+done
+event 68 | asked stubhub stubhub.com/event/9068 | tried 1 | answered | note quota_exhausted | offers - | learned - | orders no_cover/failed
+event 69 | asked stubhub stubhub.com/event/9069 | tried 1 | answered | note quota_exhausted | offers - | learned - | orders no_cover/failed
+sent: 1
+our own credit guard says stop: nothing is sent
+event 69 | asked stubhub stubhub.com/event/9069 | tried 1 | answered | note no_budget | offers - | learned - | orders no_cover/failed
+sent: 0
+the switch for teaching the map
+done
+event 69 | asked stubhub stubhub.com/event/9069 | tried 1 | answered | note - | offers 1 | learned - | orders cover/searched
+the map was told: 0
