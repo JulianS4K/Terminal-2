@@ -18,7 +18,7 @@
 --                                           90 d window moves to the daily table — D0 follow-up)
 --             axs_seat_snapshots            enable, 15 → 7 d
 --             axs_event_snapshots           enable, 30 d
---             zone_metrics                  NEW 60 d (1.6 GB, no policy today)
+--             zone_metrics                  EXEMPT (operator 2026-10-27, ML predictor; mig 20261027050000)
 --           venue_section_rollup_catchup(int,int) (W: trailing window 70 → 14 d so the
 --                                           rollup can never fall behind the 21 d raw window)
 -- seatgeek_listings_snapshots: never-purge LIFTED by the operator 2026-10-23 → 7 d.
@@ -79,10 +79,9 @@ UPDATE public.retention_policy SET enabled = true,
   notes = coalesce(notes,'') || ' | v3 2026-10-23: enabled at 30 d.', updated_at = now()
 WHERE table_name = 'axs_event_snapshots';
 
-INSERT INTO public.retention_policy (table_name, ts_column, keep_days, enabled, batch_rows, budget_seconds, priority, notes)
-VALUES ('zone_metrics', 'captured_at', 60, true, 50000, 60, 45,
-        'Per-zone aggregates — 60 d (v3 2026-10-23). Daily zone features kept forever in zone_price_observations.')
-ON CONFLICT (table_name) DO UPDATE SET keep_days = 60, enabled = true, updated_at = now();
+-- zone_metrics: NOT purged. Operator 2026-10-27 exempted it (ML price predictor needs the
+-- whole-season zone curve); mig 20261027050000 adds a disabled never_purge row. The 60 d row
+-- that used to be here would now be refused by the never_purge guard trigger.
 
 -- SeatGeek LISTINGS: operator lifted the 2026-09-11 never-purge directive for listings
 -- only (2026-10-23). Clear the flag first (the guard trigger refuses enabled=true while
@@ -145,6 +144,6 @@ END $$;
 -- VERIFY: SELECT table_name, keep_days, enabled, left(keep_where,60) FROM public.retention_policy ORDER BY priority, table_name;
 --   after ~2 days of ticks: min(captured_at) on listings_snapshots / gotickets_listings_snapshots ≈ now()-7 d
 --   (except deal-evidence rows ≤ 90 d), section_metrics ≈ 21 d, event_metrics ≈ 60 d.
--- ROLLBACK: the previous values are in the notes trail (15/15/30/30/60/120; axs rows enabled=false; delete the zone_metrics row);
+-- ROLLBACK: the previous values are in the notes trail (15/15/30/30/60/120; axs rows enabled=false);
 --   re-apply venue_section_rollup_catchup from mig 20260705153500 (70 d).
 -- ============================================================================
