@@ -38,7 +38,7 @@ Common name collisions before authoring: `*_metrics`, `*_xref`, `v_event_*`, `v_
 | **TEvo** (TicketEvolution v9) | listings/orders feed | A1 | `evo_client.py` | `TEVO_API_TOKEN`, `TEVO_SECRET` |
 | **SeatGeek** | marketplace + seller data | A1 | `seatgeek_client.py`, `sg_*` tables | `SEATGEEK_API_TOKEN` |
 | **SeatData** | wholesale sales feed | A1 | `seatdata_client.py`, `seatdata_*` | `SEATDATA_API_KEY` |
-| **TicketsData** (SH/VD/GT/TP/TM) | cross-platform listings | A1 | `ticketsdata_client.py`, `td_*` | `TICKETSDATA_USERNAME`/`_PASSWORD` |
+| **TicketsData** (SH/VD/GT/TP/TM) | cross-platform listings; + the **AXS event catalog export** (`/events?platform=axs&mode=all`, Pro plan) | A1 | `ticketsdata_client.py`, `td_*`; AXS export: `axs_export_tick` (cron `axs_export_tick_1m`: daily full US run at 5000/page + hourly `new_since` run, **cursor paging** — page numbers cap at 100k skipped rows; stopped full run → `axs_export_sync.last_full_error`) → `axs_export_event`, matched by `axs_export_match` (cron `axs_export_match_15m`) | `TICKETSDATA_USERNAME`/`_PASSWORD` |
 | **AXS** (primary box office, veritix) | primary on-sale seat-level (via TD `/fetch?platform=axs`) | A1 | `axs_client.py`, `axs_*` | reuses TICKETSDATA creds |
 | **TickPick / Vivid / GoTickets** | order/listing clients | A1/D3 | `tickpick_client.py`/`vivid_client.py`/`gotickets_client.py` | per-client |
 | **Broadway.com** | availability scrape | D3 | `broadway_client.py`, `broadway_extension/` | `BROADWAY_USER_AGENT` (opt) |
