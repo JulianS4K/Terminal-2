@@ -119,13 +119,20 @@ def ip_allowed(ip: str | None, allowed: list) -> bool:
     return False
 
 
-def forwarded_ip(xff: str | None, hops: int) -> str | None:
+def forwarded_ip(xff: str | None, hops: int, trusted: list) -> str | None:
     """The caller's address from X-Forwarded-For when `hops` proxies of ours stand in front: the
     entry that many from the end (1 = the last). Each of our proxies appends the address that
     connected to it, so entries further left were written by the caller and prove nothing.
-    None when the chain is shorter than that: never fall back to a part a caller can write."""
+    The count is not taken on faith: every entry after the caller's was written by one of our
+    proxies about another, so each must be inside `trusted` (our edge's published ranges). A
+    request that skipped a proxy, or carries a made-up chain, fails that and has no address.
+    None also when the chain is shorter than `hops`: never fall back to a part a caller can write."""
     parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
-    return parts[-hops] if 1 <= hops <= len(parts) else None
+    if not 1 <= hops <= len(parts):
+        return None
+    if any(not ip_allowed(p, trusted) for p in parts[len(parts) - hops + 1:]):
+        return None
+    return parts[-hops]
 
 
 def dropped_connection(exc: BaseException) -> bool:
@@ -349,7 +356,7 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         # the address the call came from: the X-Forwarded-For entry our own proxies vouch for (mig
         # 20261116010000; the last entry alone is our edge, not the caller). No header: a direct connection.
         xff = request.headers.get("x-forwarded-for")
-        ip = (forwarded_ip(xff, int(gate.get("client_ip_hops") or 1)) if xff
+        ip = (forwarded_ip(xff, int(gate.get("client_ip_hops") or 1), gate.get("trusted_proxies") or []) if xff
               else request.client.host if request.client else None)
         key = dict(row, id=gate.get("account_id") or row["id"], key_id=row["id"], ip=ip, gate=gate)
         allowed = gate.get("allowed_ips") or []

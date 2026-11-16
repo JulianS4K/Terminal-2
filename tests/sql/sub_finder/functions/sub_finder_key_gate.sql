@@ -12,7 +12,9 @@ AS $function$
                                                               THEN '/' || masklen(a) ELSE '' END)
                                FROM unnest(k.allowed_ips) a), '[]'::jsonb),
     'write_requires_ip', c.write_requires_ip,
-    'client_ip_hops', c.client_ip_hops)       -- 20261116010000: which X-Forwarded-For entry is the caller
+    -- 20261116010000: which X-Forwarded-For entry is the caller, and whose word that rests on
+    'client_ip_hops', c.client_ip_hops,
+    'trusted_proxies', (SELECT coalesce(jsonb_agg(text(a)), '[]'::jsonb) FROM unnest(c.trusted_proxy_cidrs) a))
   FROM public.sub_finder_config c LEFT JOIN public.sub_finder_key k ON k.key_id = p_key_id;
 $function$
 

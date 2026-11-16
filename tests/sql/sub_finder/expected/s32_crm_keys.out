@@ -3,6 +3,8 @@ A a key not listed acts for itself and may do what its account may
 A listed keys: 8 reads for account 7; 9 buys and offers for it, from its registered addresses only
 {"buy": false, "offer": false, "listed": true, "account_id": 7, "allowed_ips": [], "client_ip_hops": 1, "write_requires_ip": true}
 {"buy": true, "offer": true, "listed": true, "account_id": 7, "allowed_ips": ["203.0.113.7", "198.51.100.0/24", "2001:db8::/32"], "client_ip_hops": 1, "write_requires_ip": true}
+the proxies whose word the caller address rests on: our edge, IPv4 and IPv6
+22|172.64.0.0/13|2400:cb00::/32
 B the label is status = need2buy and nothing else
 t|f|f|f|f
 C an order the caller describes is never bought automatically, even once our books show the same sale
