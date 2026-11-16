@@ -9,7 +9,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
 `updated_since` as the sync cursor — feed each answer's `generated_at` back as the next call's
 `updated_since`, paging oldest-change-first so a row touched mid-walk is not skipped.
 
-  GET  /api/v1/subs/ping                                    key check + what it may do
+  GET  /api/v1/subs/ping                                    key check + what it may do + what changed lately
   POST /api/v1/subs/jobs                                    submit orders -> job id (202)
   GET  /api/v1/subs/jobs/{job_id}                           one job: status + every order
   GET  /api/v1/subs/jobs/{job_id}/orders/{order_number}     one order (e.g. to follow its buy)
@@ -30,7 +30,10 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
-changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us").
+changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
+carries `news`: the newest entries of the guide's "What changed for you" list, so the CRM is told
+what changed in the answer it already reads (operator 2026-11-16: "Just update crm upon ping").
+The list has one home, the guide; nothing about it is stored anywhere else.
 
 The alert is the integration we ask the CRM for: one "Needs sub" checkbox on an order, which
 fires that last call with nothing but the order number in the URL. It is a one-order submit;
@@ -177,6 +180,9 @@ DOCS_ROUTE = "/api/v1/subs/docs"
 _DOC_VERSION_MARK = "\x00doc-version\x00"   # stands in for the fingerprint while it is being worked out
 _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL | re.MULTILINE)   # internal switches
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
+_DOC_NEWS = re.compile(r"^## What changed for you\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)     # the dated list
+_DOC_NEWS_ITEM = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*[ .:·—-]*(.+)$", re.MULTILINE)          # one entry of it
+NEWS_ON_PING = 5                            # entries /ping carries; the guide has them all
 
 
 def render_crm_doc(text: str) -> dict:
@@ -184,7 +190,8 @@ def render_crm_doc(text: str) -> dict:
     SQL) left out. Its version is a fingerprint of exactly what is served, so it changes when,
     and only when, the guide the CRM reads changes. Nobody numbers it by hand (the doc's version
     line is not edited, README *Doc-writing rules* §5). `updated` is kept as a key for older
-    clients and is always None: compare `version` for equality."""
+    clients and is always None: compare `version` for equality. `news` is the guide's own
+    "What changed for you" list, in the order written (newest first), as {date, text}."""
     lines = []
     for line in text.splitlines():
         if line.startswith("> **Doc version:**"):
@@ -194,7 +201,10 @@ def render_crm_doc(text: str) -> dict:
         lines.append(line)
     markdown = _DOC_OPERATORS_LINK.sub("", _DOC_OPERATORS.sub("", "\n".join(lines) + "\n"))
     version = hashlib.sha256(markdown.encode("utf-8")).hexdigest()[:12]
-    return {"version": version, "updated": None, "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
+    section = _DOC_NEWS.search(markdown)
+    news = [{"date": d, "text": t.strip()} for d, t in _DOC_NEWS_ITEM.findall(section.group(1))] if section else []
+    return {"version": version, "updated": None, "news": news,
+            "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
 
 
 @functools.lru_cache(maxsize=4)
@@ -440,6 +450,9 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                 "limits": access.get("limits") or {},
                 # the guide's version: when it differs from the one you hold, fetch `docs.url` again
                 "docs": {"version": doc.get("version"), "updated": doc.get("updated"), "url": DOCS_ROUTE},
+                # what changed for the caller lately, newest first: the guide's own list, so a CRM
+                # that only pings is still told. Each is {date, text}; the guide has the whole list.
+                "news": (doc.get("news") or [])[:NEWS_ON_PING],
                 "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
     @router.get("/docs")
