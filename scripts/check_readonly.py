@@ -358,6 +358,18 @@ SANCTIONED_PLPGSQL_WRITE_URLS = (
     "https://sandbox.account.stubhub.com/oauth2/token",
 )
 
+# The ONLY built (non-literal) write URLs a plpgsql migration may POST to, each an exact
+# expression, blanked like the URLs above (security-CRIT to extend):
+#   - TickPick sale confirm (operator 2026-11-16, "Ok" to moving the TickPick sale read and
+#     confirm into the database: TickPick refuses the web service's address). The same single
+#     write sale_accept_client.py may send (SALE_ACCEPT_WRITES), confirming OUR OWN sale for an
+#     N2S row whose sub we bought: n2s_tickpick_confirm (mig 20261116181000) sends it once per
+#     row, only for a live 'sub_accepted' row the caller holds the lease on, with v_tp_order read
+#     from n2s_items and checked to be a plain number. No reject, cancel, price or listing write.
+SANCTIONED_PLPGSQL_WRITE_EXPRS = (
+    "'https://api.tickpick.com/1.0/orders/' || v_tp_order || '/confirmation'",
+)
+
 
 def check_plpgsql_writes() -> list[str]:
     """Scan supabase/migrations/*.sql for net.http_post|put|patch|delete calls
@@ -376,6 +388,8 @@ def check_plpgsql_writes() -> list[str]:
             snippet = text[start:end]
             for url in SANCTIONED_PLPGSQL_WRITE_URLS:
                 snippet = snippet.replace(f"'{url}'", "''")
+            for expr in SANCTIONED_PLPGSQL_WRITE_EXPRS:
+                snippet = snippet.replace(expr, "''")
             forbidden_hits = [h for h in FORBIDDEN_HOSTS if h in snippet]
             if forbidden_hits:
                 line_no = text[: m.start()].count("\n") + 1

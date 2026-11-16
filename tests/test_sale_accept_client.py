@@ -145,3 +145,91 @@ def test_tickpick_lapsed_sale_is_a_rejection_never_a_retry():
         _client(requests.Timeout(), tickpick_token="t").accept("tickpick", 1)
     with pytest.raises(EvoWriteRejected):
         _client(_resp(404, ""), tickpick_token="t").sale_state("tickpick", 1)
+
+
+# ---------- TickPick through the database (operator 2026-11-16; mig 20261116181000) ----------
+
+class FakeDb:
+    """(rpc name, params) -> each answer in turn; an Exception answer is raised."""
+    def __init__(self, *answers):
+        self.answers, self.calls = list(answers), []
+
+    def __call__(self, name, params):
+        self.calls.append((name, params))
+        a = self.answers.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+
+def _db_client(*answers):
+    db = FakeDb(*answers)
+    return _client(tickpick_token="t", tickpick_db=db), db
+
+
+def test_tickpick_db_read_never_goes_out_from_the_web_service():
+    c, db = _db_client({"http": 200, "seller_status": "Unconfirmed", "order_status": "UNCONFIRMED", "error": None})
+    assert c.sale_state("tickpick", "1074350318") == "Unconfirmed"
+    assert db.calls == [("n2s_tickpick_sale_state", {"p_order_number": "1074350318"})]
+    assert c.session.calls == []                                   # nothing sent from here
+
+
+def test_tickpick_db_read_failures_carry_tickpicks_answer():
+    c, _ = _db_client({"http": 403, "error": "IP not allowed"})
+    with pytest.raises(EvoWriteRejected) as e:
+        c.sale_state("tickpick", 1)
+    assert (e.value.status, e.value.detail) == (403, "IP not allowed")
+    for answer, text in (({"http": -1, "error": "Operation timed out"}, "HTTP -1: Operation timed out"),
+                         ({"http": 0, "error": "no_token"}, "HTTP 0: no_token"),
+                         ({"http": 502, "error": None}, "HTTP 502: "),
+                         (None, "HTTP None: ")):
+        c, _ = _db_client(answer)
+        with pytest.raises(sa.SaleAcceptError, match=text):
+            c.sale_state("tickpick", 1)
+    c, _ = _db_client(RuntimeError("Server disconnected"))
+    with pytest.raises(sa.SaleAcceptError, match="via the database: RuntimeError"):
+        c.sale_state("tickpick", 1)
+
+
+def test_tickpick_db_confirm_sends_the_row_and_its_lease():
+    c, db = _db_client({"http": 200, "body": ""})
+    assert c.accept("tickpick", "1074350318", exec_id=8, lease_token="tok-1") == \
+        {"state": "accepted", "http": 200, "body": ""}
+    assert db.calls == [("n2s_tickpick_confirm",
+                         {"p_exec_id": 8, "p_token": "tok-1", "p_order_number": "1074350318"})]
+    assert c.session.calls == []
+    c, db = _db_client({"http": 200, "body": "{}", "repeat": True})   # a retried call: the first answer
+    assert c.accept("tickpick", 1, exec_id=8, lease_token="tok-1")["http"] == 200
+
+
+def test_tickpick_db_confirm_needs_the_row_and_lease():
+    for kw in ({}, {"exec_id": 8}, {"lease_token": "tok-1"}, {"exec_id": 8, "lease_token": ""}):
+        c, db = _db_client()
+        with pytest.raises(sa.SaleAcceptError):
+            c.accept("tickpick", 1, **kw)
+        assert db.calls == []
+
+
+def test_tickpick_db_confirm_outcomes():
+    c, _ = _db_client({"refused": "row_not_held"})                   # the DB sent nothing
+    with pytest.raises(EvoWriteRejected) as e:
+        c.accept("tickpick", 1, exec_id=8, lease_token="tok-1")
+    assert (e.value.status, e.value.detail) == (409, "not sent: row_not_held")
+    c, _ = _db_client({"http": 422, "body": "already confirmed"})
+    with pytest.raises(EvoWriteRejected) as e:
+        c.accept("tickpick", 1, exec_id=8, lease_token="tok-1")
+    assert (e.value.status, e.value.detail) == (422, "already confirmed")
+    # sent but no readable answer, a 5xx, a failure in flight (also on a repeat), or no answer: unknown
+    for answer in ({"http": 503, "body": ""}, {"http": -1, "body": "timeout"},
+                   {"http": -1, "body": "timeout", "repeat": True}, {"http": None}, None, [],
+                   RuntimeError("Server disconnected")):
+        c, _ = _db_client(answer)
+        with pytest.raises(EvoWriteUnknown):
+            c.accept("tickpick", 1, exec_id=8, lease_token="tok-1")
+
+
+def test_without_tickpick_db_the_direct_calls_are_unchanged():
+    c = _client(_resp(data={"seller_status": "Unconfirmed"}), _resp(200, ""), tickpick_token="t")
+    assert c.sale_state("tickpick", 5) == "Unconfirmed"
+    assert c.accept("tickpick", 5, exec_id=8, lease_token="tok-1")["http"] == 200
+    assert [k[0] for k in c.session.calls] == ["GET", "POST"]
