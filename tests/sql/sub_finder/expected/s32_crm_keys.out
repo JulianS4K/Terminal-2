@@ -16,7 +16,7 @@ t
 0
 R1|order_described_by_caller|f
 D limits on the buys a CRM key asks for
-{"rebate_max_pct": 50, "buy_per_day_usd": 300, "buy_per_order_usd": 500}
+{"rebate_max_pct": 50, "buy_per_day_usd": 300, "buy_max_cost_pct": null, "buy_per_order_usd": 500}
 done
 5001|Index|180.00|auto_buy_off
 5002|Index|600.00|auto_buy_off

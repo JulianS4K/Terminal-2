@@ -49,7 +49,7 @@ BEGIN
   -- The rebate is the CRM's call: we suggest one (sale total - sub total) but never set it.
   -- Rows back (gate 5) need an explicit answer, 0 included; other gates take one if sent.
   v_sale := round(o.sold_ea * o.qty, 2);
-  v_max  := public.sub_finder_rebate_max(v_sale);
+  v_max  := public.sub_finder_rebate_limit(v_sale, o.site);   -- the CRM's own limit (20261116030000)
   IF v_gate = 5 AND p_rebate_amount IS NULL THEN
     RETURN jsonb_build_object('error', 'invalid',
       'detail', 'this sub moves the customer back: send rebate_amount (0 for none)',

@@ -944,3 +944,50 @@ def test_audit_passes_the_record_through_with_bounds_and_refusals():
     db.rpc_data["sub_finder_audit_read"] = {"error": "forbidden"}
     assert c.get("/api/v1/subs/audit", headers=H).status_code == 403
     assert "sub_finder_audit_read" in s.RETRY_ONCE_RPCS and "sub_finder_audit_log" not in s.RETRY_ONCE_RPCS
+
+
+# ---------------------------------------------------------------- the CRM's own limits (mig 20261116030000)
+
+LIMITS_URL = "/api/v1/subs/settings/limits"
+
+
+def test_limits_are_read_and_set_through_the_sql_and_the_change_is_recorded():
+    shown = {"rebate_max_pct": {"default": 40}, "buy_max_cost_pct": {"default": 110}, "can_set": True}
+    db = FakeDB(rpc_data={"sub_finder_limits": shown, "sub_finder_limits_set": shown})
+    c = _client(db)
+    assert c.get(LIMITS_URL).status_code == 401 and c.put(LIMITS_URL, json={}).status_code == 401
+    assert c.get(LIMITS_URL, headers=H).json() == shown and db.last("sub_finder_limits") == {"p_key_id": 7}
+    body = {"rebate_max_pct": {"default": 40, "by_marketplace": {"gotickets": 25}},
+            "buy_max_cost_pct": {"default": 110}, "set_by": " dana ", "something_else": 1}
+    r = c.put(LIMITS_URL, headers=H, json=body)
+    assert r.status_code == 200 and r.json() == shown
+    assert db.last("sub_finder_limits_set") == {
+        "p_key_id": 7, "p_key_label": "crm",
+        "p_body": {"rebate_max_pct": {"default": 40, "by_marketplace": {"gotickets": 25}},
+                   "buy_max_cost_pct": {"default": 110}},
+        "p_by": " dana "}
+    a = _audits(db)[-1]
+    assert (a["p_action"], a["p_http_status"], a["p_requested_by"], a["p_order_number"]) == ("settings", 200, "dana", None)
+    c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": None}, "set_by": 5})
+    assert db.last("sub_finder_limits_set")["p_by"] is None and _audits(db)[-1]["p_requested_by"] is None
+    assert "sub_finder_limits" in s.RETRY_ONCE_RPCS and "sub_finder_limits_set" not in s.RETRY_ONCE_RPCS
+
+
+def test_limits_refusals_and_who_may_set_them():
+    db = FakeDB(rpc_data={"sub_finder_limits_set": {"error": "invalid", "detail": "x"},
+                          "sub_finder_limits": {"error": "forbidden"}})
+    c = _client(db)
+    assert c.get(LIMITS_URL, headers=H).status_code == 403
+    assert c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": 500}}).status_code == 422
+    assert (_audits(db)[-1]["p_action"], _audits(db)[-1]["p_http_status"]) == ("settings", 422)
+    n = len([x for x, _ in db.rpcs if x == "sub_finder_limits_set"])
+    for raw in (b"not json", b"[1]"):
+        assert c.put(LIMITS_URL, headers=dict(H, **{"content-type": "application/json"}), content=raw).status_code == 422
+    assert len([x for x, _ in db.rpcs if x == "sub_finder_limits_set"]) == n          # never reached the SQL
+    # the read key may look but not set; neither may a buy key away from its registered address
+    db.rpc_data["sub_finder_key_gate"] = _gate()
+    r = c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": 40}})
+    assert r.status_code == 403 and r.json()["detail"] == "this key may not change settings"
+    db.rpc_data["sub_finder_key_gate"] = _gate(buy=True, offer=True, allowed_ips=["203.0.113.7"])
+    assert c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": 40}}).status_code == 403
+    assert len([x for x, _ in db.rpcs if x == "sub_finder_limits_set"]) == n

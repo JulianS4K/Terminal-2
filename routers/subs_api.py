@@ -25,6 +25,8 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/buys?updated_since=&limit=&offset=      every purchase either buyer placed (N2S auto-buyer + this API), one feed
   GET  /api/v1/subs/settings/auto-buy-loss                  the automatic buy's loss limits (need2buy orders), by marketplace
   PUT  /api/v1/subs/settings/auto-buy-loss                  set them: percent of the sale total, 100 to 200
+  GET  /api/v1/subs/settings/limits                         the CRM's own limits on a rebate and on a buy's cost, percent of the sale
+  PUT  /api/v1/subs/settings/limits                         set them (a key that may buy or offer, from its registered address)
   GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
@@ -96,7 +98,8 @@ NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
                              "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
                              "sub_finder_autobuys", "sub_finder_loss_limits", "sub_finder_buys",
-                             "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read"})
+                             "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read",
+                             "sub_finder_limits"})
 
 # what a call needs from its key beyond reading: _auth refuses it before any SQL runs
 _NEED_REFUSAL = {"buy": "this key may not buy", "offer": "this key may not offer subs",
@@ -483,6 +486,41 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         out = _rpc("sub_finder_loss_limits_set", {
             "p_key_id": key["id"], "p_key_label": key.get("label"),
             "p_body": {k: v for k, v in body.items() if k in ("default_max_cost_pct", "by_marketplace")},
+            "p_by": by if isinstance(by, str) else None})
+        resp = _answer(out)
+        _audit(key, "settings", None, None, resp.status_code, out, by if isinstance(by, str) else None)
+        return resp
+
+    @router.get("/settings/limits")
+    def limits(request: Request):
+        """The limits the CRM has put on its own inputs, each a percent of the sale total, with a
+        default and its own value per marketplace sold on (mig 20261116030000): `rebate_max_pct`
+        on an offer's rebate and `buy_max_cost_pct` on the cost of a cover it asks us to buy."""
+        key = _auth(request, "limits")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_limits", {"p_key_id": key["id"]}))
+
+    @router.put("/settings/limits")
+    async def set_limits(request: Request):
+        """Set them: {"rebate_max_pct": {"default": 0-100 | null, "by_marketplace": {name: 0-100 | null}},
+        "buy_max_cost_pct": {"default": 1-1000 | null, "by_marketplace": {...}}}; either may be left out.
+        Only a key that may buy or offer, from its registered address. The SQL validates every value
+        and changes nothing unless all are valid. The change is recorded with who made it."""
+        key = _auth(request, "limits_set", "write")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        if not isinstance(body, dict):
+            return _err(422, "invalid", "send a JSON object: {\"rebate_max_pct\": {\"default\": 40}, "
+                                        "\"buy_max_cost_pct\": {\"default\": 110}}")
+        by = body.get("set_by")
+        out = _rpc("sub_finder_limits_set", {
+            "p_key_id": key["id"], "p_key_label": key.get("label"),
+            "p_body": {k: v for k, v in body.items() if k in ("rebate_max_pct", "buy_max_cost_pct")},
             "p_by": by if isinstance(by, str) else None})
         resp = _answer(out)
         _audit(key, "settings", None, None, resp.status_code, out, by if isinstance(by, str) else None)
