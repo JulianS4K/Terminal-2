@@ -231,7 +231,7 @@ The seams where one lane's change can break another's surface. **A PR touching a
 | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
 | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 · D5 | `server.py`, `static/store/*`, `static/fantasy/*` | `render.yaml` |
 | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D0 | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
-| `s4k-subs-api` (Render adds a suffix to the name) | on the Render dashboard | **D0** | D0 | `core/subs_only.py` (serves only `/api/v1/subs`; no worker) — **temporary**, operator 2026-11-16, until there is a domain of ours | `render-subs-api.yaml` |
+| `s4k-subs-api-siyb` | `srv-dbti97gu01pc73df7c40` | **D0** | D0 | `core/subs_only.py` (serves only `/api/v1/subs`; no worker) — **temporary**, operator 2026-11-16, until there is a domain of ours | `render-subs-api.yaml` |
 
 *Owner* = which lane owns the service **surface**; a *write* to any of them is an **Applier** action (§2.1), today performed by A1 sessions (the former "D0 workspace-wide Render parity" was retired 2026-07-02 — surface ownership ≠ standing prod write authority).
 

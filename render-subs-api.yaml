@@ -16,6 +16,9 @@
 # Change `plan` to `starter` to keep it always on.
 #
 # The two secrets are copied from the main service by Render; they are never written here.
+#
+# Created 2026-11-16 as s4k-subs-api-siyb (srv-dbti97gu01pc73df7c40), blueprint
+# exs-dbti89942hec73big7c0: https://s4k-subs-api-siyb.onrender.com. Render adds the suffix.
 
 services:
   - type: web
