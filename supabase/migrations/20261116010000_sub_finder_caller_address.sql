@@ -25,6 +25,13 @@
 -- list is updated: closed, not open. With client_ip_hops = 1 no entry follows the caller's and
 -- the list is not used.
 --
+-- What this rests on: every public request reaches the app through Cloudflare and then the
+-- host's router, and that router writes the last entry itself. The app's own socket peer is
+-- the router's private address, which looks like any other service on the private network, so
+-- checking the peer would prove nothing. A caller already inside our private network could
+-- therefore write the whole chain: against one the address lock adds nothing, and it would
+-- still need the key.
+--
 -- sub_finder_key_gate hands the setting to routers/subs_api.py. Shipped whole.
 --
 -- rollback: UPDATE public.sub_finder_config SET client_ip_hops = 1 WHERE id = true;
