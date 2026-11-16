@@ -6,6 +6,7 @@ core, never reverse). Moved verbatim from app.py.
 """
 from __future__ import annotations
 
+import ipaddress
 import math
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -197,20 +198,59 @@ def csv_list(v: str | None) -> list[str]:
     return [s.strip() for s in (v or "").split(",") if s.strip()]
 
 
-def client_ip_from_xff(xff: str | None, fallback: str | None = None) -> str | None:
-    """Client IP from an ``X-Forwarded-For`` header value.
+# The address ranges Cloudflare publishes for its own network (https://www.cloudflare.com/ips-v4
+# and /ips-v6, read 2026-11-16). Our host puts Cloudflare in front of every service, so the last
+# X-Forwarded-For hop of a public request is one of these. If Cloudflare adds a range, requests
+# through it fall back to that hop (the behaviour before 2026-11-16) until the list is updated.
+CLOUDFLARE_CIDRS = tuple(ipaddress.ip_network(c) for c in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
+    "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+    "2a06:98c0::/29", "2c0f:f248::/32"))
 
-    Returns the RIGHTMOST comma-separated hop — the entry appended by our own
-    edge proxy, the only one a client can't forge. Keying on the leftmost,
+
+def _one_address(value: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """`value` as exactly one IP address, or None. Never raises."""
+    try:
+        return ipaddress.ip_address((value or "").strip())
+    except ValueError:
+        return None
+
+
+def client_ip_from_xff(xff: str | None, fallback: str | None = None,
+                       cf_connecting_ip: str | None = None) -> str | None:
+    """The caller's address for a request, from its forwarding headers.
+
+    The RIGHTMOST ``X-Forwarded-For`` hop is the one our host's own router
+    appends: the only entry a client can't forge. Keying on the leftmost,
     client-supplied entry let a single client rotate fake IPs past every per-IP
-    bucket (audit 2026-06-10). Falls back to ``fallback`` when the header is
-    empty/absent. Never raises on arbitrary header text.
+    bucket (audit 2026-06-10).
 
-    Single source for the parse that previously lived inline at both the
-    reCAPTCHA gate and the rate-limit middleware in server.py.
+    On Render that rightmost hop is not the caller: it is Cloudflare's edge, a
+    different address on almost every request (seen live 2026-11-16: the app
+    receives ``X-Forwarded-For: <caller>, <Cloudflare edge>``). Keyed on it, one
+    caller was spread over many buckets and strangers shared one. The caller is
+    in ``CF-Connecting-IP``, which Cloudflare writes itself on every request and
+    refuses from a caller (error 1000). So when the rightmost hop is inside
+    Cloudflare's published ranges, meaning our edge handed the request to the
+    host, and ``cf_connecting_ip`` is exactly one address, that address is
+    returned. In every other case the rightmost hop is, as before: a request
+    that did not come through the edge gains nothing by sending the header.
+
+    Falls back to ``fallback`` when ``X-Forwarded-For`` is empty/absent. Never
+    raises on arbitrary header text.
+
+    Single source for the parse used by the reCAPTCHA gates, the rate-limit
+    middleware in server.py and the retail chat proxy.
     """
     if xff:
-        return xff.split(",")[-1].strip()
+        last = xff.split(",")[-1].strip()
+        edge, caller = _one_address(last), _one_address(cf_connecting_ip)
+        if edge is not None and caller is not None and any(
+                edge.version == net.version and edge in net for net in CLOUDFLARE_CIDRS):
+            return str(caller)
+        return last
     return fallback
 
 

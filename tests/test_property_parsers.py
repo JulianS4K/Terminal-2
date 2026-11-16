@@ -102,6 +102,36 @@ def test_client_ip_from_xff_takes_rightmost_hop(chain_parts):
 def test_client_ip_from_xff_empty_returns_fallback():
     assert client_ip_from_xff("", "fb") == "fb"
     assert client_ip_from_xff(None, "fb") == "fb"
+    assert client_ip_from_xff(None, "fb", "203.0.113.7") == "fb"       # the header alone names nobody
+
+
+EDGE = "172.71.150.51"            # inside Cloudflare's published 172.64.0.0/13
+
+
+def test_client_ip_behind_cloudflare_is_the_address_cloudflare_reports():
+    """What the app receives on Render: `<caller>, <Cloudflare edge>` plus CF-Connecting-IP.
+    The edge changes per request; the caller is what a per-IP bucket must key on."""
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}", "x", "203.0.113.7") == "203.0.113.7"
+    assert client_ip_from_xff(f"1.2.3.4, 203.0.113.7, {EDGE}", "x", " 203.0.113.7 ") == "203.0.113.7"
+    assert client_ip_from_xff("2001:db8::9, 2606:4700::1", "x", "2001:DB8::9") == "2001:db8::9"
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}", "x", "2001:db8::9") == "2001:db8::9"   # v6 caller, v4 edge
+
+
+def test_client_ip_ignores_the_cloudflare_header_on_a_request_that_did_not_come_through_it():
+    # the last hop is the sender itself (not our edge): a made-up header changes nothing
+    assert client_ip_from_xff("9.9.9.9, 198.51.100.9", "x", "203.0.113.7") == "198.51.100.9"
+    assert client_ip_from_xff("198.51.100.9", "x", "203.0.113.7") == "198.51.100.9"
+    assert client_ip_from_xff("9.9.9.9, unknown", "x", "203.0.113.7") == "unknown"
+
+
+def test_client_ip_behind_cloudflare_falls_back_to_the_edge_hop_without_one_clean_address():
+    for bad in (None, "", "garbage", "203.0.113.7, 198.51.100.9", "203.0.113.0/24"):
+        assert client_ip_from_xff(f"203.0.113.7, {EDGE}", "x", bad) == EDGE
+
+
+@given(st.text(), st.one_of(st.none(), st.text(max_size=20)), st.one_of(st.none(), st.text(max_size=40)))
+def test_client_ip_from_xff_never_raises_with_the_cloudflare_header(xff, fallback, cf):
+    client_ip_from_xff(xff, fallback, cf)
 
 
 # --- decrypt_barcode (adversarial forgery) -----------------------------------

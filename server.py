@@ -297,6 +297,7 @@ def _require_human(request: Request, payload: dict | None = None):
     ip = _client_ip_from_xff(
         request.headers.get("x-forwarded-for"),
         request.client.host if request.client else None,
+        request.headers.get("cf-connecting-ip"),
     )
     if _verify_recaptcha(token, "submit", ip):
         return
@@ -706,9 +707,13 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         # by our own edge proxy and is the only one a client can't forge. The
         # leftmost entry is client-supplied — keying on it let a single client
         # rotate fake IPs and bypass every per-IP bucket (audit 2026-06-10).
+        # When that rightmost hop is Cloudflare's edge (every public request on
+        # Render), the caller is in CF-Connecting-IP, which Cloudflare writes
+        # itself; the helper takes it only then (2026-11-16).
         ip = _client_ip_from_xff(
             request.headers.get("x-forwarded-for"),
             request.client.host if request.client else "unknown",
+            request.headers.get("cf-connecting-ip"),
         ) or "unknown"
         n, w = self._bucket(path)
         # Key is ip + bucket-prefix, NOT the full path. Using the raw path lets

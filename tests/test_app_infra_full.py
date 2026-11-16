@@ -177,6 +177,36 @@ def test_require_human_accepts_fresh_recaptcha_token(monkeypatch):
     assert captured["ip"] == "203.0.113.5"
 
 
+def test_require_human_behind_cloudflare_uses_the_caller_cloudflare_reports(monkeypatch):
+    monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
+    monkeypatch.setattr(app_module, "_valid_human_token", lambda tok: False)
+    seen = []
+    monkeypatch.setattr(app_module, "_verify_recaptcha", lambda token, action, ip: seen.append(ip) or True)
+    # on Render: X-Forwarded-For is "<caller>, <Cloudflare edge>" and Cloudflare names the caller
+    req = _make_request(headers={"x-forwarded-for": "203.0.113.5, 172.71.150.51", "cf-connecting-ip": "203.0.113.5"})
+    assert app_module._require_human(req, {"recaptcha_token": "t"}) is None
+    # not through Cloudflare: the header is ignored and the last hop stands
+    req = _make_request(headers={"x-forwarded-for": "9.9.9.9, 198.51.100.9", "cf-connecting-ip": "203.0.113.5"})
+    assert app_module._require_human(req, {"recaptcha_token": "t"}) is None
+    assert seen == ["203.0.113.5", "198.51.100.9"]
+
+
+def test_rate_limit_middleware_buckets_by_caller_not_by_cloudflare_edge(client, monkeypatch):
+    keys = []
+    monkeypatch.setattr(app_module._ip_limiter, "check", lambda key, *a, **k: keys.append(key) or True)
+    # one caller arriving through three different edges is ONE bucket
+    for edge in ("172.71.150.51", "172.68.22.192", "104.22.105.66"):
+        client.get("/api/public/config", headers={"x-forwarded-for": f"203.0.113.5, {edge}",
+                                                  "cf-connecting-ip": "203.0.113.5"})
+    assert len(set(keys)) == 1 and keys[0].startswith("203.0.113.5")
+    # two callers behind the same edge are TWO buckets
+    keys.clear()
+    for caller in ("203.0.113.5", "198.51.100.9"):
+        client.get("/api/public/config", headers={"x-forwarded-for": f"{caller}, 172.71.150.51",
+                                                  "cf-connecting-ip": caller})
+    assert len(set(keys)) == 2
+
+
 def test_require_human_uses_client_host_when_no_xff(monkeypatch):
     monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
     monkeypatch.setattr(app_module, "_valid_human_token", lambda tok: False)
