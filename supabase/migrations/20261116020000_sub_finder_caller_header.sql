@@ -12,9 +12,11 @@
 --     request header (for example cf-connecting-ip) instead of from X-Forwarded-For. It is
 --     believed only on a request whose last X-Forwarded-For entry is inside
 --     trusted_proxy_cidrs, that is, one our edge handed to the host's router; otherwise there is
---     no address and an address-locked key is refused. Set it only to a header our edge always
---     overwrites, and check with GET /ping: `your_ip` must be the caller's own address both
---     plainly and when the caller sends that header itself.
+--     no address and an address-locked key is refused. The router accepts only cf-connecting-ip
+--     or true-client-ip here (headers Cloudflare itself writes on every request and lets no
+--     caller, Worker or rule set), sent exactly once; any other name gives no address. Check
+--     with GET /ping: `your_ip` must be the caller's own address both plainly and when the
+--     caller sends that header itself.
 --   ping_shows_headers (false as shipped): while true, GET /ping also returns the forwarding
 --     headers exactly as they reached the app (`forwarding_headers`), to the key that called.
 --     For setting the above; switch it off afterwards.

@@ -140,15 +140,24 @@ FORWARDING_HEADERS = ("x-forwarded-for", "cf-connecting-ip", "true-client-ip", "
                       "cf-connecting-ipv6", "cf-ray", "x-forwarded-proto", "x-forwarded-host", "via")
 
 
-def header_ip(value: str | None, xff: str | None, trusted: list) -> str | None:
+# The only headers the caller's address may be read from: ones Cloudflare itself writes on every
+# request and does not let a caller, a Worker or a rule set. Any other name is refused, whatever
+# the setting says.
+EDGE_ADDRESS_HEADERS = frozenset({"cf-connecting-ip", "true-client-ip"})
+
+
+def header_ip(name: str, values: list, xff: str | None, trusted: list) -> str | None:
     """The caller's address from the one header our edge writes it in (mig 20261116020000). It is
     believed only on a request our edge handed to the host: the last X-Forwarded-For entry, which
-    the host's router writes itself, must be inside `trusted`. Anything else, or a value that is
-    not exactly one address, is no address."""
+    the host's router writes itself, must be inside `trusted`. Anything else is no address: a
+    header name outside EDGE_ADDRESS_HEADERS, the header sent more than once, or a value that is
+    not exactly one address."""
     parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
-    if not parts or not ip_allowed(parts[-1], trusted):
+    if name not in EDGE_ADDRESS_HEADERS or not parts or not ip_allowed(parts[-1], trusted):
         return None
-    v = (value or "").strip()
+    if len(values) != 1:
+        return None
+    v = values[0].strip()
     try:
         return str(ipaddress.ip_address(v))
     except ValueError:
@@ -378,7 +387,7 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         xff = request.headers.get("x-forwarded-for")
         trusted = gate.get("trusted_proxies") or []
         if gate.get("client_ip_header"):          # the header our edge writes the caller's address in
-            ip = header_ip(request.headers.get(gate["client_ip_header"]), xff, trusted)
+            ip = header_ip(gate["client_ip_header"], request.headers.getlist(gate["client_ip_header"]), xff, trusted)
         else:
             ip = (forwarded_ip(xff, int(gate.get("client_ip_hops") or 1), trusted) if xff
                   else request.client.host if request.client else None)
