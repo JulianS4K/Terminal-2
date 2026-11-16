@@ -1,7 +1,7 @@
 """MLB schedule feed — served inside the sub finder API as GET /api/v1/subs/mlb/schedule.
 
 Every MLB club's games with the club's direct ticket link, mapped to the EVO (Ticket Evolution) event
-and to the terminal's hub event. Read from `v_mlb_schedule_feed` (mig 20261116200000), which the
+to the terminal's hub event, and to the SeatGeek event (direct match on teams + date). Read from `v_mlb_schedule_feed` (mig 20261116200000), which the
 collector `mlb_ticket_tick()` keeps filled from MLB's own ticketing schedule (the feed behind
 mlb.com/tickets): every club x season is re-read every 11 hours, so start times, links and date
 changes appear within half a day of a club releasing them, and `changed_at` moves only when something
@@ -48,7 +48,7 @@ COLUMNS = ("mlb_schedule_id", "mlb_game_id", "season", "game_type", "game_date",
            "venue_id", "venue_name", "venue_city", "venue_postal_code", "ticket_url", "on_sale_start_et",
            "tevo_event_id", "tevo_match_method", "tevo_start_local", "tevo_time_check",
            "aq_short_event_id", "sg_event_id", "sh_event_id", "vivid_event_id", "tm_event_id",
-           "gotickets_event_id", "terminal_path", "changed_at", "last_seen_at")
+           "gotickets_event_id", "sg_url", "sg_match_method", "terminal_path", "changed_at", "last_seen_at")
 _ABBREV = re.compile(r"^[A-Za-z]{2,3}$")
 
 
