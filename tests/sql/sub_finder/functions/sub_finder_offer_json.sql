@@ -26,7 +26,8 @@ AS $function$
       'rebate', r.rebate_amount,
       'rebate_needed', r.offer_id IS NULL AND (o.best->>'gate')::int = 5,
       'rebate_suggested', CASE WHEN r.offer_id IS NULL AND (o.best->>'gate')::int IN (3, 4, 5)
-                               THEN greatest((o.best->>'profit')::numeric, 0) END,
+                               THEN least(greatest((o.best->>'profit')::numeric, 0),
+                                          public.sub_finder_rebate_limit(round(o.sold_ea * o.qty, 2), o.site)) END,
       'request', CASE WHEN r.offer_id IS NOT NULL THEN jsonb_build_object(
                    'offer_id', r.offer_id, 'state', r.state, 'reasons', r.reasons,
                    'gotickets_request_id', r.gt_request_id, 'status', r.gt_status,
