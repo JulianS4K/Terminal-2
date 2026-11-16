@@ -509,12 +509,56 @@ def test_ping_names_the_guide_version_and_docs_serves_it(tmp_path, monkeypatch):
     s.crm_doc.cache_clear()
 
 
+NEWS_TEXT = DOC_TEXT.replace("## 8. Rules", """## What changed for you
+
+Newest first.
+
+- **2026-11-16** You set your own limits: `PUT /settings/limits`.
+- **2026-11-15** · second
+- **2026-11-14** third
+- **2026-11-13** fourth
+- **2026-11-12** fifth
+- **2026-11-11** sixth
+- not dated, so not news
+- **soon** not a date either
+
+## 8. Rules""")
+
+
+def test_ping_carries_the_newest_entries_of_the_guides_own_list_of_changes(tmp_path, monkeypatch):
+    # operator 2026-11-16: "Just update crm upon ping". The list lives in the guide and nowhere else.
+    news = s.render_crm_doc(NEWS_TEXT)["news"]
+    assert [n["date"] for n in news] == [f"2026-11-{d}" for d in (16, 15, 14, 13, 12, 11)]
+    assert news[0]["text"] == "You set your own limits: `PUT /settings/limits`." and news[1]["text"] == "second"
+    assert s.render_crm_doc(DOC_TEXT)["news"] == []                      # a guide with no such list
+    # the list is the last section of a guide: still read
+    assert s.render_crm_doc("# G\n\n## What changed for you\n- **2026-01-02** only\n")["news"] == [
+        {"date": "2026-01-02", "text": "only"}]
+    path = tmp_path / "guide.md"
+    path.write_text(NEWS_TEXT, encoding="utf-8")
+    monkeypatch.setattr(s, "DOC_PATH", path)
+    s.crm_doc.cache_clear()
+    body = _client(FakeDB(rpc_data={"sub_finder_access": {"find": True}})).get("/api/v1/subs/ping", headers=H).json()
+    assert body["news"] == news[:5] and len(body["news"]) == s.NEWS_ON_PING     # the guide has the rest
+    assert body["docs"]["version"] == s.render_crm_doc(NEWS_TEXT)["version"]
+    s.crm_doc.cache_clear()
+
+
+def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
+    doc = s.render_crm_doc(s.DOC_PATH.read_text(encoding="utf-8"))
+    news = doc["news"]
+    assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
+    for n in news:
+        assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
+    assert "limits" in news[0]["text"]
+
+
 def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "DOC_PATH", tmp_path / "missing.md")
     s.crm_doc.cache_clear()
     c = _client(FakeDB())
-    assert c.get("/api/v1/subs/ping", headers=H).json()["docs"] == {
-        "version": None, "updated": None, "url": "/api/v1/subs/docs"}
+    p = c.get("/api/v1/subs/ping", headers=H).json()
+    assert p["docs"] == {"version": None, "updated": None, "url": "/api/v1/subs/docs"} and p["news"] == []
     r = c.get("/api/v1/subs/docs", headers=H)
     assert r.status_code == 404 and r.json()["error"] == "not_found"
     s.crm_doc.cache_clear()
