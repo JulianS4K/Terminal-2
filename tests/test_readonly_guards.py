@@ -597,6 +597,42 @@ def test_audit_allows_only_the_sanctioned_token_logins_from_plpgsql(tmp_path: Pa
     assert any("5_bad.sql" in v for v in out) and any("6_bad.sql" in v for v in out)
 
 
+def test_audit_allows_only_the_pinned_tickpick_confirm_expression_from_plpgsql(tmp_path: Path, monkeypatch):
+    chk = _load_check_module()
+    # Operator 2026-11-16: the N2S TickPick sale confirm goes out from the database (TickPick
+    # refuses the web service's address). One exact expression; extending this is security-CRIT.
+    pinned = "'https://api.tickpick.com/1.0/orders/' || v_tp_order || '/confirmation'"
+    assert chk.SANCTIONED_PLPGSQL_WRITE_EXPRS == (pinned,)
+    mig = tmp_path / "supabase" / "migrations"
+    mig.mkdir(parents=True)
+    call = "r := extensions.http(('POST', {url}, ARRAY[h], 'application/json', '{{}}')::extensions.http_request);\n"
+    (mig / "1_ok.sql").write_text(call.format(url=pinned))
+    for i, url in enumerate((
+            "'https://api.tickpick.com/1.0/orders/' || v_tp_order || '/rejection'",
+            "'https://api.tickpick.com/1.0/orders/' || v_tp_order || '/cancel'",
+            "'https://api.tickpick.com/1.0/orders/' || p_order || '/confirmation'",
+            "'https://api.tickpick.com/1.0/orders/' || v_tp_order",
+            "'https://api.tickpick.com/1.0/listings/' || v_tp_order || '/confirmation'"), start=2):
+        (mig / f"{i}_bad.sql").write_text(call.format(url=url))
+    # the pinned confirm next to any other TickPick write still fails
+    (mig / "7_bad.sql").write_text(call.format(url=pinned) + call.format(url="'https://api.tickpick.com/1.0/listings'"))
+    monkeypatch.setattr(chk, "ROOT", tmp_path)
+    out = chk.check_plpgsql_writes()
+    assert not any("1_ok.sql" in v for v in out)
+    assert all(any(f"{i}_bad.sql" in v for v in out) for i in range(2, 8))
+
+
+def test_tickpick_confirm_migration_is_once_only_and_held(tmp_path: Path):
+    # The one migration that uses the pinned expression: it must keep its guards.
+    text = (REPO_ROOT / "supabase" / "migrations" / "20261116181000_n2s_tickpick_via_db.sql").read_text()
+    assert text.count("'https://api.tickpick.com/1.0/orders/' || v_tp_order || '/confirmation'") == 1
+    for guard in ("e.phase IS DISTINCT FROM 'sub_accepted'", "e.lease_token IS DISTINCT FROM p_token",
+                  "e.lease_until < now()", "v_tp_order !~ '^[0-9]{1,18}$'", "e.sell_market IS DISTINCT FROM 'tickpick'",
+                  "FROM public.n2s_tickpick_confirm_log WHERE exec_id = p_exec_id",
+                  "REVOKE ALL ON FUNCTION public.n2s_tickpick_confirm(bigint, uuid, text) FROM PUBLIC, anon, authenticated"):
+        assert guard in text, guard
+
+
 # ---------- stubhub_client (our seller account; OFF by default, GET-only) ----------
 
 def test_stubhub_assert_readonly_raises_on_post():

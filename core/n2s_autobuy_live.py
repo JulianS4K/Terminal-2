@@ -159,6 +159,14 @@ def gt_profile(cfg: dict) -> dict | None:
     return {"email": cfg["gt_buyer_email"], "phone": cfg["gt_buyer_phone"], "billing": billing, "recipient": recipient}
 
 
+def _read_error(e: Exception) -> str:
+    """What the row records for a failed sale read: the market's status and message when it
+    answered (2026-11-16: exec 8 recorded only "EvoWriteRejected"), else the error itself."""
+    if isinstance(e, EvoWriteRejected):
+        return f"HTTP {e.status}: {e.detail}"[:300]
+    return (str(e) or type(e).__name__)[:300]
+
+
 def _stop(reasons: list[str], **extra: Any) -> dict:
     """A plan that says do not send: ``n2s`` is the patch for our row (stopped, with the reasons)."""
     return {"stop": list(reasons), "state": "stopped", "n2s": {"phase": "stopped", "reasons": list(reasons), **extra}}
@@ -262,7 +270,7 @@ def pre_buy(job: dict | None, *, evo: EvoBuyClient, gt: gtb.GoTicketsBuyClient |
         try:
             sale = sales.sale_state(market, row["sale_order_key"])  # type: ignore[union-attr]
         except Exception as e:  # noqa: BLE001 - fail closed: never buy for a sale we cannot see
-            return _stop(["sale_read_failed"], live_error=type(e).__name__)
+            return _stop(["sale_read_failed"], live_error=_read_error(e))
         if sale not in PENDING[market]:
             return _stop(["sale_not_pending"], sale_state=sale)
     if row.get("sub_source") == "gotickets":
@@ -410,7 +418,9 @@ def _poll(rpc: Rpc, client: EvoBuyClient, sales: SaleAcceptClient | None, job: d
         if market == "evo":
             out = client.accept_order(row["sale_order_key"], int(cfg["evo_reviewer_id"]))
         else:
-            out = sales.accept(market, row["sale_order_key"])  # type: ignore[union-attr]
+            # the row and this worker's lease: what the database checks before a TickPick confirm
+            out = sales.accept(market, row["sale_order_key"],  # type: ignore[union-attr]
+                               exec_id=row["exec_id"], lease_token=row.get("lease_token"))
     except EvoWriteRejected as e:
         return _record(rpc, job, phase="accept_failed", sale_state=sale, reasons=["accept_failed"], live_error=str(e))
     except EvoWriteUnknown as e:

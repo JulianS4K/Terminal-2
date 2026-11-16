@@ -241,8 +241,9 @@ class Sales:
         self.calls.append(("state", market, key))
         return self.state
 
-    def accept(self, market, key):
+    def accept(self, market, key, *, exec_id=None, lease_token=None):
         self.calls.append(("accept", market, key))
+        self.held = (exec_id, lease_token)
         if isinstance(self.acc, Exception):
             raise self.acc
         self.state = self.after
@@ -316,7 +317,20 @@ def test_tickpick_buys_only_for_a_sale_our_login_still_shows_unconfirmed():
             raise EvoWriteRejected(404, "Not Found")
     c = Client(create={"id": 6})
     out = lv.tick(Rpc(_buy_job(sell_market="tickpick")), c, now=NOW, sales=Unreadable())
-    assert out["reasons"] == ["sale_read_failed"] and out["live_error"] == "EvoWriteRejected" and c.calls == []
+    # 2026-11-16: the row records TickPick's status and message, not just the error's type
+    assert out["reasons"] == ["sale_read_failed"] and out["live_error"] == "HTTP 404: Not Found" and c.calls == []
+
+    class Down(Sales):
+        def sale_state(self, market, key):
+            raise RuntimeError("TickPick read via the database: HTTP -1: timeout")
+
+    class Blank(Sales):
+        def sale_state(self, market, key):
+            raise RuntimeError()
+    for fake, err in ((Down(), "TickPick read via the database: HTTP -1: timeout"), (Blank(), "RuntimeError")):
+        c = Client(create={"id": 7})
+        out = lv.tick(Rpc(_buy_job(sell_market="tickpick")), c, now=NOW, sales=fake)
+        assert out["reasons"] == ["sale_read_failed"] and out["live_error"] == err and c.calls == []
 
 
 def test_tickpick_sale_accept_and_busted_after_accept():
@@ -324,6 +338,8 @@ def test_tickpick_sale_accept_and_busted_after_accept():
     out = lv.tick(Rpc(_poll_job(sell_market="tickpick")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
     assert out["phase"] == "accepted" and out["sale_state"] == "Confirmed"
     assert s.calls == [("state", "tickpick", "555"), ("accept", "tickpick", "555"), ("state", "tickpick", "555")]
+    job = _poll_job(sell_market="tickpick")
+    assert s.held == (job["row"]["exec_id"], job["row"]["lease_token"])   # what the DB checks before confirming
     s = Sales(state="Unconfirmed", after="Busted")
     out = lv.tick(Rpc(_poll_job(sell_market="tickpick")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
     assert out["phase"] == "accept_failed" and out["reasons"] == ["sale_rejected_after_accept"]
