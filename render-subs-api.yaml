@@ -11,9 +11,9 @@
 # It is still an onrender.com name, not a domain we control. When there is one, add it as a
 # custom domain to whichever service should answer, tell the CRM, and delete this service.
 #
-# Plan: free. It sleeps after 15 minutes without a call and the next call then waits for it
-# to start (up to about a minute). A caller that syncs every few minutes keeps it awake.
-# Change `plan` to `starter` to keep it always on.
+# Plan: starter (about $7 a month), so it is always on. Operator 2026-11-16: "pay the 7 for
+# now". It was created on the free plan the same day, which sleeps after 15 idle minutes and
+# makes the next caller wait for it to start; a buy call should not meet that.
 #
 # The two secrets are copied from the main service by Render; they are never written here.
 #
@@ -24,7 +24,7 @@ services:
   - type: web
     name: s4k-subs-api
     runtime: python
-    plan: free
+    plan: starter
     region: oregon          # same region as the main service
     branch: main
     autoDeploy: true
