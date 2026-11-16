@@ -1,4 +1,4 @@
--- Migration 20261028210000 · level:feature · lane:A1 (data plane — ML training data) · writes:_ml_nba_team_id()(new),_ml_team_form()(new),_ml_team_out()(new),v_ml_knicks_form_train(new),v_ml_knicks_form_predict(new) · reads:espn_team_snapshots,espn_injuries_snapshots,espn_teams_canonical,performer_espn_team_xref,listings_poll_pins,v_ml_knicks_sales_train,v_ml_knicks_predict_input · pre:20261027050000
+-- Migration 20261028210040 · level:feature · lane:A1 (data plane — ML training data) · writes:_ml_nba_team_id()(new),_ml_team_form()(new),_ml_team_out()(new),v_ml_knicks_form_train(new),v_ml_knicks_form_predict(new) · reads:espn_team_snapshots,espn_injuries_snapshots,espn_teams_canonical,performer_espn_team_xref,listings_poll_pins,v_ml_knicks_sales_train,v_ml_knicks_predict_input · pre:20261027050000
 --
 -- Team form + injuries for the Knicks price model (operator 2026-10-28: "build pipeline for 3, use
 -- existing but need to turn on later"). Read-only views; the training script reads them only when

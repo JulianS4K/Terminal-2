@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Train the Knicks home-game sale-price model and score upcoming games.
+"""Train an NBA home team's sale-price model (Knicks by default; --team sixers) and score upcoming games.
+
+Since mig 20261116160000 the ml_knicks_* tables and views hold every team in ml_team_config (column
+team_key); this script reads one team (--team) and writes its runs as model "<team>_price_ridge_v1".
 
 Runs daily as the Render cron job `ml-knicks-price-train` (render.yaml); also runnable
 by hand. Reads and writes Supabase over PostgREST with the service-role key.
@@ -30,6 +33,7 @@ Output: one ml_model_runs row (status ok | skipped | failed) and, when ok, one
 Usage:
     SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... python3 scripts/train_knicks_price.py
     python3 scripts/train_knicks_price.py --dry-run          # fit + report, write nothing
+    python3 scripts/train_knicks_price.py --team sixers      # the Philadelphia 76ers
     python3 scripts/train_knicks_price.py --from-file sales.json --dry-run
     ML_FORM_FEATURES=1 ...                                   # add team form + injuries (off by default)
 """
@@ -47,7 +51,8 @@ from typing import Any
 
 import numpy as np
 
-MODEL = "knicks_price_ridge_v1"
+MODEL = "knicks_price_ridge_v1"   # set per team by main(): "<team>_price_ridge_v1" (ml_team_config.model)
+TEAMS = ("knicks", "sixers")      # ml_team_config.team_key (mig 20261116160000)
 TRAIN_VIEW = "v_ml_knicks_sales_train"
 PREDICT_VIEW = "v_ml_knicks_predict_input"
 PAGE = 1000
@@ -89,7 +94,7 @@ NUMERIC: dict[str, tuple[str, str]] = {
 TRAIN_COLUMNS = sorted({"source", "sale_key", "sg_event_id", "occurs_at", "sale_at", "price", "quantity", "level",
                         "row_band", "zone", "opponent", "horizon_bucket", "game_dow", "game_type"}
                        | {c for c, _ in NUMERIC.values()})
-# Team form + injuries (mig 20261028210000), OFF until ML_FORM_FEATURES=1: as of each sale (now()
+# Team form + injuries (mig 20261028210040), OFF until ML_FORM_FEATURES=1: as of each sale (now()
 # for predictions), both teams' win %, games played, streak (+W / -L) and players out. Off by
 # default because every sale so far sits in the first weeks of the season (0-0 to 1-3), where
 # these barely vary; switch it on once the record has moved (~mid-November 2026).
@@ -507,11 +512,14 @@ class Rest:
         self.s = requests.Session()
         self.s.headers.update({"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
 
-    def read_all(self, view: str, columns: Iterable[str] | None = None, order: str | None = None) -> list[dict]:
+    def read_all(self, view: str, columns: Iterable[str] | None = None, order: str | None = None,
+                 team: str | None = None) -> list[dict]:
         rows: list[dict] = []
         params = {"select": ",".join(columns) if columns else "*"}
         if order:
             params["order"] = order
+        if team:
+            params["team_key"] = f"eq.{team}"
         while True:
             r = self.s.get(f"{self.base}/{view}", params={**params, "limit": PAGE, "offset": len(rows)}, timeout=120)
             r.raise_for_status()
@@ -542,7 +550,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true", help="fit and report; write nothing")
     ap.add_argument("--from-file", help="JSON file {sales: [...], upcoming: [...]} instead of the database")
+    ap.add_argument("--team", default="knicks", choices=TEAMS,
+                    help="which home team to train (ml_team_config.team_key; default knicks)")
     args = ap.parse_args(argv)
+    global MODEL
+    MODEL = f"{args.team}_price_ridge_v1"
 
     api = None
     if args.from_file:
@@ -555,11 +567,11 @@ def main(argv: list[str] | None = None) -> int:
             print("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required", file=sys.stderr)
             return 2
         api = Rest(url, key)
-        sales = api.read_all(TRAIN_VIEW, TRAIN_COLUMNS, order="sale_key.asc,source.asc")
-        upcoming = api.read_all(PREDICT_VIEW)
+        sales = api.read_all(TRAIN_VIEW, TRAIN_COLUMNS, order="sale_key.asc,source.asc", team=args.team)
+        upcoming = api.read_all(PREDICT_VIEW, team=args.team)
         if form_features_enabled():
-            sales = attach_form(sales, api.read_all(FORM_TRAIN_VIEW), ("source", "sale_key"))
-            upcoming = attach_form(upcoming, api.read_all(FORM_PREDICT_VIEW), ("sg_event_id",))
+            sales = attach_form(sales, api.read_all(FORM_TRAIN_VIEW, team=args.team), ("source", "sale_key"))
+            upcoming = attach_form(upcoming, api.read_all(FORM_PREDICT_VIEW, team=args.team), ("sg_event_id",))
     if form_features_enabled():
         enable_form_features()
 
@@ -574,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     if form_features_enabled() and result.get("status") == "ok":
         result["note"] = "; ".join(filter(None, [result.get("note"), "form features on"]))
     summary = {k: result.get(k) for k in ("status", "note", "n_train", "n_test", "games_train", "games_test", "metrics")}
+    summary["model"] = MODEL
     summary["predictions"] = len(result.get("predictions") or [])
     if api and not args.dry_run:
         summary["run_id"] = write_run(api, result)

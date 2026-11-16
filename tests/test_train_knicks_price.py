@@ -225,7 +225,7 @@ class _FakeRest:
     instances: list = []
 
     def __init__(self, url, key):
-        self.reads, self.inserts = [], []
+        self.reads, self.inserts, self.teams = [], [], []
         rows = _synthetic(games=8, per_game=60)
         for i, r in enumerate(rows):
             r["source"], r["sale_key"] = "seatgeek", str(i)
@@ -240,8 +240,9 @@ class _FakeRest:
         }
         _FakeRest.instances.append(self)
 
-    def read_all(self, view, columns=None, order=None):
+    def read_all(self, view, columns=None, order=None, team=None):
         self.reads.append(view)
+        self.teams.append(team)
         return [dict(r) for r in self.views[view]]
 
     def insert(self, table, rows, returning=False):
@@ -267,3 +268,51 @@ def test_main_reads_form_views_only_when_switched_on(monkeypatch, capsys):
     assert on.inserts == [] and "knicks_streak" in tkp.NUMERIC
     printed = capsys.readouterr().out
     assert "form features on" in printed and '"predictions": 1' in printed
+
+
+def test_main_trains_one_team_and_names_its_model(monkeypatch, capsys):
+    monkeypatch.setenv("SUPABASE_URL", "https://x.invalid")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "k")
+    monkeypatch.setattr(tkp, "Rest", _FakeRest)
+    monkeypatch.setattr(tkp, "NUMERIC", dict(tkp.NUMERIC))
+    monkeypatch.setattr(tkp, "MODEL", tkp.MODEL)
+    monkeypatch.delenv("ML_FORM_FEATURES", raising=False)
+    assert tkp.main(["--team", "sixers"]) == 0
+    api = _FakeRest.instances[-1]
+    assert set(api.teams) == {"sixers"}
+    assert api.inserts[0][0] == "ml_model_runs" and api.inserts[0][1]["model"] == "sixers_price_ridge_v1"
+    assert '"model": "sixers_price_ridge_v1"' in capsys.readouterr().out
+    assert tkp.main([]) == 0                                   # default stays the Knicks
+    knicks = _FakeRest.instances[-1]
+    assert set(knicks.teams) == {"knicks"} and knicks.inserts[0][1]["model"] == "knicks_price_ridge_v1"
+    with pytest.raises(SystemExit):
+        tkp.main(["--team", "lakers"])                        # only configured teams
+
+
+def test_rest_read_all_filters_by_team(monkeypatch):
+    class _Resp:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.rows
+
+    seen = []
+
+    class _Session:
+        headers: dict = {}
+
+        def get(self, url, params=None, timeout=None):
+            seen.append(params)
+            return _Resp([])
+
+    import types
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(Session=_Session))
+    api = tkp.Rest("https://x.invalid", "k")
+    api.read_all("v", ["a"], order="a.asc", team="sixers")
+    api.read_all("v")
+    assert seen[0]["team_key"] == "eq.sixers" and seen[0]["order"] == "a.asc"
+    assert "team_key" not in seen[1]

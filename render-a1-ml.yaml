@@ -26,3 +26,22 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+
+  # ml-sixers-price-train: the same model for the Philadelphia 76ers (mig 20261116160000, --team sixers),
+  # 15 minutes after the Knicks job so the two never share the PostgREST connection pool.
+  - type: cron
+    name: ml-sixers-price-train
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    schedule: "45 12 * * *"
+    buildCommand: pip install -r requirements-ml.txt
+    startCommand: python scripts/train_knicks_price.py --team sixers
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
