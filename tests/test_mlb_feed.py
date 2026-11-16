@@ -106,6 +106,7 @@ def test_returns_games_and_stamps_the_call():
     q = db.queries[0].calls
     assert q[0][0] == "select" and "ticket_url" in q[0][1] and "aq_short_event_id" in q[0][1]
     assert ("order", "game_date") in q and ("range", 0, mlb_feed.DEFAULT_LIMIT - 1) in q
+    assert ("in_", "level", ["mlb"]) in q          # MLB only unless a level is asked for
 
 
 # ---------- filters ----------
@@ -146,12 +147,28 @@ def test_no_rows_is_an_empty_list():
 
 @pytest.mark.parametrize("qs", ["?team=N-Y", "?type=playoffs", "?format=xml", "?limit=0", "?limit=6000",
                                 "?offset=-1", "?date_from=2027-13-01", "?since=yesterday",
-                                "?with_tickets=maybe", "?season=twenty"])
+                                "?with_tickets=maybe", "?season=twenty", "?level=rookie"])
 def test_bad_parameters_are_422(qs):
     db = FakeDB(rows=[ROW])
     r = _client(db).get(URL + qs, headers=H)
     assert r.status_code == 422 and r.json()["error"] == "invalid"
     assert db.queries == []
+
+
+@pytest.mark.parametrize("level,want", [("milb", ["aaa", "aa", "high_a", "single_a"]), ("AAA", ["aaa"]),
+                                        ("single_a", ["single_a"]), ("mlb", ["mlb"])])
+def test_level_picks_the_leagues(level, want):
+    db = FakeDB(rows=[ROW])
+    assert _client(db).get(URL + f"?level={level}&team=COL", headers=H).status_code == 200
+    q = db.queries[0].calls
+    assert [c for c in q if c[:2] == ("in_", "level")] == [("in_", "level", want)]
+    assert ("or_", "home_abbrev.eq.COL,away_abbrev.eq.COL") in q
+
+
+def test_level_all_adds_no_level_filter():
+    db = FakeDB(rows=[ROW])
+    assert _client(db).get(URL + "?level=all", headers=H).status_code == 200
+    assert not any(c[:2] == ("in_", "level") for c in db.queries[0].calls)
 
 
 # ---------- output ----------

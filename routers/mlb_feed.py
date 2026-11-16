@@ -1,6 +1,7 @@
 """MLB schedule feed — served inside the sub finder API as GET /api/v1/subs/mlb/schedule.
 
-Every MLB club's games with the club's direct ticket link, mapped to the EVO (Ticket Evolution) event
+Every MLB club's games — and, on request, every Triple-A to Single-A club's (mig 20261116230000) — with
+the club's direct ticket link, mapped to the EVO (Ticket Evolution) event
 to the terminal's hub event, and to the SeatGeek event (direct match on teams + date). Read from `v_mlb_schedule_feed` (mig 20261116200000), which the
 collector `mlb_ticket_tick()` keeps filled from MLB's own ticketing schedule (the feed behind
 mlb.com/tickets): every club x season is re-read every 11 hours, so start times, links and date
@@ -16,11 +17,15 @@ a reader uses changed.
         &with_tickets=true   only games with a direct ticket link
         &mapped=true         only games mapped to an EVO event
         &type=regular        regular | spring | exhibition | postseason
+        &level=mlb           mlb (default) | aaa | aa | high_a | single_a | milb (all four) | all
         &format=json|csv     (default json)
         &limit=1000&offset=0 (limit max 5000)
 
 `ticket_url` is only ever the seller's own page for that one game (Ticketmaster event page,
-mlb.tickets.com with the game's pid); mlb.com pages that forward to the seller are not served.
+mlb.tickets.com with the game's pid or eventId, Glitnir with its event_id); mlb.com / milb.com pages that
+forward to the seller are not served. Minor league abbreviations repeat (three clubs are COL, as is
+Colorado): `team` by abbreviation matches every club using it within the level asked; use the team id
+for one club.
 `start_local` / `start_utc` are NULL while MLB lists the time as TBD.
 
 The route lives in routers/subs_api.py (operator 2026-11-16: "send it inside the subfinder api to
@@ -42,13 +47,17 @@ MAX_LIMIT = 5000
 DEFAULT_LIMIT = 1000
 TYPES = {"regular": ["regular"], "spring": ["spring"], "exhibition": ["exhibition"],
          "postseason": ["wild_card", "division_series", "league_championship", "world_series"]}
+MINORS = ["aaa", "aa", "high_a", "single_a"]
+LEVELS = {"mlb": ["mlb"], **{lv: [lv] for lv in MINORS}, "milb": MINORS, "all": None}
+DEFAULT_LEVEL = "mlb"   # existing readers asked for MLB only
 COLUMNS = ("mlb_schedule_id", "mlb_game_id", "season", "game_type", "game_date", "start_local", "time_zone",
            "start_utc", "time_tbd", "doubleheader_game", "if_necessary", "status", "description",
            "home_team_id", "home_name", "home_abbrev", "away_team_id", "away_name", "away_abbrev",
            "venue_id", "venue_name", "venue_city", "venue_postal_code", "ticket_url", "on_sale_start_et",
            "tevo_event_id", "tevo_match_method", "tevo_start_local", "tevo_time_check",
            "aq_short_event_id", "sg_event_id", "sh_event_id", "vivid_event_id", "tm_event_id",
-           "gotickets_event_id", "sg_url", "sg_match_method", "terminal_path", "changed_at", "last_seen_at")
+           "gotickets_event_id", "sg_url", "sg_match_method", "terminal_path", "changed_at", "last_seen_at",
+           "level", "league_name", "parent_org")
 _ABBREV = re.compile(r"^[A-Za-z]{2,3}$")
 
 
@@ -93,6 +102,9 @@ def schedule_response(db: Any, params: Any) -> Any:
         gtype = (q.get("type") or "").strip().lower()
         if gtype and gtype not in TYPES:
             raise ValueError("type")
+        level = (q.get("level") or DEFAULT_LEVEL).strip().lower()
+        if level not in LEVELS:
+            raise ValueError("level")
         fmt = (q.get("format") or "json").strip().lower()
         if fmt not in ("json", "csv"):
             raise ValueError("format")
@@ -122,6 +134,8 @@ def schedule_response(db: Any, params: Any) -> Any:
         sel = sel.not_.is_("tevo_event_id", "null")
     if gtype:
         sel = sel.in_("game_type", TYPES[gtype])
+    if LEVELS[level] is not None:
+        sel = sel.in_("level", LEVELS[level])
     try:
         rows = (sel.order("game_date").order("start_utc").order("mlb_schedule_id")
                 .range(offset, offset + limit - 1).execute().data) or []
