@@ -279,7 +279,7 @@ Tax and fees are checked a second time when the buy is sent: a buy whose total w
 
 **Call limits.** Each key has a per-minute rate and a daily call quota (defaults 60 per minute and 2,000 per day; S4K can raise them). Every call counts against the key that made it, including polls. There is also a per-IP ceiling of 600 calls per minute on this path.
 
-**If a key leaks or a buy goes wrong.** Tell your S4K contact. A revoked key is refused from its next call. S4K can also stop all buying, which takes effect within 15 seconds; purchases already placed are still followed to their result. [§6e](#6e-the-audit-log) shows every buy and offer your keys asked for and where each call came from.
+**If a key leaks or a buy goes wrong.** Email **tu@s4kent.com** (the contact for now; S4K will tell you if it changes) with the order number or the key's label, never the key itself. A revoked key is refused from its next call. S4K can also stop all buying, which takes effect within 15 seconds; purchases already placed are still followed to their result. [§6e](#6e-the-audit-log) shows every buy and offer your keys asked for and where each call came from.
 
 **Errors.** Every error is JSON: `{"error": "<code>", "detail": "<human text>"}`.
 
