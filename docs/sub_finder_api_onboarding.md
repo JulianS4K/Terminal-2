@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-16** `GET /mlb/schedule` can now list minor league games too: add `level=milb` for every Triple-A, Double-A, High-A and Single-A club, or one level (`aaa`, `aa`, `high_a`, `single_a`), or `level=all`. Without `level` you get MLB only, as before. Each row now also carries `level`, `league_name` and `parent_org` (the MLB club the team is affiliated with). Only some minor league clubs have released their 2027 ticket links so far; the rest fill in as they do (section 6g).
 - **2026-11-16** `GET /mlb/schedule` now gives each game its SeatGeek event: `sg_event_id` and `sg_url`, matched straight from MLB's schedule (same teams on the same date, and on a doubleheader day the same start time). Nearly every 2027 game has one (section 6g).
 - **2026-11-16** New: `GET /mlb/schedule` lists every MLB club's games (this season and next) with the club's direct ticket link for each game, its start time, venue, and the EVO event and terminal event it maps to. It fills itself in as clubs release times and links, and `since` returns only what changed (section 6g).
 - **2026-11-16** You set your own limits on rebates and buys, each as a percent of the sale total: `rebate_max_pct` (0 to 100) and `buy_max_cost_pct` (1 to 1000), with a default and a value per marketplace. Read them with `GET /settings/limits`, set them with `PUT /settings/limits` using the buy key (section 6f). Our earlier note said a rebate could be at most 50% of the sale: that figure was ours, not yours, and is removed. Until you set a limit, a rebate may be up to the sale total, and a buy is held only by S4K's ceilings of $750 a buy and $4,000 a day.
@@ -67,7 +68,7 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 | `GET /settings/auto-buy-loss` | the automatic buy's loss limits as they stand ([§6d](#6d-the-automatic-buys-loss-limits)) |
 | `GET /settings/limits` | your own limits on rebates and buys as they stand ([§6f](#6f-your-own-limits-on-rebates-and-buys)) |
 | `GET /audit?since=` | every buy, offer and limit change asked with your keys, with the address each call came from ([§6e](#6e-the-audit-log)) |
-| `GET /mlb/schedule?since=` | every MLB club's games, this season and next: teams, venue, start time, the club's direct ticket link, and the EVO event and terminal event each game maps to. Not tied to an order; it fills itself in as clubs release times and links ([§6g](#6g-the-mlb-schedule-with-ticket-links)) |
+| `GET /mlb/schedule?since=` | every MLB club's games (and, with `level`, every minor league club's), this season and next: teams, venue, start time, the club's direct ticket link, and the EVO event and terminal event each game maps to. Not tied to an order; it fills itself in as clubs release times and links ([§6g](#6g-the-mlb-schedule-with-ticket-links)) |
 | `GET /ping`, `GET /docs` | your scopes, the address we see you call from, the limits your buys are held to, and this guide with its version |
 | `GET /health` | whether S4K's side is working: one overall status and one for each thing you depend on, with when it last ran ([§2](#2-access-keys-limits-errors)) |
 
@@ -665,7 +666,7 @@ The automatic buy's loss limit is separate and unchanged ([§6d](#6d-the-automat
 
 ## 6g. The MLB schedule with ticket links
 
-`GET /api/v1/subs/mlb/schedule` lists every MLB club's games, this season and next, one row per game. Any key that may look up subs may read it; it buys nothing and calls no marketplace.
+`GET /api/v1/subs/mlb/schedule` lists every MLB club's games, this season and next, one row per game; with `level` it lists the 120 Triple-A to Single-A clubs' home games as well. Any key that may look up subs may read it; it buys nothing and calls no marketplace.
 
 We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club twice a day, so a row fills itself in as the club releases it: a start time that was TBD, a ticket link once single-game tickets go on sale, a moved date. `changed_at` changes only when something you would use changed, so you can sync with `since`.
 
@@ -678,6 +679,7 @@ We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club 
 | `with_tickets=true` | only games with a direct ticket link |
 | `mapped=true` | only games mapped to an EVO event |
 | `type` | `regular`, `spring`, `exhibition` or `postseason` |
+| `level` | `mlb` (the default), `aaa`, `aa`, `high_a`, `single_a`, `milb` (all four minor league levels) or `all` |
 | `format` | `json` (default) or `csv` |
 | `limit`, `offset` | page size up to 5000 (default 1000); `next_offset` is null on the last page |
 
@@ -691,10 +693,12 @@ We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club 
   "tevo_event_id": 3469396, "tevo_start_local": "2027-03-25T00:00:00", "tevo_time_check": "evo_date_only",
   "aq_short_event_id": "SYS-...", "sg_event_id": 17384021, "sh_event_id": null,
   "sg_url": "https://seatgeek.com/...", "sg_match_method": "name_date",
-  "terminal_path": "/terminal/event.html?event=3469396", "changed_at": "2026-11-16T19:40:00+00:00"}]}
+  "terminal_path": "/terminal/event.html?event=3469396", "changed_at": "2026-11-16T19:40:00+00:00",
+  "level": "mlb", "league_name": "American League", "parent_org": null}]}
 ```
 
-- **`ticket_url`** is only ever the seller's own page for that one game (a Ticketmaster event page, or mlb.tickets.com with the game's id). Pages on mlb.com that forward you to the seller are left out, so it is null for those clubs, and for clubs that have not opened single-game sales yet.
+- **`ticket_url`** is only ever the seller's own page for that one game (a Ticketmaster event page, mlb.tickets.com with the game's id, or for Somerset the Glitnir page with the game's id). Pages on mlb.com or milb.com that forward you to the seller are left out, so it is null for those clubs, and for clubs that have not opened single-game sales yet.
+- **Minor league rows** (`level` other than `mlb`) are the club's home games. `parent_org` is the MLB club it is affiliated with. Minor league abbreviations repeat (three clubs and Colorado are all `COL`), so `team=COL` returns every club with that abbreviation in the levels you asked for; use the team id for one club. EVO and SeatGeek list few minor league games until spring, so `tevo_event_id` / `sg_event_id` fill in later than for MLB.
 - **`start_local` / `start_utc`** are null while MLB lists the time as TBD (`time_tbd: true`).
 - **`tevo_event_id`** is the EVO event for the game, set only when exactly one EVO event is that game on that date (or, on a day with two games, the one starting at MLB's time). `tevo_time_check` compares the two: `same`, `differs`, `evo_date_only` (EVO lists the date without a time) or `mlb_tbd`.
 - **`aq_short_event_id`** and the marketplace ids after it are the terminal's event for the game; `terminal_path` opens it in the terminal.
