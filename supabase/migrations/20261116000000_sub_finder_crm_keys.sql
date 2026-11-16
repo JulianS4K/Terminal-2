@@ -410,6 +410,9 @@ BEGIN
       'limit', 'per_order', 'limit_usd', c.crm_buy_per_order_cap_usd, 'this_buy_usd', (cv->>'total')::numeric);
   END IF;
   IF c.crm_buy_daily_cap_usd IS NOT NULL THEN
+    -- one cap check + request at a time: held to the end of the transaction, so two buys for
+    -- different orders cannot both read the same total and together pass the limit
+    PERFORM pg_advisory_xact_lock(hashtext('sub_finder_crm_buy_cap'));
     SELECT coalesce(sum(coalesce(b.bought_total_usd, round(b.max_price_ea * b.qty, 2))), 0) INTO v_spent
       FROM public.manual_sub_buy b
      WHERE b.requested_by LIKE 'crm api key %' AND b.state IN ('requested', 'buying', 'bought', 'unknown')
