@@ -78,7 +78,6 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from core.helpers import client_ip_from_xff
 from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
@@ -118,6 +117,22 @@ def ip_allowed(ip: str | None, allowed: list) -> bool:
         except ValueError:
             continue
     return False
+
+
+def forwarded_ip(xff: str | None, hops: int, trusted: list) -> str | None:
+    """The caller's address from X-Forwarded-For when `hops` proxies of ours stand in front: the
+    entry that many from the end (1 = the last). Each of our proxies appends the address that
+    connected to it, so entries further left were written by the caller and prove nothing.
+    The count is not taken on faith: every entry after the caller's was written by one of our
+    proxies about another, so each must be inside `trusted` (our edge's published ranges). A
+    request that skipped a proxy, or carries a made-up chain, fails that and has no address.
+    None also when the chain is shorter than `hops`: never fall back to a part a caller can write."""
+    parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
+    if not 1 <= hops <= len(parts):
+        return None
+    if any(not ip_allowed(p, trusted) for p in parts[len(parts) - hops + 1:]):
+        return None
+    return parts[-hops]
 
 
 def dropped_connection(exc: BaseException) -> bool:
@@ -338,19 +353,21 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         except Exception:  # noqa: BLE001 - a usage stamp must never fail the request
             pass
         gate = _rpc("sub_finder_key_gate", {"p_key_id": row["id"]}) or {}   # no answer: the key acts for itself
-        # the rightmost X-Forwarded-For hop: the one our own edge proxy appends, which a caller cannot forge
-        ip = client_ip_from_xff(request.headers.get("x-forwarded-for"),
-                                request.client.host if request.client else None)
+        # the address the call came from: the X-Forwarded-For entry our own proxies vouch for (mig
+        # 20261116010000; the last entry alone is our edge, not the caller). No header: a direct connection.
+        xff = request.headers.get("x-forwarded-for")
+        ip = (forwarded_ip(xff, int(gate.get("client_ip_hops") or 1), gate.get("trusted_proxies") or []) if xff
+              else request.client.host if request.client else None)
         key = dict(row, id=gate.get("account_id") or row["id"], key_id=row["id"], ip=ip, gate=gate)
         allowed = gate.get("allowed_ips") or []
         if allowed and not ip_allowed(ip, allowed):
             return _refuse(key, need, request, "this key is accepted only from its registered addresses")
-        if need and gate.get("write_requires_ip") and not allowed:
-            return _refuse(key, need, request, "this key cannot buy, offer or change settings until S4K "
-                                               "registers the address it calls from")
         if need and gate.get("listed") and not (
                 gate.get(need) if need != "write" else gate.get("buy") or gate.get("offer")):
             return _refuse(key, need, request, _NEED_REFUSAL[need])
+        if need and gate.get("write_requires_ip") and not allowed:
+            return _refuse(key, need, request, "this key cannot buy, offer or change settings until S4K "
+                                               "registers the address it calls from")
         return key
 
     def _answer(out: Any, ok_status: int = 200) -> JSONResponse:
