@@ -137,7 +137,7 @@ CREATE OR REPLACE FUNCTION public.mlb_ticket_event_fits(
   p_away text, p_home text, p_away_pid bigint, p_home_pid bigint)
  RETURNS boolean
  LANGUAGE sql
- IMMUTABLE
+ STABLE
 AS $function$
   SELECT p_game_date IS NOT NULL AND left(p_event_local, 10) = p_game_date::text
      AND ( (p_away IS NOT NULL AND p_home IS NOT NULL
