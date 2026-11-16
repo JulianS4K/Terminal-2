@@ -735,8 +735,9 @@ def tool_catalog(tools: tuple[Callable, ...] = EXTERNAL_TOOLS) -> list[dict]:
 # MCP wiring
 # --------------------------------------------------------------------------
 
-def _make_server(name: str, tools: tuple[Callable, ...], get_db: Callable[[], Any]) -> MCPServer:
-    srv = MCPServer(name, instructions=INSTRUCTIONS)
+def _make_server(name: str, tools: tuple[Callable, ...], get_db: Callable[[], Any],
+                 instructions: str = INSTRUCTIONS, onboarding: bool = True) -> MCPServer:
+    srv = MCPServer(name, instructions=instructions)
     for fn in tools:
         def bound(*args, __fn=fn, **kwargs):
             return __fn(get_db(), *args, **kwargs)
@@ -747,6 +748,9 @@ def _make_server(name: str, tools: tuple[Callable, ...], get_db: Callable[[], An
         bound.__annotations__ = {k: v for k, v in fn.__annotations__.items() if k != "db"}
         srv.add_tool(bound, name=fn.__name__, description=fn.__doc__,
                      annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+
+    if not onboarding:
+        return srv
 
     # Onboarding on first connect: clients that list resources/prompts surface these next to
     # the tools; `get_started` (a tool) covers clients that only call tools.
@@ -786,10 +790,13 @@ class MCPApp:
     daily quota, stamp usage, then hand the request to the tier's MCP server.
     ``lifespan()`` must wrap the host app's lifespan."""
 
-    def __init__(self, get_db: Callable[[], Any], limiter: Any | None = None):
+    def __init__(self, get_db: Callable[[], Any], limiter: Any | None = None,
+                 servers: dict[str, MCPServer] | None = None):
         self._get_db = get_db
         self._limiter = limiter
-        self._servers = {
+        # A host may pass its own tier -> server map (e.g. the internal-only N2S server);
+        # a tier with no server here is refused with 403 rather than served.
+        self._servers = servers if servers is not None else {
             EXTERNAL: _make_server("s4k-market", EXTERNAL_TOOLS, get_db),
             INTERNAL: _make_server("s4k-terminal-internal", INTERNAL_TOOLS, get_db),
         }
@@ -857,6 +864,10 @@ class MCPApp:
                 f"mcp:{info['id']}", info["rate_per_min"], 60.0):
             await _json(send, 429, {"error": "rate limited", "rate_per_min": info["rate_per_min"],
                                     "retry_after_seconds": 60}, {"retry-after": "60"})
+            return
+        if info["tier"] not in self._servers:
+            await _json(send, 403, {"error": "this MCP server is not available to this key's tier",
+                                    "tier": info["tier"]})
             return
         if info["calls_today"] >= info["daily_quota"]:
             await _json(send, 429, {"error": "daily quota exhausted", "daily_quota": info["daily_quota"],

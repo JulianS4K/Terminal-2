@@ -1,6 +1,6 @@
 # D0 Sales Reports — build spec
 
-> **Doc version:** v1.0.0 (2026-06-24)
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- docs/d0-sales-reports.md`). Do not edit this line (README *Doc-writing rules* §5).
 > **Status:** DB layer shipped & live in `Terminal .5` (project `hzrizjeaxlqcxfrtczpq`). FastAPI + terminal UI are the remaining build.
 > **Scope:** D0 terminal surface. Read-only over already-applied Supabase objects — **do not rebuild the data layer.**
 

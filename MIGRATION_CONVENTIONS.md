@@ -1,6 +1,6 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v2.3.0 (2026-09-26; §3: Exos (`*exos*`) migrations are authored in `JulianS4K/EXP` and share this project's version history, so prefix collisions span both repos) · v2.2.0 (2026-06-30; §14: +9 landmark rows for the TD sourcing redesign `20260630160000`–`250000`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- MIGRATION_CONVENTIONS.md`). Do not edit this line (README *Doc-writing rules* §5).
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
@@ -269,6 +269,20 @@ grep -B1 "FRED_API_KEY" supabase/migrations/*.sql
 When a migration breaks production, the first 30 seconds of debugging is reading the header. Make those 30 seconds productive.
 
 ---
+
+## 6a. Changing a function: ship the whole definition (2026-11-13)
+
+**A migration that changes an existing function carries that function's full `CREATE OR REPLACE`.** Do not patch a function in place by reading `pg_get_functiondef()` and replacing text inside it.
+
+Why: a text patch only works while the function in the database matches, character for character, what the author assumed. Prod has drifted from the repo before (comments stripped, an earlier patch applied by hand), so every patch needed its anchors checked against prod first, and the review showed a few replaced lines instead of the function that would result.
+
+For the sub finder and the manual sub buy path the full text is in the repo, checked in CI:
+
+- `tests/sql/sub_finder/functions/<name>.sql` is each function exactly as the migrations listed in `tests/sql/sub_finder/build.sh` leave it. The `sub finder SQL scenarios` job fails when a file and the built function differ.
+- **To change one:** copy its file into the new migration, edit it there, add the migration to `build.sh`, run `tests/sql/sub_finder/run.sh --update`, and commit the changed file with the migration. The diff of that file is the review.
+- Applying a full definition also brings prod's copy of that function back in line with the repo, so no anchor check is needed.
+
+The in-place patches already merged (2026-11-11 to 2026-11-13) stay as they are: they have run. A function owned by another lane is still changed by that lane's own rules; when a migration here has to touch one, a patch guarded against the exact prod text is acceptable, and say so in the header.
 
 ## 7. Vault secrets (process; current name list → `RESOURCES_BIBLE §7`)
 

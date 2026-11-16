@@ -1,0 +1,58 @@
+A a key not listed acts for itself and may do what its account may
+{"buy": true, "offer": true, "listed": false, "account_id": 7, "allowed_ips": [], "client_ip_hops": 1, "write_requires_ip": false}
+A listed keys: 8 reads for account 7; 9 buys and offers for it, from its registered addresses only
+{"buy": false, "offer": false, "listed": true, "account_id": 7, "allowed_ips": [], "client_ip_hops": 1, "write_requires_ip": true}
+{"buy": true, "offer": true, "listed": true, "account_id": 7, "allowed_ips": ["203.0.113.7", "198.51.100.0/24", "2001:db8::/32"], "client_ip_hops": 1, "write_requires_ip": true}
+the proxies whose word the caller address rests on: our edge, IPv4 and IPv6
+22|172.64.0.0/13|2400:cb00::/32
+the caller address can be read from a named header instead; /ping can show what arrived
+cf-connecting-ip|true|1
+B the label is status = need2buy and nothing else
+t|f|f|f|f
+C an order the caller describes is never bought automatically, even once our books show the same sale
+done
+R1|request|Index|order_described_by_caller|f
+t
+0
+R1|order_described_by_caller|f
+D limits on the buys a CRM key asks for
+{"rebate_max_pct": 50, "buy_per_day_usd": 300, "buy_per_order_usd": 500}
+done
+5001|Index|180.00|auto_buy_off
+5002|Index|600.00|auto_buy_off
+5003|Index Down offer subs zone unverified|140.00|auto_buy_off
+5004|Index|190.00|auto_buy_off
+over the per-order limit
+{"error": "forbidden", "limit": "per_order", "detail": "this buy is over the limit for one order", "limit_usd": 500, "this_buy_usd": 600.00}
+inside both limits
+{"qty": 2, "state": "requested", "market": "evo", "listing_id": "7001", "max_price_ea": 90, "order_number": "5001"}
+the next one would pass the daily limit
+{"error": "forbidden", "limit": "per_day", "detail": "this buy would take today's buys over the daily limit", "limit_usd": 300, "this_buy_usd": 190.00, "spent_today_usd": 180.00}
+a stopped buy does not count toward the day
+requested
+E the rebate ceiling: half the sale (100 of 200)
+5|true|60.00
+{"error": "invalid", "detail": "this sub moves the customer back: send rebate_amount (0 for none)", "rebate_max": 100.00, "rebate_suggested": 60.00}
+{"error": "invalid", "detail": "rebate_amount must be between 0 and the rebate limit (rebate_max)", "rebate_max": 100.00, "sale_total": 200.00}
+{"row": "4", "gate": 5, "state": "requested", "rebate": 100.00, "section": "101"}
+no ceiling set: the sale total, as before
+200|
+F the record: an accepted buy, a refusal, an offer, a settings change
+
+
+
+
+
+the same Idempotency-Key again: the first row stands
+
+buy|5001|7001|evo|180.00||203.0.113.7|9|dana|k-1|202|requested|t|f|t
+buy|5002|7101||||203.0.113.7|9|dana|k-2|403|forbidden|f|f|f
+offer|5003|7201|evo|140.00|100.00|198.51.100.9|9|||202|requested|f|t|t
+settings||||||203.0.113.7|9|||200|saved|f|f|t
+buy|5001|7001||||192.0.2.1|8|||403|refused|f|f|f
+an accepted call is found by its key; a refused one is not
+{"action": "buy", "listing_id": "7001", "order_number": "5001"}|{"qty": 2, "state": "requested", "market": "evo", "listing_id": "7001", "max_price_ea": 90, "order_number": "5001"}||
+the audit feed, newest first, for the account only
+2|5|[{"action": "buy", "market": null, "outcome": "refused", "key_label": "crm read", "source_ip": "192.0.2.1", "amount_usd": null, "listing_id": "7001", "rebate_usd": null, "http_status": 403, "order_number": "5001", "requested_by": null, "idempotency_key": null}, {"action": "settings", "market": null, "outcome": "saved", "key_label": "crm buy", "source_ip": "203.0.113.7", "amount_usd": null, "listing_id": null, "rebate_usd": null, "http_status": 200, "order_number": null, "requested_by": null, "idempotency_key": null}]
+{"count": 0, "items": [], "limit": 200, "total": 0, "offset": 0}
+{"error": "forbidden", "detail": "this key may not read the audit log"}

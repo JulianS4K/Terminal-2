@@ -480,3 +480,146 @@ def test_audit_script_catches_removed_guard(tmp_path: Path):
         assert "evo_client.py" in out
     finally:
         client_path.write_text(original, encoding="utf-8")
+
+
+# ---------- evo_buy_client (operator authorization 2026-11-09: EVO buy + accept only) ----------
+
+def test_evo_buy_client_is_registered_with_a_pinned_path_allowlist():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["evo_buy_client.py"] == frozenset({"GET", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["evo_buy_client.py"] in (REPO_ROOT / "evo_buy_client.py").read_text()
+
+
+def test_evo_buy_guard_refuses_any_other_write():
+    from evo_buy_client import _assert_readonly_method, EvoBuyError
+    for method, path in (("POST", "/v9/orders/1/reject"), ("POST", "/v9/ticket_groups/1"),
+                         ("POST", "/v9/tax_quotes/1"), ("PUT", "/v9/tax_quotes"),
+                         ("PUT", "/v9/orders/1"), ("DELETE", "/v9/orders/1"), ("PATCH", "/v9/orders")):
+        with pytest.raises(EvoBuyError):
+            _assert_readonly_method(method, path)
+
+
+def _load_check_module():
+    spec = importlib.util.spec_from_file_location("check_readonly_under_test", CHECK_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_audit_catches_a_widened_evo_write_allowlist(tmp_path: Path, monkeypatch):
+    chk = _load_check_module()
+    text = (REPO_ROOT / "evo_buy_client.py").read_text()
+    for name in chk.CLIENT_FILES:
+        src = REPO_ROOT / name
+        (tmp_path / name).write_text(src.read_text())
+    widened = text.replace(r'r"^/v9/tax_quotes$")', r'r"^/v9/tax_quotes$", r"^/v9/orders/\d+/reject$")')
+    assert widened != text
+    (tmp_path / "evo_buy_client.py").write_text(widened)
+    monkeypatch.setattr(chk, "ROOT", tmp_path)
+    out = chk.check_guard_tokens()
+    assert any("evo_buy_client.py" in v and "EVO_WRITE_PATHS" in v for v in out)
+
+
+def test_audit_catches_pgsql_http_post_to_a_broker(tmp_path: Path, monkeypatch):
+    chk = _load_check_module()
+    mig = tmp_path / "supabase" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "1_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.ticketevolution.com/v9/orders', NULL, NULL, '{}'));\n")
+    (mig / "2_bad.sql").write_text("SELECT extensions.http_post('https://gotickets.com/rest/pro/api/orders', '{}');\n")
+    (mig / "3_ok.sql").write_text("SELECT extensions.http(('POST', 'https://api.resend.com/emails', NULL, NULL, '{}'));\n")
+    monkeypatch.setattr(chk, "ROOT", tmp_path)
+    out = chk.check_plpgsql_writes()
+    assert len(out) == 2 and any("1_bad.sql" in v for v in out) and any("2_bad.sql" in v for v in out)
+
+
+def test_sale_accept_client_registered_with_pinned_writes():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["sale_accept_client.py"] == frozenset({"GET", "PATCH", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["sale_accept_client.py"] in (REPO_ROOT / "sale_accept_client.py").read_text()
+
+
+def test_gotickets_sub_client_registered_with_its_one_pinned_write():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["gotickets_sub_client.py"] == frozenset({"GET", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["gotickets_sub_client.py"] in (REPO_ROOT / "gotickets_sub_client.py").read_text()
+    from gotickets_sub_client import GT_SUB_WRITES
+    assert GT_SUB_WRITES == (("POST", "sc.gotickets.com", r"^/rest/substitution-requests$"),)
+
+
+def test_gotickets_buy_client_registered_with_its_one_pinned_write():
+    chk = _load_check_module()
+    assert chk.CLIENT_FILES["gotickets_buy_client.py"] == frozenset({"GET", "POST"})
+    assert chk.SANCTIONED_WRITE_TOKENS["gotickets_buy_client.py"] in (REPO_ROOT / "gotickets_buy_client.py").read_text()
+    from gotickets_buy_client import GT_BUY_WRITES
+    assert GT_BUY_WRITES == (("POST", "gotickets.com", r"^/rest/pro/api/orders$"),)
+
+
+def test_sale_accept_guard_refuses_reject_and_other_writes():
+    from sale_accept_client import _assert_readonly_method, SaleAcceptError
+    for m, u in (("POST", "https://brokers.vividseats.com/webservices/v1/rejectOrder"),
+                 ("POST", "https://sc.gotickets.com/rest/sales/1/cannot-retransfer-or-reissue"),
+                 ("DELETE", "https://sellerdirect-api.seatgeek.com/order"),
+                 ("POST", "https://api.tickpick.com/1.0/orders/1/rejection"),
+                 ("POST", "https://api.tickpick.com/1.0/token")):
+        with pytest.raises(SaleAcceptError):
+            _assert_readonly_method(m, u)
+
+
+def test_audit_allows_only_the_sanctioned_token_logins_from_plpgsql(tmp_path: Path, monkeypatch):
+    chk = _load_check_module()
+    # Each entry is an OAuth token login that writes none of our data (TickPick 2026-11-10;
+    # StubHub prod + sandbox 2026-11-13, mig 20261113250040). Extending this is security-CRIT.
+    assert chk.SANCTIONED_PLPGSQL_WRITE_URLS == (
+        "https://api.tickpick.com/1.0/token",
+        "https://account.stubhub.com/oauth2/token",
+        "https://sandbox.account.stubhub.com/oauth2/token",
+    )
+    mig = tmp_path / "supabase" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "1_ok.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/token', NULL, 'x', 'grant_type=password'));\n")
+    (mig / "2_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/orders/1/confirmation', NULL, NULL, '{}'));\n")
+    (mig / "3_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/token', NULL, 'x', ''));\n"
+        "SELECT extensions.http(('POST', 'https://api.tickpick.com/1.0/pro/orders', NULL, NULL, '{}'));\n")
+    (mig / "4_ok.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://account.stubhub.com/oauth2/token', NULL, 'x', 'grant_type=refresh_token'));\n")
+    (mig / "5_bad.sql").write_text(
+        "SELECT extensions.http(('POST', 'https://api.stubhub.net/v2/sellerlistings', NULL, NULL, '{}'));\n")
+    (mig / "6_bad.sql").write_text(
+        "SELECT extensions.http(('PATCH', 'https://api.stubhub.net/v2/sales/1', NULL, NULL, '{}'));\n")
+    monkeypatch.setattr(chk, "ROOT", tmp_path)
+    out = chk.check_plpgsql_writes()
+    assert not any("1_ok.sql" in v for v in out) and not any("4_ok.sql" in v for v in out)
+    assert any("2_bad.sql" in v for v in out) and any("3_bad.sql" in v for v in out)
+    assert any("5_bad.sql" in v for v in out) and any("6_bad.sql" in v for v in out)
+
+
+# ---------- stubhub_client (our seller account; OFF by default, GET-only) ----------
+
+def test_stubhub_assert_readonly_raises_on_post():
+    from stubhub_client import _assert_readonly_method, StubHubReadOnlyError
+    with pytest.raises(StubHubReadOnlyError) as exc:
+        _assert_readonly_method("POST")
+    assert "READ-ONLY violation" in str(exc.value)
+
+
+def test_stubhub_assert_readonly_raises_on_put_patch_delete():
+    from stubhub_client import _assert_readonly_method, StubHubReadOnlyError
+    for method in ("PUT", "PATCH", "DELETE"):
+        with pytest.raises(StubHubReadOnlyError):
+            _assert_readonly_method(method)
+
+
+def test_stubhub_assert_readonly_allows_get():
+    from stubhub_client import _assert_readonly_method
+    _assert_readonly_method("GET")
+    _assert_readonly_method("get")
+
+
+def test_stubhub_allowlist_constant_is_get_only_and_scopes_read_only():
+    from stubhub_client import ALLOWED_HTTP_METHODS, READ_SCOPES
+    assert ALLOWED_HTTP_METHODS == frozenset({"GET"})
+    assert READ_SCOPES and all(s.startswith("read:") for s in READ_SCOPES)
