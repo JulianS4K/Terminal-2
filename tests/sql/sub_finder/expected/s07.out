@@ -18,7 +18,7 @@ not_found
 3 yes for gates 3, 4, 5; a second yes conflicts:
 {"row": "1", "gate": 3, "state": "requested", "rebate": null, "section": "102"}
 {"row": "2", "gate": 4, "state": "requested", "rebate": null, "section": "102"}
-{"error": "invalid", "detail": "this sub moves the customer back: send rebate_amount (0 for none)", "rebate_suggested": 60.00}
+{"error": "invalid", "detail": "this sub moves the customer back: send rebate_amount (0 for none)", "rebate_max": 200.00, "rebate_suggested": 60.00}
 rebate_amount must be between 0 and the sale total
 {"row": "4", "gate": 5, "state": "requested", "rebate": null, "section": "102"}
 conflict
