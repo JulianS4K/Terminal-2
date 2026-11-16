@@ -118,6 +118,12 @@ def test_client_ip_is_forwarded(capture_post):
     hdrs = capture_post[0]["headers"]
     assert hdrs["x-real-ip"] == "10.0.0.1"
     assert hdrs["x-forwarded-for"] == "10.0.0.1"
+    # behind Cloudflare the edge is the last hop and the caller is what Cloudflare reports
+    from routers import retail_chat as _rc
+    scope = {"type": "http", "client": ("10.0.0.2", 1),
+             "headers": [(b"x-forwarded-for", b"203.0.113.7, 172.71.150.51"), (b"cf-connecting-ip", b"203.0.113.7")]}
+    from starlette.requests import Request as _Req
+    assert _rc._client_ip(_Req(scope)) == "203.0.113.7"
 
 
 # ---------- transcript validation ----------
