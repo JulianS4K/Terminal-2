@@ -28,6 +28,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/settings/limits                         the CRM's own limits on a rebate and on a buy's cost, percent of the sale
   PUT  /api/v1/subs/settings/limits                         set them (a key that may buy or offer, from its registered address)
   GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
+  GET  /api/v1/subs/mlb/schedule?team=&season=&since=       every MLB game with the club's direct ticket link + EVO / terminal event (routers/mlb_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
