@@ -6,7 +6,7 @@ For the CRM team. You send us orders that need a substitute ("sub"); we pull fre
 
 Code: `routers/subs_api.py` · SQL: migrations `20261112000000` (buy follow-up) and `20261112010000` (the API) · operator switches: [§9](#9-for-s4k-operators-switching-it-on).
 
-**Contents:** [What changed for you](#what-changed-for-you) · [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [6e Audit log](#6e-the-audit-log) · [6f Your limits](#6f-your-own-limits-on-rebates-and-buys) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+**Contents:** [What changed for you](#what-changed-for-you) · [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [6e Audit log](#6e-the-audit-log) · [6f Your limits](#6f-your-own-limits-on-rebates-and-buys) · [6g MLB schedule](#6g-the-mlb-schedule-with-ticket-links) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
 
 ## Keeping this guide current
 
@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-16** New: `GET /mlb/schedule` lists every MLB club's games (this season and next) with the club's direct ticket link for each game, its start time, venue, and the EVO event and terminal event it maps to. It fills itself in as clubs release times and links, and `since` returns only what changed (section 6g).
 - **2026-11-16** You set your own limits on rebates and buys, each as a percent of the sale total: `rebate_max_pct` (0 to 100) and `buy_max_cost_pct` (1 to 1000), with a default and a value per marketplace. Read them with `GET /settings/limits`, set them with `PUT /settings/limits` using the buy key (section 6f). Our earlier note said a rebate could be at most 50% of the sale: that figure was ours, not yours, and is removed. Until you set a limit, a rebate may be up to the sale total, and a buy is held only by S4K's ceilings of $750 a buy and $4,000 a day.
 - **2026-11-16** New: `GET /health` tells you whether S4K's side is working: one overall `status` (`ok`, `degraded` or `down`) and one entry for each thing you depend on, with when it last ran (our read of your Need-to-Sub feed, our copy of your order book, your lookups, buying, offers, balances). Poll it from your monitoring; it always answers 200, so read `status` (section 2).
 - **2026-11-16** The base URL is now `https://s4k-subs-api-siyb.onrender.com/api/v1/subs`: a host that serves only this API and is always on. Please switch to it. The earlier address keeps answering with the same keys and data (section 2).
@@ -659,6 +660,41 @@ Each has a `default` and may have its own value for the marketplace the order **
 - S4K's own ceilings (`s4k_ceilings`) are in dollars and are not changed here.
 
 The automatic buy's loss limit is separate and unchanged ([§6d](#6d-the-automatic-buys-loss-limits)).
+
+## 6g. The MLB schedule with ticket links
+
+`GET /api/v1/subs/mlb/schedule` lists every MLB club's games, this season and next, one row per game. Any key that may look up subs may read it; it buys nothing and calls no marketplace.
+
+We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club twice a day, so a row fills itself in as the club releases it: a start time that was TBD, a ticket link once single-game tickets go on sale, a moved date. `changed_at` changes only when something you would use changed, so you can sync with `since`.
+
+| Query | Meaning |
+|---|---|
+| `team` | club abbreviation (`NYY`) or MLB team id (`147`); home or away games. Add `home_only=true` for that club's home games only |
+| `season` | e.g. `2027` |
+| `date_from`, `date_to` | `YYYY-MM-DD`, the game's local date |
+| `since` | ISO-8601 instant: only rows whose data changed at or after it |
+| `with_tickets=true` | only games with a direct ticket link |
+| `mapped=true` | only games mapped to an EVO event |
+| `type` | `regular`, `spring`, `exhibition` or `postseason` |
+| `format` | `json` (default) or `csv` |
+| `limit`, `offset` | page size up to 5000 (default 1000); `next_offset` is null on the last page |
+
+```json
+{"count": 1, "offset": 0, "next_offset": null, "games": [{
+  "mlb_schedule_id": 852989, "season": 2027, "game_type": "regular", "game_date": "2027-03-25",
+  "start_local": "2027-03-25T13:35:00", "time_zone": "EDT", "start_utc": "2027-03-25T17:35:00+00:00", "time_tbd": false,
+  "doubleheader_game": 1, "home_name": "New York Yankees", "home_abbrev": "NYY", "away_name": "Toronto Blue Jays", "away_abbrev": "TOR",
+  "venue_name": "Yankee Stadium", "venue_city": "Bronx",
+  "ticket_url": null, "on_sale_start_et": null,
+  "tevo_event_id": 3469396, "tevo_start_local": "2027-03-25T00:00:00", "tevo_time_check": "evo_date_only",
+  "aq_short_event_id": "SYS-...", "sg_event_id": null, "sh_event_id": null,
+  "terminal_path": "/terminal/event.html?event=3469396", "changed_at": "2026-11-16T19:40:00+00:00"}]}
+```
+
+- **`ticket_url`** is only ever the seller's own page for that one game (a Ticketmaster event page, or mlb.tickets.com with the game's id). Pages on mlb.com that forward you to the seller are left out, so it is null for those clubs, and for clubs that have not opened single-game sales yet.
+- **`start_local` / `start_utc`** are null while MLB lists the time as TBD (`time_tbd: true`).
+- **`tevo_event_id`** is the EVO event for the game, set only when exactly one EVO event is that game on that date (or, on a day with two games, the one starting at MLB's time). `tevo_time_check` compares the two: `same`, `differs`, `evo_date_only` (EVO lists the date without a time) or `mlb_tbd`.
+- **`aq_short_event_id`** and the marketplace ids after it are the terminal's event for the game; `terminal_path` opens it in the terminal.
 
 ## 7. Buy a cover
 

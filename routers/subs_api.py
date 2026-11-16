@@ -85,6 +85,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
+from routers.mlb_feed import schedule_response as mlb_schedule_response
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
 MAX_LIMIT = 1000           # the CRM's own page ceiling
@@ -561,6 +562,20 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if isinstance(key, JSONResponse):
             return key
         return _answer(_rpc("sub_finder_balances", {"p_key_id": key["id"]}))
+
+    @router.get("/mlb/schedule")
+    def mlb_schedule(request: Request):
+        """Every MLB club's games with the club's direct ticket link, mapped to the EVO event and the
+        terminal's hub event (operator 2026-11-16: "send it inside the subfinder api to crm"). Fills
+        itself in as clubs release times and links; `since` syncs only what changed. Any key that may
+        find subs may read it. Query and columns: routers/mlb_feed.py. Reads our own tables only."""
+        key = _auth(request, "mlb_schedule")
+        if isinstance(key, JSONResponse):
+            return key
+        access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
+        if not access.get("find"):
+            return _err(403, "forbidden", "this key may not read the sub finder API")
+        return mlb_schedule_response(get_db(), request.query_params)
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
