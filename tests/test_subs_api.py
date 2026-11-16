@@ -728,8 +728,17 @@ def test_ip_allowed_reads_addresses_and_ranges():
     assert not s.ip_allowed("203.0.113.7", [])
 
 
+def test_forwarded_ip_counts_back_from_our_own_proxies():
+    chain = "1.2.3.4, 203.0.113.7, 172.71.150.51"            # forged, the caller, our edge
+    assert s.forwarded_ip(chain, 1) == "172.71.150.51" and s.forwarded_ip(chain, 2) == "203.0.113.7"
+    assert s.forwarded_ip("203.0.113.7", 1) == "203.0.113.7"
+    # a chain shorter than our proxies, or a nonsense count: no address rather than a guess
+    for xff, hops in (("203.0.113.7", 2), ("", 1), (None, 1), (" , ", 1), (chain, 0), (chain, 4)):
+        assert s.forwarded_ip(xff, hops) is None
+
+
 def test_a_read_key_acts_for_its_account_and_cannot_spend():
-    db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(),
+    db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True},
                           "sub_finder_results": {"count": 0, "items": []},
                           "sub_finder_buy_confirmed": {"buy_id": 20, "state": "requested"}})
@@ -771,6 +780,13 @@ def test_a_buy_key_is_accepted_only_from_its_addresses():
     assert len(_audits(db)) == 3 and _audits(db)[1]["p_source_ip"] == "192.0.2.1"   # reads are not recorded
     assert "sub_finder_buy_confirmed" not in [n for n, _ in db.rpcs]
     ok = dict(H, **{"x-forwarded-for": "192.0.2.1, 198.51.100.44"})                 # our proxy's hop is the last
+    # with two proxies of ours in front, the caller is the entry before the last
+    db.rpc_data["sub_finder_key_gate"]["client_ip_hops"] = 2
+    two = dict(H, **{"x-forwarded-for": "198.51.100.44, 203.0.113.7, 172.71.150.51"})
+    assert c.get("/api/v1/subs/ping", headers=two).json()["your_ip"] == "203.0.113.7"
+    assert c.get("/api/v1/subs/results", headers=ok).status_code == 403            # that entry is not registered
+    assert c.get("/api/v1/subs/results", headers=dict(H, **{"x-forwarded-for": "203.0.113.7"})).status_code == 403  # too short
+    db.rpc_data["sub_finder_key_gate"]["client_ip_hops"] = 1
     assert c.get("/api/v1/subs/results", headers=ok).status_code == 200
     r = c.post(BUY_URL, headers=ok, json={"listing_id": "1", "requested_by": "dana"})
     assert r.status_code == 202 and db.last("sub_finder_buy_confirmed")["p_key_id"] == 4
