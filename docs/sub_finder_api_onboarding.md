@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-16** `GET /mlb/schedule` now gives each game its SeatGeek event: `sg_event_id` and `sg_url`, matched straight from MLB's schedule (same teams on the same date, and on a doubleheader day the same start time). Nearly every 2027 game has one (section 6g).
 - **2026-11-16** New: `GET /mlb/schedule` lists every MLB club's games (this season and next) with the club's direct ticket link for each game, its start time, venue, and the EVO event and terminal event it maps to. It fills itself in as clubs release times and links, and `since` returns only what changed (section 6g).
 - **2026-11-16** You set your own limits on rebates and buys, each as a percent of the sale total: `rebate_max_pct` (0 to 100) and `buy_max_cost_pct` (1 to 1000), with a default and a value per marketplace. Read them with `GET /settings/limits`, set them with `PUT /settings/limits` using the buy key (section 6f). Our earlier note said a rebate could be at most 50% of the sale: that figure was ours, not yours, and is removed. Until you set a limit, a rebate may be up to the sale total, and a buy is held only by S4K's ceilings of $750 a buy and $4,000 a day.
 - **2026-11-16** New: `GET /health` tells you whether S4K's side is working: one overall `status` (`ok`, `degraded` or `down`) and one entry for each thing you depend on, with when it last ran (our read of your Need-to-Sub feed, our copy of your order book, your lookups, buying, offers, balances). Poll it from your monitoring; it always answers 200, so read `status` (section 2).
@@ -688,7 +689,8 @@ We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club 
   "venue_name": "Yankee Stadium", "venue_city": "Bronx",
   "ticket_url": null, "on_sale_start_et": null,
   "tevo_event_id": 3469396, "tevo_start_local": "2027-03-25T00:00:00", "tevo_time_check": "evo_date_only",
-  "aq_short_event_id": "SYS-...", "sg_event_id": null, "sh_event_id": null,
+  "aq_short_event_id": "SYS-...", "sg_event_id": 17384021, "sh_event_id": null,
+  "sg_url": "https://seatgeek.com/...", "sg_match_method": "name_date",
   "terminal_path": "/terminal/event.html?event=3469396", "changed_at": "2026-11-16T19:40:00+00:00"}]}
 ```
 
@@ -696,6 +698,7 @@ We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club 
 - **`start_local` / `start_utc`** are null while MLB lists the time as TBD (`time_tbd: true`).
 - **`tevo_event_id`** is the EVO event for the game, set only when exactly one EVO event is that game on that date (or, on a day with two games, the one starting at MLB's time). `tevo_time_check` compares the two: `same`, `differs`, `evo_date_only` (EVO lists the date without a time) or `mlb_tbd`.
 - **`aq_short_event_id`** and the marketplace ids after it are the terminal's event for the game; `terminal_path` opens it in the terminal.
+- **`sg_event_id`** / **`sg_url`** are the game's SeatGeek event, matched straight from MLB's schedule: the same teams on the same date, and on a day with two games the one with the same start time. `sg_match_method` says how (`name_date`, `name_date_time`, or `hub` when it comes from the terminal's event).
 
 ## 7. Buy a cover
 
