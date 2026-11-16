@@ -28,6 +28,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/settings/limits                         the CRM's own limits on a rebate and on a buy's cost, percent of the sale
   PUT  /api/v1/subs/settings/limits                         set them (a key that may buy or offer, from its registered address)
   GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
+  GET  /api/v1/subs/health                                  one overall status + one per thing the CRM depends on (its feed read, lookups, buying, ...)
   GET  /api/v1/subs/mlb/schedule?team=&season=&since=       every MLB game with the club's direct ticket link + EVO / terminal event (routers/mlb_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
@@ -104,7 +105,7 @@ RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_
                              "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
                              "sub_finder_autobuys", "sub_finder_loss_limits", "sub_finder_buys",
                              "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read",
-                             "sub_finder_limits"})
+                             "sub_finder_limits", "sub_finder_health"})
 
 # what a call needs from its key beyond reading: _auth refuses it before any SQL runs
 _NEED_REFUSAL = {"buy": "this key may not buy", "offer": "this key may not offer subs",
@@ -184,7 +185,7 @@ _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL |
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
 _DOC_NEWS = re.compile(r"^## What changed for you\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)     # the dated list
 _DOC_NEWS_ITEM = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*[ .:·—-]*(.+)$", re.MULTILINE)          # one entry of it
-NEWS_ON_PING = 5                            # entries /ping carries; the guide has them all
+NEWS_ON_PING = 10                           # entries /ping carries; the guide has them all
 
 
 def render_crm_doc(text: str) -> dict:
@@ -505,6 +506,19 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         resp = _answer(out)
         _audit(key, "settings", None, None, resp.status_code, out, by if isinstance(by, str) else None)
         return resp
+
+    @router.get("/health")
+    def health(request: Request):
+        """A health check the CRM reads (operator 2026-11-16: "also add health check that feeds
+        crm", mig 20261116210000): one overall `status` and one entry per thing the CRM depends on
+        (our read of its feed, our copy of its order book, its lookups, buying, offers, balances,
+        the MLB schedule), each ok / degraded / down by the age of its last good run, or off when
+        S4K has it switched off. Always 200 when the key is good: the answer is in `status`, so a
+        monitor reads the body, not the HTTP code. Reads our own tables only."""
+        key = _auth(request, "health")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_health", {"p_key_id": key["id"]}))
 
     @router.get("/settings/limits")
     def limits(request: Request):
