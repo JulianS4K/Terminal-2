@@ -120,7 +120,9 @@ def test_client_ip_behind_cloudflare_is_the_address_cloudflare_reports():
 def test_client_ip_steps_over_the_hosts_own_private_hop_after_the_edge():
     """A free-plan Render service receives `<caller>, <Cloudflare edge>, <10.x proxy>`."""
     assert client_ip_from_xff(f"203.0.113.7, {EDGE}, 10.192.21.100", "x", "203.0.113.7") == "203.0.113.7"
-    assert client_ip_from_xff(f"203.0.113.7, {EDGE}, 10.1.1.1, 10.2.2.2", "x", "203.0.113.7") == "203.0.113.7"
+    # one hop, because that is what the host adds: a longer run of private addresses is not read past
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}, 10.1.1.1, 10.2.2.2", "x", "203.0.113.7") == "10.2.2.2"
+    assert client_ip_from_xff("10.192.21.100", "x", "203.0.113.7") == "10.192.21.100"      # nothing before it
     # private hops with no edge before them prove nothing: the last hop stands
     assert client_ip_from_xff("203.0.113.7, 198.51.100.9, 10.192.21.100", "x", "203.0.113.7") == "10.192.21.100"
     assert client_ip_from_xff("10.0.0.1, 10.192.21.100", "x", "203.0.113.7") == "10.192.21.100"
