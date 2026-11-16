@@ -25,7 +25,7 @@ What you need to know or do, newest first. `GET /ping` returns the top five of t
 
 - **2026-11-16** You set your own limits on rebates and buys, each as a percent of the sale total: `rebate_max_pct` (0 to 100) and `buy_max_cost_pct` (1 to 1000), with a default and a value per marketplace. Read them with `GET /settings/limits`, set them with `PUT /settings/limits` using the buy key (section 6f). Our earlier note said a rebate could be at most 50% of the sale: that figure was ours, not yours, and is removed. Until you set a limit, a rebate may be up to the sale total, and a buy is held only by S4K's ceilings of $750 a buy and $4,000 a day.
 - **2026-11-16** The base URL is now `https://s4k-subs-api-siyb.onrender.com/api/v1/subs`: a host that serves only this API and is always on. Please switch to it. The earlier address keeps answering with the same keys and data (section 2).
-- **2026-11-16** If a key leaks or a buy goes wrong, email tu@s4kent.com (section 2).
+- **2026-11-16** If a key leaks or a buy goes wrong, email both tu@s4kent.com and julian@s4kent.com (section 2).
 - **2026-11-16** The key of 2026-11-13 is revoked. Two keys replace it: one that only reads, one that may also buy and offer. The buy key cannot buy, offer or change settings until S4K registers the address it calls from: call `GET /ping` with it from the server that will buy, and send us the `your_ip` it returns (section 2).
 - **2026-11-16** Only an item whose `status` is exactly `need2buy` starts a lookup, and automatic buying is off: a buy happens only when you ask for it, or when a GoTickets customer accepts seats you offered. `POST .../buy` and `POST .../offer-sub` take an `Idempotency-Key`, and `GET /audit` lists every buy, offer and limit change asked with your keys (sections 6e, 7, 7a).
 
@@ -300,7 +300,7 @@ Tax and fees are checked a second time when the buy is sent: a buy whose total w
 
 **Call limits.** Each key has a per-minute rate and a daily call quota (defaults 60 per minute and 2,000 per day; S4K can raise them). Every call counts against the key that made it, including polls. There is also a per-IP ceiling of 600 calls per minute on this path.
 
-**If a key leaks or a buy goes wrong.** Email **tu@s4kent.com** (the contact for now; S4K will tell you if it changes) with the order number or the key's label, never the key itself. A revoked key is refused from its next call. S4K can also stop all buying, which takes effect within 15 seconds; purchases already placed are still followed to their result. [§6e](#6e-the-audit-log) shows every buy and offer your keys asked for and where each call came from.
+**If a key leaks or a buy goes wrong.** Email **tu@s4kent.com** and **julian@s4kent.com**, both on the same message (the contacts for now; S4K will tell you if they change) with the order number or the key's label, never the key itself. A revoked key is refused from its next call. S4K can also stop all buying, which takes effect within 15 seconds; purchases already placed are still followed to their result. [§6e](#6e-the-audit-log) shows every buy and offer your keys asked for and where each call came from.
 
 **Errors.** Every error is JSON: `{"error": "<code>", "detail": "<human text>"}`.
 
