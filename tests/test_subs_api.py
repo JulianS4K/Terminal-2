@@ -744,6 +744,49 @@ def test_forwarded_ip_counts_back_from_our_own_proxies():
     assert s.forwarded_ip("203.0.113.7, 172.71.1.1, 172.68.2.2", 3, edge) == "203.0.113.7"
 
 
+def test_header_ip_is_believed_only_behind_our_edge():
+    edge = ["172.64.0.0/13"]
+    cf = "cf-connecting-ip"
+    assert s.header_ip(cf, [" 203.0.113.7 "], "10.0.0.1, 172.71.150.51", edge) == "203.0.113.7"
+    assert s.header_ip("true-client-ip", ["2001:DB8::1"], "172.71.150.51", edge) == "2001:db8::1"
+    # only headers the edge itself writes: any other name is refused whatever the setting says
+    for name in ("x-real-ip", "x-forwarded-for", "x-client-ip", ""):
+        assert s.header_ip(name, ["203.0.113.7"], "172.71.150.51", edge) is None
+    # the header sent twice, or not at all
+    assert s.header_ip(cf, ["203.0.113.7", "203.0.113.7"], "172.71.150.51", edge) is None
+    assert s.header_ip(cf, [], "172.71.150.51", edge) is None
+    # not handed to us by our edge (no chain, or its last entry is not the edge): no address
+    for xff in (None, "", "203.0.113.7", "172.71.150.51, 198.51.100.9"):
+        assert s.header_ip(cf, ["203.0.113.7"], xff, edge) is None
+    assert s.header_ip(cf, ["203.0.113.7"], "172.71.150.51", []) is None
+    # a value that is not exactly one address
+    for bad in ("", "203.0.113.7, 198.51.100.9", "203.0.113.0/24", "example.com"):
+        assert s.header_ip(cf, [bad], "172.71.150.51", edge) is None
+
+
+def test_the_caller_address_can_come_from_a_named_header_and_ping_can_show_what_arrived():
+    db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(buy=True, offer=True, allowed_ips=["203.0.113.7"],
+                                                       trusted_proxies=["172.64.0.0/13"], client_ip_hops=1,
+                                                       client_ip_header="cf-connecting-ip"),
+                          "sub_finder_access": {"find": True, "buy": True, "offer": True}})
+    c = _client(db)
+    via_edge = dict(H, **{"x-forwarded-for": "172.71.150.51, 172.68.2.2", "cf-connecting-ip": "203.0.113.7"})
+    p = c.get("/api/v1/subs/ping", headers=via_edge).json()
+    assert p["your_ip"] == "203.0.113.7" and "forwarding_headers" not in p
+    # the same header on a request that did not come through our edge proves nothing
+    direct = dict(H, **{"x-forwarded-for": "198.51.100.9", "cf-connecting-ip": "203.0.113.7"})
+    assert c.get("/api/v1/subs/ping", headers=direct).status_code == 403
+    assert c.get("/api/v1/subs/ping", headers=dict(H, **{"cf-connecting-ip": "203.0.113.7"})).status_code == 403
+    other = dict(H, **{"x-forwarded-for": "172.71.150.51", "cf-connecting-ip": "198.51.100.9"})
+    assert c.get("/api/v1/subs/ping", headers=other).status_code == 403            # not the registered address
+    # the operator's aid: what arrived, to the key that called, only while switched on
+    db.rpc_data["sub_finder_key_gate"]["ping_shows_headers"] = True
+    p = c.get("/api/v1/subs/ping", headers=via_edge).json()
+    assert p["forwarding_headers"]["x-forwarded-for"] == "172.71.150.51, 172.68.2.2"
+    assert p["forwarding_headers"]["cf-connecting-ip"] == "203.0.113.7" and p["forwarding_headers"]["true-client-ip"] is None
+    assert set(p["forwarding_headers"]) == set(s.FORWARDING_HEADERS) and p["ok"] is True
+
+
 def test_a_read_key_acts_for_its_account_and_cannot_spend():
     db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True},
