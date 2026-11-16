@@ -1,0 +1,43 @@
+# Render blueprint for the sub finder API on its own hostname (TEMPORARY).
+#
+# OWNER: D0 (sub finder API). Operator 2026-11-16: the CRM asked for a base URL that is not
+# the `-test` storefront service; there is no domain of ours to use yet; "just use a temp
+# render for now". This is that: a second, API-only web service that serves ONLY
+# /api/v1/subs (core/subs_only.py) from the same repository and the same database.
+#
+# It runs no worker. A buy or an offer asked through this host is filed in the same tables
+# and carried out by the main service (vibepass-storefront-test), as for any other call.
+#
+# It is still an onrender.com name, not a domain we control. When there is one, add it as a
+# custom domain to whichever service should answer, tell the CRM, and delete this service.
+#
+# Plan: free. It sleeps after 15 minutes without a call and the next call then waits for it
+# to start (up to about a minute). A caller that syncs every few minutes keeps it awake.
+# Change `plan` to `starter` to keep it always on.
+#
+# The two secrets are copied from the main service by Render; they are never written here.
+
+services:
+  - type: web
+    name: s4k-subs-api
+    runtime: python
+    plan: free
+    region: oregon          # same region as the main service
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn core.subs_only:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SUPABASE_URL
+        fromService:
+          type: web
+          name: vibepass-storefront-test
+          envVarKey: SUPABASE_URL
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        fromService:
+          type: web
+          name: vibepass-storefront-test
+          envVarKey: SUPABASE_SERVICE_ROLE_KEY
