@@ -1,0 +1,72 @@
+A dry run: the counts, and nothing written
+{"applied": false, "dropped": 2, "matched": 6, "seatgeek": {"sg_fill": 1, "sg_repoint": 1}, "ambiguous": 1, "unmatched": 4, "matched_by": {"teams_date": 3, "teams_date_time": 2, "teams_date_timed": 1}, "hub_rows_missing": 5}
+0|2|2|4
+B the pass
+{"applied": true, "dropped": 2, "matched": 6, "seatgeek": {"sg_fill": 1, "sg_repoint": 1}, "ambiguous": 1, "unmatched": 4, "hub_linked": 6, "matched_by": {"teams_date": 3, "teams_date_time": 2, "teams_date_timed": 1}, "venues_known": 4, "hub_sg_filled": 3, "games_venue_set": 6, "primary_ids_set": 3, "hub_rows_created": 5, "hub_rows_missing": 5}
+C games: EVO event + method (1 timed over placeholder, parking skipped; 2 suffix; 3+4 doubleheader by minute; 5 ambiguous; 6 other clubs; 7 wrong clubs dropped; 8 ignored dropped; 9 minor league; 10 by performer ids)
+1|2|teams_date_timed
+2|5|teams_date
+3|6|teams_date_time
+4|7|teams_date_time
+5||
+6||
+7||
+8||
+9|13|teams_date
+10|14|teams_date
+D clubs -> TEvo performers (MLB from team_xref, Triple-A by exact registry name; a name listed twice stays NULL)
+135|San Diego Padres|
+141|Toronto Blue Jays|15535
+147|New York Yankees|15533
+234|Durham Bulls|90001
+443|Peoria Chiefs|
+494|Charlotte Knights|90002
+E the sellers own ids
+1|ticketmaster|0D0065557F262646
+2|provenue|9750396
+9|provenue|30768
+F parks learned from the games both sides name
+32|American Family Field|1913|American Family Field|2|matched_games
+2680|Petco Park|2775|Petco Park|1|matched_games
+3313|Yankee Stadium|5725|Yankee Stadium|2|matched_games
+6700|Durham Bulls Athletic Park|6001|Durham Bulls Athletic Park|1|matched_games
+1|5725
+2|2775
+3|1913
+4|1913
+9|6001
+10|5725
+G SeatGeek: 501 repointed to the games event, 502 filled, 503 (the twin, fits) left as it was
+501|2|mlb_schedule|1.0
+502|5|mlb_schedule|1.0
+503|7|matcher_v3_pm24h|
+H the hub: K111 carries game 1 and its SeatGeek id; K999 let go of game 7; new system rows for the rest
+f|2|1|501|aq_curated||Toronto Blue Jays at New York Yankees
+t|5|2|502|system_seed|tevo|Arizona Diamondbacks at San Diego Padres
+t|6|3|503|system_seed|tevo|Houston Astros at Milwaukee Brewers
+t|7|4||system_seed|tevo|Houston Astros at Milwaukee Brewers
+t|13|9||system_seed|tevo|Charlotte Knights at Durham Bulls
+t|14|10||system_seed|tevo|Toronto Blue Jays at New York Yankees
+f|11|||system_seed||Atlanta Braves at Los Angeles Dodgers
+I the audit trail of the pass
+drop|mlb_ticket_game|2|7,8
+hub_link|aq_event_map|6|1,2,3,4,9,10
+hub_row|aq_event_map|5|2,3,4,9,10
+hub_sg|aq_event_map|3|1,2,3
+match|mlb_ticket_game|6|1,2,3,4,9,10
+sg_fill|sg_events_canonical|1|2
+sg_repoint|sg_events_canonical|1|1
+7|clubs_differ
+8|event_ignored
+J a second pass changes nothing
+{"applied": true, "dropped": 0, "matched": 0, "seatgeek": {}, "ambiguous": 1, "unmatched": 4, "hub_linked": 0, "matched_by": {}, "venues_known": 4, "hub_sg_filled": 0, "games_venue_set": 0, "primary_ids_set": 0, "hub_rows_created": 0}
+24
+K the game moves a day: its EVO match is dropped, its hub link with it; the next pass finds the moved listing
+{"applied": true, "dropped": 1, "matched": 0, "seatgeek": {}, "ambiguous": 1, "unmatched": 5, "hub_linked": 0, "matched_by": {}, "hub_sg_filled": 0, "games_venue_set": 0, "primary_ids_set": 0, "hub_rows_created": 0}
+1||
+K111|2|
+{"applied": true, "dropped": 0, "matched": 1, "seatgeek": {}, "ambiguous": 1, "unmatched": 4, "hub_linked": 1, "matched_by": {"teams_date": 1}, "hub_sg_filled": 0, "games_venue_set": 0, "primary_ids_set": 0, "hub_rows_created": 0}
+1|2|teams_date
+K111|2|1|501
+L who may run it
+f|t|35 * * * *
