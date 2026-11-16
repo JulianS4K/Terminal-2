@@ -15,7 +15,10 @@ AS $function$
     'limits', jsonb_build_object(
       'buy_per_order_usd', least(c.crm_buy_per_order_cap_usd, m.per_order_cap_usd),
       'buy_per_day_usd', least(c.crm_buy_daily_cap_usd, m.daily_cap_usd),
-      'rebate_max_pct', c.gt_offer_rebate_max_pct))
+      -- 20261116030000: the CRM's own default limits (GET /settings/limits has them by marketplace);
+      -- for rebates the lower of the CRM's and S4K's outer bound
+      'rebate_max_pct', least(c.gt_offer_rebate_max_pct, public.sub_finder_crm_limit_pct('rebate_max', '*')),
+      'buy_max_cost_pct', public.sub_finder_crm_limit_pct('buy_max_cost', '*')))
   FROM public.sub_finder_config c LEFT JOIN public.manual_sub_buy_config m ON true;
 $function$
 
