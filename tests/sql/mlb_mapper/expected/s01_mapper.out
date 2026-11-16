@@ -40,7 +40,7 @@ G SeatGeek: 501 repointed to the games event, 502 filled, 503 (the twin, fits) l
 501|2|mlb_schedule|1.0
 502|5|mlb_schedule|1.0
 503|7|matcher_v3_pm24h|
-H the hub: K111 carries game 1 and its SeatGeek id; K999 let go of game 7; new system rows for the rest
+H the hub: K111 is tied to game 1 and carries its SeatGeek id; K999 let go of game 7; new system rows for the rest
 f|2|1|501|aq_curated||Toronto Blue Jays at New York Yankees
 t|5|2|502|system_seed|tevo|Arizona Diamondbacks at San Diego Padres
 t|6|3|503|system_seed|tevo|Houston Astros at Milwaukee Brewers
@@ -50,7 +50,7 @@ t|14|10||system_seed|tevo|Toronto Blue Jays at New York Yankees
 f|11|||system_seed||Atlanta Braves at Los Angeles Dodgers
 I the audit trail of the pass
 drop|mlb_ticket_game|2|7,8
-hub_link|aq_event_map|6|1,2,3,4,9,10
+hub_link|mlb_hub_link|6|1,2,3,4,9,10
 hub_row|aq_event_map|5|2,3,4,9,10
 hub_sg|aq_event_map|3|1,2,3
 match|mlb_ticket_game|6|1,2,3,4,9,10

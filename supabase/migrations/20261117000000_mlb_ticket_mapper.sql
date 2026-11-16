@@ -1,4 +1,4 @@
--- Migration 20261117000000 · level:data-collection · lane:A1 (data plane — MLB schedule) · writes:mlb_ticket_team(+tevo_performer_id),mlb_ticket_game(+tevo_venue_id,primary_seller,primary_event_id),mlb_venue_xref(new),mlb_map_audit(new),aq_event_map(+mlb_schedule_id; rows for mapped games; sg_event_id fill),sg_events_canonical(tevo_event_id for MLB games the schedule proves),mlb_ticket_event_fits()(new),mlb_ticket_map()(new),cron:mlb_ticket_map_hourly · reads:events,team_xref,entity_performer_map,venue_timezone (via tevo_event_utc) · pre:20261116230000
+-- Migration 20261117000000 · level:data-collection · lane:A1 (data plane — MLB schedule) · writes:mlb_ticket_team(+tevo_performer_id),mlb_ticket_game(+tevo_venue_id,primary_seller,primary_event_id),mlb_venue_xref(new),mlb_map_audit(new),aq_event_map(rows for mapped games + sg_event_id fill — DML only, no DDL),mlb_hub_link(new),sg_events_canonical(tevo_event_id for MLB games the schedule proves),mlb_ticket_event_fits()(new),mlb_ticket_map()(new),cron:mlb_ticket_map_hourly · reads:events,team_xref,entity_performer_map,venue_timezone (via tevo_event_utc) · pre:20261116230000
 --
 -- THE MLB MAPPER (operator 2026-11-16: "look at api pipeline for mlb and tickets.com and build mapper").
 --
@@ -54,19 +54,24 @@
 --      the first run; every change is in mlb_map_audit with the old id.
 --   6. HUB: every mapped game gets a hub row — the existing aq_event_map row of its EVO event (curated
 --      first), else a new system_seed row (create_system_aq_event, source 'mlb', tevo + venue + primary
---      'tevo' set) — and the row carries the game: aq_event_map.mlb_schedule_id (new column, one game per
---      row and one row per game, both ways), and sg_event_id filled from the game's SeatGeek match when the
---      row had none and no other hub row holds that SeatGeek id for another EVO event. A hub row whose game
---      was re-matched elsewhere loses the link. Nothing already set in the hub is overwritten.
+--      'tevo' set) — and mlb_hub_link ties the game to it (schedule_id PK, aq_short_event_id UNIQUE: one
+--      game per row and one row per game); the hub row's sg_event_id is filled from the game's SeatGeek
+--      match when it had none and no other hub row holds that SeatGeek id for another EVO event. A link
+--      whose hub row no longer is the game's EVO event goes. Nothing already set in the hub is overwritten.
+--      WHY A SIDE TABLE and not a column on aq_event_map: the hub is read inside long cron transactions
+--      around the clock (sg_classify_events_5min: 272 s average, up to 900 s, every 5 min; retention_tick
+--      hourly 654 s; axs_export_match 218 s), so an ALTER TABLE on it never gets its exclusive lock
+--      without queueing every hub reader behind it for minutes. The first apply of this migration
+--      (lock_timeout 10 s) failed on exactly that and rolled back. No DDL touches aq_event_map here.
 --   Every write is a row in mlb_map_audit (run_id, action, target, old/new ids). p_apply=false reports the
 --   same counts and writes nothing.
--- Also: an index on aq_event_map(tevo_event_id) — the hub is looked up by EVO event everywhere
--- (event_mapper_apply, the feed view, this) and had no index for it (the feed view took 39 s before
--- 20261116220000 worked around it).
+-- The hub has no index on tevo_event_id (the feed view took 39 s before 20261116220000 worked around it);
+-- this pass reads the hub ONCE, hash-joined to the mapped games' EVO ids, for the same reason. The index
+-- itself (CREATE INDEX CONCURRENTLY, outside a transaction) is a separate operator-run statement.
 -- mlb_ticket_match() / mlb_ticket_match_sg() / mlb_ticket_tick() are not changed: they keep running per
 -- club read; this pass is a superset that runs after them. A later migration may fold them.
 -- Rollback (reversible by data): UPDATE from mlb_map_audit by run_id (old_tevo / old_sg per target);
---   cron.unschedule('mlb_ticket_map_hourly'); the new columns and tables may stay.
+--   DELETE FROM mlb_hub_link; cron.unschedule('mlb_ticket_map_hourly'); the new columns and tables may stay.
 
 BEGIN;
 SET LOCAL lock_timeout = '10s';
@@ -107,7 +112,7 @@ CREATE TABLE IF NOT EXISTS public.mlb_map_audit (
   run_id      uuid NOT NULL,
   schedule_id bigint,
   action      text NOT NULL,     -- drop | match | sg_fill | sg_repoint | hub_row | hub_link | hub_unlink | hub_sg
-  target      text NOT NULL,     -- mlb_ticket_game | sg_events_canonical | aq_event_map
+  target      text NOT NULL,     -- mlb_ticket_game | sg_events_canonical | aq_event_map | mlb_hub_link
   target_key  text,
   old_tevo    bigint,
   new_tevo    bigint,
@@ -118,16 +123,21 @@ CREATE TABLE IF NOT EXISTS public.mlb_map_audit (
 CREATE INDEX IF NOT EXISTS mlb_map_audit_run_idx ON public.mlb_map_audit (run_id);
 CREATE INDEX IF NOT EXISTS mlb_map_audit_game_idx ON public.mlb_map_audit (schedule_id);
 
-ALTER TABLE public.aq_event_map ADD COLUMN IF NOT EXISTS mlb_schedule_id bigint;
-COMMENT ON COLUMN public.aq_event_map.mlb_schedule_id IS
-  'The MLB ticketing schedule id (mlb_ticket_game.schedule_id) of the game this hub row is; set by mlb_ticket_map(), one row per game and one game per row.';
-CREATE INDEX IF NOT EXISTS aq_event_map_mlb_schedule_idx ON public.aq_event_map (mlb_schedule_id) WHERE mlb_schedule_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS aq_event_map_tevo_event_idx ON public.aq_event_map (tevo_event_id) WHERE tevo_event_id IS NOT NULL;
+-- the game <-> hub row tie (a side table: no DDL on aq_event_map, see the header)
+CREATE TABLE IF NOT EXISTS public.mlb_hub_link (
+  schedule_id       bigint PRIMARY KEY,          -- mlb_ticket_game.schedule_id
+  aq_short_event_id text NOT NULL UNIQUE,        -- aq_event_map.aq_short_event_id
+  tevo_event_id     bigint,                      -- the EVO event both agreed on when linked
+  linked_at         timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE public.mlb_hub_link IS
+  'MLB ticketing game (mlb_ticket_game.schedule_id) -> its hub row (aq_event_map.aq_short_event_id); one game per row and one row per game; kept by mlb_ticket_map(). Join the hub through this, never by name or date.';
 
 ALTER TABLE public.mlb_venue_xref ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mlb_map_audit  ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.mlb_venue_xref, public.mlb_map_audit FROM anon, authenticated;
-GRANT SELECT ON public.mlb_venue_xref, public.mlb_map_audit TO service_role;
+ALTER TABLE public.mlb_hub_link   ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.mlb_venue_xref, public.mlb_map_audit, public.mlb_hub_link FROM anon, authenticated;
+GRANT SELECT ON public.mlb_venue_xref, public.mlb_map_audit, public.mlb_hub_link TO service_role;
 
 -- ---------------------------------------------------------------------------------------------------------
 -- does this EVO event fit this game? same local day, and both clubs named (anywhere) or both performer ids
@@ -199,7 +209,7 @@ BEGIN
   IF p_apply THEN
     INSERT INTO public.mlb_map_audit (run_id, schedule_id, action, target, target_key, old_tevo, note)
     SELECT v_run, d.schedule_id, 'drop', 'mlb_ticket_game', d.schedule_id::text, d.tevo_event_id, d.reason FROM _mm_drop d;
-    UPDATE public.aq_event_map a SET mlb_schedule_id = NULL FROM _mm_drop d WHERE a.mlb_schedule_id = d.schedule_id;
+    DELETE FROM public.mlb_hub_link l USING _mm_drop d WHERE l.schedule_id = d.schedule_id;
     UPDATE public.mlb_ticket_game g
        SET tevo_event_id = NULL, tevo_matched_at = NULL, tevo_match_method = NULL, changed_at = now()
       FROM _mm_drop d WHERE d.schedule_id = g.schedule_id;
@@ -348,17 +358,23 @@ BEGIN
   v_out := v_out || jsonb_build_object('seatgeek', v_by);
 
   -- 6. the hub knows the game
+  DROP TABLE IF EXISTS _mm_hubrow;
+  CREATE TEMP TABLE _mm_hubrow ON COMMIT DROP AS      -- one hub row per EVO event of a mapped game: one scan of the hub, hash-joined
+  SELECT DISTINCT ON (a.tevo_event_id) a.tevo_event_id, a.aq_short_event_id
+    FROM public.aq_event_map a
+    JOIN (SELECT DISTINCT x.tevo_event_id FROM _mm_eff x WHERE x.tevo_event_id IS NOT NULL) x ON x.tevo_event_id = a.tevo_event_id
+   ORDER BY a.tevo_event_id,
+            EXISTS (SELECT 1 FROM public.mlb_hub_link l WHERE l.aq_short_event_id = a.aq_short_event_id) DESC,   -- the row already tied to a game
+            (a.aq_source = 'aq_curated') DESC, a.imported_at NULLS LAST, a.aq_short_event_id;
   DROP TABLE IF EXISTS _mm_hub;
   CREATE TEMP TABLE _mm_hub ON COMMIT DROP AS
   SELECT g.schedule_id, x.tevo_event_id, g.sg_event_id, g.away_name || ' at ' || g.home_name AS nm, g.venue_name,
          coalesce(g.game_time_local, g.game_date::timestamp) AS starts, e.venue_id AS tevo_venue_id,
-         (SELECT a.aq_short_event_id FROM public.aq_event_map a WHERE a.tevo_event_id = x.tevo_event_id
-           ORDER BY (a.mlb_schedule_id = g.schedule_id) DESC NULLS LAST, (a.aq_source = 'aq_curated') DESC, a.imported_at NULLS LAST, a.aq_short_event_id
-           LIMIT 1) AS aq,
-         false AS created
+         h.aq_short_event_id AS aq, false AS created
     FROM public.mlb_ticket_game g
     JOIN _mm_eff x ON x.schedule_id = g.schedule_id AND x.tevo_event_id IS NOT NULL
-    JOIN public.events e ON e.id = x.tevo_event_id;
+    JOIN public.events e ON e.id = x.tevo_event_id
+    LEFT JOIN _mm_hubrow h ON h.tevo_event_id = x.tevo_event_id;
   v_out := v_out || jsonb_build_object('hub_rows_missing', (SELECT count(*) FROM _mm_hub WHERE aq IS NULL));
   IF p_apply THEN
     FOR r IN SELECT * FROM _mm_hub h WHERE h.aq IS NULL ORDER BY h.schedule_id LOOP
@@ -376,23 +392,25 @@ BEGIN
     INSERT INTO public.mlb_map_audit (run_id, schedule_id, action, target, target_key, new_tevo)
     SELECT v_run, h.schedule_id, 'hub_row', 'aq_event_map', h.aq, h.tevo_event_id FROM _mm_hub h WHERE h.created;
 
-    -- a hub row that names a game now matched to another EVO event lets go of it
+    -- a link whose hub row no longer is the game's EVO event (the game was re-matched, or the row changed) goes
     WITH u AS (
-      UPDATE public.aq_event_map a SET mlb_schedule_id = NULL
-        FROM public.mlb_ticket_game g
-       WHERE g.schedule_id = a.mlb_schedule_id AND a.tevo_event_id IS DISTINCT FROM g.tevo_event_id
-       RETURNING a.aq_short_event_id, g.schedule_id, a.tevo_event_id)
+      DELETE FROM public.mlb_hub_link l
+       USING _mm_eff x
+       WHERE x.schedule_id = l.schedule_id
+         AND x.tevo_event_id IS DISTINCT FROM (SELECT a.tevo_event_id FROM public.aq_event_map a WHERE a.aq_short_event_id = l.aq_short_event_id)
+       RETURNING l.aq_short_event_id, l.schedule_id, l.tevo_event_id)
     INSERT INTO public.mlb_map_audit (run_id, schedule_id, action, target, target_key, old_tevo)
-    SELECT v_run, u.schedule_id, 'hub_unlink', 'aq_event_map', u.aq_short_event_id, u.tevo_event_id FROM u;
+    SELECT v_run, u.schedule_id, 'hub_unlink', 'mlb_hub_link', u.aq_short_event_id, u.tevo_event_id FROM u;
 
+    -- every mapped game tied to its hub row, one game per row
     WITH u AS (
-      UPDATE public.aq_event_map a SET mlb_schedule_id = h.schedule_id
-        FROM _mm_hub h
-       WHERE a.aq_short_event_id = h.aq AND a.mlb_schedule_id IS NULL
-         AND NOT EXISTS (SELECT 1 FROM public.aq_event_map o WHERE o.mlb_schedule_id = h.schedule_id)
-       RETURNING a.aq_short_event_id, h.schedule_id, h.tevo_event_id)
+      INSERT INTO public.mlb_hub_link (schedule_id, aq_short_event_id, tevo_event_id)
+      SELECT h.schedule_id, h.aq, h.tevo_event_id FROM _mm_hub h
+       WHERE h.aq IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM public.mlb_hub_link l WHERE l.schedule_id = h.schedule_id OR l.aq_short_event_id = h.aq)
+      RETURNING aq_short_event_id, schedule_id, tevo_event_id)
     INSERT INTO public.mlb_map_audit (run_id, schedule_id, action, target, target_key, new_tevo)
-    SELECT v_run, u.schedule_id, 'hub_link', 'aq_event_map', u.aq_short_event_id, u.tevo_event_id FROM u;
+    SELECT v_run, u.schedule_id, 'hub_link', 'mlb_hub_link', u.aq_short_event_id, u.tevo_event_id FROM u;
     GET DIAGNOSTICS v_n = ROW_COUNT;
     v_out := v_out || jsonb_build_object('hub_rows_created', v_hub_rows, 'hub_linked', v_n);
 
@@ -436,9 +454,9 @@ COMMIT;
 -- VERIFY:
 --   SELECT action, target, count(*) FROM mlb_map_audit WHERE run_id = (SELECT run_id FROM mlb_map_audit ORDER BY at DESC LIMIT 1) GROUP BY 1,2;
 --   SELECT tevo_match_method, count(*) FROM mlb_ticket_game WHERE game_date >= current_date GROUP BY 1;
---   SELECT count(*) FILTER (WHERE mlb_schedule_id IS NOT NULL) FROM aq_event_map;      -- one per mapped game
+--   SELECT count(*) FROM mlb_hub_link;                                                 -- one per mapped game
 --   SELECT primary_seller, count(*) FROM mlb_ticket_game WHERE ticket_url IS NOT NULL GROUP BY 1;
 -- ROLLBACK (data): for one run, UPDATE sg_events_canonical SET tevo_event_id = a.old_tevo FROM mlb_map_audit a
 --   WHERE a.run_id = $1 AND a.target = 'sg_events_canonical' AND sg_event_id = a.target_key::bigint; the same shape for
---   mlb_ticket_game (old_tevo) and aq_event_map (mlb_schedule_id / sg_event_id -> NULL for hub_link / hub_sg rows;
---   DELETE the hub_row rows); SELECT cron.unschedule('mlb_ticket_map_hourly').
+--   mlb_ticket_game (old_tevo); DELETE FROM mlb_hub_link for hub_link rows; aq_event_map sg_event_id -> NULL for hub_sg
+--   rows and DELETE the hub_row rows; SELECT cron.unschedule('mlb_ticket_map_hourly').

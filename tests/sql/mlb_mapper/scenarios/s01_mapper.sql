@@ -29,10 +29,11 @@ INSERT INTO events (id, name, occurs_at_local, state, venue_id, venue_name, perf
   (13, 'Charlotte Knights at Durham Bulls',                        at_(17, '18:35'), 'shown',   6001, 'Durham Bulls Athletic Park', NULL),
   (14, 'Bronx Bombers Night',                                      at_(18, '19:05'), 'shown',   5725, 'Yankee Stadium', '{15533,15535}');  -- clubs only as performer ids
 
--- the hub: a curated row for event 2 (no SeatGeek id yet), a row that still names game 7 but points at event 11
-INSERT INTO aq_event_map (aq_short_event_id, event_name, venue_name, event_date, aq_source, imported_at, tevo_event_id, mlb_schedule_id) VALUES
-  ('K111', 'Toronto Blue Jays at New York Yankees', 'Yankee Stadium', at_(10, '13:05')::timestamp, 'aq_curated', now() - interval '30 days', 2, NULL),
-  ('K999', 'Atlanta Braves at Los Angeles Dodgers', 'Dodger Stadium', at_(15, '19:10')::timestamp, 'system_seed', now() - interval '30 days', 11, 7);
+-- the hub: a curated row for event 2 (no SeatGeek id yet), a row tied to game 7 that points at event 11
+INSERT INTO aq_event_map (aq_short_event_id, event_name, venue_name, event_date, aq_source, imported_at, tevo_event_id) VALUES
+  ('K111', 'Toronto Blue Jays at New York Yankees', 'Yankee Stadium', at_(10, '13:05')::timestamp, 'aq_curated', now() - interval '30 days', 2),
+  ('K999', 'Atlanta Braves at Los Angeles Dodgers', 'Dodger Stadium', at_(15, '19:10')::timestamp, 'system_seed', now() - interval '30 days', 11);
+INSERT INTO mlb_hub_link (schedule_id, aq_short_event_id, tevo_event_id) VALUES (7, 'K999', 11);
 
 -- SeatGeek: 501 links to the wrong EVO event (another day's game); 503 links to the doubleheader twin (fits: left alone); 502 has no link
 INSERT INTO sg_events_canonical (sg_event_id, sg_event_name, sg_event_date, sg_datetime_utc, sg_category, tevo_event_id, match_method) VALUES
@@ -79,8 +80,9 @@ SELECT schedule_id, tevo_venue_id FROM mlb_ticket_game WHERE tevo_venue_id IS NO
 \echo G SeatGeek: 501 repointed to the games event, 502 filled, 503 (the twin, fits) left as it was
 SELECT sg_event_id, tevo_event_id, match_method, match_confidence FROM sg_events_canonical ORDER BY 1;
 
-\echo H the hub: K111 carries game 1 and its SeatGeek id; K999 let go of game 7; new system rows for the rest
-SELECT aq_short_event_id ~ '^SYS-' AS system_row, tevo_event_id, mlb_schedule_id, sg_event_id, aq_source, primary_source, event_name FROM aq_event_map ORDER BY mlb_schedule_id NULLS LAST, aq_short_event_id;
+\echo H the hub: K111 is tied to game 1 and carries its SeatGeek id; K999 let go of game 7; new system rows for the rest
+SELECT a.aq_short_event_id ~ '^SYS-' AS system_row, a.tevo_event_id, l.schedule_id, a.sg_event_id, a.aq_source, a.primary_source, a.event_name
+  FROM aq_event_map a LEFT JOIN mlb_hub_link l ON l.aq_short_event_id = a.aq_short_event_id ORDER BY l.schedule_id NULLS LAST, a.aq_short_event_id;
 
 \echo I the audit trail of the pass
 SELECT action, target, count(*), string_agg(schedule_id::text, ',' ORDER BY schedule_id) FROM mlb_map_audit GROUP BY 1, 2 ORDER BY 1, 2;
@@ -94,11 +96,11 @@ SELECT count(*) FROM mlb_map_audit;
 UPDATE mlb_ticket_game SET game_date = d(11), game_time_local = at_(11, '13:05')::timestamp, game_time_utc = at_(11, '13:05')::timestamptz WHERE schedule_id = 1;
 SELECT out_(mlb_ticket_map(true) - 'hub_rows_missing' - 'venues_known');
 SELECT schedule_id, tevo_event_id, tevo_match_method FROM mlb_ticket_game WHERE schedule_id = 1;
-SELECT aq_short_event_id, tevo_event_id, mlb_schedule_id FROM aq_event_map WHERE aq_short_event_id = 'K111';
+SELECT a.aq_short_event_id, a.tevo_event_id, l.schedule_id FROM aq_event_map a LEFT JOIN mlb_hub_link l ON l.aq_short_event_id = a.aq_short_event_id WHERE a.aq_short_event_id = 'K111';
 UPDATE events SET occurs_at_local = at_(11, '13:05') WHERE id = 2;
 SELECT out_(mlb_ticket_map(true) - 'hub_rows_missing' - 'venues_known');
 SELECT schedule_id, tevo_event_id, tevo_match_method FROM mlb_ticket_game WHERE schedule_id = 1;
-SELECT aq_short_event_id, tevo_event_id, mlb_schedule_id, sg_event_id FROM aq_event_map WHERE tevo_event_id = 2;
+SELECT a.aq_short_event_id, a.tevo_event_id, l.schedule_id, a.sg_event_id FROM aq_event_map a LEFT JOIN mlb_hub_link l ON l.aq_short_event_id = a.aq_short_event_id WHERE a.tevo_event_id = 2;
 
 \echo L who may run it
 SELECT has_function_privilege('anon', 'mlb_ticket_map(boolean)', 'EXECUTE'), has_function_privilege('service_role', 'mlb_ticket_map(boolean)', 'EXECUTE'),
