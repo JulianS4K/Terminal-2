@@ -24,7 +24,7 @@ SH1|marketplace|StubHub|63|100|cover|auto_bought|-
 TP1|api|TickPick|64|100|cover|auto_bought|-
 VV1|api|Vivid Seats|65|100|cover|buy_manually|order_closed
 SG1|api|SeatGeek|66|100|cover|auto_bought|-
-7001X|request|GoTickets|60|500|cover|buy_manually|not_in_our_books
+7001X|request|GoTickets|60|500|cover|buy_manually|order_described_by_caller
 GoTickets|7001|100
 GoTickets|7002|100
 SeatGeek|SG1|100

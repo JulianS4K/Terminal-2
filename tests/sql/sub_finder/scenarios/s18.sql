@@ -7,8 +7,8 @@ INSERT INTO n2s_evo_current (event_id,tevo_ticket_group_id,section,row,quantity,
 INSERT INTO v_s4kcs_orders (source,s4k_order_id,tevo_event_id,section,row,quantity,price_per_ticket) SELECT 'StubHub', (6000+g)::text, g, '101','2',2,100 FROM generate_series(80,84) g;
 INSERT INTO n2s_items (n2s_id,order_number,marketplace,tevo_event_id,section,row,qty,price_per_ticket,status,status_label,item_source,raw) VALUES
  (1,'6080','StubHub',80,'101','2',2,100,'need2buy','Need2Buy','manual','{"seller_notes":"rush"}'),   -- labelled by status
- (2,'6081','StubHub',81,'101','2',2,100,'n2s','N2S','manual','{"label_status":"Need-2-Buy"}'),       -- labelled by label_status
- (3,'6082','StubHub',82,'101','2',2,100,'n2s','N2S','automatiq','{}'),                               -- plain N2S: not ours
+ (2,'6081','StubHub',81,'101','2',2,100,'need2buy','N2S','manual','{"label_status":"N2S"}'),         -- status alone decides
+ (3,'6082','StubHub',82,'101','2',2,100,'n2s','N2B','automatiq','{"label_status":"Need-2-Buy"}'),    -- loose spellings in other fields: not ours (20261116000000)
  (-4,'6083','StubHub',83,'101','2',2,100,'n2b','N2B','gmail','{}'),                                  -- our Gmail N2B book: not picked up
  (5,'6084','StubHub',84,'101','2',2,100,'need2buy','Need2Buy','manual','{}');
 UPDATE n2s_items SET is_terminal = true WHERE n2s_id = 5;                                            -- closed: not picked up
@@ -33,5 +33,5 @@ SELECT sub_finder_refresh() ? 'closed';
 SELECT watching, closed_reason FROM sub_finder_order WHERE order_number='6080'; SELECT count(*) FROM sub_finder_n2b_seen;
 UPDATE n2s_items SET status='need2buy', is_terminal=false WHERE n2s_id=1;
 SELECT sub_finder_refresh() ? 'closed'; SELECT count(*) FROM sub_finder_n2b_seen, (SELECT 1) x; SELECT count(*) FROM sub_finder_order WHERE order_number='6080';
-\echo label test
-SELECT sub_finder_need2buy('Need 2 Buy',NULL,NULL), sub_finder_need2buy('n2s','N2B',NULL), sub_finder_need2buy('n2s','N2S','{"label_status":"need_to_buy"}'), sub_finder_need2buy('n2s','N2S','{}'), sub_finder_need2buy(NULL,NULL,NULL);
+\echo label test: only status = need2buy counts
+SELECT sub_finder_need2buy('need2buy',NULL,NULL), sub_finder_need2buy('Need 2 Buy',NULL,NULL), sub_finder_need2buy('n2s','N2B',NULL), sub_finder_need2buy('n2s','N2S','{"label_status":"need_to_buy"}'), sub_finder_need2buy('n2s','N2S','{}'), sub_finder_need2buy(NULL,NULL,NULL);

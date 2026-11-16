@@ -6,7 +6,7 @@ For the CRM team. You send us orders that need a substitute ("sub"); we pull fre
 
 Code: `routers/subs_api.py` · SQL: migrations `20261112000000` (buy follow-up) and `20261112010000` (the API) · operator switches: [§9](#9-for-s4k-operators-switching-it-on).
 
-**Contents:** [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+**Contents:** [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [6e Audit log](#6e-the-audit-log) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
 
 ## Keeping this guide current
 
@@ -25,7 +25,7 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 
 | What | How often | What we take |
 |---|---|---|
-| Your Need-to-Sub feed (`GET /api/v1/n2s/items` on the CRM) | every 30 seconds, the first 250 items | each item's order number, marketplace, event, seats, quantity, price, status and notes. An item labelled `need2buy` starts a lookup by itself; a `sub_decision` written on it is carried out ([the feed](#the-other-way-in-label-the-item-need2buy-in-your-n2s-feed)) |
+| Your Need-to-Sub feed (`GET /api/v1/n2s/items` on the CRM) | every 30 seconds, the first 250 items | each item's order number, marketplace, event, seats, quantity, price, status and notes. An item whose `status` is `need2buy` starts a lookup by itself ([the feed](#the-other-way-in-label-the-item-need2buy-in-your-n2s-feed)) |
 | Your order book (our mirror of it) | about every 10 minutes | each order's event, seats, quantity, sale price and status. This is what an order is checked against before anything is bought |
 
 **2. What you send us** (your key, `/api/v1/subs`)
@@ -49,7 +49,8 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 | `GET /buys?updated_since=` | **every purchase S4K placed to cover an order, by either buyer, as one sync feed** ([§6c](#6c-what-we-bought)) |
 | `GET /autobuys?updated_since=` | only the purchases S4K's Need-to-Sub auto-buyer placed (the same items as in `/buys`; kept for callers already using it) |
 | `GET /settings/auto-buy-loss` | the automatic buy's loss limits as they stand ([§6d](#6d-the-automatic-buys-loss-limits)) |
-| `GET /ping`, `GET /docs` | your scopes, and this guide with its version |
+| `GET /audit?since=` | every buy, offer and limit change asked with your keys, with the address each call came from ([§6e](#6e-the-audit-log)) |
+| `GET /ping`, `GET /docs` | your scopes, the address we see you call from, the limits your buys are held to, and this guide with its version |
 
 **Two buyers, one feed.** S4K has two buyers: this API's (the automatic one-to-one buy, your buy call or feed decision, or seats a GoTickets customer accepted) and S4K's separate Need-to-Sub auto-buyer. `GET /buys` lists what both bought, each item marked with its `buyer`. A purchase made through this API is also on the order's `buy`. The same sale is never bought by both.
 
@@ -94,16 +95,16 @@ That is all the CRM has to build: one checkbox, one call when it is ticked, one 
 
 You do not have to call us to start a lookup. We already read your Need-to-Sub feed (`GET /api/v1/n2s/items` on the CRM) every 30 seconds. **Label an item `need2buy` there and we start the sub finder on it by ourselves**, within about a minute and a half (mig `20261113160000`). One feed, one poller.
 
-- **The label.** Set the item's `status` (or `status_label`, or `label_status`) to `need2buy`. Spacing, case and punctuation do not matter (`Need2Buy`, `need-2-buy`, `need_to_buy`, `N2B` all count).
+- **The label.** Set the item's `status` to `need2buy`, exactly: that one value in that one field (mig `20261116000000`, as you asked). No other spelling and no other field starts a lookup.
 - **What we take from the item.** Its `order_number` and `marketplace`. Everything else we look up ourselves, as for an alert. `seller_notes` becomes the order's `notes`.
 - **Reading the answer** is unchanged: `GET /api/v1/subs/orders/{order_number}` or the sync feed, with your key. Your API has no write surface, so we write nothing back to the CRM.
-- **It takes the whole path**, the automatic buy included ([§8](#8-how-matching-works-and-what-it-does-not-do)). An item in the feed that is not labelled `need2buy` is left to the Need-to-Sub pipeline as before.
+- **It takes the whole path**, the automatic buy included while automatic buying is on (it is off for now, see `auto_buy_off` in §8) ([§8](#8-how-matching-works-and-what-it-does-not-do)). An item in the feed that is not labelled `need2buy` is left to the Need-to-Sub pipeline as before.
 - **It stays live until one of two things is seen** (mig `20261113190000`): **the label is removed** in your feed (taken off, changed to any other status, or the item resolved: `closed_reason` `label_removed`), or **the order's status changes on its marketplace** (cancelled, delivered or rejected, read from the marketplace's own order feed: `order_cancelled` / `order_fulfilled` / `order_rejected`). `closed_by_s4k` means S4K closed the lookup by hand (a test or a dry run). Until then we keep pulling listings and re-matching it every round, except while a GoTickets offer is waiting on the customer. Labelling it again starts a fresh lookup.
 - The checkbox call above still works and can be used alongside the label.
 
 ### What we ask you to add to your N2S feed
 
-The label starts a lookup. With the additions below, the rest of the conversation could run through the same feed, and you would not have to call us for anything except reading the answer. They are in the order that helps most. **Group B is read today and is switched on** (mig `20261113170000`, on since 2026-11-13), under exactly the names below: a `buy` decision in your feed spends money with no call from you, so test with one order first and tell S4K before you do. Groups A and C are requests: tell S4K which you can add.
+The label starts a lookup. With the additions below, the rest of the conversation could run through the same feed, and you would not have to call us for anything except reading the answer. They are in the order that helps most. **Group B is switched off** (since 2026-11-16, as you asked): a decision written in your feed is not read, and a buy or an offer is made only by a call from your server ([§7](#7-buy-a-cover), [§7a](#7a-offer-a-sub-to-a-gotickets-customer)). It stays described below because the code exists (mig `20261113170000`); S4K switches it on again only if you ask. Groups A and C are requests: tell S4K which you can add.
 
 **A. The primary way: tell us only what changed** (please build this first)
 
@@ -123,11 +124,11 @@ What it needs from your feed:
 | `updated_since=<instant>` on `GET /n2s/items`, returning every item whose `updated_at` is later (including one whose label was just removed, or that was resolved) | lets us ask only for what changed, however large the book is. Removals must be included, or we would keep watching an order you have closed |
 | `need2buy` as a real status in `GET /n2s/meta`, usable as `GET /n2s/items?status=need2buy` | we ask for exactly the labelled items instead of scanning the book |
 | `updated_at` bumped on every change to an item, decision fields included | it is the cursor: a change that does not move it is never seen |
-| until then: newest change first by default, or `sort=updated_at&order=desc` honoured | the current way reads the first 250 items; a newly labelled item must be among them |
+| until then: newest change first by default, or `sort=updated_at&order_by=desc` honoured | the current way reads the first 250 items; a newly labelled item must be among them |
 
 When it is live on your side, tell S4K: we switch our reader over and confirm with you on one test item. Nothing else in this guide changes, and you read our answers exactly as before.
 
-**B. So your decision reaches us without a call (read today)**
+**B. So your decision reaches us without a call (switched off)**
 
 | Field on the item | Values | Replaces | What we would do |
 |---|---|---|---|
@@ -188,7 +189,7 @@ After a GoTickets customer accepts and the offered seats are gone (`accepted_nex
 | `in_hand_date`, `delivery_type` (read today when present) | so we do not suggest tickets that cannot be delivered in time |
 | `seller_notes` (**read today**: becomes the order's `notes`) | your notes travel with the order |
 
-**What stays as it is.** We cannot write to the CRM, so you still read our answer from us: `GET /api/v1/subs/orders/{order_number}` or the sync feed. If you would rather we called you when an answer changes, give S4K a URL and we can add that.
+**What stays as it is.** We cannot write to the CRM, so you still read our answer from us: `GET /api/v1/subs/orders/{order_number}` or the sync feed. If you would rather we called you when an answer changes, give S4K a URL and we can add that; each call would carry an HMAC signature of its body, made with a secret we share with you.
 
 ## 1. Quick start (5 minutes)
 
@@ -235,30 +236,57 @@ A finished order looks like this (shortened):
 
 ## 2. Access: keys, limits, errors
 
-**Authentication.** Send the key as `X-API-Key: <key>` (preferred) or `Authorization: Bearer <key>`. A key only works here after S4K has added it to the sub finder's allow-list, and it only ever sees the jobs it submitted.
+**Authentication.** Send the key as `X-API-Key: <key>` (preferred) or `Authorization: Bearer <key>`. A key only works here after S4K has added it to the sub finder's allow-list, and it only ever sees the jobs of its own account.
 
-**`GET /api/v1/subs/ping`** tells you what the key may do:
+**Your keys are never written in this guide.** S4K sends them to you separately.
+
+**Two keys, one account (mig `20261116000000`).** You hold two keys that share the same jobs and orders:
+
+| Key | Scopes | Use it for | Restricted to |
+|---|---|---|---|
+| read key | `subs:find` | the alert, submitting orders, notes, every read and the sync feeds | any address |
+| buy key | `subs:find`, `subs:buy`, `subs:offer` | `POST .../buy`, `POST .../offer-sub`, `PUT /settings/auto-buy-loss` | the addresses you gave S4K; from anywhere else every call with it answers 403 |
+
+The read key cannot spend: a buy, an offer or a settings change sent with it answers 403. The buy key cannot buy or offer until S4K has registered the address it calls from. Each key has its own rate and daily quota, so reading can never use up the calls a buy needs.
+
+**`GET /api/v1/subs/ping`** tells you what the key you sent may do:
 
 ```json
-{"ok": true, "key_label": "crm", "scopes": ["subs:find", "subs:buy"],
- "max_orders_per_job": 200, "ticketsdata_fallback": true, "generated_at": "2026-11-12T20:00:00.000000Z"}
+{"ok": true, "key_label": "crm sub finder buy", "scopes": ["subs:find", "subs:buy", "subs:offer"],
+ "max_orders_per_job": 200, "ticketsdata_fallback": true,
+ "your_ip": "203.0.113.7", "allowed_ips": ["203.0.113.7"],
+ "limits": {"buy_per_order_usd": 750, "buy_per_day_usd": 4000, "rebate_max_pct": 50},
+ "generated_at": "2026-11-16T20:00:00.000000Z"}
 ```
 
 | Scope | Means |
 |---|---|
 | `subs:find` | may submit orders and read results |
 | `subs:buy` | may also ask for a `buyable` cover to be bought (EVO; GoTickets while S4K has it on) |
+| `subs:offer` | may also offer a GoTickets customer replacement seats |
 
-An empty `scopes` list means the key is valid but not yet allow-listed (or the API is switched off).
+An empty `scopes` list means the key is valid but not yet allow-listed (or the API is switched off). `your_ip` is the address we saw this call come from: call ping from the server that will buy, and send S4K that value to register. `allowed_ips` is what the key is accepted from (empty: any address).
 
-**Limits.** Each key has a per-minute rate and a daily call quota (defaults 60 per minute and 2,000 per day; S4K can raise them). Every call counts, including polls. There is also a per-IP ceiling of 600 calls per minute on this path.
+**Spending limits (`limits`).** They apply to every buy and offer you ask for, whichever person or system sends it; `null` means no limit of that kind.
+
+| Limit | Applies to | When it is passed |
+|---|---|---|
+| `buy_per_order_usd` | one buy: the tickets at the quoted price | the buy call answers 403 with `"limit": "per_order"` |
+| `buy_per_day_usd` | all the buys your keys asked for in one New York day (a buy that stopped does not count) | the buy call answers 403 with `"limit": "per_day"` and `spent_today_usd` |
+| `rebate_max_pct` | `rebate_amount` on an offer, as a percentage of the sale total | the offer call answers 422 with `rebate_max`, the most it may be in dollars |
+
+Tax and fees are checked a second time when the buy is sent: a buy whose total with tax passes S4K's own ceiling stops with a reason in `buy.reasons` and nothing is bought. Automatic buys have a separate daily cap of their own.
+
+**Call limits.** Each key has a per-minute rate and a daily call quota (defaults 60 per minute and 2,000 per day; S4K can raise them). Every call counts against the key that made it, including polls. There is also a per-IP ceiling of 600 calls per minute on this path.
+
+**If a key leaks or a buy goes wrong.** Tell your S4K contact. A revoked key is refused from its next call. S4K can also stop all buying, which takes effect within 15 seconds; purchases already placed are still followed to their result. [§6e](#6e-the-audit-log) shows every buy and offer your keys asked for and where each call came from.
 
 **Errors.** Every error is JSON: `{"error": "<code>", "detail": "<human text>"}`.
 
 | HTTP | `error` | Meaning | What to do |
 |---|---|---|---|
 | 401 | `unauthorized` | key missing, wrong, revoked or expired | check the header and the key |
-| 403 | `forbidden` | key not allow-listed, API off, or buying not enabled for it | ask S4K |
+| 403 | `forbidden` | key not allow-listed, API off, or buying not enabled for it; a buy or offer sent with the read key; a call with the buy key from an address that is not registered; a buy over a spending limit (`limit` says which) | read `detail`; ask S4K |
 | 404 | `not_found` | no such job / order for this key | check the ids; jobs are per key |
 | 500 | (not JSON) | rare: our service lost its database connection twice in a row | read again after 10 seconds; nothing was lost |
 | 409 | `conflict` | a buy already exists for this order or sale, or the order number repeats in the job | read the order to see the existing buy |
@@ -339,7 +367,7 @@ Suggested polling: every 10 seconds; expect `done` in 20 seconds to 3 minutes, a
 | Field | Meaning |
 |---|---|
 | `job_id`, `order_number`, `site`, `section`, `row`, `qty`, `sold_ea`, `venue` | the order as we understood it |
-| `order_source` | where its details came from: `api` (the marketplace's own order feed), `n2s` or `marketplace` (our mirror of that CRM book), `request` (you sent them) |
+| `order_source` | where its details came from: `api` (the marketplace's own order feed), `n2s` or `marketplace` (our mirror of that CRM book), `request` (you sent them: such an order is searched, but never bought automatically and cannot be bought on a call) |
 | `notes`, `notes_at` | your own free text on this order and when it was last written ([§6a](#6a-notes-on-an-order)); null when none |
 | `feed_decision` | the last decision we read from your N2S feed for this order, and what carrying it out answered; null when none |
 | `tevo_event_id`, `event_name`, `event_date` | the event we matched it to |
@@ -514,6 +542,28 @@ How big a loss may we take when we buy by ourselves? You decide, per marketplace
 - If any value is out of range or not a number, nothing is changed and the answer is 422 with the reason. A key that may not set limits gets 403.
 - The answer is the limits as they now stand. A change takes effect at the next match, within about a minute; it never undoes a buy already requested. S4K keeps a record of every change with the key and `set_by`.
 
+## 6e. The audit log
+
+**`GET /api/v1/subs/audit`** lists every buy, offer and loss-limit change asked with your keys, newest first, refusals included (mig `20261116000000`). Either key may read it. Optional `since` (an ISO-8601 instant), `limit` (1 to 1000, default 200) and `offset`.
+
+```json
+{"count": 1, "total": 1, "limit": 200, "offset": 0, "generated_at": "2026-11-16T20:05:00.000000Z",
+ "items": [{"at": "2026-11-16T20:04:11.512345Z", "action": "buy", "order_number": "659213629",
+            "listing_id": "6833175743", "market": "evo", "amount_usd": 131.96, "rebate_usd": null,
+            "source_ip": "203.0.113.7", "key_label": "crm sub finder buy", "requested_by": "dana@crm",
+            "idempotency_key": "3f1c-0001", "http_status": 202, "outcome": "requested",
+            "buy_id": 21, "offer_id": null}]}
+```
+
+| Field | Meaning |
+|---|---|
+| `action` | `buy`, `offer` or `settings` |
+| `amount_usd` | a buy: the tickets at the price asked. An offer: the total of the seats offered. Null on a refusal |
+| `source_ip` | the address the call came from |
+| `http_status`, `outcome` | what we answered: `requested` (202), `saved` (a settings change), or the refusal's code (`forbidden`, `conflict`, `confirm_needed`, `invalid`, `not_found`) |
+
+It records calls. What became of a purchase is on the order's `buy` and in [§6c](#6c-what-we-bought); automatic buys are there too, and are not in this log because no call asked for them.
+
 ## 7. Buy a cover
 
 > **Single tickets (mig `20261113130000`).** A one-ticket order is bought automatically only into the exact row that was sold. A same-section cover in a better row is an offer: `action` reads `offer`, the cover has `needs_buyer_ok` and `offer_bypass: true`. Ask the buyer (on GoTickets, through [§7a](#7a-offer-a-sub-to-a-gotickets-customer): the order carries a `sub_offer` with `bypass_allowed: true`), or skip the offer and buy it here with `"confirm": true`.
@@ -532,12 +582,14 @@ Before buying we check the order against **our own copy of the order books** (mi
 {"listing_id": "6833175743", "requested_by": "dana@crm"}
 ```
 
-`requested_by` is optional free text naming the person; it is kept on the purchase record. Answers **202**:
+`requested_by` is optional free text naming the person; it is kept on the purchase record. The buy is held to the spending limits in [§2](#2-access-keys-limits-errors). Answers **202**:
 
 ```json
 {"buy_id": 21, "state": "requested", "order_number": "659213629",
  "market": "evo", "listing_id": "6833175743", "qty": 2, "max_price_ea": 65.98}
 ```
+
+**Retrying safely.** Send an `Idempotency-Key` header (or `idempotency_key` in the body) with the buy: any text of up to 80 characters that you make up once per buy. If the call times out, send it again with the same key: when the first one was accepted you get its answer back (202, with the header `Idempotent-Replay: true`) and nothing is bought twice. The same key on a different order or listing answers 422. A refused call is not remembered, so correct it and send it again under the same key. Without a key a repeat is still safe: one order can hold one live buy, so the second call answers 409 with the `buy_id` of the first. The offer call takes the key the same way.
 
 That is a request, not a purchase yet. What happens next, and what you see in the order's `buy` object:
 
@@ -619,7 +671,7 @@ For an order sold on **GoTickets**, when the only covers move the buyer (gates 3
 | 5 | `ask_crm: true` and `rebate_needed: true`: the customer is moved back, so **your yes must carry the rebate amount** (`0` for none). `rebate_suggested` is sale total − sub total |
 | 6 | `results_only: true`. Never offered; you only get the results |
 
-**Say yes:** `POST /api/v1/subs/orders/{order_number}/offer-sub` with `{"listing_id": "<sub_offer.listing_id>"}` (optional `market`, `requested_by`, and `rebate_amount`: dollars to give the customer back). **You set the rebate; we never do.** For gate 5 it is required (send `0` for no rebate) and the call answers 422 with our suggestion if it is missing; for gates 3 and 4 it is optional. It must be between 0 and the sale total. `sub_offer.rebate` then shows what was offered. You may name another cover of the same order instead, as long as it is gate 3, 4 or 5. Answers 202 `{"offer_id", "state": "requested", "gate", "section", "row", "rebate"}`. Saying nothing means no offer is made.
+**Say yes:** `POST /api/v1/subs/orders/{order_number}/offer-sub` with `{"listing_id": "<sub_offer.listing_id>"}` (optional `market`, `requested_by`, and `rebate_amount`: dollars to give the customer back). **You set the rebate; we never do.** For gate 5 it is required (send `0` for no rebate) and the call answers 422 with our suggestion if it is missing; for gates 3 and 4 it is optional. It must be between 0 and the rebate limit: `limits.rebate_max_pct` percent of the sale total ([§2](#2-access-keys-limits-errors)), or the sale total when no limit is set. Over it, the call answers 422 with `rebate_max` in dollars, and `rebate_suggested` never exceeds it. `sub_offer.rebate` then shows what was offered. An `Idempotency-Key` makes a retry safe, as for a buy ([§7](#7-buy-a-cover)). You may name another cover of the same order instead, as long as it is gate 3, 4 or 5. Answers 202 `{"offer_id", "state": "requested", "gate", "section", "row", "rebate"}`. Saying nothing means no offer is made.
 
 If the cover is flagged (`confirm_needed`), add `"confirm": true`; without it the answer is 409 `{"error": "confirm_needed", "flags": [...]}` and nothing is sent to GoTickets.
 
@@ -677,7 +729,8 @@ Parking passes and S4K's own listings are never offered.
 
 | `auto_buy_note` | Why it was not bought |
 |---|---|
-| `auto_buy_off` | automatic buying is switched off |
+| `auto_buy_off` | automatic buying is switched off. It is off since 2026-11-16, as you asked, until we have run some orders together: every buy is one a person at the CRM confirmed with the buy call |
+| `order_described_by_caller` | the order's details came from you (`order_source` `request`), not from our own books; such an order is never bought automatically |
 | `no_evo_one_to_one` | no buyable cover (EVO, or GoTickets while it is on; the name is historical) in the same section and row or closer at a profit — or, for a `need2buy` order, inside its loss limit (it may be on another market, a bigger loss, a loss on an order that is not `need2buy`, or only an offer) |
 | `needs_spare_ticket` | the only EVO lot has one ticket more than the sale; we never buy extra |
 | `obstructed_view` | the only one has an obstructed view |
@@ -735,6 +788,7 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 15 | Optional: the control over both buyers (mig `20261113430000`) | One row, `sub_buy_control`, above the sub finder's buyer and the N2S auto-buyer; each keeps its own switches and ceilings, and its own pace (one buy at a time, one per 15-second tick: that is the limit on buys sent together). Everything in the row ships off. **Behind `enforce = true`:** `stop` (neither buyer starts a new buy; buys already placed are still followed) and `daily_ceiling_usd` (both buyers, both markets, per New York day; a sub finder buy over it stops with `over_shared_ceiling`, an N2S buy waits). **On its own, off while NULL:** `evo_inflight_max` = at most that many EVO buys, from both buyers, waiting for a seller; the next waits (`requested`) until one is confirmed or rejected, or has gone `evo_inflight_minutes` (60) unanswered. `SELECT sub_buy_evo_inflight(), sub_buy_spent_today();` shows where both stand. The feed of both buyers' purchases is `sub_finder_buys()`, same keys as row 11 |
 | 16 | One buyer: the N2S auto-buyer files into this queue (mig `20261113440000`) | Off until the N2S desk sets `n2s_autobuy_config.buyer = 'queue'` (its switch, default `own`, set by hand once the worker that knows N2S rows is the only one running). Then N2S's claim files each buy it would have sent with `manual_sub_buy_file_n2s()` (`manual_sub_buy.origin = 'n2s'`, `n2s_exec_id`, `buy_by`) and one worker sends everything: one buy per 15-second tick, **N2S rows first**. An N2S row skips this path's switch and ceilings (N2S's own ran when it filed) but obeys row 15; it is handed out only while N2S is live, not killed and not stopped for that market; past `buy_by` it stops unsent (`queue_expired`). N2S's guards and its reading of the market's answer stay N2S's code. Results go to N2S's own row in the same transaction; an unknown N2S buy flips N2S's kill switch and holds back N2S buys only, and an unknown buy of ours holds back ours only. N2S rows are followed, alerted and listed (`/buys`: `n2s_auto`) from N2S's row, never twice |
 | 17 | How the TicketsData search finds the event (mig `20261114000000`) | `sub_finder_td_seeds(<tevo_event_id>)` lists the links a search can start from, best first: StubHub id (`aq_event_map.sh_event_id`), SeatGeek link (`sg_events_canonical.sg_url`), Vivid id (`aq_event_map.vivid_event_id`), across every map row of the event. An answer is used only at `td_min_confidence` (80) or more and on our event's local date; otherwise the next link is tried, at most `td_max_seeds` (2) per event per job, and the bad link goes to `sub_finder_td_seed_log` and is not asked again for 14 days. 429 is retried twice; 402 stops the job's remaining searches. Each answered search is checked against `td_budget_ok()` / `td_reports_budget_ok()` first and charged with `td_charge_credit()` after. With `td_writeback` on (default), an answer at `td_writeback_min_confidence` (90) or more gives its StubHub and Vivid ids to the event map through `event_mapper_apply()` (fill-only). `sub_finder_td_pull` shows each search: `seed`, `tried`, `note`, `match_confidence`, `match_date`, `learned` |
+| 18 | The CRM's two keys, addresses, limits and the record (mig `20261116000000`) | **Keys.** `sub_finder_key (key_id, account_id, can_buy, can_offer, allowed_ips inet[], note)`: a key listed there acts for `account_id` (the id in `key_ids` / `buy_key_ids` / `gt_offer_key_ids` that the jobs are filed under) and may only read unless `can_buy` / `can_offer`. The account id may be a revoked key: it is a filing id, not a credential. Issue a key with `mcp_issue_key`, then add its row; never put it in `key_ids`. **Addresses.** `allowed_ips` restricts every call with that key; `UPDATE sub_finder_key SET allowed_ips = '{203.0.113.7}' WHERE key_id = <id>;`. `sub_finder_config.write_requires_ip = true` refuses a buy, offer or settings change from any key with no address. The router reads the last `X-Forwarded-For` hop (`core/helpers.client_ip_from_xff`). **Limits.** `crm_buy_per_order_cap_usd`, `crm_buy_daily_cap_usd` (buys a CRM key asks for, checked in `sub_finder_buy`; NULL = none) and `gt_offer_rebate_max_pct` (NULL = the sale total). **Record.** `sub_finder_audit`: one row per buy, offer or loss-limit change asked through the API, refusals included; `GET /audit`. **Rotate a key:** issue the new one, add its `sub_finder_key` row, then `UPDATE mcp_api_keys SET revoked_at = now() WHERE id = <old>;` (refused from its next call). **Label and feed.** `sub_finder_need2buy` now matches `status = 'need2buy'` only; `n2b_decisions_enabled` and `auto_buy_enabled` are off since 2026-11-16 at the CRM's request |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys, automatic buys and operator buys together; EVO spend and GoTickets spend are each counted against the day ceiling on their own. An `unknown` outcome flips its kill switch and stops **all** buys on both markets until someone has checked the market named in `kill_reason`.
 
@@ -761,7 +815,8 @@ RULE 2 note: the one upstream write this API can cause besides the EVO buy is th
 | order number in `not_found` | not in the CRM books we mirror (yet) and no section / row / qty sent; retry in a minute or send the row |
 | job sits in `pulling` | a listing pull is slow; it is matched with whatever arrived after 3 minutes. Keep reading until it is `done` |
 | a read answers 500 | rare: a dropped connection on our side; read again after 10 seconds |
-| 403 on a buy for one order only | it is a PED order: report-only ([§5](#5-the-order-object)) |
+| 403 on a buy for one order only | it is a PED order: report-only ([§5](#5-the-order-object)); or the buy is over a spending limit (`limit` in the answer) |
+| 403 on every buy and offer | the call was sent with the read key, or with the buy key from an address that is not registered. `GET /ping` with the same key from the same server shows `scopes`, `your_ip` and `allowed_ips` |
 | `no_cover` but you can see tickets on the site | different section spelling, a row more than 5 back, a quantity the seller will not split, or the listing appeared after the pull. Submit again |
 | `price_above_ceiling` on a buy | the listing's price rose since the quote; submit the order again and buy from the new job |
 | 409 on a buy | read the order: a live buy already exists for it (requested, being bought, bought, or unclear). A buy that stopped does not block a new one. If the sale was covered by hand at S4K there is nothing more to buy |

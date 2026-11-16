@@ -11,6 +11,7 @@ DECLARE
   v_id   bigint;
   v_back integer;
   v_sale numeric;
+  v_max  numeric;                    -- the most a rebate may be (20261116000000)
   v_reb  numeric := nullif(round(p_rebate_amount, 2), 0);   -- 0 = no rebate
 BEGIN
   IF NOT coalesce((public.sub_finder_access(p_key_id)->>'offer')::boolean, false) THEN
@@ -48,14 +49,18 @@ BEGIN
   -- The rebate is the CRM's call: we suggest one (sale total - sub total) but never set it.
   -- Rows back (gate 5) need an explicit answer, 0 included; other gates take one if sent.
   v_sale := round(o.sold_ea * o.qty, 2);
+  v_max  := public.sub_finder_rebate_max(v_sale);
   IF v_gate = 5 AND p_rebate_amount IS NULL THEN
     RETURN jsonb_build_object('error', 'invalid',
       'detail', 'this sub moves the customer back: send rebate_amount (0 for none)',
-      'rebate_suggested', greatest((cv->>'profit')::numeric, 0));
+      'rebate_suggested', least(greatest((cv->>'profit')::numeric, 0), v_max), 'rebate_max', v_max);
   END IF;
-  IF v_reb IS NOT NULL AND (v_reb < 0 OR v_sale IS NULL OR v_reb > v_sale) THEN
+  IF v_reb IS NOT NULL AND (v_reb < 0 OR v_max IS NULL OR v_reb > v_max) THEN
     RETURN jsonb_build_object('error', 'invalid',
-      'detail', 'rebate_amount must be between 0 and the sale total', 'sale_total', v_sale);
+      'detail', CASE WHEN v_max IS DISTINCT FROM v_sale
+                     THEN 'rebate_amount must be between 0 and the rebate limit (rebate_max)'
+                     ELSE 'rebate_amount must be between 0 and the sale total' END,
+      'sale_total', v_sale, 'rebate_max', v_max);
   END IF;
   v_back := public.seat_row_rank(cv->>'row') - public.seat_row_rank(o.seat_row);
   BEGIN
