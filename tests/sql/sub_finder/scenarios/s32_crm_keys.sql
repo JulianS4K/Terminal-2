@@ -14,14 +14,18 @@ INSERT INTO v_s4kcs_orders (source,s4k_order_id,tevo_event_id,section,row,quanti
 UPDATE sub_finder_config SET enabled=true, key_ids='{7}', settle_min_s=0, auto_buy_enabled=true, buy_enabled=true, buy_key_ids='{7}', gt_offer_enabled=true, gt_offer_key_ids='{7}' WHERE id;
 
 \echo A a key not listed acts for itself and may do what its account may
-SELECT sub_finder_key_gate(7) - 'trusted_proxies';
+SELECT sub_finder_key_gate(7) - 'trusted_proxies' - 'client_ip_header' - 'ping_shows_headers';
 \echo A listed keys: 8 reads for account 7; 9 buys and offers for it, from its registered addresses only
 INSERT INTO sub_finder_key (key_id, account_id, can_buy, can_offer, allowed_ips, note) VALUES
  (8, 7, false, false, NULL, 'read'), (9, 7, true, true, '{203.0.113.7,198.51.100.0/24,2001:db8::/32}', 'buy');
 UPDATE sub_finder_config SET write_requires_ip = true WHERE id;
-SELECT sub_finder_key_gate(8) - 'trusted_proxies'; SELECT sub_finder_key_gate(9) - 'trusted_proxies';
+SELECT sub_finder_key_gate(8) - 'trusted_proxies' - 'client_ip_header' - 'ping_shows_headers'; SELECT sub_finder_key_gate(9) - 'trusted_proxies' - 'client_ip_header' - 'ping_shows_headers';
 \echo the proxies whose word the caller address rests on: our edge, IPv4 and IPv6
 SELECT jsonb_array_length(g->'trusted_proxies'), g->'trusted_proxies'->>13, g->'trusted_proxies'->>15 FROM sub_finder_key_gate(9) g;
+\echo the caller address can be read from a named header instead; /ping can show what arrived
+UPDATE sub_finder_config SET client_ip_header = 'cf-connecting-ip', ping_shows_headers = true WHERE id;
+SELECT g->>'client_ip_header', g->>'ping_shows_headers', g->>'client_ip_hops' FROM sub_finder_key_gate(9) g;
+UPDATE sub_finder_config SET client_ip_header = NULL, ping_shows_headers = false WHERE id;
 
 \echo B the label is status = need2buy and nothing else
 SELECT sub_finder_need2buy('need2buy', NULL, NULL), sub_finder_need2buy('Need2Buy', NULL, NULL), sub_finder_need2buy('n2b', NULL, NULL),

@@ -14,7 +14,10 @@ AS $function$
     'write_requires_ip', c.write_requires_ip,
     -- 20261116010000: which X-Forwarded-For entry is the caller, and whose word that rests on
     'client_ip_hops', c.client_ip_hops,
-    'trusted_proxies', (SELECT coalesce(jsonb_agg(text(a)), '[]'::jsonb) FROM unnest(c.trusted_proxy_cidrs) a))
+    'trusted_proxies', (SELECT coalesce(jsonb_agg(text(a)), '[]'::jsonb) FROM unnest(c.trusted_proxy_cidrs) a),
+    -- 20261116020000: or the one header our edge puts the caller's address in; and the /ping aid
+    'client_ip_header', c.client_ip_header,
+    'ping_shows_headers', c.ping_shows_headers)
   FROM public.sub_finder_config c LEFT JOIN public.sub_finder_key k ON k.key_id = p_key_id;
 $function$
 

@@ -135,6 +135,26 @@ def forwarded_ip(xff: str | None, hops: int, trusted: list) -> str | None:
     return parts[-hops]
 
 
+# the request headers a proxy may put the caller's address in; shown by /ping while ping_shows_headers is on
+FORWARDING_HEADERS = ("x-forwarded-for", "cf-connecting-ip", "true-client-ip", "x-real-ip", "forwarded",
+                      "cf-connecting-ipv6", "cf-ray", "x-forwarded-proto", "x-forwarded-host", "via")
+
+
+def header_ip(value: str | None, xff: str | None, trusted: list) -> str | None:
+    """The caller's address from the one header our edge writes it in (mig 20261116020000). It is
+    believed only on a request our edge handed to the host: the last X-Forwarded-For entry, which
+    the host's router writes itself, must be inside `trusted`. Anything else, or a value that is
+    not exactly one address, is no address."""
+    parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
+    if not parts or not ip_allowed(parts[-1], trusted):
+        return None
+    v = (value or "").strip()
+    try:
+        return str(ipaddress.ip_address(v))
+    except ValueError:
+        return None
+
+
 def dropped_connection(exc: BaseException) -> bool:
     """True for an HTTP transport failure (httpx.TransportError and its kin: the connection
     reset, closed or timed out), as opposed to an answer from the database."""
@@ -356,8 +376,12 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         # the address the call came from: the X-Forwarded-For entry our own proxies vouch for (mig
         # 20261116010000; the last entry alone is our edge, not the caller). No header: a direct connection.
         xff = request.headers.get("x-forwarded-for")
-        ip = (forwarded_ip(xff, int(gate.get("client_ip_hops") or 1), gate.get("trusted_proxies") or []) if xff
-              else request.client.host if request.client else None)
+        trusted = gate.get("trusted_proxies") or []
+        if gate.get("client_ip_header"):          # the header our edge writes the caller's address in
+            ip = header_ip(request.headers.get(gate["client_ip_header"]), xff, trusted)
+        else:
+            ip = (forwarded_ip(xff, int(gate.get("client_ip_hops") or 1), trusted) if xff
+                  else request.client.host if request.client else None)
         key = dict(row, id=gate.get("account_id") or row["id"], key_id=row["id"], ip=ip, gate=gate)
         allowed = gate.get("allowed_ips") or []
         if allowed and not ip_allowed(ip, allowed):
@@ -392,7 +416,10 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             ("subs:buy", access.get("buy") and writes and gate.get("buy", True)),
             ("subs:offer", access.get("offer") and writes and gate.get("offer", True))) if on]
         doc = crm_doc(DOC_PATH) or {}
-        return {"ok": True, "key_label": key.get("label"), "scopes": scopes,
+        # an operator's aid for choosing where the caller's address is read from; off unless switched on
+        seen = ({"forwarding_headers": {h: request.headers.get(h) for h in FORWARDING_HEADERS}}
+                if gate.get("ping_shows_headers") else {})
+        return {**seen, "ok": True, "key_label": key.get("label"), "scopes": scopes,
                 "max_orders_per_job": min(int(access.get("max_orders_per_job") or MAX_ORDERS), MAX_ORDERS),
                 "ticketsdata_fallback": bool(access.get("ticketsdata_fallback")),
                 # the address we saw this call come from, and the ones this key is accepted from ([] = any)
