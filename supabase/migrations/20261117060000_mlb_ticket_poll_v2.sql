@@ -161,8 +161,11 @@ BEGIN
        NULL, NULL)
     ) v(kind, o, n) WHERE v.kind IS NOT NULL
   LOOP
+    -- a status flip on game day is the game being played (scheduled → in progress → final), not news;
+    -- on a future game it is a postponement / cancellation
     INSERT INTO mlb_ticket_change (entity, schedule_id, kind, old_value, new_value, notable)
-    VALUES ('game', NEW.schedule_id, c.kind, c.o, c.n, true);
+    VALUES ('game', NEW.schedule_id, c.kind, c.o, c.n,
+            c.kind <> 'status_changed' OR NEW.game_date > current_date);
   END LOOP;
   RETURN NEW;
 END $$;
