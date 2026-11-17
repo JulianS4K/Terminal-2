@@ -86,6 +86,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
+from routers.mlb_feed import changes_response as mlb_changes_response
+from routers.mlb_feed import events_response as mlb_events_response
 from routers.mlb_feed import schedule_response as mlb_schedule_response
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
@@ -577,6 +579,30 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if not access.get("find"):
             return _err(403, "forbidden", "this key may not read the sub finder API")
         return mlb_schedule_response(get_db(), request.query_params)
+
+    def _mlb_reader(request: Request, tool: str):
+        key = _auth(request, tool)
+        if isinstance(key, JSONResponse):
+            return key
+        access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
+        if not access.get("find"):
+            return _err(403, "forbidden", "this key may not read the sub finder API")
+        return None
+
+    @router.get("/mlb/events")
+    def mlb_events(request: Request):
+        """Concerts and other live events at MLB and minor league ballparks, with the EVO event each
+        maps to (mig 20261117060000). Same keys as /mlb/schedule. Query and columns: routers/mlb_feed.py."""
+        denied = _mlb_reader(request, "mlb_events")
+        return denied or mlb_events_response(get_db(), request.query_params)
+
+    @router.get("/mlb/changes")
+    def mlb_changes(request: Request):
+        """Every change the MLB ticketing poller detected — links going live, date / time / venue /
+        status moves, on-sale dates, removed games, new promotions and stadium events (mig
+        20261117060000). Page with after_id. Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "mlb_changes")
+        return denied or mlb_changes_response(get_db(), request.query_params)
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
