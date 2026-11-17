@@ -37,7 +37,7 @@ BEGIN
     RETURN jsonb_build_object('error', 'invalid',
                               'detail', 'that listing is not a cover we can buy that this job quoted for this order');
   END IF;
-  -- 20261117020000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
+  -- 20261117100000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
   -- other. The lookup no longer quotes such a cover; this refuses one quoted before that.
   IF public.sub_finder_seat_is_ada(o.section, o.seat_row)
      <> public.sub_finder_seat_is_ada(cv->>'section', cv->>'row') THEN

@@ -1,4 +1,4 @@
--- Migration 20261117020000 · level:secondary-sales · lane:D0 · writes:sub_finder_seat_is_ada(new),sub_finder_match,sub_finder_buy,sub_finder_gt_offer_request,sub_finder_autobuy,sub_finder_gt_offer_buy
+-- Migration 20261117100000 · level:secondary-sales · lane:D0 · writes:sub_finder_seat_is_ada(new),sub_finder_match,sub_finder_buy,sub_finder_gt_offer_request,sub_finder_autobuy,sub_finder_gt_offer_buy
 --
 -- ACCESSIBLE (ADA / WHEELCHAIR) SEATS ARE NEVER SWAPPED WITH ORDINARY SEATS.
 -- Operator 2026-11-17, on StubHub order 659535353 (Stevie Wonder, Madison Square Garden, section
@@ -78,7 +78,7 @@ BEGIN
      AND (public.seat_row_rank(l.seat_row) <= public.seat_row_rank(o.seat_row) + v_back
           OR public.sub_finder_row_letters_differ(o.seat_row, l.seat_row))
     WHERE l.px > 0 AND l.quantity > 0
-      -- 20261117020000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace
+      -- 20261117100000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace
       -- each other, whichever was sold. Not a flag a person can confirm: the listing is not a cover.
       AND public.sub_finder_seat_is_ada(o.section, o.seat_row) = public.sub_finder_seat_is_ada(l.section, l.seat_row)
   ), strict_ok AS (
@@ -307,7 +307,7 @@ BEGIN
     RETURN jsonb_build_object('error', 'invalid',
                               'detail', 'that listing is not a cover we can buy that this job quoted for this order');
   END IF;
-  -- 20261117020000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
+  -- 20261117100000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
   -- other. The lookup no longer quotes such a cover; this refuses one quoted before that.
   IF public.sub_finder_seat_is_ada(o.section, o.seat_row)
      <> public.sub_finder_seat_is_ada(cv->>'section', cv->>'row') THEN
@@ -431,7 +431,7 @@ BEGIN
   IF cv IS NULL THEN
     RETURN jsonb_build_object('error', 'invalid', 'detail', 'that listing is not a cover this lookup quoted for this order');
   END IF;
-  -- 20261117020000: as for a buy, accessible and ordinary seats are never offered for each other
+  -- 20261117100000: as for a buy, accessible and ordinary seats are never offered for each other
   IF public.sub_finder_seat_is_ada(o.section, o.seat_row)
      <> public.sub_finder_seat_is_ada(cv->>'section', cv->>'row') THEN
     RETURN jsonb_build_object('error', 'forbidden', 'limit', 'ada_seating',
@@ -547,7 +547,7 @@ BEGIN
                          AND jsonb_array_length(public.sub_finder_cover_flags(x)) = 0)
         THEN 'needs_crm_confirm'
       ELSE 'profit_too_thin' END;
-    -- 20261117020000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
+    -- 20261117100000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
     -- other. The matcher no longer quotes such a cover; this stops one quoted before that rule.
     IF v_note IS NULL AND public.sub_finder_seat_is_ada(o.section, o.seat_row)
                        <> public.sub_finder_seat_is_ada(cv->>'section', cv->>'row') THEN
@@ -648,7 +648,7 @@ BEGIN
       OR public.sub_finder_order_closed(r.order_number, 'GoTickets') IS NOT NULL
       THEN 'order_closed'
     WHEN public.sub_finder_report_only(r.order_number) THEN 'report_only'   -- 20261113250000
-    -- 20261117020000: never an accessible seat for an ordinary one, or the other way round, even
+    -- 20261117100000: never an accessible seat for an ordinary one, or the other way round, even
     -- when the customer accepted an offer made before that rule
     WHEN public.sub_finder_seat_is_ada(o.section, o.seat_row)
          <> public.sub_finder_seat_is_ada(r.section, r.seat_row) THEN 'ada_seating'

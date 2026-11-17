@@ -38,7 +38,7 @@ BEGIN
   IF cv IS NULL THEN
     RETURN jsonb_build_object('error', 'invalid', 'detail', 'that listing is not a cover this lookup quoted for this order');
   END IF;
-  -- 20261117020000: as for a buy, accessible and ordinary seats are never offered for each other
+  -- 20261117100000: as for a buy, accessible and ordinary seats are never offered for each other
   IF public.sub_finder_seat_is_ada(o.section, o.seat_row)
      <> public.sub_finder_seat_is_ada(cv->>'section', cv->>'row') THEN
     RETURN jsonb_build_object('error', 'forbidden', 'limit', 'ada_seating',

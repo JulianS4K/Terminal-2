@@ -2,7 +2,7 @@
 \pset format unaligned
 \pset tuples_only on
 -- Accessible (ADA / wheelchair) seats and ordinary seats never replace each other (mig
--- 20261117020000, operator 2026-11-17 on StubHub order 659535353, section "204LWC"). The marker
+-- 20261117100000, operator 2026-11-17 on StubHub order 659535353, section "204LWC"). The marker
 -- may be in the row or in the section. Sales are 100 x2; every listing is 80 x2 on EVO, so each
 -- would otherwise be a profitable buy.
 INSERT INTO events (id,name,occurs_at_local,venue_id,primary_performer_id) SELECT g,'G'||g,now()+interval '5 days',6,5 FROM generate_series(301,308) g;

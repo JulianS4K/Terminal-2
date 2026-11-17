@@ -33,7 +33,7 @@ BEGIN
      AND (public.seat_row_rank(l.seat_row) <= public.seat_row_rank(o.seat_row) + v_back
           OR public.sub_finder_row_letters_differ(o.seat_row, l.seat_row))
     WHERE l.px > 0 AND l.quantity > 0
-      -- 20261117020000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace
+      -- 20261117100000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace
       -- each other, whichever was sold. Not a flag a person can confirm: the listing is not a cover.
       AND public.sub_finder_seat_is_ada(o.section, o.seat_row) = public.sub_finder_seat_is_ada(l.section, l.seat_row)
   ), strict_ok AS (

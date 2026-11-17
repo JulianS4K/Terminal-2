@@ -3,7 +3,7 @@
 \pset tuples_only on
 -- Rows a person reviews before anything is bought (mig 20261113450000): a single-letter row
 -- against a double-letter row, either way round. A wheelchair row against an ordinary one is not
--- reviewed but blocked (mig 20261117020000; more in s35). Sales are 100 x2; every
+-- reviewed but blocked (mig 20261117100000; more in s35). Sales are 100 x2; every
 -- listing is 80 x2 on EVO in the same section, so each would be a profitable gate 1 buy.
 INSERT INTO events (id,name,occurs_at_local,venue_id,primary_performer_id) SELECT g,'G'||g,now()+interval '5 days',999,5 FROM generate_series(201,209) g;
 INSERT INTO n2s_evo_current (event_id,tevo_ticket_group_id,section,row,quantity,retail_price,splits,is_owned,is_ancillary) VALUES
