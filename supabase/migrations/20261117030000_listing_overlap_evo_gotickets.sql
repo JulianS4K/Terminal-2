@@ -1,4 +1,4 @@
--- Migration 20261117030000 · level:data-collection · lane:A1 (data plane — cross-source listings) · writes:listing_overlap_config(new),listing_overlap_label(new),listing_overlap_event(new),listing_overlap_evo_live(new),listing_overlap_evo_poll(new),v_listing_overlap_event(new),listing_overlap_*()(new),cron:listing_overlap_tick_1min(new) · reads:listings_snapshots,gotickets_listings_snapshots,gotickets_event,event_metrics,evo_listings_poll_state,gt_listings_poll_state,events,collector_cadence
+-- Migration 20261117030000 · level:data-collection · lane:A1 (data plane — cross-source listings) · writes:listing_overlap_config(new),listing_overlap_label(new),listing_overlap_event(new),listing_overlap_evo_live(new),listing_overlap_evo_poll(new),v_listing_overlap_event(new),listing_overlap_*()(new),cron:listing_overlap_tick_30s(new) · reads:listings_snapshots,gotickets_listings_snapshots,gotickets_event,event_metrics,evo_listings_poll_state,gt_listings_poll_state,events,collector_cadence
 --
 -- ============================================================================
 -- Migration 20261117030000 — label every EVO and GoTickets listing as on both
@@ -70,10 +70,22 @@
 -- ratio moves 0.02), so writes follow listing churn, not poll volume. label_since is when
 -- the current label began.
 --
--- UPON POLLING. listing_overlap_tick() (cron listing_overlap_tick_1min, single-runner via
+-- UPON POLLING. listing_overlap_tick() (cron listing_overlap_tick_30s, single-runner via
 -- cron_try_lock) picks the events whose EVO or GoTickets poll fired after the capture last
 -- matched, keeps those where a new capture has actually landed, and matches up to
 -- tick_max_events of them, least recently matched first, inside tick_budget_seconds.
+--
+-- WHY EVERY 30 SECONDS (operator 2026-11-17: "note response times and fix timer
+-- accordingly"). Measured 2026-11-17 over three hours of the pinned polls:
+--   the poll tick fires at second :01 of every even minute and takes 8 s (p95 15 s);
+--   an EVO response is stamped 18 s after its poll fired (p95 64 s, max 76 s);
+--   a GoTickets response arrives ~13 s after firing and is stored by gt_ingest_drain_1min,
+--   which starts at second :01 of every minute and takes 1.3 s (p95 7 s).
+-- A job on the minute would start alongside that drain, miss what it is storing, and label
+-- a GoTickets poll a full minute late. Every 30 seconds, whatever its phase, a stored
+-- response is matched within 30 seconds. The work budget is 20 s, counted from the start
+-- of the tick, so a tick ends before the next one is due; a tick that does overrun makes
+-- the next one skip (cron_try_lock).
 -- A book older than three poll intervals (collector_cadence) plus 15 minutes is not
 -- matched against: the event is marked stale_evo / stale_gt and its labels are removed —
 -- no label rather than a wrong one. Labels untouched for 50 hours are removed the same way.
@@ -83,7 +95,7 @@
 -- Service-role only for now; no terminal panel reads it yet.
 --
 -- STOP IT. UPDATE public.listing_overlap_config SET enabled = false;  (the tick returns at once)
--- rollback: SELECT cron.unschedule('listing_overlap_tick_1min');
+-- rollback: SELECT cron.unschedule('listing_overlap_tick_30s');
 --           DROP VIEW public.v_listing_overlap_event;
 --           DROP FUNCTION public.listing_overlap_event_listings(bigint), public.listing_overlap_tick(integer, integer),
 --             public.listing_overlap_match_event(bigint), public.listing_overlap_compute(bigint, timestamptz, boolean, numeric, numeric),
@@ -107,12 +119,12 @@ CREATE TABLE IF NOT EXISTS public.listing_overlap_config (
   price_center        numeric     NOT NULL DEFAULT 0.989 CHECK (price_center > 0),
   price_band          numeric     NOT NULL DEFAULT 0.12  CHECK (price_band > 0 AND price_band < 1),
   tick_max_events     integer     NOT NULL DEFAULT 80    CHECK (tick_max_events BETWEEN 1 AND 500),
-  tick_budget_seconds integer     NOT NULL DEFAULT 40    CHECK (tick_budget_seconds BETWEEN 1 AND 50),
+  tick_budget_seconds integer     NOT NULL DEFAULT 20    CHECK (tick_budget_seconds BETWEEN 1 AND 50),
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE public.listing_overlap_config IS
-  'One row. enabled = the kill switch for listing_overlap_tick(); price_center / price_band = the GoTickets all-in to EVO retail price ratio a pair must fall in (log scale); tick_* = work per one-minute tick (mig 20261117030000).';
+  'One row. enabled = the kill switch for listing_overlap_tick(); price_center / price_band = the GoTickets all-in to EVO retail price ratio a pair must fall in (log scale); tick_* = work per 30-second tick (mig 20261117030000).';
 INSERT INTO public.listing_overlap_config (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.listing_overlap_label (
@@ -650,7 +662,7 @@ BEGIN
 END
 $function$;
 COMMENT ON FUNCTION public.listing_overlap_tick(integer, integer) IS
-  'Scan-on-arrival for the EVO / GoTickets overlap labels: matches every event with an EVO or GoTickets listings capture newer than the one last matched (least recently matched first, at most p_max events, inside p_budget_seconds; both default to listing_overlap_config), then expires labels untouched for 50 hours. Does nothing when listing_overlap_config.enabled is false. Cron listing_overlap_tick_1min.';
+  'Scan-on-arrival for the EVO / GoTickets overlap labels: matches every event with an EVO or GoTickets listings capture newer than the one last matched (least recently matched first, at most p_max events, inside p_budget_seconds; both default to listing_overlap_config), then expires labels untouched for 50 hours. Does nothing when listing_overlap_config.enabled is false. Cron listing_overlap_tick_30s.';
 
 -- ---------------------------------------------------------------------------
 -- Reading the result
@@ -724,17 +736,18 @@ GRANT EXECUTE ON FUNCTION
 TO service_role;
 
 -- ---------------------------------------------------------------------------
--- Schedule: every minute, one runner at a time. Steady state is one index probe per event
--- polled in the last hour plus one match per landed poll (about 65 a minute at the
--- 2026-10-23 pin load). The statement timeout is the outer bound on the loop's own budget.
+-- Schedule: every 30 seconds, one runner at a time (why 30: see the header). Steady state is
+-- one index probe per event polled in the last hour plus one match per landed poll (about
+-- 65 a minute at the 2026-10-23 pin load, ~20 ms each). The statement timeout is the outer
+-- bound; the loop's own 20 s budget is what normally ends a tick.
 -- ---------------------------------------------------------------------------
 
 DO $schedule$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'cron') THEN
     PERFORM cron.schedule(
-      'listing_overlap_tick_1min', '* * * * *',
-      $cron$SET statement_timeout = '55s'; DO $b$ BEGIN IF NOT public.cron_try_lock('listing_overlap_tick') THEN RETURN; END IF; PERFORM public.listing_overlap_tick(); END $b$;$cron$);
+      'listing_overlap_tick_30s', '30 seconds',
+      $cron$SET statement_timeout = '50s'; DO $b$ BEGIN IF NOT public.cron_try_lock('listing_overlap_tick') THEN RETURN; END IF; PERFORM public.listing_overlap_tick(); END $b$;$cron$);
   END IF;
 END
 $schedule$;

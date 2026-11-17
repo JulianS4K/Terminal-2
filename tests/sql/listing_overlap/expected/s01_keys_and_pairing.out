@@ -61,4 +61,4 @@ listing_overlap_evo_poll rls=true anon_select=false authenticated_select=false
 listing_overlap_label rls=true anon_select=false authenticated_select=false
 v_listing_overlap_event rls=false anon_select=false authenticated_select=false
 5 schedule:
-listing_overlap_tick_1min|* * * * *|SET statement_timeout = '55s'; DO $b$ BEGIN IF NOT public.cron_try_lock('listing_overlap_tick') THEN RETURN; END IF; PERFORM public.listing_overlap_tick(); END $b$;
+listing_overlap_tick_30s|30 seconds|SET statement_timeout = '50s'; DO $b$ BEGIN IF NOT public.cron_try_lock('listing_overlap_tick') THEN RETURN; END IF; PERFORM public.listing_overlap_tick(); END $b$;
