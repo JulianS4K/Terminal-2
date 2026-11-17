@@ -20,7 +20,12 @@ from core.substitutions import (  # noqa: E402
     compare_rows,
     find_row_substitutions,
     find_section_substitutions,
+    SECTION_AMBIGUOUS,
+    gotickets_buy_url,
     parse_row,
+    section_match_key,
+    section_parts,
+    splits_allow,
 )
 
 
@@ -265,3 +270,192 @@ def test_find_fee_changes_cheapest_ranking():
     out = find_row_substitutions("104", "12", 1, cands, fee_pct=50)
     assert out["best"]["ticket_group_id"] == "A"
     assert out["best"]["landed_cost"] == 150.0   # 100 * 1.5
+
+
+# ---------- section_match_key (cross-source section identity) ----------
+
+def test_section_key_strips_zone_prefix():
+    # The exchange says "311"; GoTickets says "Promenade  311" (double space).
+    assert section_match_key("311") == "311"
+    assert section_match_key("Promenade  311") == "311"
+    assert section_match_key("Section 311") == "311"
+    assert section_match_key("Loge 202") == "202"
+
+
+def test_section_key_keeps_non_numeric_labels_whole():
+    # No trailing number -> never invent one; compare the normalized label.
+    assert section_match_key("GA") == "GA"
+    assert section_match_key("Box A") == "BOX A"
+    assert section_match_key("orchestra center") == "ORCHESTRA CENTER"
+
+
+def test_section_key_empty_is_none():
+    assert section_match_key(None) is None
+    assert section_match_key("   ") is None
+
+
+def test_section_key_keeps_alphanumeric_block():
+    assert section_match_key("Field Box 12A") == "12A"
+
+
+def test_section_parts_splits_zone_from_block():
+    assert section_parts("Promenade  311") == ("PROMENADE 311", "311", False)
+    assert section_parts("311") == ("311", "311", True)
+    assert section_parts("GA") == ("GA", None, False)
+    assert section_parts(None) == (None, None, False)
+
+
+def test_two_zoned_labels_sharing_a_number_are_not_the_same_section():
+    # Real shape from prod: one event carrying both. Equal keys, but neither is
+    # bare, so they must never match each other.
+    cands = [{"id": "x", "section": "Center Field Sports Bar 3", "row": "1",
+              "quantity": 2, "retail_price": 10.0}]
+    res = find_row_substitutions("Audi Yankees Club 3", "5", 2, cands)
+    assert res["subs"] == [] and res["ambiguous"] == []
+    assert res["counts"]["scanned"] == 0
+
+
+def test_bare_sold_section_with_two_zoned_labels_goes_to_ambiguous():
+    # "106" can't be resolved to Loge or Lower — the seat may be fine, but we
+    # won't claim which section it is.
+    cands = [
+        {"id": "loge", "section": "Loge 106", "row": "1", "quantity": 2,
+         "retail_price": 10.0},
+        {"id": "lower", "section": "Lower 106", "row": "1", "quantity": 2,
+         "retail_price": 20.0},
+    ]
+    res = find_row_substitutions("106", "9", 2, cands)
+    assert res["subs"] == []
+    assert {a["ticket_group_id"] for a in res["ambiguous"]} == {"loge", "lower"}
+    assert all(a["match_type"] == SECTION_AMBIGUOUS for a in res["ambiguous"])
+
+
+def test_bare_sold_section_with_one_zoned_label_is_a_clean_match():
+    cands = [{"id": "gt", "section": "Promenade  311", "row": "M", "quantity": 2,
+              "retail_price": 10.0}]
+    res = find_row_substitutions("311", "R", 2, cands)
+    assert [x["ticket_group_id"] for x in res["subs"]] == ["gt"]
+    assert res["subs"][0]["match_type"] == UPGRADE
+
+
+def test_exact_label_match_survives_an_ambiguous_key():
+    # An exact-label candidate is never collateral damage of the guard.
+    cands = [
+        {"id": "exact", "section": "106", "row": "1", "quantity": 2, "retail_price": 30.0},
+        {"id": "loge", "section": "Loge 106", "row": "1", "quantity": 2, "retail_price": 10.0},
+        {"id": "lower", "section": "Lower 106", "row": "1", "quantity": 2, "retail_price": 20.0},
+    ]
+    res = find_row_substitutions("106", "9", 2, cands)
+    assert [x["ticket_group_id"] for x in res["subs"]] == ["exact"]
+
+
+# ---------- splits_allow ----------
+
+def test_splits_allow_respects_lot_sizes():
+    assert splits_allow({"splits": [2, 4]}, 2) is True
+    assert splits_allow({"splits": [2, 4]}, 3) is False
+    assert splits_allow({"splits": [4]}, 2) is False
+
+
+def test_splits_allow_permissive_when_unknown():
+    # Absent or unusable splits mean the source didn't say — don't drop a
+    # real sub over missing metadata.
+    assert splits_allow({}, 2) is True
+    assert splits_allow({"splits": None}, 2) is True
+    assert splits_allow({"splits": []}, 2) is True
+    assert splits_allow({"splits": ["junk"]}, 2) is True
+
+
+def test_find_excludes_lot_that_cannot_split_to_needed_qty():
+    cands = [
+        {"id": 1, "section": "311", "row": "M", "quantity": 4, "splits": [4],
+         "retail_price": 100.0},
+        {"id": 2, "section": "311", "row": "M", "quantity": 4, "splits": [2, 4],
+         "retail_price": 120.0},
+    ]
+    res = find_row_substitutions("311", "R", 2, cands)
+    assert [s["ticket_group_id"] for s in res["subs"]] == [2]
+
+
+# ---------- gotickets_buy_url ----------
+
+def test_gotickets_buy_url_shape():
+    url = gotickets_buy_url(1252283, 3262193)
+    assert url == ("https://pro.gotickets.com/tickets/1252283/"
+                   "?sortBy=price&sortDirection=asc&sections=3262193")
+
+
+def test_gotickets_buy_url_without_section_still_links_event():
+    assert gotickets_buy_url(1252283) == (
+        "https://pro.gotickets.com/tickets/1252283/?sortBy=price&sortDirection=asc")
+
+
+def test_gotickets_buy_url_none_without_event_id():
+    assert gotickets_buy_url(None, 3262193) is None
+    assert gotickets_buy_url("", 3262193) is None
+
+
+# ---------- merged pool: exchange + GoTickets ----------
+
+def test_find_matches_gotickets_label_against_exchange_section():
+    # The real shape of the merged market pool: same physical section, two
+    # different labels, and GoTickets is the cheaper cover.
+    cands = [
+        {"id": "tg1", "section": "311", "row": "O", "quantity": 2, "splits": [2],
+         "retail_price": 262.10, "inv_source": "tevo_market"},
+        {"id": "gt1", "section": "Promenade  311", "row": "O", "quantity": 2,
+         "splits": [2], "cost": 254.44, "fee_exempt": True,
+         "inv_source": "gotickets",
+         "buy_url": gotickets_buy_url(1252283, 3262193)},
+    ]
+    res = find_row_substitutions("311", "R", 2, cands, revenue_per_ticket=280.0)
+    assert res["counts"]["scanned"] == 2
+    best = res["best"]
+    assert best["inv_source"] == "gotickets"
+    assert best["landed_cost"] == 254.44
+    assert best["buy_url"].endswith("sections=3262193")
+    assert best["pnl_total"] == round((280.0 - 254.44) * 2, 2)
+
+
+def test_fee_exempt_candidate_is_not_marked_up():
+    # A market fee applies to the exchange ask but not to an all-in price.
+    cands = [
+        {"id": "tg1", "section": "311", "row": "M", "quantity": 2,
+         "retail_price": 250.0, "inv_source": "tevo_market"},
+        {"id": "gt1", "section": "Promenade  311", "row": "M", "quantity": 2,
+         "cost": 255.0, "fee_exempt": True, "inv_source": "gotickets"},
+    ]
+    res = find_row_substitutions("311", "R", 2, cands, fee_pct=10.0)
+    by_id = {s["ticket_group_id"]: s for s in res["subs"]}
+    assert by_id["tg1"]["landed_cost"] == 275.0   # 250 + 10%
+    assert by_id["gt1"]["landed_cost"] == 255.0   # already all-in
+    # …which flips the ranking: the cheaper ask is the pricier cover.
+    assert res["best"]["ticket_group_id"] == "gt1"
+
+
+def test_section_subs_carry_buy_url_and_respect_splits():
+    cands = [
+        {"id": "a", "section": "310", "row": "C", "quantity": 2, "splits": [2],
+         "cost": 300.0, "fee_exempt": True, "inv_source": "gotickets",
+         "buy_url": gotickets_buy_url(1252283, 999)},
+        # cheaper, better section, but only sells as a 4-lot — not a cover for 2.
+        {"id": "b", "section": "310", "row": "A", "quantity": 4, "splits": [4],
+         "cost": 200.0, "fee_exempt": True, "inv_source": "gotickets"},
+    ]
+    res = find_section_substitutions("311", 2, cands, {"311": 250.0, "310": 400.0})
+    assert res["counts"]["section_subs"] == 1
+    sub = res["section_subs"][0]
+    assert sub["match_type"] == SECTION_UPGRADE
+    assert sub["to_section"] == "310"
+    assert sub["buy_url"].endswith("sections=999")
+
+
+def test_section_phase_does_not_score_zoned_labels():
+    # The quality map is keyed on exchange labels; a zoned label has no score,
+    # so it sits out the section phase rather than borrowing "310"'s median.
+    cands = [
+        {"id": "gt", "section": "Promenade  310", "row": "C", "quantity": 2,
+         "cost": 300.0, "inv_source": "gotickets"},
+    ]
+    res = find_section_substitutions("311", 2, cands, {"311": 250.0, "310": 400.0})
+    assert res["counts"]["section_subs"] == 0

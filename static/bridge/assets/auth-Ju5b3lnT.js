@@ -1,0 +1,1 @@
+function e(e){if(!e)return null;let t=e.user_metadata??{};return{uid:e.id,email:e.email??null,displayName:t.display_name??t.name??t.full_name??null,photoURL:t.avatar_url??t.picture??null,emailVerified:!!e.email_confirmed_at}}function t(e){return(e?.app_metadata??{}).admin===!0}var n=null;function r(e){n=e}function i(){return n}export{e as i,t as n,r,i as t};

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>VibePass Prices — Ticket Price Tracking for Sports and Concerts</title>
+  <meta name="description" content="Track get-in ticket prices for sports, concerts and shows. See price history and whether prices are rising or falling." />
+  <link rel="icon" type="image/svg+xml" href="/static/store/favicon.svg" />
+  <link rel="stylesheet" href="/static/prices/prices.css?v=20261013" />
+</head>
+<body data-page="home">
+  <div class="hero-bg">
+    <div class="wrap">
+      <header class="topbar"><a class="brand" href="/prices">VibePass <span>Prices</span></a></header>
+      <section class="home-hero">
+        <h1>Ticket Price Tracking for<br />Sports and Concerts</h1>
+        <div class="search"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><input type="search" placeholder="Team, Artist, or Venue" aria-label="Search teams, artists or venues" autocomplete="off" /></div>
+      </section>
+    </div>
+  </div>
+  <main class="wrap">
+    <section id="watchSec" hidden>
+      <h2 class="section">Your watchlist</h2>
+      <p class="section-sub">Saved in this browser.</p>
+      <div class="chips" id="watchList"></div>
+    </section>
+    <h2 class="section">Browse by league</h2>
+    <p class="section-sub">Every upcoming game in the next 30 days.</p>
+    <div class="chips">
+      <a href="#hot" class="chip league" data-league="nfl">NFL</a>
+      <a href="#hot" class="chip league" data-league="college">College</a>
+      <a href="#hot" class="chip league" data-league="mlb">MLB</a>
+      <a href="#hot" class="chip league" data-league="nhl">NHL</a>
+      <a href="#hot" class="chip league" data-league="nba">NBA</a>
+      <a href="#hot" class="chip league" data-league="mls">MLS</a>
+      <a href="#hot" class="chip league" data-league="wnba">WNBA</a>
+    </div>
+    <h2 class="section" id="hot">Hottest tickets</h2>
+    <p class="section-sub">Ranked by get-in price — the cheapest seat into the building.</p>
+    <div class="filters">
+      <select id="when" class="ctl" aria-label="Date range">
+        <option value="today">Today</option>
+        <option value="tomorrow">Tomorrow</option>
+        <option value="weekend">This weekend</option>
+        <option value="week">Next 7 days</option>
+        <option value="month">Next 30 days</option>
+      </select>
+      <div class="chips" id="catChips">
+        <button type="button" class="chip is-on" data-v="">All</button>
+        <button type="button" class="chip" data-v="concerts">Concerts</button>
+        <button type="button" class="chip" data-v="nfl">NFL</button>
+        <button type="button" class="chip" data-v="college">College</button>
+        <button type="button" class="chip" data-v="mlb">MLB</button>
+        <button type="button" class="chip" data-v="nba">NBA</button>
+        <button type="button" class="chip" data-v="nhl">NHL</button>
+        <button type="button" class="chip" data-v="mls">MLS</button>
+        <button type="button" class="chip" data-v="theater">Theater</button>
+        <button type="button" class="chip" data-v="comedy">Comedy</button>
+      </div>
+    </div>
+    <div id="table"></div>
+  </main>
+  <div class="wrap">
+    <footer class="foot">Get-in = the lowest listed price per ticket (before marketplace fees) in the inventory we track. Prices are checked periodically and can lag the live market; always confirm on the marketplace before you buy. Links go to third-party sites.</footer>
+  </div>
+  <script src="/static/lib/s4k.js"></script>
+  <script src="/static/prices/prices.js?v=20261013"></script>
+</body>
+</html>

@@ -7,11 +7,24 @@ Credentials in Supabase Vault as `GOTICKETS_ACCESS_ID` and
 for `PropertiesService.getScriptProperties()`.
 
 Endpoints used:
+  GET /rest/sales                  the sell-side book, newest first
   GET /rest/sales/:order_id        full per-sale detail
+  GET /rest/purchases              our BUY-side book (what we bought on
+                                   GoTickets), by order-time window
 
-There is no list endpoint in the surfaced API; callers obtain order IDs
-out-of-band (Gmail-surfaced "PEDDLING SALE RECEIVED" notifications on
-the operator side) and look up each by ID.
+CORRECTION (2026-09-09): this module previously stated "There is no list
+endpoint in the surfaced API" and exposed only the per-id lookup, so
+callers were told to obtain order IDs out-of-band (Gmail-surfaced
+"PEDDLING SALE RECEIVED" notifications on the operator side). That is
+wrong: `GET /rest/sales` returns 200 with the full recent book. Verified
+live — 5,000 sales in one call, each carrying event, section, row,
+quantity, unitCost and totalPayout. `/rest/sales/delta` does NOT exist
+(400: it parses "delta" as the order id).
+
+Paging: `limit` is honoured, `offset` / `page` / `size` / `updateTimeFrom`
+are all IGNORED — every call returns the same newest-first window from the
+same first record. So there is no cursor; a bigger `limit` is the only
+lever, and sales older than the window cannot be reached at all.
 
 Imported from the operator's Apps Script `checkGoTicketsOrderStatus`
 (2026-05-13). The original Apps Script also mutated Gmail thread labels
@@ -127,6 +140,41 @@ class GoTicketsClient:
         body = self._get(f"/rest/sales/{order_id}")
         return body if isinstance(body, dict) else {}
 
+    def get_sales(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """GET /rest/sales — the sell-side book, newest first.
+
+        The CRM ships GoTickets orders with price 0.00, so this is the book
+        that supplies their real economics: each sale carries `unitCost` (per
+        ticket) AND `totalPayout` (order total), and they agree.
+
+        `limit` is the only paging control that works (see the module
+        docstring): there is no offset, so a caller wanting more history asks
+        for a bigger window rather than a next page.
+        """
+        params = {"limit": limit} if limit is not None else None
+        body = self._get("/rest/sales", params)
+        return body if isinstance(body, list) else []
+
+    # ---------- Purchases (our buy side) ----------
+
+    def get_purchases(self, order_time_from: str, order_time_to: str) -> list[dict[str, Any]]:
+        """GET /rest/purchases — OUR buy-side book: what we bought on GoTickets.
+
+        Both bounds are REQUIRED by the endpoint (ISO-8601 date-times, e.g.
+        ``2026-09-01T00:00:00Z``). Each row carries the order (id, createTime,
+        orderTotal, orderStatus, quantity, section/originalSection, row,
+        lowSeat/highSeat, cancelReason, fulfilled...) plus the GoTickets event
+        (id, name, venue*, eventTimeUtc, performers).
+
+        Read-only: a purchase RECORD is fetched here; nothing is bought. The
+        payload also carries recipient PII, transfer account credentials and
+        file attachments — the DB ingest (mig 20260911160500) strips those
+        before storing; callers of this method must not persist them either.
+        """
+        params = {"orderTimeFrom": order_time_from, "orderTimeTo": order_time_to}
+        body = self._get("/rest/purchases", params)
+        return body if isinstance(body, list) else []
+
     # ---------- Events (events-controller, sc.gotickets.com/rest/events*) ----------
     # The read surface that makes a systematic GoTickets ingest possible: a
     # catalog list + venue directory + incremental delta. Enumerate here, match
@@ -187,6 +235,9 @@ class GoTicketsProClient:
       - POST /orders           order creation / purchase — FORBIDDEN, never add
       - GET /payment-methods   wallet endpoints that exist only to feed the
       - GET /gift-cards        forbidden checkout flow; no read-only use for us
+                             (2026-11-13: the gift cards ARE read hourly now, for their
+                             balances only, by SQL account_balances_pull(), mig
+                             20261113270000 — still not by this client)
 
     The purchase half is locked out MECHANICALLY, not just by omission: the
     module-level RULE-2 guard (``_assert_readonly_method``) raises on any

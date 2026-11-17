@@ -763,6 +763,7 @@
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
       loadGoticketsSeries(eventId).catch(e => console.error('[gotickets]', e));
+      loadGoticketsBridge(eventId).catch(e => console.error('[gotickets-bridge]', e));
       // Prediction markets (Kalshi/Polymarket) — fire-and-forget; hides itself
       // when the event has no matched markets or the pipeline isn't applied yet.
       loadPredictionMarkets(eventId).catch(e => console.error('[prediction-markets]', e));
@@ -3218,7 +3219,11 @@
       cadSel.disabled = true;
       const r = await rpcOrNull('event_watchlist_set_cadence', { p_event_id: eventId, p_cadence: cadSel.value });
       cadSel.disabled = false;
-      if (r.error) { console.error('[alerts cadence]', r.error); }
+      if (r.error) {
+        console.error('[alerts cadence]', r.error);
+        // RPC not applied yet → don't leave a control that silently does nothing.
+        if (_wlRpcMissing(r)) { cadSel.disabled = true; cadSel.title = 'Alert cadence is not enabled yet'; }
+      }
     });
     wireAlertPreview(eventId);
   }
@@ -3613,6 +3618,39 @@
   // freshness chip, and repaints the price + inventory charts — the same shape as
   // loadTdFreshness. Graceful no-op until the RPC is applied to prod (42883 /
   // "does not exist") or when there's no auth: the GOT light/chip stay dim.
+  // GoTickets MAPPING chip (mig 20260917010000). The GOT series above shows
+  // GoTickets *prices* for this event; this says WHICH GoTickets event it is,
+  // how that resolved (single claimant / hub / double-claimed / none) and what
+  // we hold on it. Double-claimed is shown as such -- a wrong deep link is worse
+  // than none. Fire-and-forget; appends to #eventMode after renderEventMode ran.
+  async function loadGoticketsBridge(eventId) {
+    const el = document.getElementById('eventMode');
+    if (!el) return;
+    const res = await rpcOrNull('get_event_gotickets_bridge', { p_event_id: eventId });
+    if (res.error || !res.data) return;
+    const b = res.data;
+    const esc = escapeHtml;
+    const sales = (b.our_sales && +b.our_sales.count) || 0;
+    const buys  = (b.our_purchases && +b.our_purchases.count) || 0;
+    const crm   = b.crm_orders || {};
+    let chip = '';
+    if (b.gt_event_id != null) {
+      const held = [sales ? `${sales} sale${sales === 1 ? '' : 's'}` : null,
+                    buys  ? `${buys} buy${buys === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
+      const tip = `GoTickets event ${b.gt_event_id} · resolved via ${b.resolved_via}` +
+                  (crm.count ? ` · CRM orders ${crm.with_gt}/${crm.count} carry it` : '') +
+                  (b.listings_latest_at ? ` · listings as of ${new Date(b.listings_latest_at).toLocaleString()}` : ' · no GoTickets listing snapshots');
+      chip = `<span class="mode-chip" title="${esc(tip)}">` +
+             `<a class="gt-open-btn" href="${esc(b.gt_url)}" target="_blank" rel="noopener noreferrer">GoTickets&nbsp;↗</a>` +
+             ` #${esc(String(b.gt_event_id))}${held ? ' · ' + esc(held) : ''}</span>`;
+    } else if (b.resolved_via === 'double_claim' || b.resolved_via === 'aq_conflict') {
+      chip = `<span class="mode-chip warn" title="${esc(String(b.claimants || ''))} GoTickets rows claim this TEvo event; no single link is safe to show until an operator picks one.">GoTickets: ${esc(String(b.claimants || 'several'))} claimants · unresolved</span>`;
+    } else {
+      chip = '<span class="mode-chip dim" title="No GoTickets event is mapped to this TEvo event (not in the mirror, not in the hub).">No GoTickets mapping</span>';
+    }
+    el.insertAdjacentHTML('beforeend', (el.innerHTML ? ' ' : '') + chip);
+  }
+
   async function loadGoticketsSeries(eventId) {
     const res = await rpcOrNull('get_gotickets_event_series', { p_tevo_event_id: eventId, p_hours: 720 });
     if (res.error) {
@@ -3956,19 +3994,33 @@
       body.innerHTML = '<div class="empty">no competing events within +/-24h / 20mi</div>';
       return;
     }
+    // event_competitors_snapshot items: {tevo_event_id, name, venue_name,
+    // distance_mi, hours_offset} — the 10 nearest; c.count is the full count.
     const ul = document.createElement('ul');
     ul.className = 'competing-list';
     c.events.slice(0, 10).forEach(e => {
       const li = document.createElement('li');
-      const eid = e.event_id || e.id;
+      const eid = e.tevo_event_id || e.event_id || e.id;
       const name = e.name || e.event_name || ('Event ' + eid);
-      const dist = e.distance_miles != null ? `${Number(e.distance_miles).toFixed(1)}mi` : '';
+      const mi = e.distance_mi != null ? e.distance_mi : e.distance_miles;
+      const dist = mi != null ? `${Number(mi).toFixed(1)}mi` : '';
       const venue = e.venue_name || e.venue || '';
-      const when = T.fmtDate(e.occurs_at_local || e.occurs_at || e.starts_at);
-      li.innerHTML = `<a href="event.html?event=${eid}">${escapeHtml(name)}</a> <span class="muted">${escapeHtml(venue)}${venue && dist ? ' · ' : ''}${dist} · ${escapeHtml(when)}</span>`;
+      const h = Number(e.hours_offset);
+      const when = Number.isFinite(h)
+        ? (h === 0 ? 'same time' : `${h > 0 ? '+' : '−'}${Math.abs(h)}h`)
+        : escapeHtml(T.fmtDate(e.occurs_at_local || e.occurs_at || e.starts_at));
+      const parts = [escapeHtml(venue), dist, when].filter(Boolean).join(' · ');
+      li.innerHTML = `<a href="event.html?event=${encodeURIComponent(eid)}">${escapeHtml(name)}</a> <span class="muted">${parts}</span>`;
       ul.appendChild(li);
     });
     body.innerHTML = '';
+    const total = Number(c.count) || c.events.length;
+    const head = document.createElement('div');
+    head.className = 'muted small';
+    head.textContent = `${total} competing event${total === 1 ? '' : 's'} within ±24h / 20mi` +
+      (total > 10 ? ' · 10 nearest shown' : '') +
+      (c.refreshed_at ? ` · as of ${T.fmtDate(c.refreshed_at)}` : '');
+    body.appendChild(head);
     body.appendChild(ul);
   }
 
@@ -3993,7 +4045,7 @@
     const arr = Array.isArray(ctx) ? ctx : (ctx.events || []);
     const teamId = (performer && performer.espn_team_id) || '';
     const league = (performer && performer.espn_league) || '';
-    body.innerHTML = `<div class="muted small">${escapeHtml(league)}${teamId ? ` · team ${escapeHtml(teamId)}` : ''} — next ${arr.length} games (this event has no ESPN xref)</div>`;
+    body.innerHTML = `<div class="muted small">${escapeHtml(league)}${teamId ? ` · team ${escapeHtml(teamId)}` : ''} — next ${arr.length} games</div>`;
     const ul = document.createElement('ul');
     ul.className = 'performer-espn-list';
     arr.slice(0, 5).forEach(g => {
@@ -4142,6 +4194,7 @@
         // into its own stacked sub-section inside #paneOurOrders.
         _tabState.loaded['our-orders'] = true;
         await Promise.all([
+          loadAllOrders(eventId),
           loadSgSellerListingsFull(eventId),
           loadEvoOrdersFull(eventId),
           loadSgSellerOrdersFull(eventId),
@@ -4205,7 +4258,10 @@
     const evo  = parseInt(document.getElementById('tabCountEvoOrders')?.textContent || '0', 10) || 0;
     const sg   = parseInt(document.getElementById('tabCountSgSellerOrders')?.textContent || '0', 10) || 0;
     const xb   = parseInt(document.getElementById('tabCountCrossBroker')?.textContent || '0', 10) || 0;
-    const total = evo + sg + xb;
+    // The all-source count already includes TEvo, SeatGeek and the CRM's
+    // TickPick/Vivid rows — prefer it so nothing is counted twice.
+    const all  = parseInt(document.getElementById('tabCountAllOrders')?.textContent || '0', 10) || 0;
+    const total = all || (evo + sg + xb);
     chip.textContent = total ? String(total) : '';
   }
 
@@ -4229,6 +4285,14 @@
       if (body) body.innerHTML = '<div class="empty">Loading…</div>';
       await loadSeatdataSalesFull(eventId);
     });
+  }
+
+  // Human age for a minute count: 45m · 5h · 9d.
+  function fmtAge(min) {
+    if (min == null || !Number.isFinite(min)) return '—';
+    if (min < 90) return `${Math.max(0, min)}m`;
+    if (min < 48 * 60) return `${Math.round(min / 60)}h`;
+    return `${Math.round(min / 1440)}d`;
   }
 
   async function rpcOrNull(rpcName, args) {
@@ -6153,6 +6217,97 @@
   }
 
   // ---------- Our TEvo Orders (full) ----------
+  // ---------- All our orders (CRM + SeatGeek + TEvo) + per-day pace ----------
+  // get_event_orders_daily (mig 20261006220000): every book we sell through,
+  // cancelled/rejected excluded from totals, and per-ET-day orders next to the
+  // SeatGeek public market (distinct sales; null when SG doesn't cover it).
+  async function loadAllOrders(eventId) {
+    const body = document.getElementById('allOrdersBody');
+    const meta = document.getElementById('allOrdersMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading our orders…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_orders_daily', { p_event_id: eventId, p_days: 30 });
+    if (res.error) {
+      if (meta) meta.textContent = _wlRpcMissing(res) ? 'not enabled yet' : 'error';
+      if (body) body.innerHTML = _wlRpcMissing(res)
+        ? '<div class="empty">All-source orders RPC pending apply.</div>'
+        : `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    renderAllOrders(res.data || {}, performance.now() - t0);
+  }
+
+  function renderAllOrders(d, ms) {
+    const body = document.getElementById('allOrdersBody');
+    const meta = document.getElementById('allOrdersMeta');
+    const sum = document.getElementById('allOrdersSummary');
+    const daily = document.getElementById('allOrdersDaily');
+    const chip = document.getElementById('tabCountAllOrders');
+    if (!body) return;
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const num = v => (v == null ? '—' : T.fmtNum(v));
+    const tot = d.totals || {};
+    const rows = d.orders || [];
+    if (meta) meta.textContent = `${num(tot.orders)} orders · ${num(tot.tix)} tix · ${money(tot.sales)}` +
+      (tot.cancelled ? ` · ${num(tot.cancelled)} cancelled` : '') + ` · ${ms.toFixed(0)}ms`;
+    if (chip) chip.textContent = String(tot.orders || 0);
+
+    // By source
+    const src = Object.entries(d.by_source || {}).sort((a, b) => (b[1].orders || 0) - (a[1].orders || 0));
+    if (sum) {
+      sum.innerHTML = src.length
+        ? '<table class="sales-tbl"><thead><tr><th>SOURCE</th><th class="num">ORDERS</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">AVG/TIX</th></tr></thead><tbody>' +
+          src.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${num(v.orders)}</td><td class="num">${num(v.tix)}</td>` +
+            `<td class="num">${money(v.sales)}</td><td class="num">${v.tix ? money(v.sales / v.tix) : '—'}</td></tr>`).join('') +
+          '</tbody></table>'
+        : '';
+    }
+
+    // Per-day pace (last 30 ET days), ours vs SeatGeek market
+    const days = d.daily || [];
+    if (daily) {
+      const active = days.filter(x => x.orders || x.mkt_sales);
+      daily.innerHTML = active.length
+        ? `<div class="panel-subtitle muted small">DAILY — last ${num(d.days)} days (ET)` +
+          (d.mkt_tracked ? ' · SG mkt = all sellers on SeatGeek' : ' · SG market not covered for this event') + '</div>' +
+          '<table class="sales-tbl"><thead><tr><th>DAY</th><th class="num">ORDERS</th><th class="num">TIX</th><th class="num">SALES</th><th>BY SOURCE</th>' +
+          (d.mkt_tracked ? '<th class="num">SG MKT SALES</th><th class="num">SG MKT TIX</th>' : '') + '</tr></thead><tbody>' +
+          active.slice().reverse().map(x => {
+            const bs = Object.entries(x.by_source || {}).map(([k, n]) => `${escapeHtml(k)} ${num(n)}`).join(' · ');
+            return `<tr><td>${escapeHtml(T.fmtDate(x.d))}</td><td class="num">${num(x.orders)}</td><td class="num">${num(x.tix)}</td>` +
+              `<td class="num">${money(x.sales)}</td><td class="muted small">${bs || '—'}</td>` +
+              (d.mkt_tracked ? `<td class="num">${num(x.mkt_sales)}</td><td class="num">${num(x.mkt_tix)}</td>` : '') + '</tr>';
+          }).join('') + '</tbody></table>'
+        : '';
+    }
+
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no orders for this event in any book</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `<thead><tr><th>Date</th><th>Source</th><th>Order</th><th>Status</th>
+      <th>Section</th><th>Row</th><th class="num">Qty</th><th class="num">$/tix</th><th class="num">Total</th></tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      if (r.cancelled) tr.className = 'muted';
+      tr.innerHTML = `<td>${escapeHtml(T.fmtDate(r.d))}</td><td>${escapeHtml(r.source || '')}</td>` +
+        `<td>${escapeHtml(String(r.order_id || ''))}</td>` +
+        `<td><span class="pill">${escapeHtml(r.status || '—')}</span>${r.cancelled ? ' <span class="neg small">cancelled</span>' : ''}</td>` +
+        `<td>${escapeHtml(r.section || '—')}</td><td>${escapeHtml(r.row || '—')}</td>` +
+        `<td class="num">${num(r.qty)}</td><td class="num">${money(r.price)}</td><td class="num">${money(r.total)}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
   async function loadEvoOrdersFull(eventId) {
     const body = document.getElementById('evoOrdersFullBody');
     const meta = document.getElementById('evoOrdersFullMeta');
@@ -6787,8 +6942,10 @@
     if (ageEl) {
       const ageMin = captured ? Math.round((Date.now() - new Date(captured).getTime()) / 60000) : null;
       ageEl.textContent = captured
-        ? `latest ${T.fmtDate(captured)} (${ageMin}m ago)`
+        ? `latest ${T.fmtDate(captured)} (${fmtAge(ageMin)} ago)` +
+          (ageMin > 24 * 60 ? ' · STALE — no TEvo listing poll since then' : '')
         : 'latest —';
+      ageEl.classList.toggle('neg', ageMin != null && ageMin > 24 * 60);
     }
 
     // Walk back through rows to fill any null fields with the most recent

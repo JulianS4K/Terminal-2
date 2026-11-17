@@ -1,11 +1,37 @@
-// D0 Terminal — Substitution checker. Enter a sold ticket (event / section /
-// row / qty) and find the cheapest acceptable cover from our inventory:
-// same-section same-or-better row first, then a better-section fallback.
+// D0 Terminal — Substitution checker + QUEUE.
+//
+// The page is push-first: NEED TO SUB lists every open obligation with its
+// cover where one exists, refreshing itself every 60s, so work arrives instead
+// of being asked for.
+//
+// The SUB QUEUE panel was removed 2026-09-10 (operator direction: "only keep
+// n2s"). That queue hunted OPTIONAL profitable swaps across our own healthy
+// order book; this page is now only about orders that already FAILED and must
+// be covered. /api/broker/sub-worklist and its 10-minute refresh cron still
+// exist server-side but nothing on this page reads them.
+//
+//   GET /api/broker/n2s-covers?source=&days=&limit=&offset=
+//   GET /api/broker/n2s-covers/verify?freshness_minutes=
+//   POST /api/broker/n2s-covers/{n2s_id}/buy-intent   (records intent; buys nothing)
+//     -> { rows:[...], count, covered, uncovered, by_no_cover_reason,
+//          refreshed_at, filters }
+//
+// A cover row carries only the ALLOCATED listing — it is precomputed state,
+// not the last word. The checker below recomputes live per order and carries
+// the GA / splits / ambiguous handling a summary row cannot represent.
+//
+// The order-# lookup and the manual entry form stay: a list is for sweeping
+// the book, but covering a specific order someone just called about still has
+// to be one box you can paste into.
 //
 //   GET /api/broker/event/{id}/substitutions
 //        ?section=&row=&quantity=&revenue=&source=owned|market
 //     -> { target, subs:[...], ambiguous:[...], section_subs:{...},
-//          best, counts, captured_at, source }
+//          best, counts, captured_at, source, pools, gt_captured_at }
+//
+// source=market spans both books we can buy from — the TEvo exchange and
+// GoTickets — so a sub carries `inv_source` and, for GoTickets, a `buy_url`
+// straight to the section page.
 //
 // Pure read-only; matching/ranking lives server-side in core.substitutions.
 // The page can be deep-linked with ?event=&section=&row=&quantity= (e.g. from
@@ -15,17 +41,729 @@
   'use strict';
   const T = window.Terminal;
 
-  function init() {
+  async function init() {
+    // Wait for the Supabase session before any /api/broker call (as deals.js does):
+    // without it the first covers fetch can go out with no bearer token and 401,
+    // and a signed-out visitor is sent to login instead of shown that 401.
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
+    wireN2s();
+    wireGtDryRun();
     wireEventSearch();
     wireFeeToggle();
     prefillFromQuery();
   }
 
+  // ---------- need-to-sub covers (push) ----------
+  //
+  // Orders that already FAILED and must be covered whether or not it pays.
+  // ⚠ cover_cost is signed the OPPOSITE way to margin: positive means honouring
+  // the order costs us that much. Sorting is cheapest-cover-first, never by
+  // margin — the question is what the obligation settles for, not where the
+  // profit is. (The profit-hunting SUB QUEUE that used to sit below was
+  // removed; see the file header.)
+
+  // The covers panel is a FEED, not a report you ask for. The pipeline rebuilds
+  // n2s_cover_queue every 2 minutes, so a page that only loads on click shows
+  // yesterday's answer to someone who left the tab open. Poll at 60s: never
+  // more than about a minute behind a refresh, and cheap (one indexed read of
+  // a materialised table).
+  const N2S_POLL_MS = 60000;
+  const n2sFeed = {
+    timer: null,
+    seen: null,      // n2s_ids from the previous payload; null = first load
+    fresh: new Set(),// ids that arrived on the last poll
+    verdicts: {},    // n2s_id -> { row, at, fp } from Verify
+    claims: {},      // n2s_id -> { intent, fp } from Claim
+  };
+
+  // A cover is (order, listing, price). If any of those change the row is a
+  // DIFFERENT offer, and anything we remembered about the old one — a verify
+  // verdict, a claim — no longer describes what is on screen.
+  // The marketplace's OWN order number, so the obligation can be looked up in
+  // that marketplace's console while it is still live. Without it the row says
+  // which marketplace failed but not which order, which is the one thing you
+  // need to go and check it.
+  //
+  // EVO is the exception worth showing both halves of: its order_number is a
+  // composite "<invoice>-<order>" while n2s_order_key is just the order part,
+  // and which one the console wants depends where you paste it. Everywhere
+  // else the two are identical and only one is shown.
+  function ordCell(r) {
+    const num = r.order_number || '';
+    if (!num) return '<span class="muted">—</span>';
+    const key = r.n2s_order_key || '';
+    const alt = (key && key !== num)
+      ? `<div class="muted small" title="order key — EVO splits invoice from order">${esc(key)}</div>`
+      : '';
+    return `<span class="mono">${esc(num)}</span>${alt}`;
+  }
+
+  // The gate label is a WORKFLOW INSTRUCTION, not a badge. Gates 1-2 keep the
+  // buyer in the section they bought and are directly actionable; gates 3-6
+  // carry "offer subs" because they MOVE the buyer and need their consent
+  // before purchase. That distinction is the whole point of showing it, so
+  // the two are styled differently rather than as one uniform chip.
+  // Suffixes are matched with endsWith, not equality: a label can carry BOTH
+  // (" zone unverified repost single"), so any equality test on the whole
+  // label silently stops matching the moment a second suffix appears.
+  const ZONE_UNVERIFIED = ' zone unverified';
+  // cover_label now ends " obstructed view" whenever sub_view is 'obstructed'.
+  // The chip below already says that, so strip it from the gate name rather
+  // than showing the same fact twice in one cell.
+  const OBSTRUCTED_SUFFIX = ' obstructed view';
+  // " single ticket" marks a one-seat SALE (the obligation's quantity is 1).
+  // It is a fact about the order, not the match, so it gets its own chip
+  // beside the gate the same way the zone caveat does. It is a different fact
+  // from " repost single", which is about the BUY (one seat over, spare
+  // reposted); a single-seat sale covered from a pair carries both.
+  const SINGLE_TICKET = ' single ticket';
+
+  function gateCell(r) {
+    if (!r.has_cover || !r.cover_label) return '<span class="muted">—</span>';
+    const g = r.cover_gate;
+    const offer = g >= 3;                       // 3-6 move the buyer
+    const cls = offer ? 'n2s-gate-offer' : 'n2s-gate-direct';
+    // The suffix is rendered as its own chip. Inside the label it is a tail on
+    // an already-long string and reads as part of the gate name; beside it, it
+    // reads as the caveat it is.
+    const unver = r.cover_label.indexOf(ZONE_UNVERIFIED) !== -1;
+    const single = r.cover_label.indexOf(SINGLE_TICKET) !== -1;
+    const base = r.cover_label
+      .replace(ZONE_UNVERIFIED, '')
+      .replace(OBSTRUCTED_SUFFIX, '')
+      .replace(SINGLE_TICKET, '');
+    const tip = offer
+      ? 'Buyer is being MOVED — offer this substitute and get acceptance BEFORE buying'
+      : 'Same section the buyer purchased — actionable directly';
+    let out = `<span class="n2s-gate ${cls}" title="${esc(tip)}">${esc(base)}</span>`;
+    // Obstructed view is NOT part of the gate — a gate 1 seat can be
+    // obstructed, and that is exactly the case worth catching, because the
+    // gate says "actionable directly". Rendered as its own chip for the same
+    // reason it is its own column: it answers "what is this seat", not "what
+    // may I do with this match".
+    if (r.sub_view === 'obstructed') {
+      out += ` <span class="n2s-gate n2s-gate-obstructed" title="${esc(
+        'Seller discloses an obstructed / limited view'
+        + (r.sub_notes ? ': ' + r.sub_notes : '')
+        + '. Offer this to the buyer before purchasing, whatever the gate says.'
+      )}">obstructed</span>`;
+    } else if (r.sub_view === 'unknown') {
+      out += ` <span class="n2s-gate n2s-gate-noview" title="${esc(
+        'No seller note or view data for this listing, so the seat has NOT been checked. '
+        + 'Unknown is not the same as clear.'
+      )}">view ?</span>`;
+    }
+    if (unver) {
+      out += ` <span class="n2s-gate n2s-gate-unver" title="${esc(
+        'No curated zones at this venue, so the same-zone rule could not be checked. '
+        + 'It does NOT mean a zone was crossed — those are refused. Judge the row drop yourself.'
+      )}">zone unverified</span>`;
+    }
+    if (single) {
+      out += ` <span class="n2s-gate n2s-gate-single" title="${esc(
+        'The sale is for exactly one seat. Singles are the hardest quantity to source and the most '
+        + 'often refused at checkout. Read sub_qty: with "repost single" it is 2 for a sale of 1.'
+      )}">single ticket</span>`;
+    }
+    return out;
+  }
+
+  // The seller's own note on the substitute, as text under the listing
+  // (20261112030000). Before, it only rode in the "obstructed" chip's tooltip,
+  // and EVO subs had none at all. The chip is our regex; this is their words,
+  // so a disclosure the regex misses is still in front of whoever buys.
+  const NOTES_MAX = 140;
+  function notesLine(notes, view) {
+    const t = String(notes || '').trim();
+    if (!t) return '';
+    const short = t.length > NOTES_MAX ? t.slice(0, NOTES_MAX - 1) + '…' : t;
+    const cls = view === 'obstructed' ? 'n2s-sub-notes-obstructed' : 'muted';
+    return `<div class="small ${cls} n2s-sub-notes" title="${esc(t)}">notes: ${esc(short)}</div>`;
+  }
+
+  function coverFp(r) {
+    return [r.sub_source || '', r.sub_listing_id || '', r.sub_ea == null ? '' : r.sub_ea].join('|');
+  }
+
+  function wireN2s() {
+    const btn = document.getElementById('n2sRun');
+    if (btn) btn.addEventListener('click', () => loadN2s());
+    const vbtn = document.getElementById('n2sVerify');
+    if (vbtn) vbtn.addEventListener('click', verifyN2s);
+    ['n2sKind', 'n2sGate', 'n2sReason', 'n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
+      const el = document.getElementById(id);
+      // Changing a filter changes which book you are watching, so the "new
+      // since last look" set is meaningless across it — reset rather than
+      // flash every row as an arrival.
+      if (el) el.addEventListener('change', () => { n2sFeed.seen = null; loadN2s(); });
+    });
+    if (!document.getElementById('n2sTable')) return;
+    loadN2s();
+    startN2sFeed();
+  }
+
+  function startN2sFeed() {
+    stopN2sFeed();
+    n2sFeed.timer = setInterval(() => loadN2s({ background: true }), N2S_POLL_MS);
+    setN2sLive(true);
+  }
+
+  function stopN2sFeed() {
+    if (n2sFeed.timer) clearInterval(n2sFeed.timer);
+    n2sFeed.timer = null;
+  }
+
+  // A hidden tab must not keep polling — it is work nobody is looking at, and
+  // on wake the browser fires every queued timer at once. Pause, then refresh
+  // ONCE on return so what you come back to is current rather than however
+  // stale it was when you left.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.getElementById('n2sTable')) return;
+    if (document.hidden) { stopN2sFeed(); setN2sLive(false); }
+    else { loadN2s({ background: true }); startN2sFeed(); }
+  });
+
+  // ---------- GoTickets auto-buy dry run ----------
+  //
+  // n2s_gt_order_dryrun (mig 20261021180000) via /api/broker/n2s-gt-dryrun —
+  // the table has no grant for browser roles, so it is read server-side like
+  // the covers book. It only ever says what WOULD be ordered; nothing here, or
+  // anywhere, sends it. Polls at the covers feed's cadence, skipped on a
+  // hidden tab.
+
+  function wireGtDryRun() {
+    if (!document.getElementById('gtdTable')) return;
+    const run = document.getElementById('gtdRun');
+    if (run) run.addEventListener('click', () => loadGtDryRun());
+    const dec = document.getElementById('gtdDecision');
+    if (dec) dec.addEventListener('change', () => loadGtDryRun());
+    loadGtDryRun();
+    setInterval(() => { if (!document.hidden) loadGtDryRun({ background: true }); }, N2S_POLL_MS);
+  }
+
+  async function loadGtDryRun(opts) {
+    const wrap = document.getElementById('gtdTable');
+    const meta = document.getElementById('gtdMeta');
+    if (!wrap) return;
+    const background = !!(opts && opts.background);
+    if (!background) wrap.innerHTML = '<div class="empty">loading…</div>';
+    const decision = (document.getElementById('gtdDecision') || {}).value || '';
+    try {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (decision) qs.set('decision', decision);
+      const d = await T.api(`/api/broker/n2s-gt-dryrun?${qs.toString()}`);
+      renderGtDryRun(d.rows || []);
+      if (meta) {
+        const t = d.today || {};
+        meta.textContent = `today (ET): ${t.logged || 0} logged · ${t.would_buy || 0} would buy` +
+          ` · ${money(t.would_spend || 0)} would spend · ${t.skipped || 0} skipped` +
+          ` · ${new Date().toTimeString().slice(0, 5)}`;
+      }
+    } catch (err) {
+      const msg = err && err.message ? err.message : err;
+      if (background) { if (meta) meta.textContent = `dry-run feed stalled: ${msg}`; }
+      else { wrap.innerHTML = emptyHtml(`dry run unavailable: ${msg}`); if (meta) meta.textContent = ''; }
+    }
+  }
+
+  // Letters only: "Floor 6" -> "floor", "106" -> "". A gate-1 match where BOTH
+  // sides name a level and the names differ is the Floor-vs-Loge false match
+  // (order 7933791) — flag it rather than trust the gate.
+  function levelWord(s) { return String(s || '').replace(/[^a-z]/gi, '').toLowerCase(); }
+  function levelMismatch(r) {
+    const a = levelWord(r.sold_section), b = levelWord(r.sub_section);
+    return r.cover_gate === 1 && a !== '' && b !== '' && a !== b;
+  }
+
+  function renderGtDryRun(rows) {
+    const wrap = document.getElementById('gtdTable');
+    if (!rows.length) { wrap.innerHTML = emptyHtml('no dry-run rows yet'); return; }
+    const seat = (sec, row, qty, ea) =>
+      `${esc(sec || '—')} / ${esc(row || '—')} × ${esc(qty == null ? '—' : qty)} @ ${money(ea)}`;
+    const body = rows.map(r => {
+      const when = new Date(r.captured_at).toLocaleString(undefined,
+        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const warn = levelMismatch(r)
+        ? ` <span class="badge neg" title="sold and listing name different levels">⚠ level</span>` : '';
+      const dec = r.decision === 'would_buy'
+        ? '<span class="badge pos">would buy</span>'
+        : `<span class="badge muted">skip</span> <span class="muted small">${
+            esc((r.skip_reasons || []).join(', ').replace(/_/g, ' '))}</span>`;
+      const ref = r.payload && r.payload._reference;
+      const buy = ref && /^https:\/\//.test(ref.buy_url || '') ? ref.buy_url : null;
+      const listing = seat(r.sub_section, r.sub_row, r.sub_qty, r.quoted_ea) +
+        ` <span class="muted small">= ${money(r.quoted_total)}</span>` +
+        (buy ? ` <a href="${esc(buy)}" target="_blank" rel="noopener noreferrer">GT&nbsp;↗</a>` : '') +
+        notesLine(r.sub_notes, r.sub_view);
+      return `<tr>
+        <td class="muted small">${esc(when)}</td>
+        <td>${esc(r.s4k_source || '—')}<div class="muted small">${esc(r.order_number || '')}</div></td>
+        <td>${esc(r.event_name || '—')}<div class="muted small">${esc(r.event_date || '')}</div></td>
+        <td>${seat(r.sold_section, r.sold_row, r.sold_qty, r.sold_ea)}</td>
+        <td>${listing}${warn}</td>
+        <td>${r.cover_cost == null ? '—' : pnlCell(-r.cover_cost)}</td>
+        <td><span class="muted small">${esc(r.cover_gate == null ? '' : r.cover_gate)}</span> ${esc(r.cover_label || '')}</td>
+        <td>${dec}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<div class="subs-table-wrap"><table class="subs-table"><thead><tr>
+      <th>Logged</th><th>Order</th><th>Event</th><th>Sold</th><th>GoTickets listing</th>
+      <th>P/L</th><th>Gate</th><th>Decision</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  function setN2sLive(on) {
+    const pill = document.getElementById('n2sLive');
+    if (!pill) return;
+    pill.classList.toggle('on', !!on);
+    pill.classList.toggle('off', !on);
+    const label = pill.querySelector('.live-label');
+    if (label) label.textContent = on ? 'live' : 'paused';
+  }
+
+  async function loadN2s(opts) {
+    const background = !!(opts && opts.background);
+    const wrap = document.getElementById('n2sTable');
+    const meta = document.getElementById('n2sMeta');
+    if (!wrap) return;
+    // Only an explicit refresh may blank the table. A background poll that
+    // wiped it would clear a fill sheet someone is reading mid-purchase.
+    if (!background) wrap.innerHTML = '<div class="empty">loading…</div>';
+    const qs = new URLSearchParams({ limit: '200' });
+    const src = (document.getElementById('n2sSource').value || '').trim();
+    const days = (document.getElementById('n2sDays').value || '').trim();
+    const has = (document.getElementById('n2sHas') || {}).value || '';
+    const late = (document.getElementById('n2sLate') || {}).value || '';
+    const kind = (document.getElementById('n2sKind') || {}).value || '';
+    // PED rows have no timer, so the Timer filter cannot change what they
+    // show. Grey it out rather than let it look like it does something.
+    const lateEl = document.getElementById('n2sLate');
+    if (lateEl) lateEl.disabled = kind === 'ped';
+    if (kind) qs.set('kind', kind);
+    const gate = (document.getElementById('n2sGate') || {}).value || '';
+    const reason = (document.getElementById('n2sReason') || {}).value || '';
+    if (gate) qs.set('gate', gate);
+    if (reason) qs.set('reason', reason);
+    if (src) qs.set('source', src);
+    if (days) qs.set('days', days);
+    // "profitable only" lives in the same select as has/no sub because it is a
+    // SUBSET of "has sub", not an independent axis. It therefore sets the
+    // profit filter and deliberately sends NO with_sub — adding
+    // with_sub=true would be redundant, and the server already narrows to
+    // covers by requiring cover_cost < 0.
+    if (has === 'profit') qs.set('profitable', 'true');
+    else if (has) qs.set('with_sub', has);
+    if (late) qs.set('include_late', late);
+    try {
+      const d = await T.api(`/api/broker/n2s-covers?${qs.toString()}`);
+      renderN2s(d);
+      if (background) setN2sLive(true);   // recovered from any earlier stall
+      if (meta) {
+        // refreshed_at is load-bearing: covers are only true while the listing
+        // is live, and the matcher only looks an hour back. Always show it.
+        const stamp = d.refreshed_at
+          ? ` · ${esc(String(d.refreshed_at).slice(0, 16).replace('T', ' '))}`
+          : ' · never refreshed';
+        const disp = d.displaced ? ` · ${d.displaced} took a dearer cover` : '';
+        const arrived = n2sFeed.fresh.size ? ` · ${n2sFeed.fresh.size} new` : '';
+        const late = d.hidden_late ? ` · ${d.hidden_late} hidden (timer expired)` : '';
+        // Lead with the shape of the book: how many can be acted on versus how
+        // many are still open with nothing to act on. The second number is the
+        // one that was invisible when this panel showed covers only.
+        const why = Object.entries(d.by_no_cover_reason || {})
+          .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
+        // The profit filter shows only covers that settle BELOW the sale, so
+        // the uncovered book is empty by construction rather than because the
+        // book is clean. Reporting "0 without" there would read as good news.
+        const onlyProfit = d.filters && d.filters.profitable;
+        meta.textContent = onlyProfit
+          ? `${d.count} profitable cover${d.count === 1 ? '' : 's'}`
+            + ` · ${money(d.total_cover_cost)} net${disp}${late}${arrived}${stamp}`
+            + ` · gaps hidden by this filter`
+          : `${d.count} open · ${d.covered} with a sub`
+            + ` · ${d.uncovered} without${why ? ` (${why})` : ''}`
+            + ` · ${money(d.total_cover_cost)} to settle${disp}${late}${arrived}${stamp}`;
+      }
+    } catch (err) {
+      const msg = err && err.message ? err.message : err;
+      // A blip on a background poll is not a reason to destroy a good table.
+      // Say it in the meta line and leave the last known covers on screen.
+      if (background) {
+        // The interval is still running, so the feed is NOT paused — say
+        // stalled and leave the pill live, or one blip mislabels it forever.
+        if (meta) meta.textContent = `feed stalled: ${msg}`;
+      } else {
+        wrap.innerHTML = emptyHtml(`covers unavailable: ${msg}`);
+        if (meta) meta.textContent = '';
+      }
+    }
+  }
+
+   // The obligation's OWN GoTickets event (n2s_items.gt_event_id, mig 20260916230000),
+  // distinct from the cover's buy_url: this is where the SOLD ticket lives, which
+  // is what you check before covering. Fill-only upstream; absent means unmapped.
+  function gtLink(r) {
+    if (r.gt_event_id == null) return '';
+    return ` <a class="gt-open-btn" href="https://gotickets.com/tickets/${esc(String(r.gt_event_id))}"` +
+           ` target="_blank" rel="noopener noreferrer" title="GoTickets event ${esc(String(r.gt_event_id))} (${esc(r.gt_mapped_via || 'mapped')})">GT&nbsp;↗</a>`;
+  }
+
+ function renderN2s(d) {
+    const wrap = document.getElementById('n2sTable');
+    const rows = (d && d.rows) || [];
+    // Which of these are arrivals? On the FIRST load nothing is new — every
+    // row would flash, which is noise, not signal.
+    const ids = new Set(rows.map((r) => String(r.n2s_id)));
+    n2sFeed.fresh = new Set();
+    if (n2sFeed.seen) {
+      ids.forEach((id) => { if (!n2sFeed.seen.has(id)) n2sFeed.fresh.add(id); });
+    }
+    n2sFeed.seen = ids;
+    forgetStaleN2sState(rows);
+    if (!rows.length) {
+      // ⚠ An empty page here is almost never "nothing needs covering". The
+      // default hides every order whose 15-minute CRM timer lapsed, which is
+      // nearly all of them, so saying only "no orders" would report a clear
+      // book when the truth is the opposite. Name the count and the way back.
+      const hidden = (d && d.hidden_late) || 0;
+      // ⚠ THE PROFIT FILTER NEEDS ITS OWN EMPTY STATE. Under it the honest
+      // reading is "no cover currently settles below its sale", which the
+      // timer has nothing to do with — pointing at the Timer control there
+      // sends the operator to a switch that cannot help.
+      const onlyProfit = !!(d && d.filters && d.filters.profitable);
+      wrap.innerHTML = emptyHtml(onlyProfit
+        ? 'no cover currently settles for less than the seat sold for. '
+          + 'Set <em>Sub</em> back to “all” for the whole book — most '
+          + 'obligations cost money to settle, and still have to be settled.'
+        : hidden
+        ? `nothing shown — <strong>${hidden}</strong> open obligation${hidden === 1 ? '' : 's'} `
+          + 'are hidden because their 15-minute CRM timer expired. '
+          + 'Set <em>Timer</em> to “include late” to see them.'
+        : 'no open N2S orders match these filters');
+      return;
+    }
+    const body = rows.map((r) => {
+      const seat = `${esc(r.section || '')} / ${esc(r.order_row || '')} ×${r.quantity || ''}`;
+      // An uncovered row is the WORK, not an empty cell. Say which of the three
+      // situations it is: "we never looked" and "we looked and found nothing"
+      // call for opposite responses, and a bare dash hides the difference —
+      // which is exactly how a mapping outage would go unnoticed here.
+      const WHY = {
+        unmapped: ['unmapped', 'the event could not be identified, so no source was searched'],
+        awaiting_source_pull: ['pulling…', 'the four-source pull is in flight; give it ~2 minutes'],
+        event_not_catalogued: ['event not in catalogue', 'the order is mapped to a real TEvo event we have never ingested, so no listings could be pulled for it — nothing was searched'],
+        no_match: ['no match', 'listings were searched; none had the same section, an equal-or-better row and a usable quantity'],
+        window_closed: ['closed', 'past its 10-minute window: polling and cover search have stopped for this order'],
+      };
+      // ⚠ A SPLIT TAKE MUST LOOK LIKE ONE. sub_qty is what we buy; sub_avail is
+      // the listing's lot size. When the lot is bigger we are buying PART of
+      // it — "2 of 4" — and showing only "2" would leave the operator to
+      // discover at checkout that the listing is not the size they expected.
+      // ⚠ AND SO MUST AN OVER-DELIVERY. The two are exclusive — a split take
+      // buys PART of a bigger lot (sub_avail > sub_qty), an over-delivery buys
+      // a WHOLE lot that is bigger than the obligation (sub_qty > quantity) —
+      // and only the second one spends money on a seat we did not sell. It is
+      // the costlier surprise, so it is the louder label.
+      const lot = (() => {
+        if (!r.has_cover || !r.sub_qty) return '';
+        if (r.quantity && r.sub_qty > r.quantity) {
+          const spare = r.sub_qty - r.quantity;
+          return ` <span class="neg small" title="no listing sells exactly ${esc(String(r.quantity))} here, so the whole ${esc(String(r.sub_qty))}-seat lot is bought and ${esc(String(spare))} spare seat${spare === 1 ? '' : 's'} paid for">buy ${esc(String(r.sub_qty))}</span>`;
+        }
+        if (r.sub_avail && r.sub_avail > r.sub_qty) {
+          return ` <span class="muted small" title="a ${esc(String(r.sub_avail))}-seat listing whose splits allow buying exactly ${esc(String(r.sub_qty))}">of ${esc(String(r.sub_avail))}</span>`;
+        }
+        return '';
+      })();
+      const cov = r.has_cover
+        ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}${lot}`
+          + notesLine(r.sub_notes, r.sub_view)
+        : (() => {
+            const w = WHY[r.no_cover_reason] || ['no sub', 'no cover allocated'];
+            // A closed order is history, not work: show the last cover we
+            // found for it (may no longer be listed) rather than a red gap.
+            if (r.no_cover_reason === 'window_closed') {
+              const last = r.last_sub_source
+                ? ` · last ${sourceBadge(r.last_sub_source)} ${esc(r.last_sub_section || '')} / ${esc(r.last_sub_row || '')} ${money(r.last_sub_ea)}`
+                : ' · no cover found';
+              return `<span class="muted small" title="${esc(w[1])}">${esc(w[0])}${last}</span>`;
+            }
+            const cls = r.no_cover_reason === 'awaiting_source_pull' ? 'muted' : 'neg';
+            return `<span class="${cls} small" title="${esc(w[1])}">${esc(w[0])}</span>`;
+          })();
+      // cover_rank > 1 means an earlier order claimed the cheaper listing.
+      const bumped = (r.cover_rank || 1) > 1
+        ? ' <span class="muted small" title="an earlier order claimed the cheaper listing">2nd choice</span>'
+        : '';
+      const claimed = '';  // shown in the action cell instead, next to the button
+      const timer = r.timer_expired
+        ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
+        : '';
+      // PED: a peddled sale from the Need2Buy/WaitToBuy Gmail label (status n2b),
+      // tagged so it reads apart from CRM N2S orders. No timer; its event is
+      // re-priced every 4 hours until the label comes off.
+      const n2b = r.n2s_status === 'n2b'
+        ? ' <span class="small" style="color:var(--warn)" title="Peddled sale (Gmail Need2Buy/WaitToBuy): no timer, re-priced every 4 hours">PED</span>'
+        : '';
+      // GoTickets gives us a deep link. TEvo and SeatGeek do not publish a
+      // buy URL to us and there is no known console URL pattern, so rather
+      // than guess a link that may 404 or point at the wrong listing, show the
+      // two ids that locate it: the event and the ticket-group/listing id.
+      // A dash here would hide information the row already carries.
+      const buy = r.buy_url
+        ? `<a href="${esc(r.buy_url)}" target="_blank" rel="noopener">buy</a>`
+        : (r.sub_listing_id
+            ? `<span class="muted small" title="event ${esc(String(r.tevo_event_id || ''))} · listing ${esc(String(r.sub_listing_id))}">`
+              + `ev ${esc(String(r.tevo_event_id || '?'))}<br>lst ${esc(String(r.sub_listing_id))}</span>`
+            : '<span class="muted">—</span>');
+      // No cover means nothing to claim and nothing to verify. Offering the
+      // button anyway would produce a 409 from the server, which is a worse
+      // way to learn there is no sub than simply not showing it.
+      // An order with an OPEN intent is already someone's. Offering the button
+      // anyway would 409 off the one-open-intent-per-order index — the same
+      // "learn by error" the no-cover branch above deliberately avoids.
+      const action = !r.has_cover
+        ? '<span class="muted">—</span>'
+        : (r.open_intent_id
+            ? `<span class="muted small" title="intent #${esc(String(r.open_intent_id))} by ${esc(r.open_intent_by || 'someone')}">claimed</span>`
+            : `<button type="button" class="btn n2s-claim" data-n2s="${esc(String(r.n2s_id))}">claim</button>`);
+      const isNew = n2sFeed.fresh.has(String(r.n2s_id));
+      const chip = isNew ? ' <span class="n2s-new-chip">NEW</span>' : '';
+      const rowCls = [isNew ? 'n2s-row-new' : '', r.has_cover ? '' : 'n2s-row-gap']
+        .filter(Boolean).join(' ');
+      return `<tr data-n2s="${esc(String(r.n2s_id))}" data-fp="${esc(coverFp(r))}"${rowCls ? ` class="${rowCls}"` : ''}>
+        <td>${esc(r.s4k_source || '')}${chip}${n2b}${timer}${claimed}</td>
+        <td class="n2s-ord">${ordCell(r)}</td>
+        <td>${esc(r.event_name || '')}${gtLink(r)}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
+        <td>${seat}</td>
+        <td class="num">${money(r.sold_ea)}</td>
+        <td class="n2s-sub">${cov}${bumped}</td>
+        <td class="num">${r.has_cover ? money(r.sub_ea) : '<span class="muted">—</span>'}</td>
+        <td class="num">${coverCell(r.cover_cost)}</td>
+        <td>${buy}</td>
+        <td class="n2s-gate-cell">${gateCell(r)}</td>
+        <td class="n2s-verdict muted small">—</td>
+        <td>${action}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table class="subs-table"><thead><tr>
+        <th>Src</th><th>Order #</th><th>Event</th><th>Failed seat</th><th class="num">Sold ea</th>
+        <th>Sub / why not</th><th class="num">Sub ea</th><th class="num">Cost to settle</th><th></th><th>Gate</th><th>Verify</th><th></th>
+      </tr></thead><tbody>${body}</tbody></table>`;
+    wrap.querySelectorAll('.n2s-claim').forEach((b) => {
+      b.addEventListener('click', () => claimN2s(b.getAttribute('data-n2s'), b));
+    });
+    restoreN2sState();
+  }
+
+  // A repaint every 60s would otherwise wipe a verdict you just asked for and
+  // the fill sheet you are working from. Both are re-applied — but only where
+  // they still describe what is on screen; see forgetStaleN2sState.
+  function restoreN2sState() {
+    const wrap = document.getElementById('n2sTable');
+    if (!wrap) return;
+    Object.entries(n2sFeed.verdicts).forEach(([id, v]) => {
+      const tr = wrap.querySelector(`tr[data-n2s="${CSS.escape(id)}"]`);
+      if (tr) paintVerdict(tr, v.row, v.at);
+    });
+    Object.entries(n2sFeed.claims).forEach(([id, c]) => {
+      const tr = wrap.querySelector(`tr[data-n2s="${CSS.escape(id)}"]`);
+      const btn = tr && tr.querySelector('.n2s-claim');
+      if (!btn) return;
+      btn.disabled = true;
+      btn.textContent = 'claimed';
+      btn.classList.add('pos');
+      showFillSheet(btn, c.intent, c.moved);
+    });
+  }
+
+  // ⚠ The queue reallocates. FIFO can hand this order's listing to an older
+  // one between polls, and then a remembered verdict describes a listing that
+  // is no longer on offer here. Showing it would be worse than showing
+  // nothing: it reads as "checked and fine" about the wrong tickets.
+  function forgetStaleN2sState(rows) {
+    const fp = {};
+    rows.forEach((r) => { fp[String(r.n2s_id)] = coverFp(r); });
+    Object.keys(n2sFeed.verdicts).forEach((id) => {
+      if (fp[id] !== n2sFeed.verdicts[id].fp) delete n2sFeed.verdicts[id];
+    });
+    Object.keys(n2sFeed.claims).forEach((id) => {
+      // A claim is NOT dropped: the intent is frozen server-side against the
+      // cover as it was, so it stays true even after the queue moves on. But
+      // the row underneath now shows a different offer, and the sheet must say
+      // so rather than looking like it describes the row it sits under.
+      if (fp[id] !== undefined && fp[id] !== n2sFeed.claims[id].fp) {
+        n2sFeed.claims[id].moved = true;
+      }
+    });
+  }
+
+  // Pre-purchase gate. Deliberately a BUTTON, not part of the page load: a
+  // cover is only "good to buy" at the moment you ask, so verifying on render
+  // would stamp a verdict that goes stale sitting on screen. Ask when acting.
+  async function verifyN2s() {
+    const meta = document.getElementById('n2sMeta');
+    const wrap = document.getElementById('n2sTable');
+    if (!wrap) return;
+    try {
+      const d = await T.api('/api/broker/n2s-covers/verify');
+      const by = {};
+      (d.rows || []).forEach((r) => { by[r.n2s_id] = r; });
+      const at = Date.now();
+      n2sFeed.verdicts = {};
+      wrap.querySelectorAll('tr[data-n2s]').forEach((tr) => {
+        const id = tr.getAttribute('data-n2s');
+        const v = by[id];
+        const cell = tr.querySelector('.n2s-verdict');
+        if (!cell) return;
+        if (!v) { cell.textContent = '—'; return; }
+        // Remembered against the cover it was about, so the next repaint can
+        // re-apply it — or drop it if the queue has moved to another listing.
+        n2sFeed.verdicts[id] = { row: v, at: at, fp: rowFpFromTr(tr) };
+        paintVerdict(tr, v, at);
+      });
+      if (meta) {
+        const parts = Object.entries(d.by_verdict || {})
+          .map(([k, n]) => `${n} ${k}`).join(' · ');
+        meta.textContent = `verified ${d.count} · ${d.buyable} buyable`
+          + (parts ? ` · ${parts}` : '');
+      }
+    } catch (err) {
+      if (meta) meta.textContent = `verify failed: ${err && err.message ? err.message : err}`;
+    }
+  }
+
+  // A verdict is only true at the moment it was asked for, so it carries its
+  // age once it is no longer fresh. Sitting on screen looking authoritative is
+  // exactly the failure the Verify button was made a button to avoid.
+  function paintVerdict(tr, v, at) {
+    const cell = tr.querySelector('.n2s-verdict');
+    if (!cell) return;
+    // gone / order_closed are hard blocks; stale_data means "cannot tell",
+    // which must not be shown as reassurance.
+    const cls = v.buyable ? (v.verdict === 'price_up' ? 'warn' : 'pos') : 'neg';
+    const delta = (v.price_delta_ea !== null && v.price_delta_ea !== undefined
+                   && Number(v.price_delta_ea) !== 0)
+      ? ` ${Number(v.price_delta_ea) > 0 ? '+' : ''}${money(v.price_delta_ea)}` : '';
+    const secs = at ? Math.round((Date.now() - at) / 1000) : 0;
+    const age = secs >= 90 ? ` <span class="muted">${Math.round(secs / 60)}m ago</span>` : '';
+    cell.innerHTML = `<span class="${cls}">${esc(v.verdict || '?')}${delta}</span>${age}`;
+  }
+
+  // The fingerprint as the CURRENT row renders it, read back off the DOM so
+  // the verdict is tied to the offer the user actually looked at.
+  function rowFpFromTr(tr) {
+    return tr.getAttribute('data-fp') || '';
+  }
+
+  // Records that someone is acting on this cover and hands them the fill
+  // sheet. It does NOT buy: nothing in this codebase places an order — the
+  // purchase is made by hand in the vendor console, for both TEvo and
+  // GoTickets. The intent exists to stop two people covering the same
+  // obligation and to keep an audit trail of who committed to what price.
+  async function claimN2s(n2sId, btn) {
+    if (!n2sId) return;
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = '…';
+    try {
+      // Without requested_by every intent stores NULL and the row reads
+      // "claimed by someone" forever — the audit trail the one-intent-per-order
+      // rule exists to provide never actually works.
+      const who = (window.TerminalAuth && window.TerminalAuth.getEmail
+                   && window.TerminalAuth.getEmail()) || '';
+      const qs = who ? `?requested_by=${encodeURIComponent(who)}` : '';
+      const d = await T.api(`/api/broker/n2s-covers/${encodeURIComponent(n2sId)}/buy-intent${qs}`,
+                            { method: 'POST' });
+      btn.textContent = 'claimed';
+      btn.classList.add('pos');
+      const tr = btn.closest('tr');
+      n2sFeed.claims[String(n2sId)] = {
+        intent: (d && d.intent) || {},
+        fp: tr ? rowFpFromTr(tr) : '',
+      };
+      showFillSheet(btn, (d && d.intent) || {});
+    } catch (err) {
+      // A 409 here is a real answer (not buyable / already claimed), not a
+      // glitch — show it rather than swallowing it.
+      btn.disabled = false;
+      btn.textContent = prev;
+      const meta = document.getElementById('n2sMeta');
+      if (meta) meta.textContent = `claim refused: ${err && err.message ? err.message : err}`;
+    }
+  }
+
+  // The two absence lists mean opposite things and must not be shown alike.
+  // operator_fills is the human's checkout work and is the NORMAL case;
+  // payload_gaps is something our side owed and failed to produce. Rendering
+  // them the same way would train people to skim past both, and then a real
+  // gap — an unmapped event, a source with no purchase path — gets ignored
+  // along with "type in your card number".
+  function showFillSheet(btn, intent, moved) {
+    const tr = btn.closest('tr');
+    if (!tr) return;
+    // Re-applied on every repaint, so an existing sheet is replaced rather
+    // than stacked — otherwise a claimed row grows a new sheet every minute.
+    const prior = tr.nextElementSibling;
+    if (prior && prior.classList.contains('n2s-sheet')) prior.remove();
+    const fills = intent.operator_fills || [];
+    const gaps = intent.payload_gaps || [];
+    const sheet = document.createElement('tr');
+    sheet.className = 'n2s-sheet';
+    const cell = document.createElement('td');
+    cell.colSpan = tr.children.length;
+    cell.className = 'muted small';
+    // Built from nodes rather than markup: every piece here is server data,
+    // and textContent cannot be talked into being markup.
+    cell.appendChild(document.createTextNode(
+      `intent #${intent.intent_id || '?'} recorded — nothing was purchased. `));
+    const seg = (label, list, cls) => {
+      if (!list.length) return;
+      if (cell.childNodes.length > 1) cell.appendChild(document.createTextNode(' · '));
+      const b = document.createElement('strong');
+      b.textContent = label;
+      if (cls) b.className = cls;
+      cell.appendChild(b);
+      cell.appendChild(document.createTextNode(` ${list.join(', ')}`));
+    };
+    seg('we still owe:', gaps, 'neg');
+    seg('you fill at checkout:', fills, '');
+    if (!gaps.length && !fills.length) {
+      cell.appendChild(document.createTextNode('nothing outstanding'));
+    }
+    // The intent is frozen server-side against the cover as it was, so it is
+    // still valid — but the row above now shows a different listing, and a
+    // sheet that silently described the wrong one would be worse than loud.
+    if (moved) {
+      cell.appendChild(document.createTextNode(' · '));
+      const w = document.createElement('strong');
+      w.className = 'warn';
+      w.textContent = 'the queue has since moved this order to a different listing;';
+      cell.appendChild(w);
+      cell.appendChild(document.createTextNode(
+        ' this sheet is the cover you claimed, not the row above.'));
+    }
+    sheet.appendChild(cell);
+    tr.insertAdjacentElement('afterend', sheet);
+  }
+
+  // Signed the opposite way to pnlCell: here a POSITIVE number is money out.
+  function coverCell(v) {
+    // NULL is "no cover was allocated", NOT zero cost. Rendering it as $0.00
+    // would read as a free settlement, which is the opposite of the truth.
+    if (v === null || v === undefined) return '<span class="muted">—</span>';
+    const cls = v > 0 ? 'neg' : 'pos';
+    return `<span class="${cls}">${money(v)}</span>`;
+  }
+
+  // ---------- sub queue (push) ----------
+
   // ---------- order # → auto-fill the sold ticket ----------
 
+  // Order sources: the four we ingest, plus the S4K CRM fallback that fronts
+  // six marketplace books (adds StubHub + Gametime, which we ingest nowhere).
   function wireOrderLoad() {
     const btn = document.getElementById('subOrderLoad');
     if (btn) btn.addEventListener('click', loadOrder);
@@ -35,6 +773,8 @@
     });
   }
 
+  // Fill-if-present: for prefilling from a query string, where an absent
+  // parameter means "leave whatever is there".
   function setVal(id, v) {
     const el = document.getElementById(id);
     if (el && v !== null && v !== undefined && v !== '') el.value = v;
@@ -59,8 +799,20 @@
       if (o.event_name) document.getElementById('subEventSearch').value = o.event_name;
       const multi = (o.line_items && o.line_items > 1)
         ? ` · ⚠ ${esc(o.line_items)} line items — showing the first` : '';
-      msg.innerHTML = `<span class="pos">loaded ${esc(o.source)} order</span> · ` +
-        `${esc(o.event_name || ('event ' + o.tevo_event_id))}${multi}`;
+      // A CRM hit identifies its event by name/date/venue only — there's no
+      // tevo_event_id to search on, so show what it is and let the operator
+      // pick the event from the typeahead (already prefilled with the name).
+      const crm = o.via === 's4k_crm';
+      const when = o.event_date ? ` · ${esc(o.event_date)}` : '';
+      const where = o.venue_name ? ` · ${esc(o.venue_name)}` : '';
+      const status = o.order_status ? ` · <strong>${esc(o.order_status)}</strong>` : '';
+      msg.innerHTML = `<span class="pos">loaded ${esc(o.source)} order</span>` +
+        (crm ? ' <span class="badge muted" title="S4K CRM marketplace book">CRM</span>' : '') +
+        ` · ${esc(o.event_name || ('event ' + o.tevo_event_id))}${when}${where}${status}${multi}` +
+        (crm && !o.tevo_event_id
+          ? `<div class="muted small neg">${esc(o.note || 'pick the event above to run the search')}</div>`
+          : '');
+      if (crm && !o.tevo_event_id) return;  // nothing to search on yet
       run();  // auto-search subs from the loaded details
     } catch (err) {
       msg.innerHTML = `<span class="neg">${esc(String(err.message || err))}</span>`;
@@ -204,13 +956,18 @@
 
   function renderRecap(data, f) {
     const t = data.target || {};
-    const poolLabel = data.source === 'market' ? 'market (buy-in)' : 'owned';
+    const poolNames = { tevo_owned: 'TEvo owned', sg_seller: 'SG seller',
+                        tevo_market: 'exchange', gotickets: 'GoTickets' };
+    const pools = (data.pools || []).map(p => poolNames[p] || p);
+    const poolLabel = (data.source === 'market' ? 'market (buy-in)' : 'owned') +
+      (pools.length ? ` — ${pools.join(' + ')}` : '');
     const rev = (t.revenue_per_ticket != null) ? ` · revenue ${money(t.revenue_per_ticket)}/tix` : '';
     document.getElementById('subsRecap').innerHTML =
       `<div class="recap-line">Cover <strong>${esc(f.quantity)}×</strong> ` +
       `Section <strong>${esc(t.section || f.section)}</strong> ` +
       `Row <strong>${esc(t.row || f.row || '—')}</strong>${rev}</div>` +
       `<div class="muted small">pool: ${esc(poolLabel)} · snapshot: ${esc(T.fmtDate(data.captured_at))}` +
+      (data.gt_captured_at ? ` · GoTickets: ${esc(T.fmtDate(data.gt_captured_at))}` : '') +
       (data.captured_at ? '' : ' (no listings snapshot for this event)') + `</div>`;
   }
 
@@ -231,16 +988,18 @@
       `<span class="best-where">${where}</span> ` +
       `<span class="best-meta">${esc(b.quantity)} avail · cost ${money(b.unit_cost)}/tix · ${sourceBadge(b.inv_source)}</span>` +
       pnlBadge(b.pnl_total, ' total') +
+      (b.buy_url ? ` <a class="sub-link" href="${esc(b.buy_url)}" target="_blank" rel="noopener noreferrer">buy ↗</a>` : '') +
       `</div>`;
   }
 
   function renderRowSubs(data) {
     const subs = data.subs || [];
     document.getElementById('subsRowCount').textContent = subs.length ? `${subs.length}` : '';
-    const cols = ['Row', 'Match', 'Δrow', 'Qty', 'Cost/tix', 'P&L total', 'Source'];
+    const cols = ['Row', 'Match', 'Δrow', 'Qty', 'Cost/tix', 'P&L total', 'Source', 'Buy'];
     const rows = subs.map(s => [
       esc(s.row), esc(s.match_type), s.row_delta != null ? `+${esc(s.row_delta)}` : '—',
       esc(s.quantity), costDisp(s), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
+      buyCell(s),
     ]);
     document.getElementById('subsRowTable').innerHTML =
       rows.length ? tableHtml(cols, rows) : emptyHtml('No same-section same-or-better-row sub.');
@@ -255,10 +1014,11 @@
       document.getElementById('subsSecTable').innerHTML = emptyHtml(esc(ss.note));
       return;
     }
-    const cols = ['To section', 'Δquality', 'Row', 'Qty', 'Cost/tix', 'P&L total', 'Source'];
+    const cols = ['To section', 'Δquality', 'Row', 'Qty', 'Cost/tix', 'P&L total', 'Source', 'Buy'];
     const rows = subs.map(s => [
       esc(s.to_section), s.section_delta != null ? `+${money(s.section_delta)}` : '—',
       esc(s.row || '—'), esc(s.quantity), costDisp(s), pnlCell(s.pnl_total), sourceBadge(s.inv_source),
+      buyCell(s),
     ]);
     document.getElementById('subsSecTable').innerHTML =
       rows.length ? tableHtml(cols, rows) : emptyHtml('No better-section sub in this pool.');
@@ -270,8 +1030,11 @@
     wrap.hidden = amb.length === 0;
     document.getElementById('subsAmbCount').textContent = amb.length ? `(${amb.length})` : '';
     if (!amb.length) return;
-    const cols = ['Row', 'Qty', 'Cost/tix', 'Source'];
-    const rows = amb.map(s => [esc(s.row), esc(s.quantity), money(s.unit_cost), sourceBadge(s.inv_source)]);
+    const cols = ['Section', 'Row', 'Why', 'Qty', 'Cost/tix', 'Source', 'Buy'];
+    const rows = amb.map(s => [
+      esc(s.section || '—'), esc(s.row), esc(s.match_type), esc(s.quantity),
+      money(s.unit_cost), sourceBadge(s.inv_source), buyCell(s),
+    ]);
     document.getElementById('subsAmbTable').innerHTML = tableHtml(cols, rows);
   }
 
@@ -316,8 +1079,18 @@
   }
 
   function sourceBadge(src) {
-    const label = { tevo_owned: 'TEvo', sg_seller: 'SG seller', tevo_market: 'market' }[src] || (src || '—');
+    const label = {
+      tevo_owned: 'TEvo', sg_seller: 'SG seller', tevo_market: 'exchange',
+      gotickets: 'GoTickets',
+    }[src] || (src || '—');
     return `<span class="badge muted" title="${esc(src || '')}">${esc(label)}</span>`;
+  }
+
+  // Only GoTickets rows carry a buy link (the exchange has no per-listing
+  // page). Absent link -> a dash, never a fabricated URL.
+  function buyCell(s) {
+    if (!s.buy_url) return '—';
+    return `<a href="${esc(s.buy_url)}" target="_blank" rel="noopener noreferrer">buy ↗</a>`;
   }
 
   const esc = window.TermRender.escapeHtml;

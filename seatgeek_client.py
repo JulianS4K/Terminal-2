@@ -211,7 +211,11 @@ class SeatGeekClient:
             raise SeatGeekScopeError(f"/sales scope denied: {msg}")
         raise SeatGeekError(f"/sales returned {status}: {msg}")
 
-    # ---------- /purchases (currently scope-denied for our token) ----------
+    # ---------- /purchases — OUR buy-side book on brokerdata ----------
+    # Historically scope-denied (401) for our token; the DB poller
+    # (sg_purchases_sync, mig 20260911160500) records http_status per pull so a
+    # scope failure is visible rather than silent. Read-only: fetches purchase
+    # RECORDS, never places an order.
 
     def purchases(self, *, start_time: str | None = None, end_time: str | None = None,
                   event_id: int | None = None, order_ids: str | None = None,
