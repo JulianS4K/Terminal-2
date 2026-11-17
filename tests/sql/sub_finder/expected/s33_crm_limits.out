@@ -1,0 +1,45 @@
+done
+7001|StubHub|S4KTrading|240.00
+7002|GoTickets|Index Down offer subs zone unverified|140.00
+7003|SeatGeek|S4KTrading|240.00
+A nothing set: no percentage limit on a buy, a rebate may be up to the sale total
+null|null|true|{"buy_per_day_usd": 666, "buy_per_order_usd": 666}
+{"rebate_max_pct": null, "buy_per_day_usd": 666, "buy_max_cost_pct": null, "buy_per_order_usd": 666}
+200|t
+B the CRM sets its limits: a default and one marketplace of its own
+{"max": 100, "min": 0, "what": "the most rebate_amount may be on an offer", "default": 40, "not_set_means": "the sale total", "by_marketplace": {"gotickets": 25}}|{"max": 1000, "min": 1, "what": "the most a cover you ask us to buy may cost (100 = no loss)", "default": 110, "not_set_means": "no percentage limit", "by_marketplace": {"seatgeek": 125}}
+{"rebate_max_pct": 40.00, "buy_per_day_usd": 666, "buy_max_cost_pct": 110.00, "buy_per_order_usd": 666}
+rebate_max|*||40.00|crm api key crm buy / dana
+rebate_max|gotickets||25.00|crm api key crm buy / dana
+buy_max_cost|*||110.00|crm api key crm buy / dana
+buy_max_cost|seatgeek||125.00|crm api key crm buy / dana
+C a buy over the CRM limit for its marketplace is refused; inside it goes through
+{"error": "forbidden", "limit": "buy_max_cost_pct", "detail": "this buy costs more than your limit for one buy (buy_max_cost_pct)", "max_usd": 220.00, "limit_pct": 110, "sale_total": 200.00, "this_buy_usd": 240.00}
+requested
+D the rebate limit is the one the CRM set: 25% of a 200 GoTickets sale is 50
+50.00
+{"error": "invalid", "detail": "rebate_amount must be between 0 and the rebate limit (rebate_max)", "rebate_max": 50.00, "sale_total": 200.00}
+{"row": "4", "gate": 5, "state": "requested", "rebate": 50.00, "section": "101"}
+E one value changed, one cleared; the rest stands
+{"max": 100, "min": 0, "what": "the most rebate_amount may be on an offer", "default": 40, "not_set_means": "the sale total", "by_marketplace": {}}|{"max": 1000, "min": 1, "what": "the most a cover you ask us to buy may cost (100 = no loss)", "default": 150, "not_set_means": "no percentage limit", "by_marketplace": {"seatgeek": 125}}
+80.00|150.00|125.00
+the outer bound S4K keeps still wins when it is lower
+20.00|10
+F with a limit set, an order with no sale price cannot be measured
+forbidden|this order has no sale price to measure your buy limit against|buy_max_cost_pct
+G bad input changes nothing
+invalid|send {"rebate_max_pct": {"default": 0-100 or null, "by_marke
+invalid|send {"rebate_max_pct": {"default": 0-100 or null, "by_marke
+invalid|rebate_max_pct: send {"rebate_max_pct": {"default": 0-100 or
+invalid|rebate_max_pct: send {"rebate_max_pct": {"default": 0-100 or
+invalid|rebate_max_pct for the default must be a number from 0 to 10
+invalid|rebate_max_pct for the default must be a number from 0 to 10
+invalid|buy_max_cost_pct for the default must be a number from 1 to 
+invalid|buy_max_cost_pct for the default must be a number from 1 to 
+invalid|buy_max_cost_pct: not a marketplace name: 123
+invalid|buy_max_cost_pct: send {"rebate_max_pct": {"default": 0-100 
+invalid|buy_max_cost_pct for the default must be a number from 1 to 
+t
+a key that may neither buy nor offer cannot set them, and an unknown key cannot read them
+{"error": "forbidden", "detail": "this key may not set limits"}|false
+{"error": "forbidden", "detail": "the sub finder is not enabled for this key"}

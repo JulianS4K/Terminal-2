@@ -1,0 +1,67 @@
+A nothing has ever run: every reader is down, the switched-on parts with nothing waiting are ok
+overall down
+crm_feed down {}
+order_book down {}
+lookups ok {"orders_watched": 0, "lookups_unanswered": 0}
+buying ok {"buys_waiting": 0, "buys_to_check": 0, "automatic_buying": "off"}
+offers ok {"offers_waiting": 0, "offers_to_check": 0, "buy_after_accept": "on"}
+balances down {}
+B everything fresh: ok, and the answer names no table of ours
+overall ok
+crm_feed ok {"last_read_items": 250, "last_attempt_http": 200, "last_read_took_ms": 61000}
+order_book ok {}
+lookups ok {"orders_watched": 0, "lookups_unanswered": 0}
+buying ok {"buys_waiting": 0, "buys_to_check": 0, "automatic_buying": "off"}
+offers ok {"offers_waiting": 0, "offers_to_check": 0, "buy_after_accept": "on"}
+balances ok {}
+f|t|ok
+f|t|off
+f|t|down
+f|t|degraded
+C the CRM feed: a failed try after a good read keeps the good read and shows the failure; late is degraded, very late is down
+ok|401|250|t
+degraded|degraded
+down|down
+D the order book and the balances late
+overall down
+crm_feed ok {"last_read_items": 3, "last_attempt_http": 200, "last_read_took_ms": 500}
+order_book degraded {}
+lookups ok {"orders_watched": 0, "lookups_unanswered": 0}
+buying ok {"buys_waiting": 0, "buys_to_check": 0, "automatic_buying": "off"}
+offers ok {"offers_waiting": 0, "offers_to_check": 0, "buy_after_accept": "on"}
+balances down {}
+ok
+E lookups: a watched order re-checked lately is ok; an unanswered lookup 20 minutes old is degraded, 2 hours old is down; another key sees its own
+done
+overall ok
+crm_feed ok {"last_read_items": 3, "last_attempt_http": 200, "last_read_took_ms": 500}
+order_book ok {}
+lookups ok {"orders_watched": 1, "lookups_unanswered": 0}
+buying ok {"buys_waiting": 0, "buys_to_check": 0, "automatic_buying": "off"}
+offers ok {"offers_waiting": 0, "offers_to_check": 0, "buy_after_accept": "on"}
+balances ok {}
+degraded
+degraded|1
+down|down
+ok|0|0
+F buying: a buy waiting 20 minutes is degraded; a buy of unknown outcome, or the safety switch, is down; switched off is off and does not lower the overall status
+degraded|degraded|1|a buy has been waiting longer than it should
+down|down|1|buying is stopped until S4K has checked a buy that did not finish cleanly
+down
+ok|off|buying is switched off at S4K
+ok|buying|off|on|
+ok|offers|off||off
+G offers: one waiting 20 minutes is degraded, 2 hours is down; one sent with its outcome unknown is degraded
+degraded|1|an offer has been waiting longer than it should
+down
+degraded|1|an offer was sent and its outcome is not known yet
+H the MLB schedule: no check until its tables exist; collected but not served is off; served and fresh is ok; stale is degraded then down
+0
+ok|off|1|the schedule is being collected and is not served yet
+ok|ok|1|f
+degraded|degraded
+down|down
+I a key that may not look up subs is refused; nobody but the service role may call it
+{"error": "forbidden", "detail": "the sub finder is not enabled for this key"}
+f|f
+down|ok|degraded|down

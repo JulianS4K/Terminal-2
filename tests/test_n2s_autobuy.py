@@ -81,6 +81,13 @@ def test_level_names_only():
     assert "level_mismatch" not in a.index_match(_order(section="Section 205", sub_section="Upper 205"))["reasons"]
 
 
+def test_row_letter_mismatch():
+    assert "row_letter_mismatch" in a.index_match(_order(order_row="AA", sub_row="H"))["reasons"]
+    assert "row_letter_mismatch" in a.index_match(_order(order_row="b", sub_row="CC"))["reasons"]
+    for sold, sub in (("H", "B"), ("AA", "BB"), ("14", "12"), ("AA", "3"), (None, "H")):
+        assert "row_letter_mismatch" not in a.index_match(_order(order_row=sold, sub_row=sub))["reasons"]
+
+
 def test_order_active_timer_and_ped():
     assert a.order_active({"timer_expires_at": "2026-10-28T16:53:45+00:00"}, NOW)["reasons"] == ["timer_closed"]
     # PED (Need2Buy) orders are never covered — non-PED only.
@@ -104,7 +111,7 @@ def test_not_ours_and_other_markets():
     assert evo["go"] is True and s[3]["ok"] is True and s[3]["kind"] == "check"
     assert s[4]["request"]["url"] == "https://api.ticketevolution.com/v9/orders"
     assert s[4]["body"]["orders"][0]["ticket_group"]["id"] == "7792279723"
-    assert s[6]["request"]["url"].endswith("/v9/orders/473339/accept") and s[6]["body"] == {"reviewer_id": None}
+    assert s[6]["request"]["url"].endswith("/v9/orders/473339/accept") and s[6]["body"] == {"reviewer_id": 53658}
     # TickPick sub sold on TickPick.
     tp = a.plan_cover(_order(sub_source="tickpick", s4k_source="TickPick"), owned=False, now=NOW)
     s = {x["step"]: x for x in tp["steps"]}
