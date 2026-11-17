@@ -29,7 +29,8 @@
  *   7. renames the tab "All orders 11/9 12:44pm NY" (time of the run, New
  *      York). Steps 6–7 run every time, even with no new emails.
  *
- * Columns are found BY HEADER NAME in row 1, so the order can change. Used:
+ * Columns are found BY HEADER NAME in the header row (the first of the top 10
+ * rows with an "Invoice #" column, e.g. row 6), so the order can change. Used:
  *   Event, Venue, Section, Row, Start Seat, End Seat, Quantity,
  *   Price per Ticket, GrandTotal Amount, Profit (formula, only if empty),
  *   Customer Name, Customer Email, Invoice # (required), Site Order#, Site,
@@ -70,6 +71,7 @@
  */
 
 const PEDDLE = {
+  HEADER_SCAN: 10,         // look for the header row in the top 10 rows
   QUERY: 'subject:"PEDDLING SALE RECEIVED"',
   LOOKBACK: '3d',          // regular sync window
   BACKFILL: '60d',         // backfillPeddlingSales() window
@@ -163,13 +165,17 @@ function peddlingPreview() {
 function peddlingCheckSheet() {
   const sh = peddleSheet_();
   const ctx = peddleSheetCtx_(sh);
-  console.log(`Tab "${sh.getName()}" (gid ${sh.getSheetId()}), ${ctx.width} header column(s), ` +
-              `${ctx.rows.length} data row(s) read, ${ctx.rows.filter(r => r.empty).length} empty.`);
+  console.log(`Tab "${sh.getName()}" (gid ${sh.getSheetId()}): header row ${ctx.headerRow}, ` +
+              `${ctx.width} header column(s), ${ctx.rows.length} data row(s) read, ` +
+              `${ctx.rows.filter(r => r.empty).length} empty.`);
+  ctx.top.slice(0, 3).forEach((r, i) =>
+    console.log(`  row ${i + 1}: ${JSON.stringify(r.filter(Boolean).slice(0, 40))}`));
   Object.keys(PEDDLE_FIELDS).forEach(k => {
     const c = ctx.cols[k];
     console.log(`  ${k.padEnd(10)} → ${c ? peddleColLetter_(c) + ' "' + ctx.header[c - 1] + '"' : '(no column — not written)'}`);
   });
-  if (!ctx.cols.invoice) console.error('No "Invoice #" column: the sync will not write to this tab.');
+  if (!ctx.cols.invoice) console.error(`No "Invoice #" column in the top ${ctx.top.length} row(s): ` +
+                                       'the sync will not write to this tab. Check the tab (gid) and the header spelling.');
 }
 
 /** Write the header row if the tab is completely empty. */
@@ -387,8 +393,8 @@ const PEDDLE_FIELDS = {
   profit:     ['profit'],
   custName:   ['customername'],
   custEmail:  ['customeremail'],
-  invoice:    ['invoice#', 'invoice'],
-  siteOrder:  ['siteorder#', 'siteorder'],
+  invoice:    ['invoice#', 'invoice', 'invoicenumber', 'invoiceno', 'invoiceno.', 'inv#'],
+  siteOrder:  ['siteorder#', 'siteorder', 'siteordernumber', 'siteorderno'],
   site:       ['site'],
   eventCity:  ['city(event)', 'eventcity'],
   eventState: ['state(event)', 'eventstate'],
@@ -420,7 +426,16 @@ function peddleNorm_(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9
 /** Header map + every data row's values/formulas. */
 function peddleSheetCtx_(sh) {
   const lastCol = Math.max(sh.getLastColumn(), 1);
-  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v).trim());
+  // The header row is the first of the top PEDDLE.HEADER_SCAN rows with an
+  // Invoice # column (a title or note row above the headers is common);
+  // row 1 when none has one.
+  const scan = Math.max(1, Math.min(sh.getLastRow(), PEDDLE.HEADER_SCAN));
+  const top = sh.getRange(1, 1, scan, lastCol).getValues().map(r => r.map(v => String(v).trim()));
+  let headerRow = 1;
+  for (let i = 0; i < top.length; i++) {
+    if (top[i].some(h => PEDDLE_FIELDS.invoice.indexOf(peddleNorm_(h)) >= 0)) { headerRow = i + 1; break; }
+  }
+  const header = top[headerRow - 1] || [];
   // trailing blank headers are not columns of ours
   let width = header.length;
   while (width > 1 && !header[width - 1]) width--;
@@ -438,17 +453,18 @@ function peddleSheetCtx_(sh) {
   if (!cols.eventDt && !header[0]) cols.eventDt = 1;
 
   const last = sh.getLastRow();
+  const first = headerRow + 1;
   const rows = [];
-  if (last >= 2) {
-    const rng = sh.getRange(2, 1, last - 1, width);
+  if (last >= first) {
+    const rng = sh.getRange(first, 1, last - first + 1, width);
     const vals = rng.getValues(), fx = rng.getFormulas();
     vals.forEach((v, i) => {
       // empty = no value in any column (a formula that shows "" counts as empty)
       const empty = v.every(x => x === '' || x === null);
-      rows.push({ row: i + 2, values: v, formulas: fx[i], empty });
+      rows.push({ row: i + first, values: v, formulas: fx[i], empty });
     });
   }
-  return { header, width, cols, rows };
+  return { header, headerRow, width, cols, rows, top };
 }
 
 /**
@@ -462,7 +478,10 @@ function peddleWriteSheet_(items, extra, opts) {
   if (sh.getLastRow() === 0) setupPeddlingSheet();
   const ctx = peddleSheetCtx_(sh);
   if (!ctx.cols.invoice) {
-    throw new Error('No "Invoice #" column in row 1 of this tab. Nothing written — run peddlingCheckSheet().');
+    throw new Error(`No "Invoice #" column in the top ${ctx.top.length} row(s) of tab "${sh.getName()}" ` +
+                    `(gid ${sh.getSheetId()}). Nothing written. Row 1 reads: ` +
+                    JSON.stringify((ctx.top[0] || []).filter(Boolean).slice(0, 40)) +
+                    ' — run peddlingCheckSheet().');
   }
   const ic = ctx.cols.invoice, oc = ctx.cols.siteOrder;
   const byInvoice = {}, bySiteOrder = {};
@@ -486,7 +505,7 @@ function peddleWriteSheet_(items, extra, opts) {
   const present = items.filter(it => rowOf(it));
   const fresh = items.filter(it => !rowOf(it) && !it.cancelled && (opts.ignoreTag || !it.in_sheet_tag));
   const free = ctx.rows.filter(r => r.empty);
-  let nextRow = Math.max(sh.getLastRow(), 1) + 1;
+  let nextRow = Math.max(sh.getLastRow(), ctx.headerRow) + 1;
   const written = [];
   fresh.forEach(it => {
     let r = free.shift();
@@ -621,13 +640,15 @@ function peddleStampTabName_() {
   if (sh.getName() !== name) sh.setName(name);
 }
 
-/** A1 blank → "Event Date", so column A is named for what the script puts there. */
+/** Column A of the header row blank → "Event Date" (what the script puts there). */
 function peddleEnsureEventDateHeader_() {
   const sh = peddleSheet_();
-  const a1 = sh.getRange(1, 1);
-  if (String(a1.getValue()).trim() || a1.getFormula()) return;
-  a1.setValue('Event Date');
-  console.log('Header: A1 was blank, set to "Event Date".');
+  const ctx = peddleSheetCtx_(sh);
+  if (!ctx.cols.invoice) return;            // not our header row: touch nothing
+  const a = sh.getRange(ctx.headerRow, 1);
+  if (String(a.getValue()).trim() || a.getFormula()) return;
+  a.setValue('Event Date');
+  console.log(`Header: A${ctx.headerRow} was blank, set to "Event Date".`);
 }
 
 function peddleRowStillEmpty_(sh, ctx, row) {
