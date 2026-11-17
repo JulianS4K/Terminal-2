@@ -320,9 +320,10 @@
  tickpick_catalog_pull      | f    | t
  tickpick_catalog_tick      | f    | t
 
-         jobname          |  schedule  
---------------------------+------------
- llm_judge_hourly         | 50 * * * *
- llm_venue_judge_daily    | 5 6 * * *
- tickpick_catalog_hourly  | 41 * * * *
- vivid_catalog_map_hourly | 43 * * * *
+          jobname          |  schedule  
+---------------------------+------------
+ catalog_venue_pair_hourly | 33 * * * *
+ llm_judge_hourly          | 50 * * * *
+ llm_venue_judge_daily     | 5 6 * * *
+ tickpick_catalog_hourly   | 41 * * * *
+ vivid_catalog_map_hourly  | 43 * * * *

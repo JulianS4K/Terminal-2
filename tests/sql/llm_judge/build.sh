@@ -19,4 +19,5 @@ while read -r step; do
 done <<'STEPS'
 stub_00_base.sql
 20261117120000_llm_match_judge.sql
+20261117140000_catalog_venue_pairing.sql
 STEPS

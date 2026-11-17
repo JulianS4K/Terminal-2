@@ -1,0 +1,58 @@
+A the normaliser
+harrahs cabaret harrahs|harrahs cabaret harrahs
+ka theater mgm grand|kennedy center opera house|comedy cellar las vegas
+t|t|t|f|f
+B Vivid dry run: 13 candidates (55 and 56 are not), 10 paired (42 by its events: two TEvo venues carry the name), nothing written
+{"paired": 10, "sample": ["Majestic Theatre Dallas => Majestic Theatre - Dallas [pair_eq_city]", "Grand Theater - Wausau => Grand Theater (2 shared event days, runner-up 0) [pair_cooccur]", "Canadian Tire Centre => Canadian Tire Centre (kanata) [pair_eq_state]", "Canadian Tire Centre Parking => Canadian Tire Centre (kanata) [pair_eq_state]", "Moody Center ATX Parking => parking of venue 45 (name_state) [pair_parking]", "The Sinclair => axs venue \"The Sinclair\" [pair_sibling]", "Boondocks Pub => tickpick venue 21 [pair_sibling]", "Boca Black Box => Boca Black Box Center for the Arts (1 shared event day) [pair_affix]", "Harrahs Cabaret at Harrahs Las Vegas => Harrah's Cabaret At Harrah's Las Vegas [pair_eq_city]", "KA Theatre at MGM Grand Hotel and Casino => KA Theatre at MGM Grand [pair_eq_city]"], "source": "vivid", "applied": false, "ambiguous": {"affix": 1}, "by_method": {"pair_affix": 1, "pair_cooccur": 1, "pair_eq_city": 3, "pair_parking": 1, "pair_sibling": 2, "pair_eq_state": 2}, "unpaired_in": 13, "paired_events": 11, "still_unpaired": 3, "events_by_method": {"pair_affix": 1, "pair_cooccur": 2, "pair_eq_city": 3, "pair_parking": 1, "pair_sibling": 2, "pair_eq_state": 2}, "unpaired_events_in": 15, "still_unpaired_events": 4}
+0
+C Vivid live: written and audited; 45 untouched; 47, 51, 52 still open
+10
+41|Majestic Theatre Dallas|100|pair_eq_city
+42|Grand Theater - Wausau|110|pair_cooccur
+43|Canadian Tire Centre|120|pair_eq_state
+44|Canadian Tire Centre Parking|120|pair_eq_state
+45|Moody Center ATX|130|name_state
+46|Moody Center ATX Parking|130|pair_parking
+47|Palace Theatre - San Francisco||
+48|The Sinclair|150|pair_sibling
+49|Boondocks Pub|160|pair_sibling
+50|Boca Black Box|170|pair_affix
+51|Gaslamp Quarter - The Yellow Door Comedy Club||
+52|Cannery Hall||
+53|Harrahs Cabaret at Harrahs Las Vegas|220|pair_eq_city
+54|KA Theatre at MGM Grand Hotel and Casino|230|pair_eq_city
+55|O2 Academy||
+56|Nowhere Hall||
+vivid_catalog_venue|41|tevo_venue 100 via pair_eq_city: Majestic Theatre - Dallas
+vivid_catalog_venue|42|tevo_venue 110 via pair_cooccur: Grand Theater (2 shared event days, runner-up 0)
+vivid_catalog_venue|43|tevo_venue 120 via pair_eq_state: Canadian Tire Centre (kanata)
+vivid_catalog_venue|44|tevo_venue 120 via pair_eq_state: Canadian Tire Centre (kanata)
+vivid_catalog_venue|46|tevo_venue 130 via pair_parking: parking of venue 45 (name_state)
+vivid_catalog_venue|48|tevo_venue 150 via pair_sibling: axs venue "The Sinclair"
+vivid_catalog_venue|49|tevo_venue 160 via pair_sibling: tickpick venue 21
+vivid_catalog_venue|50|tevo_venue 170 via pair_affix: Boca Black Box Center for the Arts (1 shared event day)
+vivid_catalog_venue|53|tevo_venue 220 via pair_eq_city: Harrah's Cabaret At Harrah's Las Vegas
+vivid_catalog_venue|54|tevo_venue 230 via pair_eq_city: KA Theatre at MGM Grand
+D a second run has nothing left to pair
+{"paired": 0, "sample": [], "source": "vivid", "applied": true, "written": 0, "ambiguous": {"affix": 1}, "by_method": {}, "unpaired_in": 3, "paired_events": 0, "still_unpaired": 3, "events_by_method": {}, "unpaired_events_in": 4, "still_unpaired_events": 4}
+E TickPick: Microtorium by the events (3 days), Majestic by name; Penn Plaza (one day) stays
+{"paired": 2, "sample": ["Microtorium => Micro Wrestling Federation at the Microtorium (3 shared event days, runner-up 0) [pair_cooccur]", "Majestic Theatre Dallas => Majestic Theatre - Dallas [pair_eq_city]"], "source": "tickpick", "applied": true, "written": 2, "ambiguous": {}, "by_method": {"pair_cooccur": 1, "pair_eq_city": 1}, "unpaired_in": 3, "paired_events": 4, "still_unpaired": 1, "events_by_method": {"pair_cooccur": 3, "pair_eq_city": 1}, "unpaired_events_in": 5, "still_unpaired_events": 1}
+21|Boondocks Pub|160|manual
+30|Microtorium|190|pair_cooccur
+31|Penn Plaza||
+32|Majestic Theatre Dallas|100|pair_eq_city
+F the review view and the cron
+tickpick|30|Microtorium|Micro Wrestling Federation at the Microtorium|Pigeon Forge, TN|pair_cooccur
+tickpick|32|Majestic Theatre Dallas|Majestic Theatre - Dallas|Dallas, TX|pair_eq_city
+vivid|41|Majestic Theatre Dallas|Majestic Theatre - Dallas|Dallas, TX|pair_eq_city
+vivid|42|Grand Theater - Wausau|Grand Theater|Wausau, WI|pair_cooccur
+vivid|43|Canadian Tire Centre|Canadian Tire Centre|Kanata, ON|pair_eq_state
+vivid|44|Canadian Tire Centre Parking|Canadian Tire Centre|Kanata, ON|pair_eq_state
+vivid|46|Moody Center ATX Parking|Moody Center|Austin, TX|pair_parking
+vivid|48|The Sinclair|||pair_sibling
+vivid|49|Boondocks Pub|||pair_sibling
+vivid|50|Boca Black Box|Boca Black Box Center for the Arts|Boca Raton, FL|pair_affix
+vivid|53|Harrahs Cabaret at Harrahs Las Vegas|Harrah's Cabaret At Harrah's Las Vegas|Las Vegas, NV|pair_eq_city
+vivid|54|KA Theatre at MGM Grand Hotel and Casino|KA Theatre at MGM Grand|Las Vegas, NV|pair_eq_city
+catalog_venue_pair_hourly|33 * * * *
+f|t
