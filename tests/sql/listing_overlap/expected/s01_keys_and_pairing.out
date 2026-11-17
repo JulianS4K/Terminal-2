@@ -1,0 +1,64 @@
+1 section keys (input -> key):
+129 -> 129
+Club 129 -> 129
+C129 -> 129
+VIP111 -> 111
+Vip 111 -> 111
+Section108D -> 108D
+Section 108D -> 108D
+400s Level 428 -> 428
+101WC -> 101WC
+105 WC -> 105WC
+Lower Corner 131 -> 131
+Suite A6 -> A6
+A6 -> A6
+B6 -> B6
+Floor E -> FLOORE
+FLOORE -> FLOORE
+C-F -> CF
+Club F -> CLUBF
+GA -> GA
+General Admission -> GA
+LOGE12 -> LOGE12
+   -> (null)
+Upper  317 -> 317
+2 row keys (input -> key):
+[12] -> [12]
+[012] -> [12]
+[ 7 ] -> [7]
+[Row 5] -> [5]
+[row AA] -> [AA]
+[a] -> [A]
+[GA] -> [GA]
+[0] -> [0]
+[00] -> [0]
+[NULL] -> []
+[] -> []
+3 pairing (evo prices | gt prices -> evo_idx:gt_idx):
+{100} | {99} -> 1:1
+{100} | {150} -> (none)
+{100,200} | {198} -> 2:1
+{200} | {99,198} -> 1:2
+{100,100,100} | {99,99} -> 1:1 2:2
+{100,300,500} | {98,296,700} -> 1:1 2:2
+{} | {99} -> (none)
+{100} | {88.9} -> 1:1
+{100} | {87} -> (none)
+4 nobody but the service role may run it:
+listing_overlap_compute anon=false authenticated=false service_role=true
+listing_overlap_event_listings anon=false authenticated=false service_role=true
+listing_overlap_evo_book anon=false authenticated=false service_role=true
+listing_overlap_evo_seen anon=false authenticated=false service_role=true
+listing_overlap_gt_book anon=false authenticated=false service_role=true
+listing_overlap_gt_cap anon=false authenticated=false service_role=true
+listing_overlap_gt_sources anon=false authenticated=false service_role=true
+listing_overlap_match_event anon=false authenticated=false service_role=true
+listing_overlap_tick anon=false authenticated=false service_role=true
+listing_overlap_config rls=true anon_select=false authenticated_select=false
+listing_overlap_event rls=true anon_select=false authenticated_select=false
+listing_overlap_evo_live rls=true anon_select=false authenticated_select=false
+listing_overlap_evo_poll rls=true anon_select=false authenticated_select=false
+listing_overlap_label rls=true anon_select=false authenticated_select=false
+v_listing_overlap_event rls=false anon_select=false authenticated_select=false
+5 schedule:
+listing_overlap_tick_1min|* * * * *|SET statement_timeout = '55s'; DO $b$ BEGIN IF NOT public.cron_try_lock('listing_overlap_tick') THEN RETURN; END IF; PERFORM public.listing_overlap_tick(); END $b$;

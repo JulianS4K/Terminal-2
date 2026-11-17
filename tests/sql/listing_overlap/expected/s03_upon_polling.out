@@ -1,0 +1,57 @@
+1 nothing polled: the tick does nothing
+{"errors": 0, "enabled": true, "expired": 0, "matched": 0, "out_of_time": false}
+2 EVO has landed, GoTickets has not: still nothing to match
+evo poll of event 10: 3 rows stored
+evo poll of event 11: 1 rows stored
+{"errors": 0, "enabled": true, "expired": 0, "matched": 0, "out_of_time": false}
+events tracked: 0
+3 the GoTickets poll lands: matched on the next tick
+gotickets poll of event 900: 2 listings stored
+{"errors": 0, "enabled": true, "expired": 0, "matched": 1, "out_of_time": false}
+evo|1|both|paired
+evo|2|evo_only|row_absent
+evo|3|both|paired
+gt|101|both|paired
+gt|103|both|paired
+event 11 (no GoTickets event) tracked: 0
+4 no new poll: the tick matches nothing
+{"errors": 0, "enabled": true, "expired": 0, "matched": 0, "out_of_time": false}
+5 a GoTickets poll fired but its response has not been stored: nothing to match yet
+{"errors": 0, "enabled": true, "expired": 0, "matched": 0, "out_of_time": false}
+6 a new GoTickets capture: 105/20 appears there, 106/1 has gone
+gotickets poll of event 900: 2 listings stored
+{"errors": 0, "enabled": true, "expired": 0, "matched": 1, "out_of_time": false}
+evo|1|both|paired|label_since kept
+evo|2|both|paired|label_since moved
+evo|3|evo_only|section_absent|label_since moved
+gt|101|both|paired|label_since kept
+gt|102|both|paired|new row
+7 EVO polls again 40 minutes on. The firehose only stores what changed: group 3 left, group 1 repriced, group 2 untouched.
+Without the id set (collector not yet updated) group 3 is still inside its hour and still counted:
+evo poll of event 10: 1 rows stored
+{"errors": 0, "enabled": true, "expired": 0, "matched": 1, "out_of_time": false}
+evo_exact=false evo_listings=3 both=2
+evo|1|both|paired
+evo|2|both|paired
+evo|3|evo_only|section_absent
+8 the same kind of poll with the id set from the collector: the book is exact, group 3 is gone
+evo poll of event 10: 0 rows stored, id set of 2
+{"errors": 0, "enabled": true, "expired": 0, "matched": 1, "out_of_time": false}
+evo_exact=true evo_listings=2 both=2
+evo|1|both|paired
+evo|2|both|paired
+gt|101|both|paired
+gt|102|both|paired
+live ids: 1,2
+9 an older response arriving late does not overwrite the live set
+0
+live ids: 1,2
+10 the id set belongs to an earlier capture than the one being matched: not trusted
+evo poll of event 10: 1 rows stored
+{"errors": 0, "enabled": true, "expired": 0, "matched": 1, "out_of_time": false}
+evo_exact=false evo_listings=4
+11 switched off: the tick returns at once
+gotickets poll of event 900: 1 listings stored
+{"enabled": false}
+{"errors": 0, "enabled": true, "expired": 0, "matched": 0, "out_of_time": false}
+{"errors": 0, "enabled": true, "expired": 0, "matched": 1, "out_of_time": false}
