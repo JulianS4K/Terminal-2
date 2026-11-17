@@ -5,21 +5,26 @@ The key is hashed (sha256) and resolved by ``mcp_verify_key`` (migs
 20261008150000 + 20261021190000) to a tier plus its limits:
 
 - ``external`` (anyone who signed up at /developers): public market data —
-  event/performer/venue search, SeatGeek market sales pace, price history +
-  zone prices + forecast, the daily top-selling chart, performer trends,
-  multi-source price movers, competing events, prediction markets, sports
-  state, news, weather, every SeatGeek sale per event, the market by seating
-  zone (live + daily history), per-game demand context from the feature store,
-  the learned price model's predictions, a per-feed freshness report, and
-  read-only queries over a whitelist of public views.
-- ``internal`` (our team): everything external gets, plus our book — pickups,
-  per-event orders across every source, home stats, the market chart with our
-  positions excluded, owned events, what we poll, and the wider ``query_view``
-  whitelist (owned / wholesale zone columns).
+  event/performer/venue search, asking-price history + zone prices +
+  forecast, performer trends, multi-source price movers, competing events,
+  prediction markets, sports state, news, weather, the market by seating zone
+  (live + daily history), per-game demand context from the feature store, the
+  learned price model's predictions, the seat map coloured by asking price, a
+  per-feed freshness report, and read-only queries over a whitelist of public
+  views.
+- ``internal`` (our team): everything external gets, plus SOLD data — every
+  SeatGeek sale per event, the sales pace, the daily top-selling chart, the
+  sold-price seat map and the sale-derived fields of the shared tools — and
+  our book: pickups, per-event orders across every source, home stats, the
+  market chart with our positions excluded, owned events, what we poll, and
+  the wider ``query_view`` whitelist (sales, owned / wholesale zone columns).
 
 Each tier is its own MCP server, so an external caller never even sees the
 internal tool list, and every external column list is explicit — no owned
 counts, order rows, buyer data or wholesale prices leave the internal tier.
+Sold data is internal only (operator 2026-11-17): the sales tools and views
+sit on the internal server, and a tool both tiers share answers the external
+tier through ``_strip_sold`` (see ``_PUBLIC_VARIANTS``).
 Every tool answers with the as-of timestamps of the rows it used; the
 ``data_freshness`` tool says how fresh each feed is right now (the TEvo get-in
 feed has been paused since 2026-09-27 and is labelled so).
@@ -61,25 +66,18 @@ STALE_AFTER_H = 48.0
 
 # --------------------------------------------------------------------------
 # query_view whitelists: view → columns a caller may select/filter/sort on.
-# EXTERNAL = public market data only (no owned counts, orders, buyer PII).
-# INTERNAL adds our book and the owned columns.
+# EXTERNAL = public market data only (no sold data, owned counts, orders, buyer PII).
+# INTERNAL adds sold data, our book and the owned columns.
 # --------------------------------------------------------------------------
 EXTERNAL_QUERY_VIEWS: dict[str, tuple[str, ...]] = {
     "events": ("id", "name", "occurs_at_local", "venue_id", "venue_name", "venue_location",
                "event_type", "primary_performer_id", "primary_performer_name", "popularity_score"),
-    "seatgeek_sales_snapshots": ("tevo_event_id", "sg_event_id", "sg_sale_id", "sale_at_utc",
-                                 "broadcast_price", "quantity", "section", "row"),
     "event_listing_snapshot_daily": ("event_id", "snapshot_date", "captured_at",
                                      "evo_tickets_count", "evo_retail_getin", "evo_retail_median",
                                      "sg_all_listings", "sg_all_tickets", "sg_all_getin",
                                      "sg_all_median", "amalgam_getin", "amalgam_median"),
     "event_competitors_snapshot": ("tevo_event_id", "competitors_count", "competitors",
                                    "refreshed_at"),
-    "sg_market_chart": ("chart_date", "rank", "prev_rank", "peak_rank", "days_on_chart",
-                        "chart_score", "blended_score", "pct_volume", "pct_median", "ma7_volume",
-                        "ma7_median", "ma7_gross", "days_with_sales", "platform_breadth",
-                        "market_median_all", "tevo_event_id", "sg_event_id", "sg_event_name",
-                        "sg_venue_name", "sg_datetime_utc"),
     "performer_metrics_daily": ("performer_id", "snapshot_date", "split", "performer_name",
                                 "what_event_type", "event_count", "evo_tickets_total",
                                 "sg_all_tickets_total", "getin_min", "getin_median", "price_min",
@@ -110,7 +108,7 @@ EXTERNAL_QUERY_VIEWS: dict[str, tuple[str, ...]] = {
         "perf_daily_getin_median", "market_competing_events", "is_rivalry", "rivalry_name",
         "rivalry_intensity", "wx_temp_f", "wx_precip_pct", "wx_wind_mph", "wx_summary",
         "wx_has_alert", "primary_getin", "primary_median", "primary_listings",
-        "primary_flip_margin_pct", "primary_signal", "vel_prev_capture_date", "vel_tickets_sold",
+        "primary_flip_margin_pct", "primary_signal", "vel_prev_capture_date",
         "vel_getin_delta_pct", "vel_median_delta_pct", "buzz_home_news_7d", "is_national_tv",
         "broadcast_networks"),
     # latest learned price-model predictions (Knicks home games; scripts/train_knicks_price.py)
@@ -118,8 +116,20 @@ EXTERNAL_QUERY_VIEWS: dict[str, tuple[str, ...]] = {
                                  "opponent", "occurs_at", "zone", "predicted_price", "p10", "p90",
                                  "ctx_zone_getin", "ctx_zone_median", "predicted_vs_zone_getin"),
 }
+# Sold data — what sold, for how much, how fast — never external (operator 2026-11-17).
+SOLD_QUERY_VIEWS: dict[str, tuple[str, ...]] = {
+    "seatgeek_sales_snapshots": ("tevo_event_id", "sg_event_id", "sg_sale_id", "sale_at_utc",
+                                 "broadcast_price", "quantity", "section", "row"),
+    "sg_market_chart": ("chart_date", "rank", "prev_rank", "peak_rank", "days_on_chart",
+                        "chart_score", "blended_score", "pct_volume", "pct_median", "ma7_volume",
+                        "ma7_median", "ma7_gross", "days_with_sales", "platform_breadth",
+                        "market_median_all", "tevo_event_id", "sg_event_id", "sg_event_name",
+                        "sg_venue_name", "sg_datetime_utc"),
+}
 QUERY_VIEWS: dict[str, tuple[str, ...]] = {
     **EXTERNAL_QUERY_VIEWS,
+    **SOLD_QUERY_VIEWS,
+    "zone_price_observations": EXTERNAL_QUERY_VIEWS["zone_price_observations"] + ("vel_tickets_sold",),
     "event_listing_snapshot_daily": EXTERNAL_QUERY_VIEWS["event_listing_snapshot_daily"]
     + ("evo_owned_tickets", "sg_owned_tickets"),
     "v_s4kcs_orders": ("source", "s4k_order_id", "order_status", "event_name", "event_date",
@@ -138,7 +148,7 @@ MAX_ROWS = 500
 
 PUBLIC_EVENT_COLS = "id,name,occurs_at_local,venue_id,venue_name,venue_location,event_type," \
                     "primary_performer_id,primary_performer_name,popularity_score"
-MARKET_CHART_COLS = ",".join(EXTERNAL_QUERY_VIEWS["sg_market_chart"])
+MARKET_CHART_COLS = ",".join(SOLD_QUERY_VIEWS["sg_market_chart"])
 PERFORMER_COLS = ",".join(EXTERNAL_QUERY_VIEWS["performer_metrics_daily"])
 PREDICTION_COLS = ",".join(EXTERNAL_QUERY_VIEWS["prediction_markets"])
 NEWS_COLS = ",".join(EXTERNAL_QUERY_VIEWS["v_reddit_news_ticker"])
@@ -261,6 +271,38 @@ def _cached(fn: Callable) -> Callable:
 
 def _rpc(db, name: str, args: dict | None = None):
     return db.rpc(name, args or {}).execute().data
+
+
+# --------------------------------------------------------------------------
+# Sold data stays internal (operator 2026-11-17). A tool both tiers share is
+# registered on the external server through `_public`, which drops every key
+# below from its answer; the internal server registers the tool itself.
+# --------------------------------------------------------------------------
+_SOLD_KEYS = frozenset({
+    "sg_sales_30d", "sales_daily",                       # team_report: sales pace per game / per day
+    "realized_section_median", "realized_sample_n",      # price_forecast: the sales behind the number
+    "sold_to_ask_ratio", "sold_to_ask_ratio_used",
+    "realized_sale", "seatdata_market", "sg_sold_median",    # forecast signals built on sale prices
+    "ma7_volume", "ma7_median", "ma7_gross",             # the top-selling chart's sales averages
+    "vel_tickets_sold",                                  # feature store: tickets gone since the last capture
+})
+
+
+def _strip_sold(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _strip_sold(v) for k, v in obj.items() if k not in _SOLD_KEYS}
+    if isinstance(obj, list):
+        return [_strip_sold(v) for v in obj]
+    return obj
+
+
+def _public(fn: Callable, doc: str) -> Callable:
+    """The external-tier variant of `fn`: same name and arguments, sold data removed."""
+    def variant(db, *args, **kwargs):
+        return _strip_sold(fn(db, *args, **kwargs))
+    variant.__name__, variant.__doc__, variant.__wrapped__ = fn.__name__, doc, fn  # type: ignore[attr-defined]
+    variant.__annotations__ = dict(fn.__annotations__)
+    return variant
 
 
 # --------------------------------------------------------------------------
@@ -689,7 +731,7 @@ def zone_prices(db, event_id: int) -> dict:
     if thin:
         out["note"] = (f"{len(thin)} of {len(zones)} zones have fewer than {THIN_ZONE_TICKETS} tickets on "
                        "TEvo (`thin`: true) — their medians rest on a listing or two; check "
-                       "`event_sales` (what actually sold) and `team_report` (SeatGeek depth)")
+                       "`team_report` (SeatGeek and GoTickets depth) before leaning on them")
     return out
 
 
@@ -978,6 +1020,18 @@ table{{border-collapse:collapse;margin-top:16px;min-width:280px}}td,th{{padding:
                 uri=f"{base}.html", mime_type="text/html", text=page))]
 
 
+def _seat_map_public(db, event_id: int) -> list[TextContent | EmbeddedResource]:
+    """The event's seat map coloured by the median asking price per section right now
+    (TEvo) — an artifact you can show the user. Returns a JSON summary (legend, the priced
+    sections, sections we could not place), the coloured map as an SVG resource and a
+    self-contained HTML page (map + legend + section table) — render the HTML resource as an
+    artifact. Sections without listings are grey. Event ids are TEvo ids."""
+    return seat_map(db, event_id, metric="ask")
+
+
+_seat_map_public.__name__ = "seat_map"
+
+
 FORECAST_MAX_SECTIONS = 5
 # Keys of predict_event_clearing_price's answer that describe OUR book — never external.
 _BOOK_KEYS = ("own_book_gap",)
@@ -1018,7 +1072,7 @@ def _guard_forecast(f: dict) -> dict:
     exp = f.get("expected_clearing")
     if n == 0 and not f.get("section_tickets"):
         f["warning"] = ("no sales and no current listings in this section — the estimate is "
-                        "prior-only; check event_market/team_report before using it")
+                        "prior-only; check zone_prices/team_report before using it")
     elif n == 0 and ask and exp and exp > ask:
         anchor = ((f.get("signals") or {}).get("ask_x_ratio") or {}).get("value") \
             or round(ask * (f.get("sold_to_ask_ratio") or 1.0), 2)
@@ -1030,6 +1084,25 @@ def _guard_forecast(f: dict) -> dict:
                         "was above every current ask, so expected_clearing is anchored to the "
                         "live ask x sold-to-ask ratio (band up to the ask median). Low confidence.")
     return f
+
+
+FORECAST_METHOD = ("weighted blend of realized section sales, current asks x sold-to-ask ratio "
+                   "and section/opponent priors (each prior capped at 2x the live ask), scaled by "
+                   "demand and team form (form_mult: both teams' win/loss records, shrunk early "
+                   "in the season); band = calibrated p25-p75 drift. Each signal carries its "
+                   "weight; realized_sample_n = sales used.")
+FORECAST_METHOD_PUBLIC = ("weighted blend of the market's recent clearing level, current asks and "
+                          "section/opponent priors (each prior capped at 2x the live ask), scaled by "
+                          "demand and team form (form_mult: both teams' win/loss records, shrunk "
+                          "early in the season); band = calibrated p25-p75 drift. `confidence` says "
+                          "how much market evidence stands behind the number.")
+
+
+FORECAST_WARN_PRIOR_ONLY = ("no market evidence in this section — the estimate is prior-only; "
+                            "check zone_prices/team_report before using it")
+FORECAST_WARN_ANCHORED = ("the prior-driven model estimate was above every current ask, so "
+                          "expected_clearing is anchored below the live ask median (band up to "
+                          "it). Low confidence.")
 
 
 def price_forecast(db, event_id: int, section: str | None = None, max_sections: int = 3) -> dict:
@@ -1044,11 +1117,40 @@ def price_forecast(db, event_id: int, section: str | None = None, max_sections: 
     (e.g. "226", "floor a"); omit it to forecast the best-selling sections from the
     last 30 days, or — with no sales — the sections with the most tickets listed.
     Event ids are TEvo ids."""
+    return _forecast(db, event_id, section, max_sections, by_sales=True)
+
+
+def _price_forecast_public(db, event_id: int, section: str | None = None, max_sections: int = 3) -> dict:
+    """Predicted clearing price for an event section: `expected_clearing` with a
+    `lo`–`hi` band, `price_heading_24h`, the chance of a sale above ask, and the
+    signals behind it (current asks, section and opponent priors capped at 2x the live
+    ask, demand context: injuries, attendance, weather, and team form — `form_mult`
+    from both teams' win/loss records). Every forecast carries `confidence`
+    (high/medium/low by how much market evidence it rests on) and a `warning` when it
+    rests on priors alone. Pass `section` as it appears on the marketplace
+    (e.g. "226", "floor a"); omit it to forecast the sections with the most tickets
+    listed. Event ids are TEvo ids."""
+    out = _forecast(db, event_id, section, max_sections, by_sales=False)
+    for f in out["forecasts"]:
+        if "warning" in f:   # the internal wording says how many sales there were
+            f["warning"] = FORECAST_WARN_ANCHORED if "model_estimate" in f else FORECAST_WARN_PRIOR_ONLY
+    if "method" in out:
+        out["method"] = FORECAST_METHOD_PUBLIC
+    return _strip_sold(out)
+
+
+_price_forecast_public.__name__ = "price_forecast"
+
+
+def _forecast(db, event_id: int, section: str | None, max_sections: int, by_sales: bool) -> dict:
+    """The forecast behind both tiers. `by_sales` picks the default sections by what sold
+    in the last 30 days (internal); without it they come from listed inventory alone."""
     n = _clamp(max_sections, 1, FORECAST_MAX_SECTIONS, 3)
     picked_by = "explicit"
+    sections: list[str] = []
     if section and str(section).strip():
         sections = [str(section).strip()[:60]]
-    else:
+    elif by_sales:
         since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         rows = db.table("seatgeek_sales_snapshots").select("sg_sale_id,section") \
             .eq("tevo_event_id", event_id).gte("sale_at_utc", since).limit(5000).execute().data or []
@@ -1059,24 +1161,20 @@ def price_forecast(db, event_id: int, section: str | None = None, max_sections: 
                 counts.setdefault(sec.lower(), set()).add(r.get("sg_sale_id"))
         sections = [s for s, _ in sorted(counts.items(), key=lambda kv: (-len(kv[1]), kv[0]))[:n]]
         picked_by = "sales_30d"
-        if not sections:
-            sections = _forecast_sections_by_inventory(db, event_id, n)
-            picked_by = "listed_inventory"
-        if not sections:
-            return {"event_id": event_id, "forecasts": [],
-                    "note": "no sales in 30 days and no current listings — nothing to price; "
-                            "pass `section` explicitly"}
+    if not sections:
+        sections = _forecast_sections_by_inventory(db, event_id, n)
+        picked_by = "listed_inventory"
+    if not sections:
+        return {"event_id": event_id, "forecasts": [],
+                "note": ("no sales in 30 days and no current listings" if by_sales
+                         else "no current listings") + " — nothing to price; pass `section` explicitly"}
     out = []
     for sec in sections:
         f = _rpc(db, "predict_event_clearing_price", {"p_event_id": event_id, "p_section": sec})
         if f:
             out.append(_guard_forecast(_strip_book(f)))
     return {"event_id": event_id, "forecasts": out, "count": len(out), "sections_picked_by": picked_by,
-            "method": "weighted blend of realized section sales, current asks x sold-to-ask ratio "
-                      "and section/opponent priors (each prior capped at 2x the live ask), scaled by "
-                      "demand and team form (form_mult: both teams' win/loss records, shrunk early "
-                      "in the season); band = calibrated p25-p75 drift. Each signal carries its "
-                      "weight; realized_sample_n = sales used."}
+            "method": FORECAST_METHOD}
 
 
 _LIST_KEYS = ("games", "roster", "injuries", "transactions", "player_value", "espn_news", "reddit",
@@ -1140,7 +1238,7 @@ AUTO_PRICER_GUIDE_PATH = Path(__file__).resolve().parent.parent / "docs" / "auto
 
 def get_started(db) -> dict:
     """Start here on first connect: what this server does, the 4 calls that answer
-    most questions (search → team_report / event_market → price_forecast), how
+    most questions (search → team_report / event_prices → price_forecast), how
     freshness works, and the full onboarding guide (Markdown)."""
     try:
         guide = GET_STARTED_PATH.read_text(encoding="utf-8")
@@ -1189,10 +1287,9 @@ def _query_view(db, views: dict[str, tuple[str, ...]], view: str, columns, filte
 def query_public_view(db, view: str, columns: list[str] | None = None,
                       filters: list[dict] | None = None, order_by: str | None = None,
                       descending: bool = False, limit: int = 100) -> dict:
-    """Read-only query over a whitelisted PUBLIC view (events, SeatGeek sales,
-    daily listing ladder, competitors, market chart, performer metrics,
-    prediction markets, news, zone captures, the daily feature store, the price
-    model's predictions). filters: [{column, op, value}], op in
+    """Read-only query over a whitelisted PUBLIC view (events, daily listing
+    ladder, competitors, performer metrics, prediction markets, news, zone
+    captures, the daily feature store, the price model's predictions). filters: [{column, op, value}], op in
     eq|neq|gt|gte|lt|lte|ilike|in (value is a list for `in`). Call with an
     unknown view to list views + columns."""
     return _query_view(db, EXTERNAL_QUERY_VIEWS, view, columns, filters, order_by, descending, limit)
@@ -1347,12 +1444,33 @@ def query_view(db, view: str, columns: list[str] | None = None,
     return _query_view(db, QUERY_VIEWS, view, columns, filters, order_by, descending, limit)
 
 
-EXTERNAL_TOOLS: tuple[Callable, ...] = (
-    search, search_events, event_market, event_prices, top_market_events, performer_trend,
-    price_movers, competing_events, prediction_markets, sports_context, news, event_weather,
-    price_forecast, team_report, event_sales, sales_breakdown, zone_prices, zone_trend,
-    game_context, model_price_prediction, seat_map, data_freshness, query_public_view, get_started)
-INTERNAL_TOOLS: tuple[Callable, ...] = EXTERNAL_TOOLS + (
+# A tool both tiers share whose full answer carries sold data → its external variant.
+_PUBLIC_VARIANTS: dict[Callable, Callable] = {
+    price_forecast: _price_forecast_public,
+    seat_map: _seat_map_public,
+    team_report: _public(team_report, """One call for a team's market and context, e.g. team="New York Knicks" or a
+    TEvo performer id ("16303"). Returns, per upcoming game (home games by default):
+    live TEvo/SeatGeek/GoTickets inventory (get-in, median, p25-p75, tickets), a daily
+    trend since `since`, Kalshi win odds, weather and a `data_quality` flag (live /
+    stale / none). Plus the team: ESPN standing, recent results vs the spread, roster,
+    injuries, transactions, player ticket-price value, ESPN news, Reddit, Kalshi futures
+    and the team's daily market history. `since` (YYYY-MM-DD) defaults to when we started
+    polling the team's games. Metrics are processed, not raw listings. For a price, follow
+    with `price_forecast(event_id)`."""),
+    zone_trend: _public(zone_trend, """Daily history per seating zone for an event from the feature store: tickets
+    listed, get-in, p25 / median / p75 ask, and the day-over-day get-in and median move.
+    `zone` narrows to one zone (exact name from `zone_prices`). Built nightly."""),
+    game_context: _public(game_context, game_context.__doc__ or ""),
+}
+_SHARED_TOOLS: tuple[Callable, ...] = (
+    search, search_events, event_prices, performer_trend, price_movers, competing_events,
+    prediction_markets, sports_context, news, event_weather, price_forecast, team_report,
+    zone_prices, zone_trend, game_context, model_price_prediction, seat_map, data_freshness,
+    query_public_view, get_started)
+EXTERNAL_TOOLS: tuple[Callable, ...] = tuple(_PUBLIC_VARIANTS.get(t, t) for t in _SHARED_TOOLS)
+# Sold data: what sold, for how much, how fast — internal only (operator 2026-11-17).
+SOLD_TOOLS: tuple[Callable, ...] = (event_market, top_market_events, event_sales, sales_breakdown)
+INTERNAL_TOOLS: tuple[Callable, ...] = _SHARED_TOOLS + SOLD_TOOLS + (
     pickups, event_orders, crm_sales_breakdown, event_source_links, home_stats, market_chart,
     owned_events, team_book,
     polling_coverage, auto_pricer_setup, query_view)
@@ -1364,25 +1482,32 @@ INSTRUCTIONS = (
     "field says _utc. Every answer carries `freshness` (as_of / age_hours / stale) for the "
     "rows it used — call `data_freshness` to see every feed's current age; the TEvo get-in "
     "price feed (`event_prices`) has been paused since 2026-09-27 and is marked stale. "
-    "SeatGeek sales, prediction markets, sports state and news update within minutes; the "
-    "chart, movers and performer trends are daily. For a team (e.g. the Knicks) call "
+    "Prediction markets, sports state and news update within minutes; movers and performer "
+    "trends are daily. Prices are asking prices: what tickets are listed for. For a team "
+    "(e.g. the Knicks) call "
     "`team_report` — live inventory, trends, ESPN, Reddit, Kalshi, roster and weather in one "
     "answer. To predict a price, call `price_forecast` "
-    "(per section; omit section for the best sellers) and read `expected_clearing` with its "
+    "(per section; omit section for the most-listed sections) and read `expected_clearing` with its "
     "`lo`-`hi` band, `confidence` and any `warning`; for Knicks home games also "
-    "`model_price_prediction` (learned per-zone model). Drill down with `event_sales` "
-    "(every sale), `sales_breakdown` (median and top-10% price by seating area, and when the "
-    "top sales happened), `zone_prices` (live market by seating zone), `zone_trend` (daily zone "
+    "`model_price_prediction` (learned per-zone model). Drill down with "
+    "`zone_prices` (live market by seating zone), `zone_trend` (daily zone "
     "history) and `game_context` (records, line, injuries, buzz, weather). `seat_map` returns the "
-    "venue map coloured by price per section as an HTML page — show it as an artifact. Read-only.")
+    "venue map coloured by asking price per section as an HTML page — show it as an artifact. "
+    "Read-only.")
+INTERNAL_INSTRUCTIONS = INSTRUCTIONS + (
+    " Internal tier: sold data is here and nowhere else — `event_sales` (every SeatGeek sale), "
+    "`sales_breakdown` (median and top-10% price by seating area, and when the top sales "
+    "happened), `event_market` (sales per day), `top_market_events` (the daily top-selling "
+    "chart) and `seat_map(metric='sold')`; `price_forecast`, `team_report`, `zone_trend` and "
+    "`game_context` carry their sale-derived fields. Never quote sold data outside the team.")
 
 QUICK_START = [
     "search('knicks') → performer + event ids",
     "team_report('New York Knicks') → every home game: live get-in/median/tickets on TEvo, "
     "SeatGeek and GoTickets, daily trend, Kalshi odds, injuries, roster, news",
     "price_forecast(event_id) → expected clearing price per section with a band and confidence",
-    "zone_prices(event_id) / event_sales(event_id) → live asks by zone / every sale, newest first",
-    "seat_map(event_id) → the venue map coloured by sale price per section (HTML artifact)",
+    "zone_prices(event_id) / zone_trend(event_id) → live asks by zone / their daily history",
+    "seat_map(event_id) → the venue map coloured by asking price per section (HTML artifact)",
     "data_freshness() → how old each feed is before you trust a number",
 ]
 
@@ -1491,7 +1616,8 @@ class MCPApp:
         # a tier with no server here is refused with 403 rather than served.
         self._servers = servers if servers is not None else {
             EXTERNAL: _make_server("s4k-market", EXTERNAL_TOOLS, get_db),
-            INTERNAL: _make_server("s4k-terminal-internal", INTERNAL_TOOLS, get_db),
+            INTERNAL: _make_server("s4k-terminal-internal", INTERNAL_TOOLS, get_db,
+                                       instructions=INTERNAL_INSTRUCTIONS),
         }
         self._managers: dict[str, StreamableHTTPSessionManager] = {}
 
