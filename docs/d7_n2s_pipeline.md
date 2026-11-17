@@ -1,6 +1,6 @@
 # D7 · N2S ("Need to Sub") obligation-covering pipeline
 
-> **Doc version:** v1.26.0 (2026-10-26) — §6: subs page gains a **GoTickets auto-buy dry run** panel (`/api/broker/n2s-gt-dryrun`, read-only) with a Floor/Loge level-mismatch flag. · v1.25.1 (2026-10-21) — GoTickets dry run: would_buy only on gate 1 "Index" covers (mig `20261021223000`); gates 2-6 are still logged as skips. · v1.25.0 (2026-10-21) — §1 stage 5: **GoTickets auto-buy dry run** (mig `20261021180000`): a statement trigger on `n2s_cover_queue` logs every new GoTickets cover into `n2s_gt_order_dryrun` with the order body an auto-buyer would send and its would_buy/skip decision. Nothing is sent. · v1.24.0 (2026-10-09) — §1 stage 1: **N2B (Need to Buy)** intake (mig `20261009180000`). Peddled sales whose Gmail thread carries `Need2Buy/WaitToBuy` are sent by `scripts/apps_script/n2b_sync.gs` (every 5 min, read-only on Gmail) to `n2b_ingest_from_apps_script()` and become `n2s_items` rows (`status n2b`, `item_source gmail`, `n2s_id = -order`). **No timer**: the event is re-priced every **4 hours** (`n2s_pull_all_sources`) until the label is removed (closed 30 min after leaving a full sync), the sale is cancelled, or the event is a day past. N2S rows are swept and allocated listings first (`n2s_covers`). · v1.23.0 (2026-10-06) — §1 stage 2: N2S **maps through the Automatiq hub first** (mig `20261006170040`): `n2s_hub_quick_map()` answers an order from `aq_event_map` (venue + local day + exact start minute + consistent name, unique-or-decline) the moment it lands in `n2s_crm_fetch_direct` and again at the top of each tick, firing its pulls at once; the full matcher only sees what the hub cannot answer. `n2s_aq_hub_writeback()` stores every event N2S maps that the hub lacks (`N2S-<tevo id>`), so the next order on it hits the hub. Dry run on 7 days (708 orders): 569 same, 0 different, 139 declined. · v1.22.0 (2026-09-28) — §1: SeatGeek ids now also come from **our own SeatGeek orders** (mig `20260928190000`): `sg_canonical_seed_from_orders()` runs in cron 659 (it existed but was never scheduled — 332 events were waiting), and `n2s_pull_events` resolves an SG event from `seatgeek_orders` when every order on that TEvo event agrees. Found when SeatGeek had the exact 203/D for order k9l9brp580m and we never pulled it. · v1.21.0 (2026-09-28) — §3/§6: the **panel and the external feed read different views** (mig `20260928174500`). `v_n2s_orders` (the subs panel) shows the last 24 h of non-terminal orders again, closed-window ones with `no_cover_reason = window_closed` and their most recent cover in `last_*`; `v_n2s_orders_live` (the old 10-minute-gated view, verbatim) feeds `n2s_profitable_cover_sync`, `n2s_cover_push_queue` and the book snapshot, so Albert's feed is still live-only. Found when the panel sat empty for 78 minutes between orders. · v1.20.0 (2026-09-28) — §1: SeatGeek events that SeatGeek has **expired** (400, code 421006) are recorded in `n2s_sg_expired` and never re-polled (mig `20260928153000`). Deliberately **not** a start-time cut: SeatGeek keeps selling after kickoff (60–90 events per half-hour still had listings 0–4 h after start), so expiry is taken from SeatGeek's own answer. · v1.19.0 (2026-09-27) — §1/§3/§7: **N2S polls and stores marketplace inventory on its own, apart from the terminal** (migs `20260927020000`–`20260927160500`). An order is worked for **10 minutes** after its alert (`n2s_timer_open`; the CRM gives 15, the last 5 are for accepting and buying), then it leaves polling, cover search, the panel and the feed. CRM ingest is **page 0 only**. EVO (signed direct GET), GoTickets and SeatGeek are pulled per event through N2S's own queue `n2s_mkt_pull`, as **full inventory** into `n2s_evo_current`/`n2s_gt_current`/`n2s_sg_current` with **1-hour retention**; the only thing shared with the terminal is a per-source 60 s rate timer. A 15 s `n2s_fast_land` job lands replies between ticks; CRM timeouts cut to 25 s (pg_net) / 20 s (direct, every 30 s). The terminal's own listing pollers are **paused** (event matchers kept). · v1.18.0 (2026-09-26) — §3: cron 640 runs as a single statement (mig `20260926170000`) after proving its `SET …; SELECT …` form stalled the project-wide pg_cron scheduler; direct CRM fetch to every minute and the book snapshot to :33 (`20260926144628`). · v1.17.0 (2026-09-26) — §3: `n2s_gt_map_by_name()` rewritten to an index-served time range with a `p_only_unlinked` scope (35.7 s → 1.9 s) and run in **every** cron 640 tick before the poller (mig `20260926031431`), with a 30-minute full pass as the safety net; the interim own-job variant (`20260926014415`) doubled tick length and was replaced. The N2S obligation is a 10-minute window, and a tick is one transaction every new order waits on. Function EXECUTE revoked from anon/authenticated. · v1.16.0 (2026-09-25) — §3: CRM page 0 is now fetched **both** through the tick's pg_net call and by a synchronous 20 s job (`n2s_crm_direct_20s` → `n2s_crm_fetch_direct()` via the `http` extension; migs `20260925231959` + `20260925233701`), both writing through `n2s_items_upsert()` with a newer-wins guard. Records that the ~2 min ingest lag is mostly the **CRM endpoint's own ~35–60 s response time** (not only pg_net queueing) — found when a 15 s direct timeout stalled ingest for ~16 min. Cron table corrected to the consolidated cron 640 tick. · v1.15.0 (2026-09-24) — §2: rule **3b `n2s_venue_date_time`** (mig `20260924190000`) — among same-venue, same-day, name-consistent candidates the order's local start time picks one; closes the Broadway two-shows-a-day gap (Harry Potter x3, Oh, Mary! — 4 of the 29 unmapped rows on 2026-09-24). Measured before shipping: agrees with 239 of 249 existing multi-candidate mappings; the 10 disagreements are prior mis-maps by the CRM/AQ/alias paths, left for an operator decision (fill-only). · v1.14.0 (2026-09-24) — §4/§5 + the in-DB manual (mig `20260924194804`), reviewed as the first external consumer went to connect: §5 step 2 now leads with **creating a dedicated integration user** (Add user → Create new user, Auto Confirm) instead of only adding a password to an existing Google account; §4 marks `N2S-C200` **retired** (superseded by `N2S-G200`) and adds the `G`/`V` families that the DB registry already carried; the manual's `zones` step lost a pre-`20260910620000` "gate 5/6 is NOT zone-capped" line that contradicted its own `gates` step, and `columns` now names `n2s_id`, `sub_view`, `sub_notes`. · v1.13.0 (2026-09-11) — §2/§3: **orders are now pulled BY ID the tick they arrive** (mig `20260911090000`, `n2s_order_identity_pull()` first in cron 598): an open, unmapped Vivid or GoTickets obligation whose order is not in our book gets one GET (`getOrder?orderId=`, `/rest/sales/{id}`), landed through the existing drains, and is **cross-mapped** — Vivid via `raw.productionId` = `aq_event_map.vivid_event_id` (2,533 agree / 2 disagree vs the hourly AQ-name path), GoTickets via `gotickets_event` else the hub's `gotickets_event_id`. Rules 0c/0d carry the same hub fallbacks. Records why a scheduled feed cannot do this (GoTickets drops a rejected sale from the list; Vivid's pull is status-filtered) and that every GoTickets order since the feed existed matched 7/7. · v1.12.0 (2026-09-11) — §2: the mapper now takes **identity from the marketplace books we ingest directly** (mig `20260911040000`): rule 0b EVO (`evo_orders` via the `n2s_order_key` split), 0c GoTickets (`gotickets_sales.gt_event_id` through `gotickets_event`), 0d Vivid (`vivid_orders`), 0e SeatGeek (`seatgeek_orders` → row / xref / hub), all ahead of every name/date/venue inference. Records the measurement (EVO 22/22 found, 0 disagreements; GoTickets 6/49) and **why 0d/0e map nothing yet**: the Vivid pull is `PENDING_SHIPMENT`-only and the SeatGeek pull only ever fetched page 1 ascending (2019 orders) — the latter fixed by `20260911080000`. · v1.11.0 (2026-09-11) — §3: SeatGeek snapshots are retained **indefinitely** on operator direction (mig `20260911030000`; rule + guard in `RESOURCES_BIBLE §2.14`), unlike the 15-day TEvo and GoTickets windows; records why the old "flip on resume" note was a trap and that change-only persistence (a re-pull of an unmoved listing writes no row) is a separate, unchanged decision. · v1.10.0 (2026-09-11) — §3: two poller/mapper gaps found by investigating why SeatGeek and GoTickets covered fewer open events than TEvo. (a) `sg_listings_pull_on_demand` could resolve an SG id from the hub but never fire it (the snapshot FK needs a canonical row, the drain needs an xref row) — it now **registers** hub-resolved events first (20260911010000). (b) `gt_map_events` matches on performer only and the TEvo catalogue can list a support act as primary performer — new **`n2s_gt_map_by_name()`** second pass scoped to the open N2S book, in cron 598 (20260911020000): classifies each TEvo time as offset / naive / tbd and applies a rule per shape (same-minute name+venue ≥ 0.6; same-minute venue ≥ 0.8 + performer agreement; no usable instant → date ±1 + name/venue ≥ 0.8), excludes parking/cancelled/season-ticket rows, refuses ties. 5 of 61 open events had no usable instant, which A1's exact-minute mapper can never match. Both are operator-directed cross-lane writes into A1's SG/GT tables, never overwriting an existing mapping. · v1.9.0 (2026-09-10) — §2b: new ` single ticket` suffix (`N2S-G1100`) on `cover_label` when the **sold** quantity is 1, so a label-only consumer knows the obligation is a single seat; distinct from ` repost single` (the buy is one over) and the two can co-occur; panel renders it as its own chip. · v1.8.0 (2026-09-10) — §2b/§4a: view quality is now a **suffix as well as a column** — `cover_label` gains ` obstructed view`, so a label-only consumer still sees the defect; records why `unknown` is deliberately NOT suffixed (it is the majority state, and a suffix on the majority stops carrying information). Panel strips the suffix from the gate name so the chip does not duplicate it. · v1.7.0 (2026-09-10) — new **§2b**: listing **view quality** surfaced end to end (`sub_view`/`sub_notes` on the queue, `v_n2s_orders`, the external feed and the panel), after finding that an obstructed substitute classifies as gate 1 "actionable directly". Records the three-state rule (`unknown` is not `clear`), the new `N2S-V100`/`V200` codes, and the **TEvo blind spot** — `public_notes` is read by the client but never mirrored into `listings_snapshots`, so most rows read `unknown`; closing it is an A1 change. · v1.6.0 (2026-09-10) — §4a: **the gate-5/6 row downgrade is now zone-capped** (operator reversal of "downgrade is not zone based for now"), closing the row-bound-price-tier hole the original cascade documented as accepted. Adds the `zone_ok` truth table, the new ` zone unverified` suffix (`N2S-G1000`) for venues with no curated zones, and why the unverifiable case is a suffix rather than a seventh gate. Profit/cap split is unchanged. · v1.5.0 (2026-09-10) — §2a: recorded that the **section-change guarantee is structural** (only `match_zone` can move a section, and it requires a non-null `order_zone` equal to `sub_zone`), that gate 5 inherits it, and that the one carve-out is a row downgrade inside the sold section — now stated in the integration manual rather than left implied. · v1.4.0 (2026-09-10) — new **§2a**: the gate label now crosses to the external feed (`cover_gate`/`cover_label`/`order_zone`/`sub_zone` on `n2s_profitable_cover`), after finding the manual documented a field the feed never sent while 7 of 11 live rows were consent-required gates; records the change-detection-tuple trap, the odd-gates-only rule and the fail-closed NULL. §2 rewritten: the **6-hour age-out is OFF** on operator direction (history is being retained for P&L), which cost the deadman — the reasoning is kept so it is not naively re-added. · v1.3.0 (2026-09-10) — §1: added **tier 3** (one seat over from a larger lot whose splits permit it), its two load-bearing caps and the measurement that rejected the unbounded version, plus the **global 200% cost ceiling** and its `sold_ea ≤ 0` carve-out. · v1.2.0 (2026-09-10) — §2: documented the **6-hour age-out**, done at the source inside the sync rather than as a DELETE job, with the flap trap that makes the obvious implementation self-defeating. · v1.1.0 (2026-09-10) — §4/§5: added **`N2S-A104`** (sign-in refused on an OAuth-only account) and the password-setup step, after finding every auth user on this project is Google-only with **no** Supabase password — so the documented `signInWithPassword` flow could not have worked for any existing account. · v1.0.0 (2026-09-10) — first cut. The D7 lane manual: what the pipeline
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- docs/d7_n2s_pipeline.md`). Do not edit this line (README *Doc-writing rules* §5).
 > does, the six stages it runs, the tables and crons that make up each one, the error-code
 > registry, and how an external consumer plugs into the profitable-cover feed.
 
@@ -25,6 +25,19 @@ This pipeline does all of that on a 1-minute loop and surfaces two things:
 
 The pipeline never buys anything. It finds and prices covers; a human clicks the buy link.
 That is a deliberate boundary, not a missing feature — see §6.
+
+> **Sister flow, not N2S: subs for orders already accepted whose tickets have a problem.**
+> The sub finder API (`/api/v1/subs`, `routers/subs_api.py`, D0; onboarding in
+> `docs/sub_finder_api_onboarding.md`) and the manual sub buy (`core/manual_sub_buy.py`) serve
+> that case. None of this document's rules apply to it: no gates, no N2S caps or live-run
+> budget, no sale accept, and the N2S queue, dry run and auto-buyer never see its orders. It
+> has its own switches and spend ceilings (`sub_finder_config`, `manual_sub_buy_config`).
+> It shares two things with N2S: the on-demand listing pull (`n2s_pull_events`) and the
+> `n2s_*_current` lists it matches against. ⚠ Those lists stay fresh (about every 3 min) only
+> for events N2S itself is working. Fleet listing polls of all events have been paused since
+> 2026-09-27 (`20260927043400`); since `20261023051000` only pinned performers are polled, into
+> the terminal tables, which the sub finder does not read. With `sub_finder_config.refresh_pull`
+> off, an accepted order whose event N2S is not working keeps the covers from its first lookup.
 
 ---
 
@@ -63,6 +76,12 @@ Differences from N2S:
   cancel label (`Need2Buy/Cancelled`, `ISSUE/Cancelled`) or a "CANCEL" subject →
   `n2b_cancelled` (sticky); absent from a full sync and unseen 30 min → `n2b_closed`
   (`label removed`); event a day past → `n2b_closed` (`event passed`).
+
+**A CRM feed item labelled `need2buy` goes to the sub finder, not here** (mig `20261113160000`):
+`sub_finder_n2b_intake()` (called by the sub finder's one-minute refresh) starts a sub finder
+lookup for any open CRM-feed item whose `status`, `status_label` or `label_status` reads
+`need2buy`. That is a different thing from the Gmail-labelled N2B rows above, which it does not
+touch. See `docs/sub_finder_api_onboarding.md`.
 
 ### 2. Map — obligation to a TEvo event
 `n2s_map_events()` resolves each item to a `tevo_event_id`. Until this lands the obligation
@@ -166,6 +185,11 @@ numeric order numbers only. GET-only on both hosts — RULE 2 holds.
 >   ("event has expired"), the drain records the event in `n2s_sg_expired` (7-day purge) and
 >   `n2s_pull_events` never fires it again. It is not cut at start time on purpose: SeatGeek keeps
 >   selling in-game, and expiry came 1 h 40 m – 4 h after start on 2026-09-27.
+> - **N2S pulls a SeatGeek event once (`20261113120000`, operator 2026-11-13).** Every SeatGeek
+>   pull is recorded in `n2s_sg_polled`; `n2s_pull_events` skips an event already there, whoever
+>   pulled it first. EVO and GoTickets are pulled as before. Only the sub finder passes
+>   `p_sg_repeat = true` and keeps pulling SeatGeek for its watched orders. `n2s_sg_current`
+>   keeps an hour, so N2S sees SeatGeek listings for the hour after that one pull.
 `n2s_pull_all_sources()` fans out to TEvo, SeatGeek, TicketsData and SeatData for every
 mapped event with an open obligation, and stamps `n2s_items.sources_pulled_at`.
 
@@ -338,8 +362,80 @@ it has not seen (one row per order + listing + quoted price) into **`n2s_gt_orde
 the `POST /orders` body and `decision` = `would_buy` or `skip` with `skip_reasons`. Rules and
 caps are in the migration header; the trigger downgrades its own errors to a WARNING so it
 cannot break the refresh. **Nothing is sent** — see `docs/buy_side_evo_gotickets.md` §5.
+Since 2026-10-28 the same trigger also runs **`n2s_evo_order_dryrun_capture()`** for EVO (TEvo)
+subs (live re-check against `n2s_evo_current`; our own listing → `our_own_listing`), writing to
+the same table with `sub_source = 'tevo'` and the TEvo `POST /v9/orders` body. Both captures take
+only non-PED orders sold on EVO, GoTickets, SeatGeek or Vivid (the markets whose tokens work;
+TickPick 401 — its vault token had been saved cut off at the first `.`; since mig `20261110020000`
+`tickpick_token_refresh()` (cron `tickpick_token_refresh_hourly`, :17) logs in with the vault's
+`TICKPICK_USERNAME`/`TICKPICK_PASSWORD` (OAuth2 password grant, `POST /1.0/token`, the one
+sanctioned plpgsql write URL) and keeps `TICKPICK_API_TOKEN` fresh, state in `tickpick_token_state`
+— whether that login's account is the one N2S TickPick sales are sold from is being measured by
+`v_n2s_tickpick_watch` (mig `20261110040000`): an unconfirmed TickPick order that lapses disappears,
+so only a lookup while the sale is open counts — StubHub invalid credentials, no token for
+Gametime/Viagogo/Ticketmaster), and
+share one daily cap. Since 2026-10-29 (`20261029170000`) both also skip a cover when fewer
+than **6 minutes** remain on the sale timer (`not_enough_time`), when the sold and sub sections
+name **different levels** (`level_mismatch`, via `n2s_section_level`), or when another order
+already has a would_buy on the **same listing** (`listing_taken`).
+Since 2026-11-04 (`20261104170000`) they also skip a **single-letter vs double-letter row** pair
+(`row_letter_mismatch`, e.g. sold AA, sub H).
+Since 2026-11-13 (`20261113460000`, operator "add the wc rule to n2s too") they also skip a pair
+where exactly one of the two rows is a **wheelchair row** (`wheelchair_row`: WC, wheelchair,
+accessible, ADA, handicap, via `sub_finder_row_is_wheelchair`); WC against WC is not skipped.
+Since 2026-11-13 (`20261113050000`, operator "Yes" to limiting N2S to Automatiq items) both take
+only **Automatiq** items (`n2s_items.item_source = 'automatiq'`): the failed-order alerts with an
+alert time and the 10-minute timer. The CRM intake also brings in items agents add by hand
+(`manual`, no alert, no timer), and `n2s_timer_open()` reads a missing timer as open, so before
+this a manual item could reach the dry run and, through it, the auto-buyer. Those are the sister
+flow's (§0). The cover queue, the subs page and the feed still show every item.
+Since 2026-11-13 (`20261113400000`, operator "wire in gotickets similar to evo and set same limits
+and same one buy condition") the live auto-buyer also buys **GoTickets subs**, with **its own single
+live run** (`gt_live_runs_allowed` / `gt_live_runs_used`) and **its own $666 caps** per order, per day
+and for the project (`gt_*_cap_usd`, `gt_project_stopped`); EVO keeps its own. Spend, buys and
+failures are counted per sub source. GoTickets shows a saved card to the API only when it is shared
+account-wide (none is), so `gotickets_buy_client.py` pays `POST /rest/pro/api/orders` from **gift
+cards** (`giftCardIds`; the largest balances first, `gt_gift_card_ids` to restrict them). Before the
+buy the worker reads the listing fresh on the Pro API, refuses **our own listing** (Seller Central
+`GET /rest/listings/{id}` answers only for ours), prices the order with GoTickets' own formula
+(display price × qty + delivery fee + tax) and re-runs every money guard on that total. After it,
+Seller Central `GET /rest/purchases/{id}` is followed: `PENDING_CONFIRMATION` = waiting, `CANCELLED`
+= rejected (also refunded / expired), a status on `GT_CONFIRMED` (the post-confirmation states seen
+on our purchases) = confirmed, then the sale is accepted as for EVO. Any other status is read as
+unknown: the worker waits, then stops `sub_unconfirmed` without accepting. GoTickets requires a
+buyer email, phone, billing address and recipient on every order: they live in the config
+(`gt_buyer_email`, `gt_buyer_phone`, `gt_billing_address`, `gt_recipient`) and while any is missing
+every GoTickets row is blocked `gt_buyer_profile_missing`. The migration fills them (only where empty)
+from EVO office 42029 (Office 3): tu@s4kent.com, 212-913-9751, 362 5th Ave, New York NY 10001, name
+Julian G (operator 2026-11-13). With no GoTickets acceptance history yet, the
+seller window is `gt_seller_window_s` (540 s).
+
+**One buyer** (stage 3, mig `20261113470000`; operator 2026-11-13 "allow stage 3, n2s gets priority
+in queue"; lane D0's side is `20261113440000`). `n2s_autobuy_config.buyer` says who sends the buy:
+`'own'` (the default, as above) or `'queue'`. With `'queue'` the claim **files** a buy it would have
+handed out into the sub finder's queue (`manual_sub_buy_file_n2s`, origin `'n2s'`), spends the live
+run as before, and sets the row's phase to **`queued`**. The sub finder's worker hands N2S rows out
+first, one buy at a time across both origins, only while N2S is live, not killed and not stopped for
+that source. It never sends after `buy_by` = `sub_confirm_by` − GREATEST(`min_confirm_window_s`,
+`seller_window_in_hand_s`). Before sending it runs `core/n2s_autobuy_live.pre_buy` (every guard above,
+read fresh, and the one request) on the job `n2s_autobuy_queue_job` builds. That is the claim's own
+job, from `n2s_autobuy_job_json`. It reads the answer with `n2s_result`. The result reaches our row in
+the same transaction (`n2s_autobuy_queue_result`):
+- `bought` → `buy_sent`, then our poll and accept as for our own buy;
+- `stopped` → `stopped`, with the run given back unless the market refused the buy (`buy_failed`);
+- `unknown` (and a lease the queue lost mid-buy) → `buy_unknown` and **our** kill switch.
+
+Two cases stop the row with the run given back: a filing the queue refuses (`queue_file_refused`: the
+sale already has a live buy there, or the row cannot be filed), and a queued row whose `buy_by`
+passes unsent (`queue_expired`). A purchase reported for a row that has left the queue fails closed
+(`queue_result_late`, kill switch). Flip `buyer` to `'queue'` only after the sub finder's worker is
+deployed. `'own'` undoes it at once.
 
 ### 6. Surface — panel and feed
+- **Auto-buy results to the CRM** (mig `20261113410000`): every live purchase the auto-buyer
+  placed (`n2s_autobuy_exec` with `buy_order_id`) is a sync feed in the sub finder API,
+  `GET /api/v1/subs/autobuys` (`sub_finder_autobuys`, keys in `sub_finder_config.autobuys_key_ids`).
+  Fields and statuses: `docs/sub_finder_api_onboarding.md` §6c.
 - **`v_n2s_orders`** joins items + queue and computes `has_cover` / `no_cover_reason`;
   `/api/broker/n2s-covers` serves it to `static/terminal/subs.html`.
 - **`n2s_gt_order_dryrun`** (stage 5) is served by `/api/broker/n2s-gt-dryrun` to the
@@ -347,6 +443,126 @@ cannot break the refresh. **Nothing is sent** — see `docs/buy_side_evo_goticke
   today's ET tally and would-spend, and a ⚠ on gate-1 rows whose named level differs
   (sold *Floor 6* vs listing *Loge 6*). Read server-side because the table has no grant
   for browser roles. Read-only — there is no buy route.
+- **N2S MCP** (`/n2s-mcp`, server `s4k-n2s`, `routers/n2s_mcp.py`): the desk as MCP tools, a
+  separate server from the market-data `/mcp` and **internal keys only** (external → 403).
+  `n2s_health` (CRM ingest, newest order, queue refresh, newest dry-run row), `n2s_book`
+  (`v_n2s_orders`), `n2s_order` (book row + cover history + dry-run rows for one order),
+  `n2s_cover_history`, `ped_orders` (`inbox_n2b`), `gt_dryrun` / `gt_dryrun_summary` (rows with
+  `profit`, `ped`, `level_mismatch`, `would_send`; totals, per-gate profit left on the table,
+  listings offered to several orders) and `tm_primary` (Ticketmaster box-office seats per section
+  via TicketsData, **1 credit per call**) and `autobuy_plan`. Read-only.
+- **Auto-cover planner — DRY RUN ONLY** (`core/n2s_autobuy.py`, operator 2026-10-28: "build but
+  dont run, dry runs only … NO PUSHING OUT"). Per open order it builds the six-step plan — sale
+  still active (`in_window` / `event_live`; `event_live` means *still sellable*, not *started*) →
+  1-1 Index sub (gate 1, profitable, full quantity, not obstructed, named levels agree) → sub is
+  not ours (`n2s_evo_current.is_owned`, `n2s_sg_current.is_broker_owned`; GoTickets: Seller
+  Central `GET /rest/listings/{id}` empty 200 / 404 = not ours, made live) → BUY request → purchase-confirmed
+  read → ACCEPT request on the selling market — with every write `sent: False`. The module
+  imports no HTTP library; RULE 2 and `check_readonly.py` are unchanged. Endpoints checked
+  2026-10-28: buy on GoTickets Pro `POST /orders`, TEvo v9 `POST /orders`, TickPick
+  `POST /pro/orders` (SeatGeek has none — manual); accept on GoTickets
+  `POST /rest/sales/{id}/confirm`, TEvo `POST /v9/orders/{id}/accept`, TickPick
+  `POST /orders/{n}/confirmation`, SeatGeek SellerDirect `PATCH /order`. **Not yet read** (accept
+  blocked in the plan): Vivid, StubHub, Gametime, Viagogo, Ticketmaster. Measured 2026-10-28:
+  the cover search has no own-inventory filter, though no live cover was on our listings.
+- **Auto-buy executor — SHADOW MODE** (mig `20261109030000`, `core/n2s_autobuy_exec.py`, operator
+  2026-11-09). Every dry-run `would_buy` gets **one** row in `n2s_autobuy_exec` (`UNIQUE n2s_id`: a
+  sale is attempted once, never retried) with state `shadow_buy` / `awaiting_approval` / `blocked` /
+  `off` and the `reasons[]`. Limits live in the one-row `n2s_autobuy_config`: **$250 per order and
+  $250 per day** to start, 3 buys/day, one buy per event per day, a listing used once, circuit
+  breaker after 2 failures/day, event start **> `min_event_lead`** away (24 h; **12 h since `20261111000000`**, measured
+  from the real start: `events.occurs_at_local`, else venue-local read as UTC) and **not today** (America/New_York;
+  skipped while `allow_same_day`, true since `20261111000000`; reason `event_within_24h` = within `min_event_lead`),
+  profit > 0 (**no minimum margin**), live price not above the quote, live read ≤ 120 s old.
+  **Allotted time** per selling market = the median alert-to-auto-reject from the order timer
+  (`v_n2s_market_cutoff`, ≥ 3 samples, rejects under 5 min excluded — measured 2026-11-09: EVO
+  746 s from 15, SeatGeek 1,160 s from 3), else the CRM's 900 s; the sub must be **confirmed by
+  cutoff − 60 s** (`sub_confirm_by`) or the sale is **not accepted**. Subs over **$1,000** wait for
+  approval: `n2s_autobuy_notify_tick()` (cron `n2s_autobuy_notify_1min`) texts the operator through
+  Twilio (SMS or WhatsApp, `notify_channel`) once `notify_to` / `notify_from` are set; the answer is
+  `n2s_autobuy_approve(n2s_id, true|false)`; an unanswered request lapses at `sub_confirm_by`.
+  **Project cap** (operator 2026-11-09: "for now 500 cap on entire project"): every buy ever
+  committed in the current mode, on any market, counts against `project_cap_usd` (**$500**); a buy
+  that would otherwise go through but would cross it is blocked and **all buying auto-stops**
+  (`project_stopped`, with `project_stopped_reason`), as does reaching the cap exactly; while
+  stopped every buy is blocked `stopped_pending_review` until the operator runs
+  `n2s_autobuy_resume([new_cap])`. Shadow and a future live mode count separately. A live row
+  that stopped before anything was bought (phase `stopped`, no purchase id) counts toward none of
+  the caps, buy counts or "already bought" checks (mig `20261116180000`; before it, exec 8's
+  unsent $449.68 blocked the next cover over the daily and project caps). EVO buys come
+  from Office 3 (`evo_buyer_office_id` 42029) and EVO accepts carry `reviewer_id` 53658.
+  **Buy email** (operator 2026-11-09): the same tick emails `email_to` (default the operator)
+  through Resend for every buy with a `buy_order_id` — the purchase id on EVO / GoTickets and the
+  sale order it covers — and for shadow buys too when `email_shadow` is on; it emails once when
+  the project cap auto-stops buying. Enqueues lock the config row (`FOR UPDATE`) so concurrent would_buys
+  cannot both pass a cap.
+  **Soft launch: EVO subs only** (operator 2026-11-09, mig `20261109200000`): `buy_sources`
+  (default `{tevo}`) — GoTickets subs are blocked `sub_source_disabled` because the Pro API key sees
+  no payment method (`GET /rest/pro/api/payment-methods` → `[]`); re-enable with
+  `UPDATE n2s_autobuy_config SET buy_sources = '{tevo,gotickets}'`.
+  **Live mode — EVO only, one live run** (operator authorization 2026-11-09: "I authorize EVO only,
+  build the live executor, limit to only 1 live run for testing"; mig `20261110000000`). In
+  `mode = 'live'` the trigger also blocks a sale not sold on EVO (`sell_market_not_live`, from
+  `live_sell_markets` = `{evo}`), a non-EVO sub (`sub_source_not_live`) and anything once the live
+  runs are used up (`live_runs_used_up`); a row that passes gets state `live_buy`. The web worker
+  (`server.py` → `core/n2s_autobuy_live.py`, every 15 s, only with env `N2S_AUTOBUY_LIVE=1`) takes
+  one row at a time from `n2s_autobuy_live_claim()` (config row lock + `FOR UPDATE SKIP LOCKED` +
+  a 180 s lease with its own `lease_token`; a new buy uses up a live run **before** anything is
+  sent) and records each step with `n2s_autobuy_live_record()`, which only writes under that
+  unexpired lease — the worker re-checks it right before each market write, and a row left in
+  `buying` past its lease becomes `buy_unknown` and sets `kill_switch`. Steps land in `phase`: `buying` → `buy_sent` → `sub_accepted` → `accepted`, or
+  `stopped` / `buy_unknown` / `accept_failed` / `accept_unknown`. The buy step re-checks the
+  guards, reads the ticket group fresh (not ours — brokerage 1768 / `owned`; enough tickets; a split
+  that fits; wholesale × qty not above our quote; event further out than `min_event_lead` by EVO's
+  `event.occurs_at_local` — its `occurs_at` is local time with a misleading Z — and the row's stored
+  `event_start_utc`) and
+  sends **one** `POST /v9/orders` (seller = the ticket group's office, buyer Office 3, `evopay`,
+  shipment type from the ticket-group format to Office 3's delivery email `evo_email_address_id`).
+  The poll step reads our purchase: accepted → reads the sale and, only while it is still
+  `pending`, `POST /v9/orders/{id}/accept` with `reviewer_id` 53658; rejected → stop; not accepted
+  by `sub_confirm_by` → stop, sale **not** accepted. Nothing is retried and no sale is ever
+  rejected. A write whose outcome is unknown (timeout / 5xx) stops the row **and sets
+  `kill_switch`**. `n2s_autobuy_outcome_tick()` (cron `n2s_autobuy_outcome_1min`) emails the
+  outcome of each live row once it ends. Live spend counts apart from shadow spend.
+  **Any selling market with a token and a confirm endpoint** (operator 2026-11-10, mig
+  `20261110010000`): `live_sell_markets` = `{evo,gotickets,seatgeek,vivid}` (+ `tickpick`, `20261110070000`). A non-EVO sale is
+  accepted through `sale_accept_client.py` — GoTickets `POST /rest/sales/{id}/confirm`, SeatGeek
+  SellerDirect `PATCH /order` (`status=confirmed`), Vivid `POST /webservices/v1/confirmOrder`
+  (`apiToken`, `orderId`, `shipNow=false`; a `<success>false</success>` body counts as rejected) —
+  each pinned to its (method, host, path) by `SALE_ACCEPT_WRITES`. "Still waiting for us" is
+  GoTickets `sellerStatus` UNCONFIRMED, SeatGeek `status` submitted/pending/open, Vivid `<status>`
+  UNCONFIRMED (the same reads as the order timer).
+  **TickPick** (operator 2026-11-10, mig `20261110070000`, after the watch showed 3 of 3 N2S TickPick
+  sales visible to our seller login while open): `POST /1.0/orders/{n}/confirmation` (empty
+  `ConfirmOrderRequest`), pending = `seller_status` Unconfirmed, Canceled / Rejected / Busted after
+  an accept = `sale_rejected_after_accept`. The token is read from the Vault on every use (it is
+  replaced about daily). Before buying, the worker re-reads the TickPick sale and stops
+  (`sale_not_pending` / `sale_read_failed`) unless our login shows it Unconfirmed — an unconfirmed
+  TickPick sale lapses and vanishes (404). TickPick states each sale's own deadline (10 min for a
+  same-day event, 60 min later out, 2026-11-09 samples) in the venue's local time;
+  `n2s_tickpick_watch_tick` stores it in UTC as `n2s_tickpick_seen.confirm_by` and the enqueue
+  trigger uses it as the cutoff, else 540 s until the watch has seen the sale.
+  **TickPick calls go out from the database** (mig `20261116181000`, operator 2026-11-16): TickPick
+  only answers known addresses, and the web service's is not one (the first live attempt, exec 8,
+  stopped `sale_read_failed` on a 4xx while the watch's same read from the database got 200). With
+  `tickpick_db` set (server.py) the worker's TickPick sale read is `n2s_tickpick_sale_state` and
+  its confirm is `n2s_tickpick_confirm(exec_id, lease_token, order_number)`, which sends only for a
+  live `sub_accepted` TickPick row whose lease the caller holds and whose `n2s_items` order number
+  matches, at most once per row (`n2s_tickpick_confirm_log`; a repeat returns the first answer, a
+  call that failed in flight stays unknown). A failed read records TickPick's status and message
+  in `live_error` (e.g. `HTTP 403: …`), not just the error's type. The worker reads the tokens through
+  `get_app_secret` (GoTickets added to its whitelist) and refuses to buy (`no_sale_accept_token`)
+  when the selling market's token is missing. The GoTickets and Vivid confirm request formats were
+  never exercised by the dry run (their specs could not be fetched), so the first live accept on
+  each is its first real test; a failure is `accept_failed` and emails the operator, who can
+  still confirm by hand. **Every accept is verified** (operator 2026-11-10): ~3 s after a 2xx
+  accept the worker re-reads the sale with the same status read; it is `accepted` only if the
+  market shows it has left pending and is not rejected/cancelled — else `accept_failed` with reason
+  `accept_unverified` (still pending, or the re-read failed) or `sale_rejected_after_accept`. Go live:
+  `N2S_AUTOBUY_LIVE=1` on the web service, then `UPDATE n2s_autobuy_config SET mode = 'live'`;
+  stop: `kill_switch = true` or `mode = 'shadow'`; another run: raise `live_runs_allowed`. The
+  `POST /v9/orders` body follows Office 3's own purchase orders; TEvo's Orders/Create page could
+  not be read, so the first live run is also the body's first real test (a 4xx just stops the row).
 - **`n2s_profitable_cover`** is a real **table** (not a view) holding only rows where
   `profit > 0`, synced by diff and published to Supabase Realtime. This is the external feed.
   It carries `cover_gate` / `cover_label` / `order_zone` / `sub_zone` — see §2a.
@@ -465,20 +681,20 @@ collapsed to a boolean:
 |---|---|---|
 | `seatgeek` | `has_limited_view` (its own `lv` flag) + `seller_notes` | real answer |
 | `gotickets` | `notes` (free text) | real answer where notes exist |
-| `tevo` | **nothing** | always `unknown` |
+| `tevo` | `public_notes` + `view_type` from N2S's own pull (`n2s_evo_current`), via `n2s_evo_notes()` | real answer where the seller wrote a note (since `20261112030000`) |
 | `ticketsdata` | nothing (and the vendor is off) | always `unknown` |
 
-> ⚠ **TEvo is the blind spot, and TEvo is most of the book** — 10 of the 11 rows on the
-> feed when this was written. Its API *does* return `public_notes`: `core/helpers.py` reads
-> it, and `core/store_events.py` says outright `"public_notes": None, # not mirrored to
-> listings_snapshots`. The column simply does not exist on that table. So for TEvo the
-> honest answer is not "clear", it is "we never looked" — which is the entire reason for
-> the third state. A boolean cannot express it and `NULL`-as-false expresses it wrongly.
+> ⚠ **TEvo was the blind spot until 2026-11-12, and TEvo is most of the book.** When this
+> section was first written N2S read `listings_snapshots`, which had no `public_notes`. Since
+> `20260927041700` N2S pulls EVO itself into `n2s_evo_current`, which keeps `public_notes` and
+> `view_type`, but the queue went on reading notes for GoTickets and SeatGeek only, so every
+> EVO sub still read `unknown` with no text. `20261112030000` reads them. `unknown` now means
+> the listing itself carries no note or view type (or has left the list), which is still "we
+> could not check", never "clear".
 >
-> Mirroring `public_notes` into `listings_snapshots` is an **A1** change (that table and
-> the collector are A1's data plane, `PROJECT_BIBLE §2`), so D7 does not make it. It is the
-> single highest-value follow-up here: it converts the majority of rows from "unknown" to a
-> real answer.
+> **People read `sub_notes`, not just `sub_view`.** The note is shown as text under every
+> suggestion (subs page, dry-run panel, buy email, approval text, MCP). The classifier is a
+> regex; the seller's words are the evidence.
 
 **Why the queue and not the cascade.** View quality is a property of the *listing*, not of
 how the listing matched. Threading it through `n2s_cover_candidates` would mean ten anchored
@@ -497,14 +713,16 @@ queue each run, so it cannot accumulate).
 > would train readers to skip the tail of every label, which is exactly where ` repost single`
 > and ` zone unverified` live. The label is a workflow instruction: `obstructed` changes the
 > action, `unknown` does not. The classifier vocabulary is **shared with the scanner's confidence
-rule** (`20260811273000` and siblings); widen both together or neither.
+rule** (`20260811273000` and siblings); widen both together or neither. `20261112030000`
+> *narrowed* only N2S's copy, to stop two false matches seen in live notes (`limited` inside
+> "unlimited food", `behind` in "behind home bench"); the scanner's copy (D0) still has both.
 
 ## 3. Cron chain
 
 | Job | Schedule | What it does |
 |---|---|---|
 | `n2s_fast_land_15s` (job 665) | every 15 s | `n2s_fast_land()` — exits cheaply when nothing is waiting; otherwise, under the shared `n2s_cover_stage` advisory lock (the tick takes the same lock), drains `n2s_mkt_pull` replies → queue refresh → history → feed sync → push drain/queue. Replies land between ticks instead of waiting up to a minute. (20260927045900) |
-| `n2s_crm_direct_20s` (job 660) | **every 30 s**; command `SELECT public.n2s_crm_fetch_direct(150, 0, 20000);` (20260927160500) | `n2s_crm_fetch_direct(150, 0, …)` — synchronous GET of CRM page 0 (sorted `updated_at` DESC) through the `http` extension, upserted in the same statement; runs **alongside** the tick's pg_net page 0, newest write wins. Logged per fetch in `n2s_crm_direct_log` (2-day window). (20260925231959, 20260925233701) |
+| `n2s_crm_direct_20s` (job 660) | **every 30 s**; command `SELECT public.n2s_crm_fetch_direct(250, 0, 25000);` (20261113280000; 500 was tried 2026-11-13 and was too slow) | `n2s_crm_fetch_direct(250, 0, …)` — synchronous GET of the first 250 CRM items (sorted `updated_at` DESC) through the `http` extension, upserted in the same statement; runs **alongside** the tick's pg_net page 0, newest write wins. Logged per fetch in `n2s_crm_direct_log` (2-day window). (20260925231959, 20260925233701) |
 | cron 640 `n2s_pipeline_tick_1min` | every minute, back-to-back; command is ONE statement `SELECT public.n2s_pipeline_tick(200);` (see note) | `n2s_pipeline_tick()` — one budgeted chain: drain the pg_net CRM replies → order-identity pull → **Automatiq-hub quick map** → mapper (only what the hub declined) → **hub write-back** → **GoTickets name matcher, scoped to events with no GoTickets link (~2 s)** → `n2s_pull_all_sources` (so a new link is polled the same tick) → queue refresh / history / feed sync → sub ping → push outbox → **fire CRM page 0 only via pg_net (25 s timeout)** for the next tick. Since 2026-09-27 it drains `n2s_mkt_pull` first, polls with `p_refresh_after`/`p_sweep_after` = 2 min, and only for orders where `n2s_timer_open()` is true (20260927030000, 20260927030200, 20260927160500) |
 | `n2s_gt_map_by_name_full_30min` | `13,43 * * * *` | `n2s_gt_map_by_name()` **full pass** — catches a second GoTickets listing for an event that already has one link (~7 s). The scoped pass runs inside every tick. (20260926031431) |
 | `n2s_book_snapshot_hourly` | `37 * * * *` | `n2s_book_snapshot_take()` — open/covered/uncovered exposure, so the P&L series measures what we did NOT cover too |
@@ -617,7 +835,7 @@ retired and a new one issued.
 | `N2S-G1000` | gate | Suffix ` zone unverified` — gate 5/6 at a venue with no curated zones. | Judge the row drop yourself; the zone rule could not be checked. |
 | `N2S-G1100` | gate | Suffix ` single ticket` — the sale is one seat. | Read `sub_qty`; may co-occur with ` repost single`. |
 | `N2S-V100` | view | `sub_view = 'obstructed'`. | Offer first whatever the gate; quote `sub_notes`. |
-| `N2S-V200` | view | `sub_view = 'unknown'` — the source publishes no view data. | Not "clear". Most TEvo rows today (§2b). |
+| `N2S-V200` | view | `sub_view = 'unknown'` — the listing carries no note or view data. | Not "clear". Read the listing yourself (§2b). |
 | `N2S-A104` | access | `Invalid login credentials` on an account that has **no Supabase password** — it signs in via Google/OAuth. | Retrying the password never works: an OAuth password is a different credential and GoTrue holds no hash to check. Set a real Supabase password (step 3 of `n2s_integration_doc`). A headless receiver cannot use an OAuth-only account at all. |
 
 ---
@@ -661,17 +879,28 @@ acted on at all), then `order_number` (and `order_key` to find it in the CRM), `
 
 These are not style preferences. Each has a guard behind it.
 
-- **The pipeline never writes to a marketplace.** No order creation, no holds, no
-  reprice — `RULE 2`, `CLAUDE.md`. Every `*_client.py` is GET-only by construction
-  (`ALLOWED_HTTP_METHODS = frozenset({"GET"})` + `_assert_readonly_method()` that raises),
-  audited by `scripts/check_readonly.py` and `tests/test_readonly_guards.py`. Weakening
-  either is a **security-CRIT** change.
+- **The pipeline never writes to a marketplace — except the two operator-authorized EVO
+  writes** (2026-11-09): `POST /v9/orders` (buy the sub) and `POST /v9/orders/{id}/accept`
+  (accept our own sale), only from `evo_buy_client.py`, whose guard pins POST to exactly those
+  paths (`EVO_WRITE_PATHS`, required verbatim by `scripts/check_readonly.py`). No holds, no
+  reprice, no reject — `RULE 2`, `CLAUDE.md`. (The same guard also allows `POST /v9/tax_quotes`,
+  operator-authorized 2026-11-13: EVO's calculation of what a purchase will cost, tax included.
+  It buys nothing. With `n2s_autobuy_config.tax_quote` on (mig `20261113110000`, off by default)
+  the live worker asks for it as a third pre-buy check, after the fresh listing read and the
+  seller-time check: every money guard runs again on EVO's quoted total in place of our venue
+  estimate (`est_tax_usd`), no usable quote means no buy (`tax_quote_failed`), and the quote's
+  `tax_signature` goes with the order. The manual sub buy path has the same check.) Every other `*_client.py` is GET-only by
+  construction (`ALLOWED_HTTP_METHODS = frozenset({"GET"})` + `_assert_readonly_method()` that
+  raises), audited by `scripts/check_readonly.py` and `tests/test_readonly_guards.py`. Weakening
+  either, or adding a write path, is a **security-CRIT** change.
 - **The push outbox refuses listing-source hosts at runtime** (`N2S-P104`). A webhook URL
   is operator-supplied config, so the guard is in the drain, not only in CI.
 - **No secret reaches the receiver.** `get_app_secret()` enforces a `current_user` assert
   *and* a hard name whitelist raising `42501`. Extend the whitelist additively; never relax
   the assert.
-- **Nothing is bought automatically.** The pipeline surfaces a link. A human clicks it.
+- **Nothing is bought automatically unless the operator turns live mode on** — EVO only,
+  `live_runs_allowed` runs (1), every cap above. Otherwise the pipeline surfaces a link and a human
+  clicks it.
 
 ---
 
@@ -688,10 +917,9 @@ Tracked as D7 cards in `KANBAN.md` — do not re-discover these:
 - **D7-PROD-2** — greedy-FIFO allocation is not globally optimal.
 - **D7-OPS-3** — `get_app_secret()` is not in the `§2.6` seam map, so seam review is blind
   to security controls carried in migrations.
-- **D7-DATA-1** — **TEvo `public_notes` is never mirrored into `listings_snapshots`**
-  (`core/store_events.py`), so `sub_view` reads `unknown` for the source that supplies most
-  covers. Closing it is an **A1** change to that table and the TEvo collector; it converts
-  the majority of the book from "not checked" to a real sightline answer. See §2b.
+- **D7-DATA-1** — ~~TEvo `public_notes` never reaches `sub_view`~~ **closed for N2S
+  2026-11-12** (`20261112030000`: the queue reads `n2s_evo_current`). `listings_snapshots`
+  (A1) still has no notes before 2026-09-11; N2S no longer reads it. See §2b.
 - **Parking passes cannot be covered (2026-09-27).** A parking order maps to the game's event, and
   `n2s_cover_candidates` excludes ancillary listings (`is_ancillary`), so a parking obligation never
   gets a candidate. Deliberately left for now on operator direction.

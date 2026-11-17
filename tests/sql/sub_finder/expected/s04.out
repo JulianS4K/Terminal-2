@@ -1,0 +1,25 @@
+cron: * * * * * SELECT public.sub_finder_refresh();
+cron: 17 * * * * SELECT public.evo_venue_tax_refresh();
+R1 off by default:
+{"skipped": "off"}
+R2 nothing newer landed: closes the past-event order only, no churn:
+{"skipped": "off"}
+refresh fired pulls: 0
+R3 a cheaper EVO listing lands; GoTickets has nothing fresh (failed pull) -> its cover is kept; W2 (no cover) now gets one:
+
+{"skipped": "off"}
+R4 same listings again (fresh pull, nothing changed): refreshed but the feed does not move:
+
+
+R5 the listing sells (fresh EVO pull without it): cover drops back, feed moves:
+
+
+R6 stop conditions: W1 leaves the CRM book, W3 goes terminal, W4 is fulfilled in our feed:
+feed check is paced: W4 was looked at 0 time(s) recently
+
+R6b routine data already there: an alert is answered in the same call, nothing pulled:
+
+R6c refresh_pull on: it does fire:
+f
+f
+R7 a new alert for W2 takes over from the old lookup:

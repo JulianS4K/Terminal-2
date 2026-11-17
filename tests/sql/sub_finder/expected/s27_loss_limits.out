@@ -1,0 +1,42 @@
+what the CRM reads before anything is set: 105 everywhere, and this key may not set it yet
+105|{}|false|100|200
+forbidden
+forbidden
+default limit 105: the need2buy order at 104% is bought, the one at 106% is not; a plain order is bought at a profit only
+t
+N140|StubHub|t|2|208.00|auto_bought|-|105|210.00
+N141|StubHub|t|2|212.00|buy_manually|no_evo_one_to_one|105|no buy
+N142|Vivid Seats|t|2|208.00|auto_bought|-|105|210.00
+N143|StubHub|f|2|202.00|buy_manually|no_evo_one_to_one|100|no buy
+N144|StubHub|f|1|190.00|auto_bought|-|100|199.99
+the CRM sets limits by marketplace: StubHub 110, Vivid 100 (no loss); bad values change nothing
+invalid|the limit for vivid must be a number from 100 to 200 (percent of the sale total), or null
+invalid|the limit for stubhub must be a number from 100 to 200 (percent of the sale total), or null
+invalid|the limit for stubhub must be a number from 100 to 200 (percent of the sale total), or null
+invalid|not a marketplace name: !!
+invalid
+invalid
+0
+105|{"vivid": 100, "stubhub": 110}|true
+10|0|5|profit only
+at the next match the StubHub order at 106% is bought (the Vivid order was already requested under the default)
+t
+N140|StubHub|t|2|208.00|auto_bought|-|110|220.00
+N141|StubHub|t|2|212.00|auto_bought|-|110|220.00
+N142|Vivid Seats|t|2|208.00|auto_bought|-|100|200.00
+N143|StubHub|f|2|202.00|buy_manually|no_evo_one_to_one|100|no buy
+N144|StubHub|f|1|190.00|auto_bought|-|100|199.99
+the default for every other marketplace can be set too, up to 200; null takes a marketplace back to the default
+200|{"stubhub": 110}
+100|10
+t|f|f|t|f
+105
+every change is kept
+vivid|-|100.00|crm api key crm / dana
+stubhub|-|110.00|crm api key crm / dana
+*|-|200.00|crm api key crm
+vivid|100.00|-|crm api key crm
+*|200.00|-|crm api key crm
+a buy that ends at a loss is put in the gate 2 category afterwards; one that made money stays gate 1
+N140|209|-9.00|2|S4KTrading
+N144|191|9.00|1|Index

@@ -1,0 +1,16 @@
+t
+done
+5|5
+8100 label kept | 8101 label back to n2s | 8102 subbed | 8103 resolved | 8104 marketplace cancels
+t
+8100|t|-
+8101|f|label_removed
+8102|f|label_removed
+8103|f|label_removed
+8104|f|order_cancelled
+only the one still labelled is polled:
+{100}
+a hand-alerted plain N2S order still closes when it leaves the book
+1
+t
+8200|f|f|left_crm_n2s
