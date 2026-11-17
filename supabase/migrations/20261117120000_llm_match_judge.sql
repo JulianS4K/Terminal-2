@@ -1,4 +1,4 @@
--- Migration 20261117120000 · level:data-collection · lane:A1 (data plane — mapping program) · writes:llm_judge_config(new),llm_judge_call(new),llm_judge_decision(new),llm_judge_call()(new),llm_match_cases()(new),llm_match_apply()(new),llm_match_judge()(new),llm_venue_cases()(new),llm_venue_apply()(new),llm_venue_judge()(new),v_llm_judge_review(new view),tickpick_catalog_map() fn (venue judge source),vivid_catalog_map() fn (venue judge source),tickpick_catalog_event/vivid_catalog_event/mlb_ticket_event(tevo_event_id fill-only — DML, apply gated),tickpick_catalog_venue/vivid_catalog_venue(tevo_venue_id fill-only — DML, apply gated),cron:llm_judge_hourly(new),cron:llm_venue_judge_daily(new) · reads:events,vault.decrypted_secrets(GEMINI_API_KEY),tickpick_catalog_*,vivid_catalog_*,mlb_ticket_event,mlb_ticket_game,mlb_venue_xref · pre:20261117110000
+-- Migration 20261117120000 · level:data-collection · lane:A1 (data plane — mapping program) · writes:llm_judge_config(new),llm_judge_call(new),llm_judge_decision(new),llm_clean()(new),llm_pick_corroborated()(new),llm_judge_call()(new),llm_match_cases()(new),llm_match_apply()(new),llm_match_judge()(new),llm_venue_cases()(new),llm_venue_apply()(new),llm_venue_judge()(new),v_llm_judge_review(new view),tickpick_catalog_map() fn (venue judge source),vivid_catalog_map() fn (venue judge source),tickpick_catalog_event/vivid_catalog_event/mlb_ticket_event(tevo_event_id fill-only — DML, apply gated),tickpick_catalog_venue/vivid_catalog_venue(tevo_venue_id fill-only — DML, apply gated),cron:llm_judge_hourly(new),cron:llm_venue_judge_daily(new) · reads:events,vault.decrypted_secrets(GEMINI_API_KEY),tickpick_catalog_*,vivid_catalog_*,mlb_ticket_event,mlb_ticket_game,mlb_venue_xref · pre:20261117110000
 --
 -- MAPPING PROGRAM — A LANGUAGE MODEL JUDGES WHAT THE RULES LEAVE OPEN.
 --
@@ -20,6 +20,12 @@
 -- nothing written — until the operator has read v_llm_judge_review and flips it. Caps: batch_size cases a call,
 -- max_calls_per_run calls a run, daily_call_cap calls a day; the key is read from the vault at call time
 -- (secret_name, default GEMINI_API_KEY) and sent in the x-goog-api-key header, never in a URL or a log.
+--
+-- Hardened after the automated security review of the first cut (same day): catalogue text is cleaned before it
+-- enters a prompt; product listings are not candidates for non-product rows; the answer is parsed strictly and a
+-- malformed one is an abstention, never an abort; and a pick is written only when something the model cannot fake
+-- corroborates it (a shared word, the same start minute, the same city) — otherwise it is recorded and held. This
+-- file is safe to run over the first cut (same signatures, the one new column added IF NOT EXISTS).
 --
 -- RULE 2: Gemini is not a listing source; the only upstream calls are inference requests to
 -- generativelanguage.googleapis.com. Nothing is sent to any marketplace. The catalogue mappers gain one venue
@@ -76,8 +82,10 @@ CREATE TABLE IF NOT EXISTS public.llm_judge_decision (
   call_id     bigint REFERENCES public.llm_judge_call (id),
   applied     boolean NOT NULL DEFAULT false,
   applied_at  timestamptz,
+  held_reason text,                      -- why an accepted-looking pick was not written: under_floor | uncorroborated | claimed | dry_run
   UNIQUE (purpose, source, case_key, cand_hash)
 );
+ALTER TABLE public.llm_judge_decision ADD COLUMN IF NOT EXISTS held_reason text;   -- the first cut of this file (applied 2026-11-17 19:4xZ) had no held_reason
 CREATE INDEX IF NOT EXISTS llm_judge_decision_at_idx ON public.llm_judge_decision (at);
 CREATE INDEX IF NOT EXISTS llm_judge_decision_open_idx ON public.llm_judge_decision (purpose, source) WHERE NOT applied;
 COMMENT ON TABLE public.llm_judge_decision IS
@@ -89,6 +97,40 @@ ALTER TABLE public.llm_judge_decision ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.llm_judge_config, public.llm_judge_call, public.llm_judge_decision FROM anon, authenticated;
 GRANT SELECT ON public.llm_judge_config, public.llm_judge_call, public.llm_judge_decision TO service_role;
 GRANT UPDATE ON public.llm_judge_config TO service_role;
+
+-- ───────────────────────── 1b. what goes into a prompt, and what may come out of one ─────────────────────────
+-- Catalogue names are text other companies wrote: they go into the prompt stripped of control characters and cut to
+-- 200 characters, and nothing the model says is enough on its own — an applied pick must also be corroborated by a
+-- signal the model cannot fake: a shared word (4+ letters) between the catalogue row and the candidate, or the same
+-- start minute, or (venues) the same city. A pick without that is recorded and held (held_reason), never written.
+CREATE OR REPLACE FUNCTION public.llm_clean(p text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  SELECT left(trim(regexp_replace(regexp_replace(coalesce(p, ''), '[[:cntrl:]]+', ' ', 'g'), '\s+', ' ', 'g')), 200)
+$function$;
+
+CREATE OR REPLACE FUNCTION public.llm_pick_corroborated(p_purpose text, p_payload jsonb, p_cand jsonb)
+ RETURNS boolean
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  WITH a AS (
+    SELECT lower(coalesce(p_payload->>'name', '') || ' ' || coalesce((SELECT string_agg(x#>>'{}', ' ') FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p_payload->'performers') = 'array' THEN p_payload->'performers' ELSE '[]'::jsonb END) x), '')) AS t),
+  b AS (
+    SELECT lower(coalesce(p_cand->>'name', '') || ' ' || coalesce(p_cand->>'performer', '') || ' ' || coalesce(p_cand->>'location', '')) AS t)
+  SELECT EXISTS (
+           SELECT 1 FROM a, b, regexp_split_to_table(a.t, '[^a-z0-9]+') w
+            WHERE length(w) >= 4 AND w NOT IN ('with', 'from', 'live', 'tour', 'show', 'night', 'game', 'party', 'event', 'events', 'club', 'stadium', 'arena', 'center', 'centre', 'theatre', 'theater', 'hall', 'park', 'field', 'presents', 'featuring', 'special', 'guest', 'tickets', 'ticket', 'concert', 'series', 'music', 'festival', 'the')
+              AND w = ANY (regexp_split_to_array(b.t, '[^a-z0-9]+')))
+      OR (p_purpose = 'match' AND p_payload->>'start_local' IS NOT NULL AND p_cand->>'start_local' IS NOT NULL
+          AND left(p_payload->>'start_local', 16) = left(p_cand->>'start_local', 16))
+      OR (p_purpose = 'venue' AND coalesce(p_payload->>'city', '') <> ''
+          AND lower(trim(p_payload->>'city')) = lower(trim(split_part(coalesce(p_cand->>'location', ''), ',', 1))))
+$function$;
+REVOKE ALL ON FUNCTION public.llm_clean(text), public.llm_pick_corroborated(text, jsonb, jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.llm_clean(text), public.llm_pick_corroborated(text, jsonb, jsonb) TO service_role;
 
 -- ───────────────────────── 2. one call to the model ─────────────────────────
 -- Returns the parsed JSON the model answered (an array of decisions), or NULL when the call was not made or
@@ -189,16 +231,17 @@ BEGIN
          AND x.event_date BETWEEN current_date AND current_date + coalesce(v_h, 180)
          AND coalesce(x.venue_country, 'US') IN ('US', 'CA', 'MX')),
     k AS (
-      SELECT c.*, (SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name, 'performer', e.primary_performer_name, 'start_local', e.occurs_at_local) ORDER BY e.occurs_at_local, e.id)
+      SELECT c.*, (SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', public.llm_clean(e.name), 'performer', public.llm_clean(e.primary_performer_name), 'start_local', e.occurs_at_local) ORDER BY e.occurs_at_local, e.id)
                      FROM public.events e
                     WHERE e.venue_id = c.tevo_venue_id AND left(e.occurs_at_local, 10) = to_char(c.event_date, 'YYYY-MM-DD')
                       AND e.state IS DISTINCT FROM 'ignored'
+                      AND (lower(e.name) !~ '(parking|tailgate|package|shuttle|hospitality|\\mvip\\M)' OR lower(c.name) ~ '(parking|tailgate|package|shuttle|hospitality|\\mvip\\M)')   -- a product listing only for a product row
                       AND NOT EXISTS (SELECT 1 FROM public.tickpick_catalog_event o WHERE o.tevo_event_id = e.id)) AS cands
         FROM c)
     SELECT k.tp_event_id::text,
-           jsonb_strip_nulls(jsonb_build_object('name', k.name, 'performers', (SELECT jsonb_agg(p->>'name') FROM jsonb_array_elements(coalesce(k.performers, '[]'::jsonb)) p),
-                                                'start_local', k.event_local, 'time_confirmed', k.time_confirmed, 'category', k.cat_name,
-                                                'venue', k.venue, 'city', k.city, 'state', k.state)),
+           jsonb_strip_nulls(jsonb_build_object('name', public.llm_clean(k.name), 'performers', (SELECT jsonb_agg(public.llm_clean(p->>'name')) FROM jsonb_array_elements(coalesce(k.performers, '[]'::jsonb)) p),
+                                                'start_local', k.event_local, 'time_confirmed', k.time_confirmed, 'category', public.llm_clean(k.cat_name),
+                                                'venue', public.llm_clean(k.venue), 'city', public.llm_clean(k.city), 'state', public.llm_clean(k.state))),
            k.cands,
            (SELECT array_agg((x->>'id')::bigint ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x),
            md5((SELECT string_agg(x->>'id', ',' ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x))
@@ -220,16 +263,17 @@ BEGIN
          AND x.event_date BETWEEN current_date AND current_date + coalesce(v_h, 180)
          AND coalesce(x.venue_country, 'US') IN ('US', 'CA', 'MX')),
     k AS (
-      SELECT c.*, (SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name, 'performer', e.primary_performer_name, 'start_local', e.occurs_at_local) ORDER BY e.occurs_at_local, e.id)
+      SELECT c.*, (SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', public.llm_clean(e.name), 'performer', public.llm_clean(e.primary_performer_name), 'start_local', e.occurs_at_local) ORDER BY e.occurs_at_local, e.id)
                      FROM public.events e
                     WHERE e.venue_id = c.tevo_venue_id AND left(e.occurs_at_local, 10) = to_char(c.event_date, 'YYYY-MM-DD')
                       AND e.state IS DISTINCT FROM 'ignored'
+                      AND (lower(e.name) !~ '(parking|tailgate|package|shuttle|hospitality|\\mvip\\M)' OR lower(c.name) ~ '(parking|tailgate|package|shuttle|hospitality|\\mvip\\M)')
                       AND NOT EXISTS (SELECT 1 FROM public.vivid_catalog_event o WHERE o.tevo_event_id = e.id)) AS cands
         FROM c)
     SELECT k.vivid_event_id::text,
-           jsonb_strip_nulls(jsonb_build_object('name', k.name, 'performers', (SELECT jsonb_agg(coalesce(p->>'name', p#>>'{}')) FROM jsonb_array_elements(coalesce(k.performers, '[]'::jsonb)) p),
+           jsonb_strip_nulls(jsonb_build_object('name', public.llm_clean(k.name), 'performers', (SELECT jsonb_agg(public.llm_clean(coalesce(p->>'name', p#>>'{}'))) FROM jsonb_array_elements(coalesce(k.performers, '[]'::jsonb)) p),
                                                 'start_local', CASE WHEN k.time_known THEN k.event_local END, 'time_confirmed', k.time_known,
-                                                'category', k.category, 'type', k.event_type, 'venue', k.venue, 'city', k.city, 'state', k.state)),
+                                                'category', public.llm_clean(k.category), 'type', public.llm_clean(k.event_type), 'venue', public.llm_clean(k.venue), 'city', public.llm_clean(k.city), 'state', public.llm_clean(k.state))),
            k.cands,
            (SELECT array_agg((x->>'id')::bigint ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x),
            md5((SELECT string_agg(x->>'id', ',' ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x))
@@ -250,17 +294,18 @@ BEGIN
          AND x.event_date BETWEEN current_date AND current_date + coalesce(v_h, 180)
          AND x.title !~* '(package|hospitality|suites?\M|parking|pre-?game|post-?game|pickup|membership|party|\mpass(es)?\M)'),
     k AS (
-      SELECT c.*, (SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name, 'performer', e.primary_performer_name, 'start_local', e.occurs_at_local) ORDER BY e.occurs_at_local, e.id)
+      SELECT c.*, (SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', public.llm_clean(e.name), 'performer', public.llm_clean(e.primary_performer_name), 'start_local', e.occurs_at_local) ORDER BY e.occurs_at_local, e.id)
                      FROM public.events e
                     WHERE e.venue_id = c.tevo_venue_id AND left(e.occurs_at_local, 10) = c.event_date::text
                       AND e.state IS DISTINCT FROM 'ignored'
+                      AND lower(e.name) !~ '(parking|tailgate|package|shuttle|hospitality|\\mvip\\M)'
                       AND NOT EXISTS (SELECT 1 FROM public.mlb_ticket_game g WHERE g.tevo_event_id = e.id)
                       AND NOT EXISTS (SELECT 1 FROM public.mlb_ticket_event o WHERE o.tevo_event_id = e.id)) AS cands
         FROM c)
     SELECT k.schedule_id::text,
-           jsonb_strip_nulls(jsonb_build_object('name', k.title, 'description', left(k.descr, 300), 'type', k.event_type,
+           jsonb_strip_nulls(jsonb_build_object('name', public.llm_clean(k.title), 'description', public.llm_clean(k.descr), 'type', public.llm_clean(k.event_type),
                                                 'start_local', CASE WHEN NOT coalesce(k.is_tbd, false) THEN k.event_time_local::text END,
-                                                'venue', k.venue_name, 'city', k.venue_city, 'note', 'a non-game event sold by an MLB club at its ballpark')),
+                                                'venue', public.llm_clean(k.venue_name), 'city', public.llm_clean(k.venue_city), 'note', 'a non-game event sold by an MLB club at its ballpark')),
            k.cands,
            (SELECT array_agg((x->>'id')::bigint ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x),
            md5((SELECT string_agg(x->>'id', ',' ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x))
@@ -322,6 +367,7 @@ BEGIN
   IF v_ok THEN
     UPDATE public.llm_judge_decision d SET applied = true, applied_at = now()
      WHERE d.purpose = 'match' AND d.source = p_source AND d.case_key = p_case AND d.cand_hash = p_hash AND NOT d.applied;
+    UPDATE public.llm_judge_decision d SET held_reason = NULL WHERE d.purpose = 'match' AND d.source = p_source AND d.case_key = p_case AND d.cand_hash = p_hash AND d.applied;
   END IF;
   RETURN v_ok;
 END $function$;
@@ -354,6 +400,7 @@ DECLARE
   d          jsonb;
   v_pick     bigint;
   v_conf     numeric;
+  v_hold     text;
   v_n        int;
 BEGIN
   SELECT * INTO cfg FROM public.llm_judge_config WHERE id = 1;
@@ -374,7 +421,8 @@ BEGIN
                FROM public.llm_match_cases(p_source, 100000, true) c
                JOIN public.llm_judge_decision dd ON dd.purpose = 'match' AND dd.source = p_source AND dd.case_key = c.case_key AND dd.cand_hash = c.cand_hash
               WHERE NOT dd.applied AND dd.pick IS NOT NULL AND dd.confidence >= cfg.min_confidence
-                AND dd.pick::bigint = ANY (c.cand_ids) LOOP
+                AND dd.pick::bigint = ANY (c.cand_ids)
+                AND public.llm_pick_corroborated('match', dd.payload, (SELECT x FROM jsonb_array_elements(dd.candidates) x WHERE x->>'id' = dd.pick LIMIT 1)) LOOP
       IF public.llm_match_apply(p_source, r.case_key, r.cand_hash, r.pick::bigint, r.confidence, r.reason, v_run) THEN v_replayed := v_replayed + 1; END IF;
     END LOOP;
   END IF;
@@ -398,21 +446,30 @@ BEGIN
       EXIT;   -- the cases stay open for the next run; a missing key or a spent cap would loop, so this run stops here
     END IF;
 
-    -- record every answer; a case the model skipped is recorded as an abstention so it is not re-asked for the same candidates
+    -- record every answer; a case the model skipped, or answered unreadably, is recorded as an abstention so it is not re-asked for the same candidates
     FOR r IN SELECT b.*, (SELECT x FROM jsonb_array_elements(v_ans->'decisions') x WHERE x->>'case' = b.case_key LIMIT 1) AS ans FROM _lj_batch b LOOP
-      d := r.ans;
-      v_pick := CASE WHEN d IS NOT NULL AND (d->>'pick') ~ '^\d+$' THEN (d->>'pick')::bigint END;
-      v_conf := CASE WHEN d IS NOT NULL AND (d->>'confidence') ~ '^[0-9.]+$' THEN least(1, greatest(0, (d->>'confidence')::numeric)) END;
+      d := r.ans; v_pick := NULL; v_conf := NULL; v_hold := NULL;
+      BEGIN
+        v_pick := CASE WHEN d IS NOT NULL AND (d->>'pick') ~ '^\d{1,18}$' THEN (d->>'pick')::bigint END;
+        v_conf := CASE WHEN d IS NOT NULL AND (d->>'confidence') ~ '^(0(\.\d{1,6})?|1(\.0{1,6})?|\.\d{1,6})$' THEN (d->>'confidence')::numeric END;
+      EXCEPTION WHEN OTHERS THEN v_pick := NULL; v_conf := NULL;
+      END;
       IF v_pick IS NOT NULL AND NOT (v_pick = ANY (r.cand_ids)) THEN v_pick := NULL; v_conf := 0; END IF;   -- outside the list: an abstention
-      INSERT INTO public.llm_judge_decision (purpose, source, case_key, cand_hash, payload, candidates, pick, confidence, reason, call_id)
+      IF v_pick IS NOT NULL THEN
+        v_hold := CASE WHEN v_conf IS NULL OR v_conf < cfg.min_confidence THEN 'under_floor'
+                       WHEN NOT public.llm_pick_corroborated('match', r.payload, (SELECT x FROM jsonb_array_elements(r.candidates) x WHERE (x->>'id')::bigint = v_pick LIMIT 1)) THEN 'uncorroborated'
+                       WHEN NOT v_apply THEN 'dry_run' END;
+      END IF;
+      INSERT INTO public.llm_judge_decision (purpose, source, case_key, cand_hash, payload, candidates, pick, confidence, reason, call_id, held_reason)
       VALUES ('match', p_source, r.case_key, r.cand_hash, r.payload, r.candidates, v_pick::text, v_conf,
-              left(coalesce(d->>'reason', CASE WHEN d IS NULL THEN 'no answer for this case' END), 500), (v_ans->>'call_id')::bigint)
+              left(coalesce(d->>'reason', CASE WHEN d IS NULL THEN 'no answer for this case' END), 500), (v_ans->>'call_id')::bigint, v_hold)
       ON CONFLICT (purpose, source, case_key, cand_hash) DO UPDATE
-        SET at = now(), pick = EXCLUDED.pick, confidence = EXCLUDED.confidence, reason = EXCLUDED.reason, call_id = EXCLUDED.call_id;
+        SET at = now(), pick = EXCLUDED.pick, confidence = EXCLUDED.confidence, reason = EXCLUDED.reason, call_id = EXCLUDED.call_id, held_reason = EXCLUDED.held_reason;
       IF v_pick IS NULL THEN v_abst := v_abst + 1; CONTINUE; END IF;
       v_picked := v_picked + 1;
-      IF v_apply AND v_conf IS NOT NULL AND v_conf >= cfg.min_confidence THEN
-        IF public.llm_match_apply(p_source, r.case_key, r.cand_hash, v_pick, v_conf, d->>'reason', v_run) THEN v_applied := v_applied + 1; END IF;
+      IF v_hold IS NULL THEN
+        IF public.llm_match_apply(p_source, r.case_key, r.cand_hash, v_pick, v_conf, d->>'reason', v_run) THEN v_applied := v_applied + 1;
+        ELSE UPDATE public.llm_judge_decision SET held_reason = 'claimed' WHERE purpose = 'match' AND source = p_source AND case_key = r.case_key AND cand_hash = r.cand_hash; END IF;
       END IF;
     END LOOP;
   END LOOP;
@@ -450,14 +507,14 @@ BEGIN
          AND x.event_date BETWEEN current_date AND current_date + %4$s
        GROUP BY v.%1$I, v.name, v.city, v.state, v.country),
     k AS (
-      SELECT cv.*, (SELECT jsonb_agg(jsonb_build_object('id', t.venue_id, 'name', t.name, 'location', t.loc) ORDER BY t.sim DESC, t.venue_id)
+      SELECT cv.*, (SELECT jsonb_agg(jsonb_build_object('id', t.venue_id, 'name', public.llm_clean(t.name), 'location', public.llm_clean(t.loc)) ORDER BY t.sim DESC, t.venue_id)
                       FROM (SELECT tv.*, similarity(lower(tv.name), lower(cv.name)) AS sim FROM tv
                              WHERE tv.st = upper(trim(cv.state))
                                AND (tv.city = lower(trim(coalesce(cv.city, ''))) OR similarity(lower(tv.name), lower(cv.name)) >= 0.35)
                              ORDER BY similarity(lower(tv.name), lower(cv.name)) DESC, tv.venue_id LIMIT 10) t) AS cands
         FROM cv)
     SELECT k.vid::text,
-           jsonb_strip_nulls(jsonb_build_object('name', k.name, 'city', k.city, 'state', k.state, 'country', k.country, 'upcoming_events', k.upcoming)),
+           jsonb_strip_nulls(jsonb_build_object('name', public.llm_clean(k.name), 'city', public.llm_clean(k.city), 'state', public.llm_clean(k.state), 'country', public.llm_clean(k.country), 'upcoming_events', k.upcoming)),
            k.cands,
            (SELECT array_agg((x->>'id')::bigint ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x),
            md5((SELECT string_agg(x->>'id', ',' ORDER BY (x->>'id')::bigint) FROM jsonb_array_elements(k.cands) x))
@@ -498,6 +555,7 @@ BEGIN
   IF v_ok THEN
     UPDATE public.llm_judge_decision d SET applied = true, applied_at = now()
      WHERE d.purpose = 'venue' AND d.source = p_source AND d.case_key = p_case AND d.cand_hash = p_hash AND NOT d.applied;
+    UPDATE public.llm_judge_decision d SET held_reason = NULL WHERE d.purpose = 'venue' AND d.source = p_source AND d.case_key = p_case AND d.cand_hash = p_hash AND d.applied;
   END IF;
   RETURN v_ok;
 END $function$;
@@ -526,6 +584,7 @@ DECLARE
   d          jsonb;
   v_pick     bigint;
   v_conf     numeric;
+  v_hold     text;
   v_n        int;
 BEGIN
   IF p_source NOT IN ('tickpick', 'vivid') THEN RAISE EXCEPTION 'llm_venue_judge: unknown source %', p_source; END IF;
@@ -544,7 +603,8 @@ BEGIN
                FROM public.llm_venue_cases(p_source, 100000, true) c
                JOIN public.llm_judge_decision dd ON dd.purpose = 'venue' AND dd.source = p_source AND dd.case_key = c.case_key AND dd.cand_hash = c.cand_hash
               WHERE NOT dd.applied AND dd.pick IS NOT NULL AND dd.confidence >= cfg.min_confidence
-                AND dd.pick::bigint = ANY (c.cand_ids) LOOP
+                AND dd.pick::bigint = ANY (c.cand_ids)
+                AND public.llm_pick_corroborated('venue', dd.payload, (SELECT x FROM jsonb_array_elements(dd.candidates) x WHERE x->>'id' = dd.pick LIMIT 1)) LOOP
       IF public.llm_venue_apply(p_source, r.case_key, r.cand_hash, r.pick::bigint, r.confidence, r.reason, v_run) THEN v_replayed := v_replayed + 1; END IF;
     END LOOP;
   END IF;
@@ -565,19 +625,28 @@ BEGIN
     IF v_ans IS NULL THEN v_err := v_err + 1; EXIT; END IF;
 
     FOR r IN SELECT b.*, (SELECT x FROM jsonb_array_elements(v_ans->'decisions') x WHERE x->>'case' = b.case_key LIMIT 1) AS ans FROM _lv_batch b LOOP
-      d := r.ans;
-      v_pick := CASE WHEN d IS NOT NULL AND (d->>'pick') ~ '^\d+$' THEN (d->>'pick')::bigint END;
-      v_conf := CASE WHEN d IS NOT NULL AND (d->>'confidence') ~ '^[0-9.]+$' THEN least(1, greatest(0, (d->>'confidence')::numeric)) END;
+      d := r.ans; v_pick := NULL; v_conf := NULL; v_hold := NULL;
+      BEGIN
+        v_pick := CASE WHEN d IS NOT NULL AND (d->>'pick') ~ '^\d{1,18}$' THEN (d->>'pick')::bigint END;
+        v_conf := CASE WHEN d IS NOT NULL AND (d->>'confidence') ~ '^(0(\.\d{1,6})?|1(\.0{1,6})?|\.\d{1,6})$' THEN (d->>'confidence')::numeric END;
+      EXCEPTION WHEN OTHERS THEN v_pick := NULL; v_conf := NULL;
+      END;
       IF v_pick IS NOT NULL AND NOT (v_pick = ANY (r.cand_ids)) THEN v_pick := NULL; v_conf := 0; END IF;
-      INSERT INTO public.llm_judge_decision (purpose, source, case_key, cand_hash, payload, candidates, pick, confidence, reason, call_id)
+      IF v_pick IS NOT NULL THEN
+        v_hold := CASE WHEN v_conf IS NULL OR v_conf < cfg.min_confidence THEN 'under_floor'
+                       WHEN NOT public.llm_pick_corroborated('venue', r.payload, (SELECT x FROM jsonb_array_elements(r.candidates) x WHERE (x->>'id')::bigint = v_pick LIMIT 1)) THEN 'uncorroborated'
+                       WHEN NOT v_apply THEN 'dry_run' END;
+      END IF;
+      INSERT INTO public.llm_judge_decision (purpose, source, case_key, cand_hash, payload, candidates, pick, confidence, reason, call_id, held_reason)
       VALUES ('venue', p_source, r.case_key, r.cand_hash, r.payload, r.candidates, v_pick::text, v_conf,
-              left(coalesce(d->>'reason', CASE WHEN d IS NULL THEN 'no answer for this case' END), 500), (v_ans->>'call_id')::bigint)
+              left(coalesce(d->>'reason', CASE WHEN d IS NULL THEN 'no answer for this case' END), 500), (v_ans->>'call_id')::bigint, v_hold)
       ON CONFLICT (purpose, source, case_key, cand_hash) DO UPDATE
-        SET at = now(), pick = EXCLUDED.pick, confidence = EXCLUDED.confidence, reason = EXCLUDED.reason, call_id = EXCLUDED.call_id;
+        SET at = now(), pick = EXCLUDED.pick, confidence = EXCLUDED.confidence, reason = EXCLUDED.reason, call_id = EXCLUDED.call_id, held_reason = EXCLUDED.held_reason;
       IF v_pick IS NULL THEN v_abst := v_abst + 1; CONTINUE; END IF;
       v_picked := v_picked + 1;
-      IF v_apply AND v_conf IS NOT NULL AND v_conf >= cfg.min_confidence THEN
-        IF public.llm_venue_apply(p_source, r.case_key, r.cand_hash, v_pick, v_conf, d->>'reason', v_run) THEN v_applied := v_applied + 1; END IF;
+      IF v_hold IS NULL THEN
+        IF public.llm_venue_apply(p_source, r.case_key, r.cand_hash, v_pick, v_conf, d->>'reason', v_run) THEN v_applied := v_applied + 1;
+        ELSE UPDATE public.llm_judge_decision SET held_reason = 'claimed' WHERE purpose = 'venue' AND source = p_source AND case_key = r.case_key AND cand_hash = r.cand_hash; END IF;
       END IF;
     END LOOP;
   END LOOP;
@@ -588,12 +657,13 @@ BEGIN
 END $function$;
 
 -- what the operator reads before flipping apply_enabled
-CREATE OR REPLACE VIEW public.v_llm_judge_review AS
+DROP VIEW IF EXISTS public.v_llm_judge_review;
+CREATE VIEW public.v_llm_judge_review AS
 SELECT d.id, d.at, d.purpose, d.source, d.case_key,
        coalesce(d.payload->>'name', '') AS subject,
        d.payload->>'start_local' AS start_local,
        coalesce(d.payload->>'venue', d.payload->>'city') AS venue,
-       d.pick, d.confidence, d.reason, d.applied,
+       d.pick, d.confidence, d.reason, d.applied, d.held_reason,
        (SELECT x->>'name' FROM jsonb_array_elements(d.candidates) x WHERE x->>'id' = d.pick LIMIT 1) AS picked_name,
        (SELECT x->>'start_local' FROM jsonb_array_elements(d.candidates) x WHERE x->>'id' = d.pick LIMIT 1) AS picked_start,
        jsonb_array_length(d.candidates) AS n_candidates,
