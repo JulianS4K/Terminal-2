@@ -53,7 +53,7 @@
 == every request was a GET with the vault token
  method |       auth        | count 
 --------+-------------------+-------
- GET    | Bearer stub-token |     4
+ GET    | Bearer stub-token |     3
 
 == dry run
              out_             
