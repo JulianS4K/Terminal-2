@@ -466,7 +466,7 @@ def test_axs_listings_no_snapshot():
     c = _axs_client(tables={"axs_event_snapshots": []})
     body = c.get("/api/axs/event/1/listings").json()
     assert body == {"event_id": 1, "count": 0, "listings": [], "summary": None,
-                    "captured_at": None}
+                    "captured_at": None, "buy_url": None}
 
 
 def test_axs_series_hours_param():

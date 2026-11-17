@@ -538,8 +538,9 @@ def test_ping_carries_the_newest_entries_of_the_guides_own_list_of_changes(tmp_p
     path.write_text(NEWS_TEXT, encoding="utf-8")
     monkeypatch.setattr(s, "DOC_PATH", path)
     s.crm_doc.cache_clear()
+    monkeypatch.setattr(s, "NEWS_ON_PING", 5)
     body = _client(FakeDB(rpc_data={"sub_finder_access": {"find": True}})).get("/api/v1/subs/ping", headers=H).json()
-    assert body["news"] == news[:5] and len(body["news"]) == s.NEWS_ON_PING     # the guide has the rest
+    assert body["news"] == news[:5]                                              # the guide has the rest
     assert body["docs"]["version"] == s.render_crm_doc(NEWS_TEXT)["version"]
     s.crm_doc.cache_clear()
 
@@ -550,7 +551,7 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
     assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
     for n in news:
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
-    assert "limits" in news[0]["text"]
+    assert "minor league" in news[0]["text"] and "SeatGeek" in news[1]["text"] and "mlb/schedule" in news[2]["text"]
 
 
 def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
@@ -991,6 +992,21 @@ def test_audit_passes_the_record_through_with_bounds_and_refusals():
 
 
 # ---------------------------------------------------------------- the CRM's own limits (mig 20261116030000)
+
+def test_health_is_read_through_the_sql_and_answers_200_whatever_the_status():
+    # operator 2026-11-16: "also add health check that feeds crm"
+    shown = {"status": "down", "checks": [{"name": "crm_feed", "status": "down"}], "checked_at": "2026-11-16T20:00:00Z"}
+    db = FakeDB(rpc_data={"sub_finder_health": shown})
+    c = _client(db)
+    assert c.get("/api/v1/subs/health").status_code == 401                      # the key, like every route
+    r = c.get("/api/v1/subs/health", headers=H)
+    assert r.status_code == 200 and r.json() == shown                           # the status is in the body
+    assert db.last("sub_finder_health") == {"p_key_id": 7}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.health"}
+    assert "sub_finder_health" in s.RETRY_ONCE_RPCS                             # a read: safe to send again
+    db.rpc_data["sub_finder_health"] = {"error": "forbidden", "detail": "the sub finder is not enabled for this key"}
+    assert c.get("/api/v1/subs/health", headers=H).status_code == 403
+
 
 LIMITS_URL = "/api/v1/subs/settings/limits"
 
