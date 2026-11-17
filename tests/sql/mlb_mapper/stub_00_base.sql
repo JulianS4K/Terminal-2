@@ -7,6 +7,10 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
 END $$;
 CREATE SCHEMA IF NOT EXISTS extensions;
+-- pgsql-http, as far as the alert digest (mig 20261117060000) declares it; never called by a scenario
+CREATE TYPE extensions.http_header AS (field text, value text);
+CREATE TYPE extensions.http_request AS (method text, uri text, headers extensions.http_header[], content_type text, content text);
+CREATE TYPE extensions.http_response AS (status int, content_type text, headers extensions.http_header[], content text);
 CREATE TABLE public.events (id bigint PRIMARY KEY, name text, occurs_at_local text, state text, venue_id bigint, venue_name text,
                             primary_performer_id bigint, primary_performer_name text, performer_ids bigint[]);
 CREATE INDEX events_local_day_idx ON public.events (left(occurs_at_local, 10));
