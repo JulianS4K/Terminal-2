@@ -61,7 +61,10 @@
      },                      +
      "unmatched": 3,         +
      "candidates": 10,       +
-     "venues_resolved": 2    +
+     "venues_resolved": 2,   +
+     "venues_by_method": {   +
+         "matched_events": 2 +
+     }                       +
  }
 
  matched_after_dry_run 
@@ -89,6 +92,9 @@
      "venues_written": 2,    +
      "venues_resolved": 2,   +
      "hub_vivid_filled": 5,  +
+     "venues_by_method": {   +
+         "matched_events": 2 +
+     },                      +
      "orders_disagree_new": 1+
  }
 
@@ -154,6 +160,9 @@
      "venues_written": 0,    +
      "venues_resolved": 2,   +
      "hub_vivid_filled": 0,  +
+     "venues_by_method": {   +
+         "matched_events": 2 +
+     },                      +
      "orders_disagree_new": 0+
  }
 
@@ -179,6 +188,10 @@
      "venues_written": 1,    +
      "venues_resolved": 3,   +
      "hub_vivid_filled": 0,  +
+     "venues_by_method": {   +
+         "manual": 1,        +
+         "matched_events": 2 +
+     },                      +
      "orders_disagree_new": 0+
  }
 

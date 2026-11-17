@@ -19,4 +19,5 @@ while read -r step; do
 done <<'STEPS'
 stub_00_base.sql
 20261117070000_vivid_catalog.sql
+20261117080000_catalogues_in_resolver.sql
 STEPS

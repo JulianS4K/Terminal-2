@@ -73,7 +73,11 @@
      },                      +
      "unmatched": 4,         +
      "candidates": 11,       +
-     "venues_resolved": 2    +
+     "venues_resolved": 2,   +
+     "venues_by_method": {   +
+         "aq_venue_map": 1,  +
+         "cross_source": 1   +
+     }                       +
  }
 
  matched_after_dry_run 
@@ -107,6 +111,10 @@
      "venues_written": 2,    +
      "venues_resolved": 2,   +
      "venue_map_filled": 1,  +
+     "venues_by_method": {   +
+         "aq_venue_map": 1,  +
+         "cross_source": 1   +
+     },                      +
      "orders_disagree_new": 1+
  }
 
@@ -192,6 +200,9 @@
      "venues_written": 1,    +
      "venues_resolved": 2,   +
      "venue_map_filled": 0,  +
+     "venues_by_method": {   +
+         "aq_venue_map": 2   +
+     },                      +
      "orders_disagree_new": 0+
  }
 
@@ -225,6 +236,10 @@
          "venues_written": 1,    +
          "venues_resolved": 3,   +
          "venue_map_filled": 1,  +
+         "venues_by_method": {   +
+             "manual": 1,        +
+             "aq_venue_map": 2   +
+         },                      +
          "orders_disagree_new": 0+
      },                          +
      "walk": {                   +
@@ -278,6 +293,10 @@
      "venues_written": 0,    +
      "venues_resolved": 4,   +
      "venue_map_filled": 1,  +
+     "venues_by_method": {   +
+         "manual": 2,        +
+         "aq_venue_map": 2   +
+     },                      +
      "orders_disagree_new": 0+
  }
 

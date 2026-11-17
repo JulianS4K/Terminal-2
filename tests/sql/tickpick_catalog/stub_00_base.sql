@@ -7,7 +7,7 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
 END $$;
-CREATE TABLE public.events (id bigint PRIMARY KEY, name text, occurs_at_local text, state text, venue_id bigint, venue_name text,
+CREATE TABLE public.events (id bigint PRIMARY KEY, name text, occurs_at_local text, state text, venue_id bigint, venue_name text, venue_location text,
                             primary_performer_id bigint, primary_performer_name text, performer_ids bigint[]);
 CREATE INDEX events_local_day_idx ON public.events (left(occurs_at_local, 10));
 CREATE TABLE public.aq_event_map (id bigserial PRIMARY KEY, aq_short_event_id text UNIQUE, event_name text, venue_name text, event_date timestamp,
@@ -64,3 +64,10 @@ CREATE FUNCTION cron.schedule(name text, schedule text, command text) RETURNS bi
   INSERT INTO cron.job (jobname, schedule, command) VALUES (name, schedule, command)
   ON CONFLICT (jobname) DO UPDATE SET schedule = excluded.schedule, command = excluded.command RETURNING jobid $$;
 CREATE FUNCTION cron.unschedule(name text) RETURNS boolean LANGUAGE sql AS $$ DELETE FROM cron.job WHERE jobname = name RETURNING true $$;
+
+-- the other catalogues, as far as v_event_catalogues (mig 20261117080000) reads them
+CREATE TABLE IF NOT EXISTS public.sg_events_canonical (sg_event_id bigint PRIMARY KEY, tevo_event_id bigint, sg_event_date date, updated_at timestamptz);
+CREATE TABLE IF NOT EXISTS public.gotickets_event (gt_event_id bigint PRIMARY KEY, tevo_event_id bigint, event_time_utc timestamptz, status text, updated_at timestamptz);
+CREATE TABLE IF NOT EXISTS public.axs_export_event (axs_event_id bigint PRIMARY KEY, tevo_event_id bigint, gone_at timestamptz, event_date_local text, venue_country text, matched_at timestamptz);
+CREATE TABLE IF NOT EXISTS public.mlb_ticket_game (schedule_id bigint PRIMARY KEY, tevo_event_id bigint, game_date date, updated_at timestamptz);
+CREATE TABLE IF NOT EXISTS public.vivid_catalog_event (vivid_event_id bigint PRIMARY KEY, tevo_event_id bigint, event_date date, venue_country text, last_seen_at timestamptz);
