@@ -16,7 +16,7 @@ CREATE FUNCTION public.safe_jsonb(p text) RETURNS jsonb LANGUAGE plpgsql IMMUTAB
 
 -- the catalogues, as far as the judge reads and writes them
 CREATE TABLE public.tickpick_catalog_event (tp_event_id bigint PRIMARY KEY, name text, status text, merged_into bigint, event_local timestamp, event_utc timestamptz,
-                                            date_confirmed boolean DEFAULT true, time_confirmed boolean DEFAULT true, event_date date, cat_name text, tp_venue_id bigint,
+                                            date_confirmed boolean DEFAULT true, time_confirmed boolean DEFAULT true, event_date date, cat_parent text, cat_child text, cat_grandchild text, tp_venue_id bigint,
                                             venue_country text, performers jsonb, tevo_event_id bigint, tevo_match_method text, tevo_matched_at timestamptz);
 CREATE TABLE public.tickpick_catalog_venue (tp_venue_id bigint PRIMARY KEY, name text, city text, state text, country text, timezone text, tevo_venue_id bigint,
                                             method text, events int, first_seen_at timestamptz DEFAULT now(), last_seen_at timestamptz DEFAULT now(), derived_at timestamptz);

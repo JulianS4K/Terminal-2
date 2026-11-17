@@ -223,7 +223,8 @@ BEGIN
   IF p_source = 'tickpick' THEN
     RETURN QUERY
     WITH c AS (
-      SELECT x.tp_event_id, x.name, x.performers, x.event_local, x.time_confirmed, x.event_date, x.cat_name,
+      SELECT x.tp_event_id, x.name, x.performers, x.event_local, x.time_confirmed, x.event_date,
+             nullif(concat_ws(' / ', x.cat_parent, x.cat_child, x.cat_grandchild), '') AS cat_name,
              v.name AS venue, v.city, v.state, v.tevo_venue_id
         FROM public.tickpick_catalog_event x
         JOIN public.tickpick_catalog_venue v ON v.tp_venue_id = x.tp_venue_id AND v.tevo_venue_id IS NOT NULL

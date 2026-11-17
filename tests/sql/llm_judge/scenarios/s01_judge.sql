@@ -27,7 +27,7 @@ INSERT INTO tickpick_catalog_venue (tp_venue_id, name, city, state, country, tev
   (11, 'EagleBank Arena', 'Fairfax', 'VA', 'US', 100, 'name_state'),
   (12, 'The Kennedy Center Opera House', 'Washington', 'DC', 'US', 300, 'manual'),
   (13, 'The Fillmore Silver Spring', 'Silver Spring', 'MD', 'US', NULL, NULL);
-INSERT INTO tickpick_catalog_event (tp_event_id, name, status, event_local, event_date, time_confirmed, tp_venue_id, venue_country, performers, cat_name) VALUES
+INSERT INTO tickpick_catalog_event (tp_event_id, name, status, event_local, event_date, time_confirmed, tp_venue_id, venue_country, performers, cat_parent) VALUES
   (1001, 'George Mason Patriots vs. South Florida Bulls', 'active', at_(5, '03:30')::timestamp, d(5), false, 11, 'US', '[{"name":"George Mason Patriots","role":"Home Team"},{"name":"South Florida Bulls","role":"Away Team"}]', 'NCAA Basketball'),
   (1002, 'Hamilton', 'active', at_(6, '19:30')::timestamp, d(6), true, 12, 'US', '[{"name":"Hamilton","role":"Headliner"}]', 'Theater'),
   (1003, 'Hamilton', 'active', at_(6, '14:00')::timestamp, d(6), true, 12, 'US', '[{"name":"Hamilton","role":"Headliner"}]', 'Theater'),
