@@ -470,9 +470,12 @@ deployed. `'own'` undoes it at once.
   sale is attempted once, never retried) with state `shadow_buy` / `awaiting_approval` / `blocked` /
   `off` and the `reasons[]`. Limits live in the one-row `n2s_autobuy_config`: **$250 per order and
   $250 per day** to start, 3 buys/day, one buy per event per day, a listing used once, circuit
-  breaker after 2 failures/day, event start **> `min_event_lead`** away (24 h; **12 h since `20261111000000`**, measured
+  breaker after 2 failures/day, event start **> `min_event_lead`** away (24 h; 12 h since `20261111000000`;
+  **6 h since 2026-11-17**, operator "lower the event lead to 6 hours"), **except an event that starts before noon
+  Eastern, which still needs 12 h** (`morning_before_et` 12:00 / `morning_event_lead` 12 h, `n2s_autobuy_event_lead()`,
+  `20261117013000`, operator "exclude events before noon est": no overnight buys for morning events), measured
   from the real start: `events.occurs_at_local`, else venue-local read as UTC) and **not today** (America/New_York;
-  skipped while `allow_same_day`, true since `20261111000000`; reason `event_within_24h` = within `min_event_lead`),
+  skipped while `allow_same_day`, true since `20261111000000`; reason `event_within_24h` = within the event's lead),
   profit > 0 (**no minimum margin**), live price not above the quote, live read ≤ 120 s old.
   **Allotted time** per selling market = the median alert-to-auto-reject from the order timer
   (`v_n2s_market_cutoff`, ≥ 3 samples, rejects under 5 min excluded — measured 2026-11-09: EVO

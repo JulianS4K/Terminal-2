@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-17** MLB schedule upgrades. Clubs are now re-read every 2 hours (minor league every 4), so new ticket links and time changes show up the same day. Each game row now also carries its `promotions` (giveaways, theme nights, ticket offers) and `removed` (true once the club drops the game from its schedule). Two new endpoints: `GET /mlb/changes` lists every change we detect (a link going live, a moved date or time, an on-sale date, a removed game, a new giveaway or stadium event), and `GET /mlb/events` lists the concerts and other live events at the ballparks, each mapped to its EVO event where we can (section 6g).
 - **2026-11-16** `GET /mlb/schedule` can now list minor league games too: add `level=milb` for every Triple-A, Double-A, High-A and Single-A club, or one level (`aaa`, `aa`, `high_a`, `single_a`), or `level=all`. Without `level` you get MLB only, as before. Each row now also carries `level`, `league_name` and `parent_org` (the MLB club the team is affiliated with). Only some minor league clubs have released their 2027 ticket links so far; the rest fill in as they do (section 6g).
 - **2026-11-16** `GET /mlb/schedule` now gives each game its SeatGeek event: `sg_event_id` and `sg_url`, matched straight from MLB's schedule (same teams on the same date, and on a doubleheader day the same start time). Nearly every 2027 game has one (section 6g).
 - **2026-11-16** New: `GET /mlb/schedule` lists every MLB club's games (this season and next) with the club's direct ticket link for each game, its start time, venue, and the EVO event and terminal event it maps to. It fills itself in as clubs release times and links, and `since` returns only what changed (section 6g).
@@ -668,7 +669,7 @@ The automatic buy's loss limit is separate and unchanged ([§6d](#6d-the-automat
 
 `GET /api/v1/subs/mlb/schedule` lists every MLB club's games, this season and next, one row per game; with `level` it lists the 120 Triple-A to Single-A clubs' home games as well. Any key that may look up subs may read it; it buys nothing and calls no marketplace.
 
-We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club twice a day, so a row fills itself in as the club releases it: a start time that was TBD, a ticket link once single-game tickets go on sale, a moved date. `changed_at` changes only when something you would use changed, so you can sync with `since`.
+We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each MLB club every 2 hours and each minor league club every 4, so a row fills itself in as the club releases it: a start time that was TBD, a ticket link once single-game tickets go on sale, a moved date. `changed_at` changes only when something you would use changed, so you can sync with `since`.
 
 | Query | Meaning |
 |---|---|
@@ -699,10 +700,30 @@ We read MLB's own ticketing schedule (what mlb.com/tickets shows) for each club 
 
 - **`ticket_url`** is only ever the seller's own page for that one game (a Ticketmaster event page, mlb.tickets.com with the game's id, or for Somerset the Glitnir page with the game's id). Pages on mlb.com or milb.com that forward you to the seller are left out, so it is null for those clubs, and for clubs that have not opened single-game sales yet.
 - **Minor league rows** (`level` other than `mlb`) are the club's home games. `parent_org` is the MLB club it is affiliated with. Minor league abbreviations repeat (three clubs and Colorado are all `COL`), so `team=COL` returns every club with that abbreviation in the levels you asked for; use the team id for one club. EVO and SeatGeek list few minor league games until spring, so `tevo_event_id` / `sg_event_id` fill in later than for MLB.
+- **`promotions`** lists the club's offers for that game: giveaways (bobbleheads, hats, apparel), theme nights, fireworks, and ticket offers, each with its `type`, `kind`, `name`, `description`, sponsor (`presented_by`), `distribution` (for example "first 15,000 fans") and links. Null when the game has none.
+- **`removed`** is true once the club no longer lists the game (cancelled or moved off the schedule). The row stays, so you can tell it went away; it comes back to false if the club lists it again.
 - **`start_local` / `start_utc`** are null while MLB lists the time as TBD (`time_tbd: true`).
 - **`tevo_event_id`** is the EVO event for the game, set only when exactly one EVO event is that game on that date (or, on a day with two games, the one starting at MLB's time). `tevo_time_check` compares the two: `same`, `differs`, `evo_date_only` (EVO lists the date without a time) or `mlb_tbd`.
 - **`aq_short_event_id`** and the marketplace ids after it are the terminal's event for the game; `terminal_path` opens it in the terminal.
 - **`sg_event_id`** / **`sg_url`** are the game's SeatGeek event, matched straight from MLB's schedule: the same teams on the same date, and on a day with two games the one with the same start time. `sg_match_method` says how (`name_date`, `name_date_time`, or `hub` when it comes from the terminal's event).
+
+### Changes: `GET /api/v1/subs/mlb/changes`
+
+Everything the poller detects, oldest first, one row per change: `link_live` / `link_changed` / `link_removed`, `date_changed`, `time_changed`, `venue_changed`, `status_changed`, `on_sale_set` / `on_sale_changed`, `removed` / `restored`, `added` (a new game on the schedule), `promo_added`, and for stadium events `event_added`, `event_moved`, `event_removed`. Each row has `old_value` → `new_value`, the game or event it belongs to (`mlb_schedule_id`, date, teams or event title, venue, `ticket_url`, `tevo_event_id`), and `notable`: the changes worth acting on (a club's first load and plain new-game rows are not notable).
+
+| Query | Meaning |
+|---|---|
+| `after_id` | only changes after this `change_id`; pass `next_after_id` from the previous page |
+| `since` | ISO-8601 instant: changes detected at or after it |
+| `kind` | comma list of the kinds above |
+| `entity` | `game`, `event` or `promotion` |
+| `notable` | `true` for the ones worth acting on |
+| `team`, `level` | as for `/mlb/schedule` (`level` defaults to all here) |
+| `format`, `limit` | `json` or `csv`; up to 5000 (default 1000) |
+
+### Stadium events: `GET /api/v1/subs/mlb/events`
+
+Concerts and other live events at MLB and minor league ballparks, from the same MLB schedule: for example Monster Jam, Supercross, concerts, the All-Star Home Run Derby. Ballpark tours, parking, rentals and similar extras are left out. MLB lists no ticket link for these, so each carries the EVO event at the same ballpark on the same day when there is exactly one (`tevo_event_id`, `tevo_event_name`, `terminal_path`). Query: `team` (the home club), `level` (default all), `date_from`, `date_to`, `since`, `mapped=true`, `format`, `limit`, `offset`.
 
 ## 7. Buy a cover
 
