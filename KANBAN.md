@@ -10,6 +10,7 @@
 
 - **★ #1 — The database as an MCP product (operator 2026-10-21: "convert the database into a MCP so people can plug into their bot and get real-time-ish information and trends").** Self-serve keys at `/developers`, public market + trends + prediction markets + sports/news/weather on the external tier, every answer carries an as-of, our book never leaves the internal tier. Rows: 🚀 `D0-MCP-*` below.
 - **★ #2 — Supabase hardening + data lifecycle** (the 2026-10-21/23 audits): security rows closed; **A1-DB-25 (retention stalled) is the live P0**, then the A1-DATA-1 program (reclaim ~230 GB, policy coverage, partitions, index + cron diet, observability), cron phase 2, the rollup rewrite and the operator decisions in the 🔴 table.
+- **★ New — Ticket Terminal, the free public site (operator 2026-11-17).** Grows out of `/prices`: every event, listing-level asking prices, history and context, free; referral buy links; **no sold data anywhere public**. Rows: 🎟 `D1-TT-*` below. Not yet ranked against #1 / #2 — operator call.
 - **Product focus otherwise:** D0 terminal. D1–D7 lower priority (a focus call, not a lockout — permission is per-action, `PROJECT_BIBLE §2.1`).
 
 ---
@@ -36,6 +37,18 @@ Baseline at kickoff: `/mcp` existed since #1024 (2 external tools, 7 internal) w
 | 2 | D0-MCP-2 | D0 / A1 | **Trends layer.** Nightly category/league/performer price + volume indices as first-class tools; revive or replace `event_movers_index` (dead since 2026-07-02); freshness SLOs per feed surfaced on the page; resume the EVO get-in feed (A1-DB-6) so `event_prices` stops being stale. | Not started. |
 | 3 | D0-MCP-3 | D0 / Op | **Commercial.** Paid tiers (higher limits), Stripe, per-key usage dashboard, abuse controls beyond rate/quota (per-account key limits exist), a dedicated Render service once traffic warrants. | Not started. |
 | — | D0-MCP-4 | D0 | Follow-ups: MCP resources/prompts for discoverability; `query_public_view` row-level freshness; Redis-backed per-key limiter before >1 dyno (shares the `REDIS_URL` path of the IP limiter). | Backlog. |
+
+### 🎟 Ticket Terminal — free public site (filed 2026-11-17, operator-directed)
+
+Decisions 2026-11-17: public, free, no login; shows every event with listing-level asking prices, their history and context; **no sold data on any public surface** (the MCP external tier included); buy links are referral links wherever we hold a program; never our book, wholesale prices, brokerage names or which listings are ours. Working name "Ticket Terminal". It grows out of `/prices` (`routers/prices.py`, `static/prices/*`).
+
+| Phase | ID | Lane | Scope | Status |
+|---|---|---|---|---|
+| 1 | D1-TT-1 | D1 / Op | **Referral buy links.** `core/referral_links.py` wraps a marketplace link as its referral link (Impact `…/c/<acct>/<ad>/<campaign>?u=<url>&subId1=`, Partnerize `prf.hn/click/camref:…/pubref:…/destination:…`, or ids appended to the marketplace URL — SeatGeek `aid` / `rid`), sub id = `ev<event_id>`, only for https links on that marketplace's own hosts; `/prices` event links carry `referral` and the page discloses it (`rel="sponsored"`). | Builder + wiring shipped. **Op:** join the programs and set `REFERRAL_PROGRAMS` on Render — Impact: SeatGeek, Vivid Seats, Ticketmaster; Partnerize: StubHub (North America). Not available / unconfirmed: TickPick ("new program coming soon"), Gametime and AXS (no official page found), GoTickets (none found), TEvo (API / white label, not referral links — that is the storefront). Each brand's tracking domain and ids come from its dashboard after approval. |
+| 2 | D1-TT-2 | Op | **Data-rights check before listing-level goes public.** What the TEvo, SeatGeek and GoTickets agreements allow on a public page (listing-level display, display without a buy path, caching); the TEvo seat-map bundle is `UNLICENSED` (`static/*/lib/tevomaps.bundle.NOTICE.md`); SeatGeek's API terms require its logo wherever its data is shown. | Open — operator. Blocks D1-TT-3 going live, not building it. |
+| 3 | D1-TT-3 | D1 / A1 | **Listing-level event page.** Listings table (section, row, quantity, asking price, source, buy link), section filter, cross-source comparison per section; a `price_tracker_listings` SQL function with an explicit column list (no wholesale, brokerage or owned columns), read through the service role like the other `price_tracker_*` reads. Needs fresh listings: A1-DB-6, resumed under partitions (A1-DATA-1 P3). | Not started. |
+| 4 | D1-TT-4 | A1 | **Every event gets a page; mappers accurate enough to publish.** Pages for unmapped events ("no data from X" per source instead of invisible), one page per `tevo_event_id` (hub duplicates), a wrong-match guard before a source's price is shown; follow-ups of A1-DB-20 / A1-DB-21. | Not started. |
+| 5 | D1-TT-5 | D1 / Op | **Launch surface.** Own domain + service, indexable pages (server-rendered titles / meta, sitemap), trends pages, price alerts and watchlists behind a free account. Before publicity: A1-DB-11 / A1-DB-15 (anon-callable functions) and D0-UX-1 (rate limiter vs our own assets). | Not started. |
 
 ### 🔴 P0 — Supabase (filed 2026-10-21 from the live read-only audit)
 

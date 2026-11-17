@@ -429,10 +429,14 @@
     const links = data.links || [];
     const resale = links.filter((l) => l.kind === 'resale');
     const primary = links.filter((l) => l.kind === 'primary');
-    const linkHTML = (l) => `<a class="buy" href="${S4K.safeHref(l.url)}" target="_blank" rel="noopener noreferrer nofollow"><span>${esc(l.name)}</span>${EXT}</a>`;
+    // A referral link is marked rel="sponsored" and disclosed under the list.
+    const linkHTML = (l) => `<a class="buy" href="${S4K.safeHref(l.url)}" target="_blank" rel="noopener noreferrer nofollow${l.referral ? ' sponsored' : ''}"><span>${esc(l.name)}</span>${EXT}</a>`;
+    const disclosure = links.some((l) => l.referral)
+      ? '<p class="muted small" id="referralNote" style="margin:10px 0 0">We may earn a commission when you buy through some of these links. It does not change the price you pay or the prices we show.</p>'
+      : '';
     setHTML($('#buyBody'), links.length
       ? (resale.length ? '<h4>Resale marketplaces</h4>' + resale.map(linkHTML).join('') : '') +
-        (primary.length ? '<h4>Primary market</h4>' + primary.map(linkHTML).join('') : '')
+        (primary.length ? '<h4>Primary market</h4>' + primary.map(linkHTML).join('') : '') + disclosure
       : '<p class="muted small" style="margin:0">No marketplace links for this event yet.</p>');
 
     // Watch (this browser only).
