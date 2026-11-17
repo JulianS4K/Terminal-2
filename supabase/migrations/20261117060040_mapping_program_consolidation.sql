@@ -1,4 +1,8 @@
--- Migration 20261117060000 · level:admin · lane:A1 (data plane — mapping program) · writes:hub_link_run(new),hub_link_tick()(new),cron:hub_link_hourly(new),cron:gt_map_events_hourly(command),cron.unschedule × 10 (gotickets_match_us_6h, gt_map_events_wide_daily, match_unmatched_orders_sweep_hourly, backfill-order-tevo-from-aq-hourly, resolve-aq-tevo-from-sources-hourly, resolve-aq-seatdata-link-hourly, aq_link_tevo_siblings_hourly, aq_link_tevo_from_events_hourly, aq_link_gotickets_catalogue_hourly, axs_aq_link_hourly),cron_policy(rows) · reads:cron.job · pre:20261117050000
+-- Migration 20261117060040 · level:admin · lane:A1 (data plane — mapping program) · writes:hub_link_run(new),hub_link_tick()(new),cron:hub_link_hourly(new),cron:gt_map_events_hourly(command),cron.unschedule × 10 (gotickets_match_us_6h, gt_map_events_wide_daily, match_unmatched_orders_sweep_hourly, backfill-order-tevo-from-aq-hourly, resolve-aq-tevo-from-sources-hourly, resolve-aq-seatdata-link-hourly, aq_link_tevo_siblings_hourly, aq_link_tevo_from_events_hourly, aq_link_gotickets_catalogue_hourly, axs_aq_link_hourly),cron_policy(rows) · reads:cron.job · pre:20261117050000
+--
+-- Prefix note: applied to prod 2026-11-17 05:00Z under the prefix 20261117060000; renamed to 20261117060040 after
+-- main gained 20261117060000_mlb_ticket_poll_v2.sql (the CI prefix-collision gate). The cron_policy.notes rows and the
+-- hub_link_run comment on prod still read "mig 20261117060000" — they name this file.
 --
 -- MAPPING PROGRAM — CONSOLIDATION (operator 2026-11-17: "consolidate event matchers where it makes sense, then dry run").
 -- Census the same day: 27 active matching / linking jobs. Two groups collapse without changing a single match rule.
