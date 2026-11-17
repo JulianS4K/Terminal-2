@@ -41,11 +41,16 @@
   'use strict';
   const T = window.Terminal;
 
-  function init() {
+  async function init() {
+    // Wait for the Supabase session before any /api/broker call (as deals.js does):
+    // without it the first covers fetch can go out with no bearer token and 401,
+    // and a signed-out visitor is sent to login instead of shown that 401.
+    if (window.TerminalAuth) await window.TerminalAuth.requireAuth();
     const form = document.getElementById('subsForm');
     if (form) form.addEventListener('submit', onSubmit);
     wireOrderLoad();
     wireN2s();
+    wireGtDryRun();
     wireEventSearch();
     wireFeeToggle();
     prefillFromQuery();
@@ -147,7 +152,7 @@
       )}">obstructed</span>`;
     } else if (r.sub_view === 'unknown') {
       out += ` <span class="n2s-gate n2s-gate-noview" title="${esc(
-        'This source publishes no view data, so the seat has NOT been checked. '
+        'No seller note or view data for this listing, so the seat has NOT been checked. '
         + 'Unknown is not the same as clear.'
       )}">view ?</span>`;
     }
@@ -166,6 +171,19 @@
     return out;
   }
 
+  // The seller's own note on the substitute, as text under the listing
+  // (20261112030000). Before, it only rode in the "obstructed" chip's tooltip,
+  // and EVO subs had none at all. The chip is our regex; this is their words,
+  // so a disclosure the regex misses is still in front of whoever buys.
+  const NOTES_MAX = 140;
+  function notesLine(notes, view) {
+    const t = String(notes || '').trim();
+    if (!t) return '';
+    const short = t.length > NOTES_MAX ? t.slice(0, NOTES_MAX - 1) + '…' : t;
+    const cls = view === 'obstructed' ? 'n2s-sub-notes-obstructed' : 'muted';
+    return `<div class="small ${cls} n2s-sub-notes" title="${esc(t)}">notes: ${esc(short)}</div>`;
+  }
+
   function coverFp(r) {
     return [r.sub_source || '', r.sub_listing_id || '', r.sub_ea == null ? '' : r.sub_ea].join('|');
   }
@@ -175,7 +193,7 @@
     if (btn) btn.addEventListener('click', () => loadN2s());
     const vbtn = document.getElementById('n2sVerify');
     if (vbtn) vbtn.addEventListener('click', verifyN2s);
-    ['n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
+    ['n2sKind', 'n2sGate', 'n2sReason', 'n2sSource', 'n2sDays', 'n2sHas', 'n2sLate'].forEach((id) => {
       const el = document.getElementById(id);
       // Changing a filter changes which book you are watching, so the "new
       // since last look" set is meaningless across it — reset rather than
@@ -208,6 +226,94 @@
     else { loadN2s({ background: true }); startN2sFeed(); }
   });
 
+  // ---------- GoTickets auto-buy dry run ----------
+  //
+  // n2s_gt_order_dryrun (mig 20261021180000) via /api/broker/n2s-gt-dryrun —
+  // the table has no grant for browser roles, so it is read server-side like
+  // the covers book. It only ever says what WOULD be ordered; nothing here, or
+  // anywhere, sends it. Polls at the covers feed's cadence, skipped on a
+  // hidden tab.
+
+  function wireGtDryRun() {
+    if (!document.getElementById('gtdTable')) return;
+    const run = document.getElementById('gtdRun');
+    if (run) run.addEventListener('click', () => loadGtDryRun());
+    const dec = document.getElementById('gtdDecision');
+    if (dec) dec.addEventListener('change', () => loadGtDryRun());
+    loadGtDryRun();
+    setInterval(() => { if (!document.hidden) loadGtDryRun({ background: true }); }, N2S_POLL_MS);
+  }
+
+  async function loadGtDryRun(opts) {
+    const wrap = document.getElementById('gtdTable');
+    const meta = document.getElementById('gtdMeta');
+    if (!wrap) return;
+    const background = !!(opts && opts.background);
+    if (!background) wrap.innerHTML = '<div class="empty">loading…</div>';
+    const decision = (document.getElementById('gtdDecision') || {}).value || '';
+    try {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (decision) qs.set('decision', decision);
+      const d = await T.api(`/api/broker/n2s-gt-dryrun?${qs.toString()}`);
+      renderGtDryRun(d.rows || []);
+      if (meta) {
+        const t = d.today || {};
+        meta.textContent = `today (ET): ${t.logged || 0} logged · ${t.would_buy || 0} would buy` +
+          ` · ${money(t.would_spend || 0)} would spend · ${t.skipped || 0} skipped` +
+          ` · ${new Date().toTimeString().slice(0, 5)}`;
+      }
+    } catch (err) {
+      const msg = err && err.message ? err.message : err;
+      if (background) { if (meta) meta.textContent = `dry-run feed stalled: ${msg}`; }
+      else { wrap.innerHTML = emptyHtml(`dry run unavailable: ${msg}`); if (meta) meta.textContent = ''; }
+    }
+  }
+
+  // Letters only: "Floor 6" -> "floor", "106" -> "". A gate-1 match where BOTH
+  // sides name a level and the names differ is the Floor-vs-Loge false match
+  // (order 7933791) — flag it rather than trust the gate.
+  function levelWord(s) { return String(s || '').replace(/[^a-z]/gi, '').toLowerCase(); }
+  function levelMismatch(r) {
+    const a = levelWord(r.sold_section), b = levelWord(r.sub_section);
+    return r.cover_gate === 1 && a !== '' && b !== '' && a !== b;
+  }
+
+  function renderGtDryRun(rows) {
+    const wrap = document.getElementById('gtdTable');
+    if (!rows.length) { wrap.innerHTML = emptyHtml('no dry-run rows yet'); return; }
+    const seat = (sec, row, qty, ea) =>
+      `${esc(sec || '—')} / ${esc(row || '—')} × ${esc(qty == null ? '—' : qty)} @ ${money(ea)}`;
+    const body = rows.map(r => {
+      const when = new Date(r.captured_at).toLocaleString(undefined,
+        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const warn = levelMismatch(r)
+        ? ` <span class="badge neg" title="sold and listing name different levels">⚠ level</span>` : '';
+      const dec = r.decision === 'would_buy'
+        ? '<span class="badge pos">would buy</span>'
+        : `<span class="badge muted">skip</span> <span class="muted small">${
+            esc((r.skip_reasons || []).join(', ').replace(/_/g, ' '))}</span>`;
+      const ref = r.payload && r.payload._reference;
+      const buy = ref && /^https:\/\//.test(ref.buy_url || '') ? ref.buy_url : null;
+      const listing = seat(r.sub_section, r.sub_row, r.sub_qty, r.quoted_ea) +
+        ` <span class="muted small">= ${money(r.quoted_total)}</span>` +
+        (buy ? ` <a href="${esc(buy)}" target="_blank" rel="noopener noreferrer">GT&nbsp;↗</a>` : '') +
+        notesLine(r.sub_notes, r.sub_view);
+      return `<tr>
+        <td class="muted small">${esc(when)}</td>
+        <td>${esc(r.s4k_source || '—')}<div class="muted small">${esc(r.order_number || '')}</div></td>
+        <td>${esc(r.event_name || '—')}<div class="muted small">${esc(r.event_date || '')}</div></td>
+        <td>${seat(r.sold_section, r.sold_row, r.sold_qty, r.sold_ea)}</td>
+        <td>${listing}${warn}</td>
+        <td>${r.cover_cost == null ? '—' : pnlCell(-r.cover_cost)}</td>
+        <td><span class="muted small">${esc(r.cover_gate == null ? '' : r.cover_gate)}</span> ${esc(r.cover_label || '')}</td>
+        <td>${dec}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<div class="subs-table-wrap"><table class="subs-table"><thead><tr>
+      <th>Logged</th><th>Order</th><th>Event</th><th>Sold</th><th>GoTickets listing</th>
+      <th>P/L</th><th>Gate</th><th>Decision</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
   function setN2sLive(on) {
     const pill = document.getElementById('n2sLive');
     if (!pill) return;
@@ -230,6 +336,16 @@
     const days = (document.getElementById('n2sDays').value || '').trim();
     const has = (document.getElementById('n2sHas') || {}).value || '';
     const late = (document.getElementById('n2sLate') || {}).value || '';
+    const kind = (document.getElementById('n2sKind') || {}).value || '';
+    // PED rows have no timer, so the Timer filter cannot change what they
+    // show. Grey it out rather than let it look like it does something.
+    const lateEl = document.getElementById('n2sLate');
+    if (lateEl) lateEl.disabled = kind === 'ped';
+    if (kind) qs.set('kind', kind);
+    const gate = (document.getElementById('n2sGate') || {}).value || '';
+    const reason = (document.getElementById('n2sReason') || {}).value || '';
+    if (gate) qs.set('gate', gate);
+    if (reason) qs.set('reason', reason);
     if (src) qs.set('source', src);
     if (days) qs.set('days', days);
     // "profitable only" lives in the same select as has/no sub because it is a
@@ -363,6 +479,7 @@
       })();
       const cov = r.has_cover
         ? `${sourceBadge(r.sub_source)} ${esc(r.sub_section || '')} / ${esc(r.sub_row || '')}${lot}`
+          + notesLine(r.sub_notes, r.sub_view)
         : (() => {
             const w = WHY[r.no_cover_reason] || ['no sub', 'no cover allocated'];
             // A closed order is history, not work: show the last cover we
@@ -383,6 +500,12 @@
       const claimed = '';  // shown in the action cell instead, next to the button
       const timer = r.timer_expired
         ? ' <span class="neg small" title="the N2S 15-minute timer has expired">late</span>'
+        : '';
+      // PED: a peddled sale from the Need2Buy/WaitToBuy Gmail label (status n2b),
+      // tagged so it reads apart from CRM N2S orders. No timer; its event is
+      // re-priced every 4 hours until the label comes off.
+      const n2b = r.n2s_status === 'n2b'
+        ? ' <span class="small" style="color:var(--warn)" title="Peddled sale (Gmail Need2Buy/WaitToBuy): no timer, re-priced every 4 hours">PED</span>'
         : '';
       // GoTickets gives us a deep link. TEvo and SeatGeek do not publish a
       // buy URL to us and there is no known console URL pattern, so rather
@@ -411,7 +534,7 @@
       const rowCls = [isNew ? 'n2s-row-new' : '', r.has_cover ? '' : 'n2s-row-gap']
         .filter(Boolean).join(' ');
       return `<tr data-n2s="${esc(String(r.n2s_id))}" data-fp="${esc(coverFp(r))}"${rowCls ? ` class="${rowCls}"` : ''}>
-        <td>${esc(r.s4k_source || '')}${chip}${timer}${claimed}</td>
+        <td>${esc(r.s4k_source || '')}${chip}${n2b}${timer}${claimed}</td>
         <td class="n2s-ord">${ordCell(r)}</td>
         <td>${esc(r.event_name || '')}${gtLink(r)}<div class="muted small">${esc(r.event_date || '')} · ${esc(r.venue || '')}</div></td>
         <td>${seat}</td>

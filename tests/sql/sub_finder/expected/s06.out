@@ -1,0 +1,40 @@
+1 auto buy off:
+OFF|cover|buy_manually|auto_buy_off|1|Index|null
+2 main job:
+pulling
+G1|pending|none|-|-|-|-|-
+W|pending|none|-|-|-|-|-
+U|pending|none|-|-|-|-|-
+S|pending|none|-|-|-|-|-
+O|pending|none|-|-|-|-|-
+T|pending|none|-|-|-|-|-
+N|pending|none|-|-|-|-|-
+N2|pending|none|-|-|-|-|-
+R|pending|none|-|-|-|-|-
+Q|pending|none|-|-|-|-|-
+P|pending|none|-|-|-|-|-
+C1|pending|none|-|-|-|-|-
+C2|pending|none|-|-|-|-|-
+K|pending|none|-|-|-|-|-
+B|pending|none|-|-|-|-|-
+LIE|pending|none|-|-|-|-|-
+DONE|pending|none|-|-|-|-|-
+TWO|pending|none|-|-|-|-|-
+SITE|pending|none|-|-|-|-|-
+GHOST|pending|none|-|-|-|-|-
+Z|pending|none|-|-|-|-|-
+3 covers of W (gate order) and G1 (no zone cover shown):
+4 buys filed:
+CRM|B|1|2|10||op|requested|
+5 rerun does not buy again, thin-profit bought at 0 pct, cap holds:
+0
+0
+C2|none|-
+G1|none|-
+T|none|-
+
+6 closed N2S timer is still N2S; a stopped auto buy is not retried; not-watching is skipped:
+NX|buy_manually|n2s_order|f
+0
+0
+C2|t|none|-

@@ -60,6 +60,14 @@
       color: #60a5fa;
     }
     .n2s-gate-cell { max-width: 300px; }
+    /* the seller's own note under a suggested sub (20261112030000) */
+    .n2s-sub-notes { max-width: 420px; white-space: normal; margin-top: 2px; }
+    .n2s-sub-notes-obstructed { color: #f87171; }
+    #gt-dryrun-panel { margin-top: 24px; }
+    #gt-dryrun-panel .pos { color: var(--pos); }
+    #gt-dryrun-panel .neg { color: var(--neg); }
+    #gt-dryrun-panel .badge.pos { border-color: var(--pos); }
+    #gt-dryrun-panel .badge.neg { border-color: var(--neg); }
   </style>
 </head>
 <body data-page="subs">
@@ -99,9 +107,20 @@
         whole and the row says <em>buy N</em> — the spare seat is paid for, and is
         already counted in the cost. <strong>Claim</strong> records an intent and hands you a fill
         sheet; it buys nothing — the purchase is made by hand in the vendor console.
-        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row.
+        Live feed, refreshing every 60s. <strong>Sub</strong> filters the book: <em>profitable only</em> keeps just the covers that settle for less than the seat sold for, which necessarily hides every uncovered row. <strong>Type</strong> splits CRM N2S orders from <em>PED</em> (peddled sales on the Gmail Need2Buy label, no timer). <strong>Gate</strong> keeps only covers of that gate (1-2 direct, 3-6 move the buyer); <strong>No-cover reason</strong> keeps only uncovered orders with that reason.
       </p>
       <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="n2sKind">Type</label>
+          <!-- N2S = CRM need-to-sub orders (10-minute window, timer).
+               PED = peddled sales from the Gmail Need2Buy/WaitToBuy label:
+               no timer, re-priced until the label comes off. -->
+          <select id="n2sKind">
+            <option value="">all</option>
+            <option value="n2s">N2S</option>
+            <option value="ped">PED</option>
+          </select>
+        </div>
         <div class="subs-field narrow">
           <label for="n2sSource">Marketplace</label>
           <select id="n2sSource">
@@ -129,6 +148,35 @@
           </select>
         </div>
         <div class="subs-field narrow">
+          <label for="n2sGate">Gate</label>
+          <!-- 1-2 cover the buyer's own section and can be bought directly;
+               3-6 MOVE the buyer and need their acceptance first. Picking a
+               gate hides uncovered rows. -->
+          <select id="n2sGate">
+            <option value="">all</option>
+            <option value="direct">1-2 direct</option>
+            <option value="offer">3-6 offer subs</option>
+            <option value="1">1 Index</option>
+            <option value="2">2 S4KTrading</option>
+            <option value="3">3 Index offer subs</option>
+            <option value="4">4 offer subs S4KTrading</option>
+            <option value="5">5 Index Down offer subs</option>
+            <option value="6">6 Down offer subs S4KTrading</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <label for="n2sReason">No-cover reason</label>
+          <!-- Why an order has no cover. Picking one hides covered rows. -->
+          <select id="n2sReason">
+            <option value="">all</option>
+            <option value="no_match">no match</option>
+            <option value="window_closed">window closed</option>
+            <option value="unmapped">unmapped</option>
+            <option value="event_not_catalogued">event not in catalogue</option>
+            <option value="awaiting_source_pull">pulling</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
           <label for="n2sLate">Timer</label>
           <!-- Default shows the last 24 h, including orders past the CRM's
                15-minute timer (operator, 2026-09-28): an order's 10-minute
@@ -151,6 +199,35 @@
         </div>
       </div>
       <div id="n2sTable"></div>
+    </section>
+
+    <section id="gt-dryrun-panel">
+      <div class="panel-title row">
+        <span>GOTICKETS AUTO-BUY — DRY RUN</span>
+        <span id="gtdMeta" class="muted small"></span>
+      </div>
+      <p class="muted small">
+        What an auto-buyer <strong>would</strong> have ordered on GoTickets for each new cover
+        (<code>n2s_gt_order_dryrun</code>). <strong>Nothing is sent</strong> — no code path calls
+        GoTickets' order endpoint. <em>Would buy</em> only on gate 1 (Index, same section);
+        every other gate is logged as a skip with <em>gate moves buyer</em>. A ⚠ marks a
+        gate-1 match whose named level differs (e.g. sold <em>Floor 6</em> vs listing
+        <em>Loge 6</em>) — check those by hand. P/L is sale minus listing total.
+      </p>
+      <div class="subs-orderbar">
+        <div class="subs-field narrow">
+          <label for="gtdDecision">Decision</label>
+          <select id="gtdDecision">
+            <option value="">all</option>
+            <option value="would_buy">would buy</option>
+            <option value="skip">skip</option>
+          </select>
+        </div>
+        <div class="subs-field narrow">
+          <button id="gtdRun" type="button" class="btn">Refresh</button>
+        </div>
+      </div>
+      <div id="gtdTable"></div>
     </section>
 
     <section id="subs-form-panel">
@@ -252,6 +329,6 @@
   <script src="auth.js?v=20260608"></script>
   <script src="app.js?v=20260910api"></script>
   <script src="nav.js?v=20261006pk"></script>
-  <script src="subs.js?v=20260910single"></script>
+  <script src="subs.js?v=20261112notes"></script>
 </body>
 </html>

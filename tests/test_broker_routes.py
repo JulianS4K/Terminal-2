@@ -66,6 +66,9 @@ class _FakeQuery:
     def eq(self, *_a, **_k):
         return self
 
+    def neq(self, *_a, **_k):
+        return self
+
     def in_(self, *_a, **_k):
         return self
 
@@ -82,6 +85,9 @@ class _FakeQuery:
         return self
 
     def lte(self, *_a, **_k):
+        return self
+
+    def gte(self, *_a, **_k):
         return self
 
     def range(self, *_a, **_k):
@@ -1272,6 +1278,73 @@ def test_n2s_covers_hidden_late_count_respects_the_profit_filter(client, monkeyp
     assert fake.table_calls.count("v_n2s_orders") == 2
 
 
+def test_n2s_covers_kind_filter_narrows_page_and_late_count(client, monkeypatch):
+    """Type filter: ped = Gmail Need2Buy rows (status n2b), n2s = the rest.
+    The hidden_late count query must narrow the same way as the page."""
+    seen = []
+
+    class _Rec(type(FakeSupabase().table("x"))):
+        def eq(self, col, val):
+            seen.append(("eq", col, val))
+            return self
+
+        def neq(self, col, val):
+            seen.append(("neq", col, val))
+            return self
+
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    fake.table = lambda name: (fake.table_calls.append(name),
+                               _Rec(fake.table_data.get(name, [])))[1]
+    _use_db(monkeypatch, fake)
+
+    body = client.get("/api/broker/n2s-covers?kind=ped").json()
+    assert body["filters"]["kind"] == "ped"
+    assert seen.count(("eq", "n2s_status", "n2b")) == 2
+
+    seen.clear()
+    client.get("/api/broker/n2s-covers?kind=n2s")
+    assert seen.count(("neq", "n2s_status", "n2b")) == 2
+    assert ("eq", "n2s_status", "n2b") not in seen
+
+    assert client.get("/api/broker/n2s-covers").json()["filters"]["kind"] is None
+    assert client.get("/api/broker/n2s-covers?kind=bogus").status_code == 422
+
+
+def test_n2s_covers_gate_and_reason_filters(client, monkeypatch):
+    """Gate takes one gate 1-6 or a group (direct = 1-2, offer = 3-6); reason
+    is no_cover_reason. Both narrow the page AND the hidden_late count."""
+    seen = []
+
+    class _Rec(type(FakeSupabase().table("x"))):
+        def eq(self, col, val):
+            seen.append(("eq", col, val))
+            return self
+
+        def lte(self, col, val):
+            seen.append(("lte", col, val))
+            return self
+
+        def gte(self, col, val):
+            seen.append(("gte", col, val))
+            return self
+
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    fake.table = lambda name: (fake.table_calls.append(name),
+                               _Rec(fake.table_data.get(name, [])))[1]
+    _use_db(monkeypatch, fake)
+
+    for qs, call in (("gate=4", ("eq", "cover_gate", 4)),
+                     ("gate=direct", ("lte", "cover_gate", 2)),
+                     ("gate=offer", ("gte", "cover_gate", 3)),
+                     ("reason=no_match", ("eq", "no_cover_reason", "no_match"))):
+        seen.clear()
+        body = client.get(f"/api/broker/n2s-covers?{qs}").json()
+        assert seen.count(call) == 2, qs
+    assert body["filters"]["reason"] == "no_match"
+    assert client.get("/api/broker/n2s-covers?gate=7").status_code == 422
+    assert client.get("/api/broker/n2s-covers?reason=bogus").status_code == 422
+
+
 def test_n2s_covers_serves_the_source_order_key(client, monkeypatch):
     """The panel needs the marketplace's own order id to look the obligation up
     while it is still live. EVO's order_number is an <invoice>-<order>
@@ -1318,10 +1391,11 @@ def test_n2s_covers_applies_every_filter(client, monkeypatch):
     fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
     _use_db(monkeypatch, fake)
     body = client.get("/api/broker/n2s-covers"
-                      "?source=Gametime&days=14&limit=5&offset=10").json()
+                      "?source=Gametime&days=14&kind=ped&limit=5&offset=10").json()
     assert body["filters"] == {"source": "Gametime", "days": 14,
                                "with_sub": None, "include_late": False,
-                               "profitable": False,
+                               "profitable": False, "kind": "ped",
+                               "gate": None, "reason": None,
                                "limit": 5, "offset": 10}
     assert body["count"] == 1
 
@@ -1527,3 +1601,62 @@ def test_n2s_covers_gap_row_carries_no_gate(client, monkeypatch):
     row = client.get("/api/broker/n2s-covers").json()["rows"][0]
     assert row["has_cover"] is False
     assert row["cover_gate"] is None and row["cover_label"] is None
+
+
+# ---------- /api/broker/n2s-gt-dryrun ----------
+
+def _dry_row(**kw):
+    r = {"dryrun_id": 96, "captured_at": "2026-10-26T18:02:40Z", "decision": "skip",
+         "skip_reasons": ["gate_moves_buyer"], "cover_gate": 5, "quoted_total": 755.96,
+         "cover_cost": -235.64, "payload": {"_dry_run": True}}
+    r.update(kw)
+    return r
+
+
+def test_n2s_gt_dryrun_tallies_today_from_would_buys_only(client, monkeypatch):
+    rows = [_dry_row(),
+            _dry_row(dryrun_id=95, decision="would_buy", skip_reasons=[], cover_gate=1,
+                     quoted_total=175.83),
+            _dry_row(dryrun_id=94, decision="would_buy", skip_reasons=[], cover_gate=1,
+                     quoted_total=670.48)]
+    fake = FakeSupabase(table_data={"n2s_gt_order_dryrun": rows})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-gt-dryrun").json()
+    assert body["count"] == 3
+    # Spend is what would actually be ordered: skips cost nothing.
+    assert body["today"]["would_buy"] == 2 and body["today"]["skipped"] == 1
+    assert body["today"]["would_spend"] == 846.31
+    # Read-only: only the dry-run table is touched, no RPC is called.
+    assert fake.rpc_calls == []
+    assert set(fake.table_calls) == {"n2s_gt_order_dryrun"}
+
+
+def test_n2s_gt_dryrun_returns_the_seller_note(client, monkeypatch):
+    """20261112030000: the dry-run panel shows the note the dry run judged."""
+    fake = FakeSupabase(table_data={"n2s_gt_order_dryrun": [
+        _dry_row(sub_view="obstructed", sub_notes="Limited View,Mobile Xfer")]})
+    selected: list[str] = []
+    real_table = fake.table
+
+    def table(name):
+        q = real_table(name)
+        real_select = q.select
+        q.select = lambda cols, **k: (selected.append(cols), real_select(cols, **k))[1]
+        return q
+
+    fake.table = table
+    _use_db(monkeypatch, fake)
+    row = client.get("/api/broker/n2s-gt-dryrun").json()["rows"][0]
+    assert row["sub_notes"] == "Limited View,Mobile Xfer" and row["sub_view"] == "obstructed"
+    assert {"sub_view", "sub_notes"} <= set(selected[0].split(","))
+
+
+def test_n2s_gt_dryrun_rejects_unknown_decision(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    assert client.get("/api/broker/n2s-gt-dryrun?decision=buy").status_code == 400
+
+
+def test_n2s_gt_dryrun_empty(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    body = client.get("/api/broker/n2s-gt-dryrun?decision=would_buy").json()
+    assert body["rows"] == [] and body["today"]["would_spend"] == 0
