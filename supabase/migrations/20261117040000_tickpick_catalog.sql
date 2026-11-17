@@ -595,5 +595,5 @@ COMMIT;
 
 -- first pull (the 60-day window) and a DRY RUN of the mapper, outside the DDL transaction so a slow page cannot
 -- hold the locks; the first real apply is the cron's, at the next :41, every write of it in tickpick_catalog_audit.
-SELECT public.tickpick_catalog_pull('window', current_date, current_date + 60, 30);
+SELECT public.tickpick_catalog_pull('window', current_date, current_date + 60, 10);
 SELECT public.tickpick_catalog_map(false);
