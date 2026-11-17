@@ -1,4 +1,4 @@
--- Migration 20261117090000 · level:data-collection · lane:A1 (data plane — mapping program) · writes:tickpick_catalog_map() fn (plan fix),vivid_catalog_map() fn (plan fix),cron:tickpick_catalog_hourly(ceiling),cron:vivid_catalog_map_hourly(ceiling) · reads:events · pre:20261117080000
+-- Migration 20261117090000 · level:data-collection · lane:A1 (data plane — mapping program) · writes:tickpick_catalog_map() fn (plan fix),vivid_catalog_map() fn (plan fix + advisory lock),vivid_catalog_tick() fn (try-lock),cron:tickpick_catalog_hourly(ceiling),cron:vivid_catalog_map_hourly(ceiling) · reads:events · pre:20261117080000
 --
 -- MAPPING PROGRAM — THE CATALOGUE MAPPERS RUN INSIDE THEIR HOUR.
 --
@@ -12,6 +12,12 @@
 -- "fits" it accepts are the same show under both names, e.g. "Little Shop Of Horrors" / "Little Shop of Horrors").
 -- The two crons get a 300 s ceiling (from 150 s) so a slow hour degrades rather than fails. Bodies otherwise those
 -- of mig 20261117080000 (generated from that file; only the marked block and the join line differ).
+--
+-- Also (2026-11-17 11:43Z, seen once the fit step fit the hour): vivid_catalog_map's UPDATE of vivid_catalog_event
+-- deadlocked with the minute tick's upsert of the same table. The map now takes pg_advisory_xact_lock('vivid_catalog')
+-- first and the tick (redefined from mig 20261117070000, one line added) tries the same lock and skips its minute
+-- while the map holds it — never the other way round, so a 58 s tick cannot be left waiting on a 300 s map. And the
+-- order fills (step 6, both mappers) look only at orders from yesterday on; the older book has nothing left to fill.
 -- RULE 2: nothing upstream is called.
 
 BEGIN;
@@ -243,7 +249,7 @@ BEGIN
       UPDATE public.tickpick_orders o
          SET tevo_event_id = c.tevo_event_id, matched_via = 'tp_catalog_id', match_confidence = 1.0, matched_at = now()
         FROM public.tickpick_catalog_event c
-       WHERE o.tevo_event_id IS NULL AND (o.raw->'event'->>'event_id') ~ '^\d+$'
+       WHERE o.tevo_event_id IS NULL AND o.event_date >= now() - interval '1 day' AND (o.raw->'event'->>'event_id') ~ '^\d+$'
          AND c.tp_event_id = (o.raw->'event'->>'event_id')::bigint AND c.tevo_event_id IS NOT NULL
        RETURNING o.tp_order_id, c.tp_event_id, c.tevo_event_id)
     INSERT INTO public.tickpick_catalog_audit (run_id, tp_event_id, action, target, target_key, new_tevo)
@@ -291,6 +297,9 @@ DECLARE
   v_out jsonb := '{}'::jsonb;
   v_n   int;
 BEGIN
+  -- one writer of vivid_catalog_event at a time: the minute tick (vivid_catalog_tick) skips its minute while this runs
+  PERFORM pg_advisory_xact_lock(hashtext('vivid_catalog'));
+
   -- 0. candidates: upcoming, local day known, at venues in the US, Canada or Mexico (mig 20261117080000)
   DROP TABLE IF EXISTS _vc_cand;
   CREATE TEMP TABLE _vc_cand ON COMMIT DROP AS
@@ -482,7 +491,7 @@ BEGIN
       UPDATE public.vivid_orders o
          SET tevo_event_id = c.tevo_event_id
         FROM public.vivid_catalog_event c
-       WHERE o.tevo_event_id IS NULL AND (o.raw->>'productionId') ~ '^\d+$'
+       WHERE o.tevo_event_id IS NULL AND o.event_date >= now() - interval '1 day' AND (o.raw->>'productionId') ~ '^\d+$'
          AND c.vivid_event_id = (o.raw->>'productionId')::bigint AND c.tevo_event_id IS NOT NULL
        RETURNING o.vivid_order_id, c.vivid_event_id, c.tevo_event_id)
     INSERT INTO public.vivid_catalog_audit (run_id, vivid_event_id, action, target, target_key, new_tevo, note)
@@ -502,6 +511,26 @@ BEGIN
   END IF;
 
   RETURN jsonb_build_object('run_id', v_run, 'applied', p_apply) || v_out;
+END $function$;
+
+CREATE OR REPLACE FUNCTION public.vivid_catalog_tick()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $function$
+DECLARE s public.vivid_catalog_sync;
+BEGIN
+  -- mig 20261117090000: the hourly map holds this lock while it writes vivid_catalog_event; sit this minute out
+  IF NOT pg_try_advisory_xact_lock(hashtext('vivid_catalog')) THEN
+    RETURN jsonb_build_object('idle', true, 'reason', 'map_running');
+  END IF;
+  SELECT * INTO s FROM public.vivid_catalog_sync WHERE id = 1;
+  -- a pass is open (next_page > 1) or due (none yet, or the last finished over 6 h ago)
+  IF s.next_page > 1 OR s.pass_finished_at IS NULL OR s.pass_finished_at < now() - interval '6 hours' THEN
+    RETURN public.vivid_catalog_pull(8);
+  END IF;
+  RETURN jsonb_build_object('idle', true, 'next_pass_after', s.pass_finished_at + interval '6 hours');
 END $function$;
 
 DO $cron$
