@@ -9,6 +9,10 @@ DECLARE
   cv    jsonb;
   v_buy bigint;
   v_n   integer;
+  c     public.sub_finder_config;
+  v_spent numeric;
+  v_pct numeric;                     -- the CRM's own limit on a buy's cost, % of the sale (20261116030000)
+  v_sale numeric;
 BEGIN
   IF NOT coalesce((public.sub_finder_access(p_key_id)->>'buy')::boolean, false) THEN
     RETURN jsonb_build_object('error', 'forbidden', 'detail', 'buying is not enabled for this key');
@@ -32,6 +36,45 @@ BEGIN
   IF cv IS NULL THEN
     RETURN jsonb_build_object('error', 'invalid',
                               'detail', 'that listing is not a cover we can buy that this job quoted for this order');
+  END IF;
+  -- 20261116000000: the caps on buys a CRM key asks for (NULL = none; the buyer's own ceilings
+  -- still apply afterwards). Per order: this buy's quoted total. Per New York day: with every
+  -- other buy a CRM key asked for today that was not stopped or failed.
+  SELECT * INTO c FROM public.sub_finder_config;
+  IF (cv->>'total')::numeric > c.crm_buy_per_order_cap_usd THEN
+    RETURN jsonb_build_object('error', 'forbidden',
+      'detail', 'this buy is over the limit for one order',
+      'limit', 'per_order', 'limit_usd', c.crm_buy_per_order_cap_usd, 'this_buy_usd', (cv->>'total')::numeric);
+  END IF;
+  IF c.crm_buy_daily_cap_usd IS NOT NULL THEN
+    -- one cap check + request at a time: held to the end of the transaction, so two buys for
+    -- different orders cannot both read the same total and together pass the limit
+    PERFORM pg_advisory_xact_lock(hashtext('sub_finder_crm_buy_cap'));
+    SELECT coalesce(sum(coalesce(b.bought_total_usd, round(b.max_price_ea * b.qty, 2))), 0) INTO v_spent
+      FROM public.manual_sub_buy b
+     WHERE b.requested_by LIKE 'crm api key %' AND b.state IN ('requested', 'buying', 'bought', 'unknown')
+       AND (b.created_at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date;
+    IF v_spent + (cv->>'total')::numeric > c.crm_buy_daily_cap_usd THEN
+      RETURN jsonb_build_object('error', 'forbidden',
+        'detail', 'this buy would take today''s buys over the daily limit',
+        'limit', 'per_day', 'limit_usd', c.crm_buy_daily_cap_usd, 'this_buy_usd', (cv->>'total')::numeric,
+        'spent_today_usd', v_spent);
+    END IF;
+  END IF;
+  -- 20261116030000: the CRM's own limit on what a cover it asks for may cost, as a percent of
+  -- the sale total, for the marketplace the order sold on. Not set: no percentage limit. An
+  -- order with no sale price cannot be measured, so it is refused while a limit is set.
+  v_pct := public.sub_finder_crm_limit_pct('buy_max_cost', o.site);
+  IF v_pct IS NOT NULL THEN
+    v_sale := round(o.sold_ea * o.qty, 2);
+    IF v_sale IS NULL OR v_sale <= 0 OR (cv->>'total')::numeric > round(v_sale * v_pct / 100.0, 2) THEN
+      RETURN jsonb_build_object('error', 'forbidden',
+        'detail', CASE WHEN v_sale IS NULL OR v_sale <= 0
+                       THEN 'this order has no sale price to measure your buy limit against'
+                       ELSE 'this buy costs more than your limit for one buy (buy_max_cost_pct)' END,
+        'limit', 'buy_max_cost_pct', 'limit_pct', trim_scale(v_pct), 'sale_total', v_sale,
+        'max_usd', round(v_sale * v_pct / 100.0, 2), 'this_buy_usd', (cv->>'total')::numeric);
+    END IF;
   END IF;
   -- The purchase is decided on OUR copy of the order, not on what the caller sent: it must be
   -- in the N2S book or the marketplace order book with this event, these seats, this quantity

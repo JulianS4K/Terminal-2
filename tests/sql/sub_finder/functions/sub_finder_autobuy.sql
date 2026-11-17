@@ -56,6 +56,11 @@ BEGIN
                          AND jsonb_array_length(public.sub_finder_cover_flags(x)) = 0)
         THEN 'needs_crm_confirm'
       ELSE 'profit_too_thin' END;
+    -- 20261116000000: an order whose details the caller sent (order_source 'request') is never
+    -- bought automatically, even if our own books later show the same seats and price
+    IF v_note IS NULL AND o.order_source = 'request' THEN
+      v_note := 'order_described_by_caller';
+    END IF;
     IF v_note IS NULL AND (
          EXISTS (SELECT 1 FROM public.n2s_items n
                  WHERE (n.order_number = o.order_number OR n.n2s_order_key = o.order_number)

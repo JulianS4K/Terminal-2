@@ -410,6 +410,27 @@ from EVO office 42029 (Office 3): tu@s4kent.com, 212-913-9751, 362 5th Ave, New 
 Julian G (operator 2026-11-13). With no GoTickets acceptance history yet, the
 seller window is `gt_seller_window_s` (540 s).
 
+**One buyer** (stage 3, mig `20261113470000`; operator 2026-11-13 "allow stage 3, n2s gets priority
+in queue"; lane D0's side is `20261113440000`). `n2s_autobuy_config.buyer` says who sends the buy:
+`'own'` (the default, as above) or `'queue'`. With `'queue'` the claim **files** a buy it would have
+handed out into the sub finder's queue (`manual_sub_buy_file_n2s`, origin `'n2s'`), spends the live
+run as before, and sets the row's phase to **`queued`**. The sub finder's worker hands N2S rows out
+first, one buy at a time across both origins, only while N2S is live, not killed and not stopped for
+that source. It never sends after `buy_by` = `sub_confirm_by` − GREATEST(`min_confirm_window_s`,
+`seller_window_in_hand_s`). Before sending it runs `core/n2s_autobuy_live.pre_buy` (every guard above,
+read fresh, and the one request) on the job `n2s_autobuy_queue_job` builds. That is the claim's own
+job, from `n2s_autobuy_job_json`. It reads the answer with `n2s_result`. The result reaches our row in
+the same transaction (`n2s_autobuy_queue_result`):
+- `bought` → `buy_sent`, then our poll and accept as for our own buy;
+- `stopped` → `stopped`, with the run given back unless the market refused the buy (`buy_failed`);
+- `unknown` (and a lease the queue lost mid-buy) → `buy_unknown` and **our** kill switch.
+
+Two cases stop the row with the run given back: a filing the queue refuses (`queue_file_refused`: the
+sale already has a live buy there, or the row cannot be filed), and a queued row whose `buy_by`
+passes unsent (`queue_expired`). A purchase reported for a row that has left the queue fails closed
+(`queue_result_late`, kill switch). Flip `buyer` to `'queue'` only after the sub finder's worker is
+deployed. `'own'` undoes it at once.
+
 ### 6. Surface — panel and feed
 - **Auto-buy results to the CRM** (mig `20261113410000`): every live purchase the auto-buyer
   placed (`n2s_autobuy_exec` with `buy_order_id`) is a sync feed in the sub finder API,
@@ -465,7 +486,10 @@ seller window is `gt_seller_window_s` (540 s).
   that would otherwise go through but would cross it is blocked and **all buying auto-stops**
   (`project_stopped`, with `project_stopped_reason`), as does reaching the cap exactly; while
   stopped every buy is blocked `stopped_pending_review` until the operator runs
-  `n2s_autobuy_resume([new_cap])`. Shadow and a future live mode count separately. EVO buys come
+  `n2s_autobuy_resume([new_cap])`. Shadow and a future live mode count separately. A live row
+  that stopped before anything was bought (phase `stopped`, no purchase id) counts toward none of
+  the caps, buy counts or "already bought" checks (mig `20261116180000`; before it, exec 8's
+  unsent $449.68 blocked the next cover over the daily and project caps). EVO buys come
   from Office 3 (`evo_buyer_office_id` 42029) and EVO accepts carry `reviewer_id` 53658.
   **Buy email** (operator 2026-11-09): the same tick emails `email_to` (default the operator)
   through Resend for every buy with a `buy_order_id` — the purchase id on EVO / GoTickets and the
@@ -517,7 +541,16 @@ seller window is `gt_seller_window_s` (540 s).
   TickPick sale lapses and vanishes (404). TickPick states each sale's own deadline (10 min for a
   same-day event, 60 min later out, 2026-11-09 samples) in the venue's local time;
   `n2s_tickpick_watch_tick` stores it in UTC as `n2s_tickpick_seen.confirm_by` and the enqueue
-  trigger uses it as the cutoff, else 540 s until the watch has seen the sale. The worker reads the tokens through
+  trigger uses it as the cutoff, else 540 s until the watch has seen the sale.
+  **TickPick calls go out from the database** (mig `20261116181000`, operator 2026-11-16): TickPick
+  only answers known addresses, and the web service's is not one (the first live attempt, exec 8,
+  stopped `sale_read_failed` on a 4xx while the watch's same read from the database got 200). With
+  `tickpick_db` set (server.py) the worker's TickPick sale read is `n2s_tickpick_sale_state` and
+  its confirm is `n2s_tickpick_confirm(exec_id, lease_token, order_number)`, which sends only for a
+  live `sub_accepted` TickPick row whose lease the caller holds and whose `n2s_items` order number
+  matches, at most once per row (`n2s_tickpick_confirm_log`; a repeat returns the first answer, a
+  call that failed in flight stays unknown). A failed read records TickPick's status and message
+  in `live_error` (e.g. `HTTP 403: …`), not just the error's type. The worker reads the tokens through
   `get_app_secret` (GoTickets added to its whitelist) and refuses to buy (`no_sale_accept_token`)
   when the selling market's token is missing. The GoTickets and Vivid confirm request formats were
   never exercised by the dry run (their specs could not be fetched), so the first live accept on

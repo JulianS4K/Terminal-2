@@ -174,7 +174,7 @@ One lane writes each table; all others read (mechanics: `MIGRATION_CONVENTIONS.m
 
 | Lane | Tables they write |
 |---|---|
-| **A1** | `event_xref`, `*_xref`, `event_listing_snapshot_daily`, sweep fns, `latest_event_metrics` matview, ESPN tables + the **athlete registry** (`espn_athletes` + Wikipedia enrichment) + the **fantasy-engine** tables, the **news-wire** tables (Reddit / X / FRED macro), **zone-metric** rollups, `td_discovered_events` + the **Eventbrite** xref, `event_movers_index(_history)`, `discovery_gap_alerts`, **the order + ingest tables** (`evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots` — order *ingestion* is A1's data plane, §2.3), **`*_canonical`/`*_resolved` sidecars + `seatgeek_event_xref`** (cross-source data, moved from C1 2026-07-02), **`paciolan_*`** (ingest surface, moved from D6 2026-09-10), **`pg_policies`/RLS** |
+| **A1** | `event_xref`, `*_xref`, `event_listing_snapshot_daily`, sweep fns, `latest_event_metrics` matview, ESPN tables + the **athlete registry** (`espn_athletes` + Wikipedia enrichment) + the **fantasy-engine** tables, the **news-wire** tables (Reddit / X / FRED macro), **zone-metric** rollups, `td_discovered_events` + the **Eventbrite** xref, `event_movers_index(_history)`, `discovery_gap_alerts`, **the order + ingest tables** (`evo_orders`, `seatgeek_orders`, `tickpick_orders`, `vivid_orders`, `seatdata_sales_snapshots` — order *ingestion* is A1's data plane, §2.3), **`*_canonical`/`*_resolved` sidecars + `seatgeek_event_xref`** (cross-source data, moved from C1 2026-07-02), **`paciolan_*`** (ingest surface, moved from D6 2026-09-10), **`mlb_ticket_*`** + `v_mlb_schedule_feed` (MLB's ticketing schedule, 2026-11-16; `RESOURCES_BIBLE` §1), **`pg_policies`/RLS** |
 | **B1** | `bot_chat` (schema/structure; all lanes append via `bot_chat_log()` — standing permission, §2.1) + the main bible set + registry (docs surface, absorbed from C1 2026-07-02); otherwise git history, CI/guard code, `cron-auth.ts`, test suite |
 | **D0** | `static/terminal/*` + `d2_dashboard/*` (read-only from DB) |
 | **D1** | `share_links` |
@@ -231,6 +231,7 @@ The seams where one lane's change can break another's surface. **A PR touching a
 | `vibepass-terminal-test` | `srv-d839339kh4rs73ac3s20` | **D0** | D0 | `static/terminal/*` | `render-d0-terminal.yaml` |
 | `vibepass-storefront-test` | `srv-d8140bnaqgkc73al4asg` | **D0** | D1 · D5 | `server.py`, `static/store/*`, `static/fantasy/*` | `render.yaml` |
 | `d2-orders-dashboard` | `srv-d82b4kl7vvec73b4r3r0` | **D0** | D0 | `d2_dashboard/*` | `render-d2-dashboard.yaml` |
+| `s4k-subs-api-siyb` | `srv-dbti97gu01pc73df7c40` | **D0** | D0 | `core/subs_only.py` (serves only `/api/v1/subs`; no worker) — **temporary**, operator 2026-11-16, until there is a domain of ours | `render-subs-api.yaml` |
 
 *Owner* = which lane owns the service **surface**; a *write* to any of them is an **Applier** action (§2.1), today performed by A1 sessions (the former "D0 workspace-wide Render parity" was retired 2026-07-02 — surface ownership ≠ standing prod write authority).
 

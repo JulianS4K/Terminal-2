@@ -297,6 +297,7 @@ def _require_human(request: Request, payload: dict | None = None):
     ip = _client_ip_from_xff(
         request.headers.get("x-forwarded-for"),
         request.client.host if request.client else None,
+        request.headers.get("cf-connecting-ip"),
     )
     if _verify_recaptcha(token, "submit", ip):
         return
@@ -706,9 +707,13 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         # by our own edge proxy and is the only one a client can't forge. The
         # leftmost entry is client-supplied — keying on it let a single client
         # rotate fake IPs and bypass every per-IP bucket (audit 2026-06-10).
+        # When that rightmost hop is Cloudflare's edge (every public request on
+        # Render), the caller is in CF-Connecting-IP, which Cloudflare writes
+        # itself; the helper takes it only then (2026-11-16).
         ip = _client_ip_from_xff(
             request.headers.get("x-forwarded-for"),
             request.client.host if request.client else "unknown",
+            request.headers.get("cf-connecting-ip"),
         ) or "unknown"
         n, w = self._bucket(path)
         # Key is ip + bucket-prefix, NOT the full path. Using the raw path lets
@@ -1982,6 +1987,7 @@ _autobuy_sales_client: list = []  # built once per process from Vault (GoTickets
 
 def _autobuy_sale_client():
     if not _autobuy_sales_client:
+        from core import n2s_autobuy_live
         from core.vault import vault_secret
         from sale_accept_client import SaleAcceptClient
         db = require_sb()
@@ -1989,7 +1995,10 @@ def _autobuy_sale_client():
             gt_id=vault_secret(db, "GOTICKETS_ACCESS_ID"), gt_secret=vault_secret(db, "GOTICKETS_API_SECRET"),
             sg_token=vault_secret(db, "SEATGEEK_API_TOKEN"), vivid_token=vault_secret(db, "VIVID_API_TOKEN"),
             # read on every use: tickpick_token_refresh replaces it about daily
-            tickpick_token=lambda: vault_secret(require_sb(), "TICKPICK_API_TOKEN"))
+            tickpick_token=lambda: vault_secret(require_sb(), "TICKPICK_API_TOKEN"),
+            # TickPick refuses this service's address: its read and confirm go out from the database
+            # (mig 20261116181000). One retry on a dropped connection is safe: the confirm is once-only.
+            tickpick_db=n2s_autobuy_live.retrying(lambda name, params: require_sb().rpc(name, params).execute().data))
         if not all(c.has_market(m) for m in ("gotickets", "seatgeek", "vivid")):
             return c  # a token is missing (or Vault blipped): don't cache, re-read next tick
         _autobuy_sales_client.append(c)

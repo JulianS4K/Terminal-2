@@ -9,7 +9,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
 `updated_since` as the sync cursor — feed each answer's `generated_at` back as the next call's
 `updated_since`, paging oldest-change-first so a row touched mid-walk is not skipped.
 
-  GET  /api/v1/subs/ping                                    key check + what it may do
+  GET  /api/v1/subs/ping                                    key check + what it may do + what changed lately
   POST /api/v1/subs/jobs                                    submit orders -> job id (202)
   GET  /api/v1/subs/jobs/{job_id}                           one job: status + every order
   GET  /api/v1/subs/jobs/{job_id}/orders/{order_number}     one order (e.g. to follow its buy)
@@ -25,9 +25,17 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/buys?updated_since=&limit=&offset=      every purchase either buyer placed (N2S auto-buyer + this API), one feed
   GET  /api/v1/subs/settings/auto-buy-loss                  the automatic buy's loss limits (need2buy orders), by marketplace
   PUT  /api/v1/subs/settings/auto-buy-loss                  set them: percent of the sale total, 100 to 200
+  GET  /api/v1/subs/settings/limits                         the CRM's own limits on a rebate and on a buy's cost, percent of the sale
+  PUT  /api/v1/subs/settings/limits                         set them (a key that may buy or offer, from its registered address)
+  GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
+  GET  /api/v1/subs/health                                  one overall status + one per thing the CRM depends on (its feed read, lookups, buying, ...)
+  GET  /api/v1/subs/mlb/schedule?team=&season=&since=       every MLB game with the club's direct ticket link + EVO / terminal event (routers/mlb_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
-changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us").
+changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
+carries `news`: the newest entries of the guide's "What changed for you" list, so the CRM is told
+what changed in the answer it already reads (operator 2026-11-16: "Just update crm upon ping").
+The list has one home, the guide; nothing about it is stored anywhere else.
 
 The alert is the integration we ask the CRM for: one "Needs sub" checkbox on an order, which
 fires that last call with nothing but the order number in the URL. It is a one-order submit;
@@ -47,6 +55,13 @@ Keys are the existing API keys (mcp_api_keys); a key may call only if its id is 
 `sub_finder_config.key_ids`, and reads only its own jobs. The usual per-minute rate and daily
 quota of the key apply.
 
+One account can hold several keys (mig 20261116000000, asked for by the CRM): a key listed in
+`sub_finder_key` acts for its `account_id` (the key id the jobs are filed under) with only the
+rights its row gives it, so a key that syncs results cannot spend. `_auth` enforces that, and
+the addresses a key is accepted from, before anything reaches the SQL: past it, `key["id"]` is
+the account. Every buy, offer and limit change is written to `sub_finder_audit` with the
+address it came from, and an accepted one is repeated from there for the same Idempotency-Key.
+
 RULE 2: this module makes no upstream call. The buy route sends nothing either — it files a
 `manual_sub_buy` request for an EVO cover this API quoted, and that path (core/manual_sub_buy.py,
 its switches, ceilings and one-per-sale rule) decides whether a buy is sent. It is refused
@@ -58,6 +73,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import ipaddress
 import re
 import time
 import uuid
@@ -70,6 +86,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
+from routers.mlb_feed import schedule_response as mlb_schedule_response
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
 MAX_LIMIT = 1000           # the CRM's own page ceiling
@@ -86,7 +103,74 @@ NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 # A buy, an offer, a submit or a note is never repeated: the first may have gone through.
 RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
                              "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
-                             "sub_finder_autobuys", "sub_finder_loss_limits", "sub_finder_buys"})
+                             "sub_finder_autobuys", "sub_finder_loss_limits", "sub_finder_buys",
+                             "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read",
+                             "sub_finder_limits", "sub_finder_health"})
+
+# what a call needs from its key beyond reading: _auth refuses it before any SQL runs
+_NEED_REFUSAL = {"buy": "this key may not buy", "offer": "this key may not offer subs",
+                 "write": "this key may not change settings"}
+
+
+def ip_allowed(ip: str | None, allowed: list) -> bool:
+    """True when `ip` is one of `allowed` (single addresses or CIDR ranges, IPv4 or IPv6).
+    Anything unreadable on either side is a no."""
+    try:
+        addr = ipaddress.ip_address((ip or "").strip())
+    except ValueError:
+        return False
+    for a in allowed:
+        try:
+            if addr in ipaddress.ip_network(str(a).strip(), strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def forwarded_ip(xff: str | None, hops: int, trusted: list) -> str | None:
+    """The caller's address from X-Forwarded-For when `hops` proxies of ours stand in front: the
+    entry that many from the end (1 = the last). Each of our proxies appends the address that
+    connected to it, so entries further left were written by the caller and prove nothing.
+    The count is not taken on faith: every entry after the caller's was written by one of our
+    proxies about another, so each must be inside `trusted` (our edge's published ranges). A
+    request that skipped a proxy, or carries a made-up chain, fails that and has no address.
+    None also when the chain is shorter than `hops`: never fall back to a part a caller can write."""
+    parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
+    if not 1 <= hops <= len(parts):
+        return None
+    if any(not ip_allowed(p, trusted) for p in parts[len(parts) - hops + 1:]):
+        return None
+    return parts[-hops]
+
+
+# the request headers a proxy may put the caller's address in; shown by /ping while ping_shows_headers is on
+FORWARDING_HEADERS = ("x-forwarded-for", "cf-connecting-ip", "true-client-ip", "x-real-ip", "forwarded",
+                      "cf-connecting-ipv6", "cf-ray", "x-forwarded-proto", "x-forwarded-host", "via")
+
+
+# The only headers the caller's address may be read from: ones Cloudflare itself writes on every
+# request and does not let a caller, a Worker or a rule set. Any other name is refused, whatever
+# the setting says.
+EDGE_ADDRESS_HEADERS = frozenset({"cf-connecting-ip", "true-client-ip"})
+
+
+def header_ip(name: str, values: list, xff: str | None, trusted: list) -> str | None:
+    """The caller's address from the one header our edge writes it in (mig 20261116020000). It is
+    believed only on a request our edge handed to the host: the last X-Forwarded-For entry, which
+    the host's router writes itself, must be inside `trusted`. Anything else is no address: a
+    header name outside EDGE_ADDRESS_HEADERS, the header sent more than once, or a value that is
+    not exactly one address."""
+    parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
+    if name not in EDGE_ADDRESS_HEADERS or not parts or not ip_allowed(parts[-1], trusted):
+        return None
+    if len(values) != 1:
+        return None
+    v = values[0].strip()
+    try:
+        return str(ipaddress.ip_address(v))
+    except ValueError:
+        return None
 
 
 def dropped_connection(exc: BaseException) -> bool:
@@ -99,6 +183,9 @@ DOCS_ROUTE = "/api/v1/subs/docs"
 _DOC_VERSION_MARK = "\x00doc-version\x00"   # stands in for the fingerprint while it is being worked out
 _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL | re.MULTILINE)   # internal switches
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
+_DOC_NEWS = re.compile(r"^## What changed for you\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)     # the dated list
+_DOC_NEWS_ITEM = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*[ .:·—-]*(.+)$", re.MULTILINE)          # one entry of it
+NEWS_ON_PING = 10                           # entries /ping carries; the guide has them all
 
 
 def render_crm_doc(text: str) -> dict:
@@ -106,7 +193,8 @@ def render_crm_doc(text: str) -> dict:
     SQL) left out. Its version is a fingerprint of exactly what is served, so it changes when,
     and only when, the guide the CRM reads changes. Nobody numbers it by hand (the doc's version
     line is not edited, README *Doc-writing rules* §5). `updated` is kept as a key for older
-    clients and is always None: compare `version` for equality."""
+    clients and is always None: compare `version` for equality. `news` is the guide's own
+    "What changed for you" list, in the order written (newest first), as {date, text}."""
     lines = []
     for line in text.splitlines():
         if line.startswith("> **Doc version:**"):
@@ -116,7 +204,10 @@ def render_crm_doc(text: str) -> dict:
         lines.append(line)
     markdown = _DOC_OPERATORS_LINK.sub("", _DOC_OPERATORS.sub("", "\n".join(lines) + "\n"))
     version = hashlib.sha256(markdown.encode("utf-8")).hexdigest()[:12]
-    return {"version": version, "updated": None, "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
+    section = _DOC_NEWS.search(markdown)
+    news = [{"date": d, "text": t.strip()} for d, t in _DOC_NEWS_ITEM.findall(section.group(1))] if section else []
+    return {"version": version, "updated": None, "news": news,
+            "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
 
 
 @functools.lru_cache(maxsize=4)
@@ -258,8 +349,31 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                 raise
         return get_db().rpc(name, args).execute().data
 
-    def _auth(request: Request, tool: str) -> dict | JSONResponse:
-        """The key's row, or the refusal to send. Counts the call against the key's quota."""
+    def _audit(key: dict, action: str, order_number: str | None, listing: str | None,
+               status: int, out: Any, requested_by: Any = None, idem: str | None = None) -> None:
+        """One row in sub_finder_audit. Never fails the call it records."""
+        try:
+            _rpc("sub_finder_audit_log", {
+                "p_account_id": key["id"], "p_key_id": key["key_id"], "p_key_label": key.get("label"),
+                "p_action": action, "p_order_number": order_number, "p_listing_id": listing,
+                "p_source_ip": key.get("ip"), "p_requested_by": _text(requested_by, 80), "p_idem_key": idem,
+                "p_http_status": status, "p_response": out if isinstance(out, dict) else None})
+        except Exception:  # noqa: BLE001 - the buy or offer already happened; its own table holds it
+            pass
+
+    def _refuse(key: dict, need: str | None, request: Request, why: str) -> JSONResponse:
+        """403, recorded when the call was a buy, an offer or a settings change."""
+        out = {"error": "forbidden", "detail": why}
+        if need:
+            _audit(key, {"write": "settings"}.get(need, need), request.path_params.get("order_number"),
+                   None, 403, out)
+        return JSONResponse(out, status_code=403)
+
+    def _auth(request: Request, tool: str, need: str | None = None) -> dict | JSONResponse:
+        """The key, or the refusal to send. Counts the call against the key's quota. `need` is
+        what the call does beyond reading: "buy", "offer" or "write" (a settings change).
+        In the answer `id` is the ACCOUNT the key acts for (what every SQL call is given),
+        `key_id` the key itself and `ip` the address the call came from."""
         auth = request.headers.get("authorization", "")
         key = (auth[7:].strip() if auth.lower().startswith("bearer ")
                else request.headers.get("x-api-key", "").strip())
@@ -283,7 +397,27 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             _rpc("mcp_count_call", {"p_key_id": row["id"], "p_tool": f"subs.{tool}"})
         except Exception:  # noqa: BLE001 - a usage stamp must never fail the request
             pass
-        return row
+        gate = _rpc("sub_finder_key_gate", {"p_key_id": row["id"]}) or {}   # no answer: the key acts for itself
+        # the address the call came from: the X-Forwarded-For entry our own proxies vouch for (mig
+        # 20261116010000; the last entry alone is our edge, not the caller). No header: a direct connection.
+        xff = request.headers.get("x-forwarded-for")
+        trusted = gate.get("trusted_proxies") or []
+        if gate.get("client_ip_header"):          # the header our edge writes the caller's address in
+            ip = header_ip(gate["client_ip_header"], request.headers.getlist(gate["client_ip_header"]), xff, trusted)
+        else:
+            ip = (forwarded_ip(xff, int(gate.get("client_ip_hops") or 1), trusted) if xff
+                  else request.client.host if request.client else None)
+        key = dict(row, id=gate.get("account_id") or row["id"], key_id=row["id"], ip=ip, gate=gate)
+        allowed = gate.get("allowed_ips") or []
+        if allowed and not ip_allowed(ip, allowed):
+            return _refuse(key, need, request, "this key is accepted only from its registered addresses")
+        if need and gate.get("listed") and not (
+                gate.get(need) if need != "write" else gate.get("buy") or gate.get("offer")):
+            return _refuse(key, need, request, _NEED_REFUSAL[need])
+        if need and gate.get("write_requires_ip") and not allowed:
+            return _refuse(key, need, request, "this key cannot buy, offer or change settings until S4K "
+                                               "registers the address it calls from")
+        return key
 
     def _answer(out: Any, ok_status: int = 200) -> JSONResponse:
         """A SQL answer -> HTTP: its own error code picks the status; NULL is a 404."""
@@ -299,14 +433,29 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if isinstance(key, JSONResponse):
             return key
         access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
-        scopes = [s for s, on in (("subs:find", access.get("find")), ("subs:buy", access.get("buy")),
-                                  ("subs:offer", access.get("offer"))) if on]
+        gate = key["gate"]
+        # what THIS key may do: its account's rights, narrowed by the key's own row and addresses
+        writes = not (gate.get("write_requires_ip") and not gate.get("allowed_ips"))
+        scopes = [s for s, on in (
+            ("subs:find", access.get("find")),
+            ("subs:buy", access.get("buy") and writes and gate.get("buy", True)),
+            ("subs:offer", access.get("offer") and writes and gate.get("offer", True))) if on]
         doc = crm_doc(DOC_PATH) or {}
-        return {"ok": True, "key_label": key.get("label"), "scopes": scopes,
+        # an operator's aid for choosing where the caller's address is read from; off unless switched on
+        seen = ({"forwarding_headers": {h: request.headers.get(h) for h in FORWARDING_HEADERS}}
+                if gate.get("ping_shows_headers") else {})
+        return {**seen, "ok": True, "key_label": key.get("label"), "scopes": scopes,
                 "max_orders_per_job": min(int(access.get("max_orders_per_job") or MAX_ORDERS), MAX_ORDERS),
                 "ticketsdata_fallback": bool(access.get("ticketsdata_fallback")),
+                # the address we saw this call come from, and the ones this key is accepted from ([] = any)
+                "your_ip": key.get("ip"), "allowed_ips": gate.get("allowed_ips") or [],
+                # dollars a buy asked with this key is held to, and the most a rebate may be; null = no limit
+                "limits": access.get("limits") or {},
                 # the guide's version: when it differs from the one you hold, fetch `docs.url` again
                 "docs": {"version": doc.get("version"), "updated": doc.get("updated"), "url": DOCS_ROUTE},
+                # what changed for the caller lately, newest first: the guide's own list, so a CRM
+                # that only pings is still told. Each is {date, text}; the guide has the whole list.
+                "news": (doc.get("news") or [])[:NEWS_ON_PING],
                 "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
     @router.get("/docs")
@@ -339,7 +488,7 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         Only for keys in `sub_finder_config.loss_limit_key_ids`; the SQL validates every value and
         changes nothing unless all are valid. It moves no money by itself: it widens or narrows what
         the automatic buy may take for need2buy orders, inside the same spend ceilings."""
-        key = _auth(request, "loss_limits_set")
+        key = _auth(request, "loss_limits_set", "write")
         if isinstance(key, JSONResponse):
             return key
         try:
@@ -350,10 +499,61 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             return _err(422, "invalid", "send a JSON object: {\"default_max_cost_pct\": 105, "
                                         "\"by_marketplace\": {\"stubhub\": 110}}")
         by = body.get("set_by")
-        return _answer(_rpc("sub_finder_loss_limits_set", {
+        out = _rpc("sub_finder_loss_limits_set", {
             "p_key_id": key["id"], "p_key_label": key.get("label"),
             "p_body": {k: v for k, v in body.items() if k in ("default_max_cost_pct", "by_marketplace")},
-            "p_by": by if isinstance(by, str) else None}))
+            "p_by": by if isinstance(by, str) else None})
+        resp = _answer(out)
+        _audit(key, "settings", None, None, resp.status_code, out, by if isinstance(by, str) else None)
+        return resp
+
+    @router.get("/health")
+    def health(request: Request):
+        """A health check the CRM reads (operator 2026-11-16: "also add health check that feeds
+        crm", mig 20261116210000): one overall `status` and one entry per thing the CRM depends on
+        (our read of its feed, our copy of its order book, its lookups, buying, offers, balances,
+        the MLB schedule), each ok / degraded / down by the age of its last good run, or off when
+        S4K has it switched off. Always 200 when the key is good: the answer is in `status`, so a
+        monitor reads the body, not the HTTP code. Reads our own tables only."""
+        key = _auth(request, "health")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_health", {"p_key_id": key["id"]}))
+
+    @router.get("/settings/limits")
+    def limits(request: Request):
+        """The limits the CRM has put on its own inputs, each a percent of the sale total, with a
+        default and its own value per marketplace sold on (mig 20261116030000): `rebate_max_pct`
+        on an offer's rebate and `buy_max_cost_pct` on the cost of a cover it asks us to buy."""
+        key = _auth(request, "limits")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_limits", {"p_key_id": key["id"]}))
+
+    @router.put("/settings/limits")
+    async def set_limits(request: Request):
+        """Set them: {"rebate_max_pct": {"default": 0-100 | null, "by_marketplace": {name: 0-100 | null}},
+        "buy_max_cost_pct": {"default": 1-1000 | null, "by_marketplace": {...}}}; either may be left out.
+        Only a key that may buy or offer, from its registered address. The SQL validates every value
+        and changes nothing unless all are valid. The change is recorded with who made it."""
+        key = _auth(request, "limits_set", "write")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        if not isinstance(body, dict):
+            return _err(422, "invalid", "send a JSON object: {\"rebate_max_pct\": {\"default\": 40}, "
+                                        "\"buy_max_cost_pct\": {\"default\": 110}}")
+        by = body.get("set_by")
+        out = _rpc("sub_finder_limits_set", {
+            "p_key_id": key["id"], "p_key_label": key.get("label"),
+            "p_body": {k: v for k, v in body.items() if k in ("rebate_max_pct", "buy_max_cost_pct")},
+            "p_by": by if isinstance(by, str) else None})
+        resp = _answer(out)
+        _audit(key, "settings", None, None, resp.status_code, out, by if isinstance(by, str) else None)
+        return resp
 
     @router.get("/balances")
     def balances(request: Request):
@@ -363,6 +563,20 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if isinstance(key, JSONResponse):
             return key
         return _answer(_rpc("sub_finder_balances", {"p_key_id": key["id"]}))
+
+    @router.get("/mlb/schedule")
+    def mlb_schedule(request: Request):
+        """Every MLB club's games with the club's direct ticket link, mapped to the EVO event and the
+        terminal's hub event (operator 2026-11-16: "send it inside the subfinder api to crm"). Fills
+        itself in as clubs release times and links; `since` syncs only what changed. Any key that may
+        find subs may read it. Query and columns: routers/mlb_feed.py. Reads our own tables only."""
+        key = _auth(request, "mlb_schedule")
+        if isinstance(key, JSONResponse):
+            return key
+        access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
+        if not access.get("find"):
+            return _err(403, "forbidden", "this key may not read the sub finder API")
+        return mlb_schedule_response(get_db(), request.query_params)
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
@@ -515,7 +729,7 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
 
     @router.post("/orders/{order_number}/buy")
     async def buy_latest(order_number: str, request: Request):
-        key = _auth(request, "buy")
+        key = _auth(request, "buy", "buy")
         if isinstance(key, JSONResponse):
             return key
         jid = _latest(key, order_number)
@@ -527,7 +741,7 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
     async def offer_sub(order_number: str, request: Request):
         """The CRM's yes to `sub_offer.ask_crm`: offer the customer this cover through GoTickets.
         Files a request only; core/gt_sub_offer.py sends it (RULE 2: this module calls no upstream)."""
-        key = _auth(request, "offer")
+        key = _auth(request, "offer", "offer")
         if isinstance(key, JSONResponse):
             return key
         try:
@@ -543,12 +757,35 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if rebate is not None and (isinstance(rebate, bool) or not isinstance(rebate, (int, float))
                                    or not 0 <= rebate <= 100000):
             return _err(422, "invalid", "rebate_amount must be a number of dollars, 0 or more")
+        idem, again = _replay(key, request, body, "offer", order_number, listing)
+        if again is not None:
+            return again
         out = _rpc("sub_finder_gt_offer_confirmed", {
             "p_key_id": key["id"], "p_key_label": key.get("label"), "p_order_number": order_number,
             "p_listing_id": listing, "p_market": _text(body.get("market"), 20),
             "p_requested_by": _text(body.get("requested_by"), 80), "p_rebate_amount": rebate,
             "p_confirm": body.get("confirm") is True})
-        return _answer(out, ok_status=202)
+        resp = _answer(out, ok_status=202)
+        _audit(key, "offer", order_number, listing, resp.status_code, out, body.get("requested_by"), idem)
+        return resp
+
+    @router.get("/audit")
+    def audit(request: Request, since: str | None = None, limit: int = 200, offset: int = 0):
+        """Every buy, offer and loss-limit change asked through this API for the account, newest
+        first, refusals included: time, key, source address, order, listing, amount, outcome
+        (mig 20261116000000). Reads our own table; calls no market."""
+        key = _auth(request, "audit")
+        if isinstance(key, JSONResponse):
+            return key
+        at, ok = parse_instant(since)
+        if not ok:
+            return _err(422, "invalid", "since must be an ISO-8601 instant")
+        if not 1 <= limit <= MAX_LIMIT:
+            return _err(422, "invalid", f"limit must be between 1 and {MAX_LIMIT}")
+        if offset < 0:
+            return _err(422, "invalid", "offset must not be negative")
+        return _answer(_rpc("sub_finder_audit_read", {"p_key_id": key["id"], "p_since": at,
+                                                      "p_limit": limit, "p_offset": offset}))
 
     @router.get("/results")
     def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
@@ -567,8 +804,23 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
 
     @router.post("/jobs/{job_id}/orders/{order_number}/buy")
     async def buy(job_id: str, order_number: str, request: Request):
-        key = _auth(request, "buy")
+        key = _auth(request, "buy", "buy")
         return key if isinstance(key, JSONResponse) else await _request_buy(key, job_id, order_number, request)
+
+    def _replay(key: dict, request: Request, body: dict, action: str, order_number: str,
+                listing: str) -> tuple[str | None, JSONResponse | None]:
+        """(the call's Idempotency-Key, the answer to send instead of acting). A key that already
+        got a buy or offer accepted gets that same answer again, so a retry after a timeout is
+        safe; the same key on a different order or listing is the caller's mistake."""
+        idem = _text(request.headers.get("idempotency-key") or body.get("idempotency_key"), 80)
+        if not idem:
+            return None, None
+        first = _rpc("sub_finder_idem", {"p_account_id": key["id"], "p_idem_key": idem})
+        if not first:
+            return idem, None
+        if (first.get("action"), first.get("order_number"), first.get("listing_id")) != (action, order_number, listing):
+            return idem, _err(422, "invalid", "this Idempotency-Key was already used for a different buy or offer")
+        return idem, JSONResponse(first.get("response"), status_code=202, headers={"Idempotent-Replay": "true"})
 
     async def _request_buy(key: dict, job_id: str, order_number: str, request: Request) -> JSONResponse:
         try:
@@ -584,11 +836,16 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         listing = _text(body.get("listing_id"), 20)
         if not listing or not listing.isdigit() or not _ORDER_NO.fullmatch(order_number):
             return _err(422, "invalid", "send {\"listing_id\": \"<EVO listing id from this job>\"}")
+        idem, again = _replay(key, request, body, "buy", order_number, listing)
+        if again is not None:
+            return again
         out = _rpc("sub_finder_buy_confirmed", {
             "p_key_id": key["id"], "p_key_label": key.get("label"), "p_job_id": jid,
             "p_order_number": order_number, "p_listing_id": listing,
             "p_requested_by": _text(body.get("requested_by"), 80),
             "p_confirm": body.get("confirm") is True})
-        return _answer(out, ok_status=202)
+        resp = _answer(out, ok_status=202)
+        _audit(key, "buy", order_number, listing, resp.status_code, out, body.get("requested_by"), idem)
+        return resp
 
     return router

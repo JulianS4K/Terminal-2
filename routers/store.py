@@ -504,6 +504,7 @@ def build_store_router(
         ip = client_ip_from_xff(
             request.headers.get("x-forwarded-for"),
             request.client.host if request.client else None,
+            request.headers.get("cf-connecting-ip"),
         )
         if not get_verify_recaptcha()(token, "gate", ip):
             raise HTTPException(403, "verification failed")
