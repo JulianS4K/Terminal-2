@@ -217,12 +217,32 @@ def test_query_view_default_columns():
 
 def test_tier_tool_sets():
     ext = {f.__name__ for f in m.EXTERNAL_TOOLS}
-    assert ext == {"search", "search_events", "event_market", "event_prices", "top_market_events",
+    assert ext == {"search", "search_events", "event_prices",
                    "performer_trend", "price_movers", "competing_events", "prediction_markets",
                    "sports_context", "news", "event_weather", "price_forecast", "team_report",
-                   "event_sales", "sales_breakdown", "zone_prices", "zone_trend", "game_context",
+                   "zone_prices", "zone_trend", "game_context",
                    "model_price_prediction", "seat_map", "data_freshness", "query_public_view", "get_started"}
-    assert ext < {f.__name__ for f in m.INTERNAL_TOOLS}
+    internal = [f.__name__ for f in m.INTERNAL_TOOLS]
+    assert ext < set(internal) and len(internal) == len(set(internal))
+    # Sold data is internal only (operator 2026-11-17): the sales tools and views...
+    sold = {"event_market", "top_market_events", "event_sales", "sales_breakdown"}
+    assert {f.__name__ for f in m.SOLD_TOOLS} == sold and not ext & sold and sold < set(internal)
+    assert not set(m.SOLD_QUERY_VIEWS) & set(m.EXTERNAL_QUERY_VIEWS)
+    assert set(m.SOLD_QUERY_VIEWS) == {"seatgeek_sales_snapshots", "sg_market_chart"} < set(m.QUERY_VIEWS)
+    for cols in m.EXTERNAL_QUERY_VIEWS.values():
+        assert not [c for c in cols if c in m._SOLD_KEYS or "sold" in c or "sale" in c]
+    assert "vel_tickets_sold" in m.QUERY_VIEWS["zone_price_observations"]
+    # ...and every shared tool whose answer carries sold data reaches the external tier
+    # only as its stripped variant; the internal tier keeps the full tool.
+    for full, public in m._PUBLIC_VARIANTS.items():
+        assert public in m.EXTERNAL_TOOLS and full not in m.EXTERNAL_TOOLS
+        assert full in m.INTERNAL_TOOLS and public not in m.INTERNAL_TOOLS
+        assert public.__name__ == full.__name__ and public.__doc__
+    for word in ("event_sales", "sales_breakdown", "event_market", "top_market_events", "sold"):
+        assert word not in m.INSTRUCTIONS and word not in " ".join(m.QUICK_START)
+    assert "event_sales" in m.INTERNAL_INSTRUCTIONS
+    for t in m.tool_catalog(m.EXTERNAL_TOOLS):
+        assert "SeatGeek sale" not in t["description"] and "sold" not in t["description"].lower(), t["name"]
     # Nothing that exposes our book is reachable on the external tier.
     assert not ext & {"pickups", "event_orders", "query_view", "owned_events", "market_chart",
                       "event_source_links", "home_stats", "team_book", "polling_coverage",
@@ -292,11 +312,29 @@ def test_http_tiers_and_calls(fake_db):
         ext_tools = {t["name"] for t in _rpc_call(c, EXT_KEY, "tools/list").json()["result"]["tools"]}
         assert ext_tools == {f.__name__ for f in m.EXTERNAL_TOOLS}
         # cached tools expose their real signature, not the wrapper's
-        chart = next(t for t in _rpc_call(c, EXT_KEY, "tools/list").json()["result"]["tools"]
-                     if t["name"] == "top_market_events")
-        assert set(chart["inputSchema"]["properties"]) == {"limit", "chart_date"}
+        movers = next(t for t in _rpc_call(c, EXT_KEY, "tools/list").json()["result"]["tools"]
+                      if t["name"] == "price_movers")
+        assert set(movers["inputSchema"]["properties"]) == {"window_days", "direction", "source", "limit"}
         int_list = _rpc_call(c, INT_KEY, "tools/list").json()["result"]["tools"]
         assert {t["name"] for t in int_list} == {f.__name__ for f in m.INTERNAL_TOOLS}
+        chart = next(t for t in int_list if t["name"] == "top_market_events")
+        assert set(chart["inputSchema"]["properties"]) == {"limit", "chart_date"}
+        # the internal server says where sold data lives; the external one never mentions it
+        int_init = _rpc_call(c, INT_KEY, "initialize", {
+            "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}})
+        assert "event_sales" in int_init.json()["result"]["instructions"]
+        assert "event_sales" not in init.json()["result"]["instructions"]
+        # a public variant keeps the tool's real arguments (team_report) or narrows them (seat_map)
+        ext_list = {t["name"]: t for t in _rpc_call(c, EXT_KEY, "tools/list").json()["result"]["tools"]}
+        assert set(ext_list["team_report"]["inputSchema"]["properties"]) == {
+            "team", "since", "home_only", "max_games", "news_limit"}
+        assert set(ext_list["seat_map"]["inputSchema"]["properties"]) == {"event_id"}
+        assert set(next(t for t in int_list if t["name"] == "seat_map")["inputSchema"]["properties"]) == {
+            "event_id", "metric", "days"}
+        # External caller cannot invoke a sold-data tool.
+        for tool in ("event_sales", "sales_breakdown", "event_market", "top_market_events"):
+            no = _rpc_call(c, EXT_KEY, "tools/call", {"name": tool, "arguments": {"event_id": 1}}).json()
+            assert "error" in no or no["result"]["isError"] is True
         pk = next(t for t in int_list if t["name"] == "pickups")
         assert "db" not in pk["inputSchema"]["properties"] and "mode" in pk["inputSchema"]["properties"]
         assert pk["annotations"]["readOnlyHint"] is True
@@ -452,9 +490,17 @@ def test_query_public_view_whitelist():
     assert "error" in out and "v_s4kcs_orders" not in out["views"]
     bad = m.query_public_view(db, "event_listing_snapshot_daily", columns=["evo_owned_tickets"])
     assert bad["error"].startswith("columns not allowed")
-    ok = m.query_public_view(db, "sg_market_chart", filters=[{"column": "rank", "op": "lte", "value": 5}],
-                             order_by="rank", limit=5)
-    assert ok == {"view": "sg_market_chart", "rows": [], "count": 0}
+    ok = m.query_public_view(db, "prediction_markets", filters=[{"column": "volume", "op": "gte", "value": 5}],
+                             order_by="volume", limit=5)
+    assert ok == {"view": "prediction_markets", "rows": [], "count": 0}
+    # sold data: the sales views and the sold column are internal only
+    for view in m.SOLD_QUERY_VIEWS:
+        out = m.query_public_view(db, view)
+        assert "error" in out and view not in out["views"]
+        assert m.query_view(db, view) == {"view": view, "rows": [], "count": 0}
+    assert m.query_public_view(db, "zone_price_observations", columns=["vel_tickets_sold"])["error"] \
+        .startswith("columns not allowed")
+    assert "error" not in m.query_view(db, "zone_price_observations", columns=["vel_tickets_sold"])
 
 
 def test_price_forecast_explicit_section_strips_book():
@@ -504,6 +550,74 @@ def test_price_forecast_no_sales_falls_back_to_listed_inventory():
     out = m.price_forecast(db, 9, max_sections=5)
     assert [a["p_section"] for _, a in db.rpcs] == ["112", "226"]  # latest capture, no ancillary
     assert out["sections_picked_by"] == "listed_inventory"
+
+
+def test_public_price_forecast_has_no_sold_data():
+    public = m._PUBLIC_VARIANTS[m.price_forecast]
+    fc = {"expected_clearing": 547.71, "lo": 361.38, "hi": 738.11, "realized_sample_n": 0,
+          "realized_section_median": None, "section_ask_median": 329.84, "section_tickets": 74,
+          "sold_to_ask_ratio": 0.5511, "sold_to_ask_ratio_used": 0.55, "demand_context": {
+              "own_book_gap": 1, "demand_rank": {"rank": 3, "ma7_volume": 40, "ma7_median": 210}},
+          "signals": {"ask_x_ratio": {"value": 181.78}, "realized_sale": {"value": 226},
+                      "seatdata_market": {"value": 240, "sg_sold_median": 250}}}
+    secs = [{"section": "112", "tickets_count": 74, "is_ancillary": False, "captured_at": "t2"}]
+    db = FakeDB(tables={"seatgeek_sales_snapshots": [{"sg_sale_id": 1, "section": "226"}],
+                        "section_metrics": secs},
+                rpc_data={"predict_event_clearing_price": fc})
+    out = public(db, 9)
+    # sections come from listed inventory — the sales table is never read
+    assert [q.table for q in db.queries] == ["section_metrics"]
+    assert [a["p_section"] for _, a in db.rpcs] == ["112"] and out["sections_picked_by"] == "listed_inventory"
+    f = out["forecasts"][0]
+    assert f["expected_clearing"] == 181.78 and f["model_estimate"] == 547.71 and f["confidence"] == "low"
+    assert f["warning"] == m.FORECAST_WARN_ANCHORED and out["method"] == m.FORECAST_METHOD_PUBLIC
+    assert f["signals"] == {"ask_x_ratio": {"value": 181.78}}
+    assert f["demand_context"] == {"demand_rank": {"rank": 3}}
+    assert not m._SOLD_KEYS & set(f) and "sale" not in json.dumps(out).lower()
+    # prior-only warning, explicit section, and the no-listings note carry no sales wording either
+    db = FakeDB(rpc_data={"predict_event_clearing_price": {"expected_clearing": 90, "realized_sample_n": 0,
+                                                             "section_tickets": 0}})
+    f = public(db, 9, section="226")["forecasts"][0]
+    assert f["warning"] == m.FORECAST_WARN_PRIOR_ONLY and "realized_sample_n" not in f
+    db = FakeDB(rpc_data={"predict_event_clearing_price": {"expected_clearing": 400, "realized_sample_n": 8}})
+    f = public(db, 9, section="226")["forecasts"][0]
+    assert f == {"expected_clearing": 400, "confidence": "high"}
+    empty = public(FakeDB(tables={"section_metrics": []}), 9)
+    assert empty == {"event_id": 9, "forecasts": [],
+                     "note": "no current listings — nothing to price; pass `section` explicitly"}
+    # the internal tool is unchanged: picks by sales and keeps the sale-derived fields
+    db = FakeDB(tables={"seatgeek_sales_snapshots": [{"sg_sale_id": 1, "section": "226"}]},
+                rpc_data={"predict_event_clearing_price": dict(fc)})
+    full = m.price_forecast(db, 9)
+    assert full["sections_picked_by"] == "sales_30d" and full["method"] == m.FORECAST_METHOD
+    assert full["forecasts"][0]["sold_to_ask_ratio"] == 0.5511 and "no realized sales" in full["forecasts"][0]["warning"]
+
+
+def test_strip_sold_and_public_variants():
+    assert m._strip_sold({"a": 1, "sales_daily": [1], "b": [{"sg_sales_30d": {}, "c": 2}], "d": "x"}) == {
+        "a": 1, "b": [{"c": 2}], "d": "x"}
+    # team_report: the per-game sales pace and the daily sales history never leave the internal tier
+    rep = {"games": [{"event_id": 1, "data_quality": "live", "sg_now": {"getin": 90},
+                      "sg_sales_30d": {"sales": 4, "median": 120}}],
+           "sales_daily": [{"day": "2026-11-01", "sales": 9}], "team_market_daily": [{"day": "2026-11-01"}],
+           "reddit": [{"title": "t"}]}
+    db = FakeDB(rpc_data={"mcp_team_report": rep})
+    public = m._PUBLIC_VARIANTS[m.team_report](db, "Knicks", max_games=3)
+    assert public["games"] == [{"event_id": 1, "data_quality": "live", "sg_now": {"getin": 90}}]
+    assert "sales_daily" not in public and public["team_market_daily"] == [{"day": "2026-11-01"}]
+    assert db.rpcs[0][1]["p_max_events"] == 3
+    full = m.team_report(FakeDB(rpc_data={"mcp_team_report": rep}), "Knicks")
+    assert full["sales_daily"] and full["games"][0]["sg_sales_30d"]["sales"] == 4
+    # zone_trend: no tickets-sold velocity
+    rows = [{"zone": "Lower", "capture_date": "2026-10-25", "getin_price": 200, "vel_tickets_sold": 12,
+             "vel_getin_delta_pct": 1.5}]
+    out = m._PUBLIC_VARIANTS[m.zone_trend](FakeDB(tables={"zone_price_observations": rows}), 7)
+    assert out["zones"]["Lower"] == [{"capture_date": "2026-10-25", "getin_price": 200, "vel_getin_delta_pct": 1.5}]
+    # game_context: the chart's sales averages are dropped from the live demand context
+    ctx = {"home": {"record": "1-0"}, "demand_rank": {"rank": 2, "ma7_volume": 30, "ma7_median": 180}}
+    out = m._PUBLIC_VARIANTS[m.game_context](FakeDB(rpc_data={"get_event_demand_context": ctx}), 7)
+    assert out["live"]["demand_rank"] == {"rank": 2}
+    assert m.game_context(FakeDB(rpc_data={"get_event_demand_context": ctx}), 7)["live"]["demand_rank"]["ma7_volume"] == 30
 
 
 def test_guard_forecast_anchors_prior_only_estimate_to_market():
@@ -603,7 +717,13 @@ def test_server_exposes_onboarding_resource_and_prompt():
 
 def test_tool_catalog_and_tool_name():
     cat = {t["name"]: t for t in m.tool_catalog()}
-    assert cat["top_market_events"]["parameters"] == ["limit", "chart_date"]
+    assert "top_market_events" not in cat and cat["price_movers"]["parameters"] == [
+        "window_days", "direction", "source", "limit"]
+    assert cat["seat_map"]["parameters"] == ["event_id"] and "asking price" in cat["seat_map"]["description"]
+    assert cat["team_report"]["parameters"] == ["team", "since", "home_only", "max_games", "news_limit"]
+    internal = {t["name"]: t for t in m.tool_catalog(m.INTERNAL_TOOLS)}
+    assert internal["top_market_events"]["parameters"] == ["limit", "chart_date"]
+    assert internal["seat_map"]["parameters"] == ["event_id", "metric", "days"]
     assert cat["search"]["description"].startswith("Find performers")
     assert m._tool_name(b'{"jsonrpc":"2.0","method":"tools/call","params":{"name":"news"}}') == "news"
     assert m._tool_name(b'[{"method":"initialize"}]') == "initialize"
@@ -1084,9 +1204,25 @@ def test_weighted_median():
 
 def test_seat_map_over_mcp_returns_content_blocks(monkeypatch):
     monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
-    srv = m._make_server("t", m.EXTERNAL_TOOLS, lambda: _seat_db())
+    srv = m._make_server("t", m.INTERNAL_TOOLS, lambda: _seat_db())
     tool = next(t for t in anyio.run(srv.list_tools) if t.name == "seat_map")
     assert tool.output_schema is None and set(tool.input_schema["properties"]) == {"event_id", "metric", "days"}
     res = anyio.run(srv.call_tool, "seat_map", {"event_id": 9})
     assert not res.is_error and [c.type for c in res.content] == ["text", "resource", "resource"]
     assert res.content[2].resource.mime_type == "text/html"
+
+
+def test_public_seat_map_is_asking_prices_only(monkeypatch):
+    monkeypatch.setattr(m, "_seatmap_svg", lambda v, c: _SVG)
+    db = _seat_db(sections=[{"section": "107", "tickets_count": 4, "retail_median": 310, "captured_at": "t2"}])
+    srv = m._make_server("t", m.EXTERNAL_TOOLS, lambda: db)
+    tool = next(t for t in anyio.run(srv.list_tools) if t.name == "seat_map")
+    assert tool.output_schema is None and set(tool.input_schema["properties"]) == {"event_id"}
+    res = anyio.run(srv.call_tool, "seat_map", {"event_id": 9})
+    assert not res.is_error and [c.type for c in res.content] == ["text", "resource", "resource"]
+    summary = json.loads(res.content[0].text)
+    assert summary["metric"] == "ask" and str(res.content[2].resource.uri) == "s4k://seatmap/9/ask.html"
+    # the sales table is never read, and a caller cannot ask for the sold map
+    assert "seatgeek_sales_snapshots" not in [q.table for q in db.queries]
+    bad = anyio.run(srv.call_tool, "seat_map", {"event_id": 9, "metric": "sold"})
+    assert json.loads(bad.content[0].text)["metric"] == "ask"

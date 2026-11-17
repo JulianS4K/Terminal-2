@@ -11,6 +11,11 @@ get-in price + its history, per-zone get-in, weather, the naive forecast
 direction, and outbound marketplace links. Never owned inventory, orders,
 wholesale prices or brokerage names.
 
+Outbound links go through ``core.referral_links``: where we hold a referral
+account with a marketplace (``REFERRAL_PROGRAMS`` in the environment) the link
+is that marketplace's referral link and is flagged ``referral: true`` so the
+page can disclose it; everywhere else it is the plain marketplace URL.
+
 Responses are cached in-process for a short TTL — the underlying metrics move
 at most every few minutes, and the home table is the same for every visitor.
 """
@@ -24,6 +29,8 @@ from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
+
+from core import referral_links
 
 CATEGORIES = frozenset({
     "nfl", "mlb", "nba", "nhl", "wnba", "mls", "college",
@@ -78,8 +85,12 @@ def _safe_url(url: Any) -> Optional[str]:
     return u if u.startswith("https://") else None
 
 
-def build_links(source_links: Optional[dict], axs_url: Optional[str] = None) -> list[dict]:
-    """Shape get_event_source_links() output into ordered outbound buy links."""
+def build_links(source_links: Optional[dict], axs_url: Optional[str] = None, *,
+                event_id: Optional[int] = None, programs: Optional[dict] = None) -> list[dict]:
+    """Shape get_event_source_links() output into ordered outbound buy links.
+
+    `programs` (core.referral_links.load_programs) turns a marketplace's link into
+    its referral link, with the event as the sub id; none configured → plain links."""
     out: dict[str, dict] = {}
     src = source_links or {}
     for platform, url in (src.get("td") or {}).items():
@@ -94,7 +105,12 @@ def build_links(source_links: Optional[dict], axs_url: Optional[str] = None) -> 
     axs = _safe_url(axs_url)
     if axs:
         out["axs"] = {"key": "axs", "name": "AXS", "kind": "primary", "url": axs}
-    return [out[k] for k in _LINK_ORDER if k in out]
+    links = [out[k] for k in _LINK_ORDER if k in out]
+    sub_id = f"ev{event_id}" if event_id is not None else None
+    for link in links:
+        link["url"], link["referral"] = referral_links.wrap(
+            link["key"], link["url"], sub_id, programs or {})
+    return links
 
 
 def _parse_day(v: Optional[str], name: str) -> Optional[str]:
@@ -111,9 +127,11 @@ def build_prices_router(
     *,
     get_require_sb: Callable[[], Callable],
     cache_ttl: float = 120.0,
+    referral_programs: Optional[dict] = None,
 ) -> APIRouter:
     router = APIRouter()
     cache = _TTLCache(cache_ttl)
+    programs = referral_links.load_programs() if referral_programs is None else referral_programs
 
     pages_dir = os.path.join(static_dir, "prices")
 
@@ -206,7 +224,7 @@ def build_prices_router(
         except Exception:  # noqa: BLE001
             axs_url = None
         data = dict(data)
-        data["links"] = build_links(source_links, axs_url)
+        data["links"] = build_links(source_links, axs_url, event_id=event_id, programs=programs)
         cache.put(key, data)
         return data
 

@@ -169,6 +169,7 @@ def test_event_payload_with_links(client, db):
     assert keys == ["stubhub", "seatgeek", "ticketmaster", "axs"]  # vivid dropped (unsafe url)
     assert {l["key"]: l["kind"] for l in body["links"]}["ticketmaster"] == "primary"
     assert all(l["url"].startswith("https://") for l in body["links"])
+    assert not any(l["referral"] for l in body["links"])   # no referral programs configured
 
 
 def test_event_links_best_effort(client, db):
@@ -243,7 +244,37 @@ def test_build_links_handles_empty():
 
 def test_build_links_td_seatgeek_wins_over_sg_url():
     links = build_links({"sg_url": "https://seatgeek.com/a", "td": {"SG": "https://seatgeek.com/b"}})
-    assert links == [{"key": "seatgeek", "name": "SeatGeek", "kind": "resale", "url": "https://seatgeek.com/b"}]
+    assert links == [{"key": "seatgeek", "name": "SeatGeek", "kind": "resale", "url": "https://seatgeek.com/b",
+                      "referral": False}]
+
+
+def test_build_links_wraps_marketplaces_we_have_a_referral_program_with():
+    programs = {"seatgeek": {"network": "impact", "base": "https://seatgeek.pxf.io/c/1/2/3"},
+                "stubhub": {"network": "partnerize", "camref": "1101abc"}}
+    links = {l["key"]: l for l in build_links(
+        {"td": {"SG": "https://seatgeek.com/e/1", "SH": "https://www.stubhub.com/e/1",
+                "VD": "https://www.vividseats.com/p/1"}},
+        "https://www.axs.com/events/1", event_id=3226757, programs=programs)}
+    assert links["seatgeek"] == {
+        "key": "seatgeek", "name": "SeatGeek", "kind": "resale", "referral": True,
+        "url": "https://seatgeek.pxf.io/c/1/2/3?u=https%3A%2F%2Fseatgeek.com%2Fe%2F1&subId1=ev3226757"}
+    assert links["stubhub"]["referral"] is True and links["stubhub"]["url"] == (
+        "https://prf.hn/click/camref:1101abc/pubref:ev3226757/destination:https%3A%2F%2Fwww.stubhub.com%2Fe%2F1")
+    # no program → the plain marketplace link, unflagged
+    assert links["vivid"] == {"key": "vivid", "name": "Vivid Seats", "kind": "resale",
+                              "url": "https://www.vividseats.com/p/1", "referral": False}
+    assert links["axs"]["referral"] is False
+
+
+def test_router_reads_referral_programs_from_the_environment(monkeypatch, db):
+    monkeypatch.setenv("REFERRAL_PROGRAMS", '{"vivid": {"network": "impact", "base": "https://vivid.sjv.io/c/9/8/7"}}')
+    app = FastAPI()
+    app.include_router(build_prices_router(STATIC_DIR, get_require_sb=lambda: (lambda: db)))
+    db.responses["price_tracker_event"] = EVENT
+    db.responses["get_event_source_links"] = {"td": {"VD": "https://www.vividseats.com/p/1"}}
+    link = testclient.TestClient(app).get("/api/prices/event/3226757").json()["links"][0]
+    assert link["referral"] is True
+    assert link["url"] == "https://vivid.sjv.io/c/9/8/7?u=https%3A%2F%2Fwww.vividseats.com%2Fp%2F1&subId1=ev3226757"
 
 
 # ---------- wiring into the real app ----------
