@@ -94,11 +94,18 @@ CREATE TABLE IF NOT EXISTS public.event_xmap_run (
   result      jsonb
 );
 
-ALTER TABLE public.event_xmap       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.event_xmap_audit ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.event_xmap_run   ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.event_xmap, public.event_xmap_audit, public.event_xmap_run FROM anon, authenticated;
-GRANT SELECT ON public.event_xmap, public.event_xmap_audit, public.event_xmap_run TO service_role;
+DO $rls$   -- only when not yet set: an ALTER needs an exclusive lock, and this file may be re-applied while a run holds the tables
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['event_xmap', 'event_xmap_audit', 'event_xmap_run'] LOOP
+    IF NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = ('public.' || t)::regclass) THEN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+      EXECUTE format('REVOKE ALL ON public.%I FROM anon, authenticated', t);
+      EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
+    END IF;
+  END LOOP;
+END
+$rls$;
 
 -- ───────────────────────── 2. helpers ─────────────────────────
 -- the zone a state usually keeps, for a source that publishes UTC and a venue we have not paired
@@ -400,14 +407,21 @@ BEGIN
   END IF;
 
   -- B/C. the rows without an EVO id, not yet in a cluster
+  --     (the members of the spine in the window, one indexed lookup per source — a six-way OR against event_xmap
+  --      made the planner scan the spine once per loose row: 164k × 73k on the first prod pass, 2026-11-17 20:21Z)
+  DROP TABLE IF EXISTS _xm_member;
+  CREATE TEMP TABLE _xm_member (src text, sid bigint) ON COMMIT DROP;
+  FOR i IN 1..6 LOOP
+    EXECUTE format($q$INSERT INTO _xm_member SELECT %1$L, x.%2$I FROM public.event_xmap x WHERE x.%2$I IS NOT NULL AND x.local_day BETWEEN $1 - 2 AND $2 + 2$q$, v_srcs[i], v_cols[i])
+    USING v_from, v_to;
+  END LOOP;
+  CREATE INDEX ON _xm_member (src, sid);
+  ANALYZE _xm_member;
   DROP TABLE IF EXISTS _xm_loose;
   CREATE TEMP TABLE _xm_loose ON COMMIT DROP AS
   SELECT e.* FROM _xm_ev e
    WHERE e.tevo_event_id IS NULL
-     AND NOT EXISTS (SELECT 1 FROM public.event_xmap x
-                      WHERE (e.src = 'mlb' AND x.mlb_schedule_id = e.sid) OR (e.src = 'tickpick' AND x.tp_event_id = e.sid)
-                         OR (e.src = 'vivid' AND x.vivid_event_id = e.sid) OR (e.src = 'sg' AND x.sg_event_id = e.sid)
-                         OR (e.src = 'gotickets' AND x.gt_event_id = e.sid) OR (e.src = 'axs' AND x.axs_event_id = e.sid));
+     AND NOT EXISTS (SELECT 1 FROM _xm_member m WHERE m.src = e.src AND m.sid = e.sid);
   CREATE INDEX ON _xm_loose (venue_key, local_day);
   v_out := v_out || jsonb_build_object('loose', (SELECT count(*) FROM _xm_loose));
 
