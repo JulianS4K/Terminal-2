@@ -32,6 +32,17 @@ def test_spend_limits():
     assert _guards(_row(), fails=2) == ["circuit_breaker"]
 
 
+def test_evo_tax_counts_in_every_cap_and_the_profit_test():
+    # 20261112020000: EVO charged 5.5% at Camp Randall; the cost is the sub plus that tax
+    assert _guards(_row(sub_total_usd=240, est_tax_usd=13.2, sold_total_usd=400)) == ["over_per_order_cap",
+                                                                                     "over_daily_cap"]
+    assert _guards(_row(), spend=124, cfg=None) == []                                 # 124 + 120 + 0 tax
+    assert _guards(_row(est_tax_usd=6.6), spend=124) == ["over_daily_cap"]            # 124 + 126.6 > 250
+    assert _guards(_row(sub_total_usd=152, est_tax_usd=8.36)) == ["not_profitable"]   # 160.36 >= 160 sold
+    assert _guards(_row(est_tax_usd=None)) == []
+    assert _guards(_row(est_tax_usd=6.6), project_spent=374) == ["over_project_cap"]   # 374 + 126.6 > 500
+
+
 def test_project_cap_500_on_every_market_and_stop():
     both = {"buy_sources": ("tevo", "gotickets")}
     for src in ("tevo", "gotickets"):

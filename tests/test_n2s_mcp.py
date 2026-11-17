@@ -238,3 +238,16 @@ def test_owned_lookup_per_source():
     empty = FakeDB(tables={"n2s_evo_current": [], "n2s_sg_current": []})
     assert n._owned(empty, {"sub_source": "tevo", "sub_listing_id": "1"}) is None
     assert n._owned(empty, {"sub_source": "seatgeek", "sub_listing_id": "1"}) is None
+
+
+def test_book_and_dry_run_carry_the_seller_note():
+    """20261112030000: the seller's own note on the sub rides with every suggestion."""
+    db = FakeDB(tables={"v_n2s_orders": [{"n2s_id": 1, "has_cover": True, "cover_cost": -10,
+                                          "sub_view": "obstructed", "sub_notes": "Limited View"}],
+                        "n2s_gt_order_dryrun": [_dry(sub_view="obstructed", sub_notes="Limited View")]})
+    n.n2s_book(db)
+    book_cols = db.queries[-1].calls[0][1][0]
+    assert "sub_notes" in book_cols.split(",")
+    row = n.gt_dryrun(db)["rows"][0]
+    assert db.queries[-1].calls[0][1][0].split(",").count("sub_notes") == 1
+    assert row["sub_notes"] == "Limited View" and row["sub_view"] == "obstructed"

@@ -74,6 +74,12 @@ FORBIDDEN_HOSTS = (
     # Python client). Bare host substring-matches api.twitterapi.io and any
     # future subdomain, same as seatdata.io / axs.com.
     "twitterapi.io",
+    # StubHub API (our seller account, stubhub_client.py — GET-only, OFF by default). The data
+    # API has listing/sale write endpoints that must never be touched; the only sanctioned write
+    # is the OAuth token login (SANCTIONED_PLPGSQL_WRITE_URLS). "stubhub.net" covers api. and
+    # sandbox.api.; "account.stubhub.com" covers the login host and its sandbox.* twin.
+    "stubhub.net",
+    "account.stubhub.com",
     # AXS has order/hold endpoints that must never be touched. All sanctioned
     # AXS traffic proxies through ticketsdata.com (covered above); a direct
     # call to axs.com is forbidden outright. Bare "axs.com" substring-matches
@@ -97,10 +103,18 @@ FORBIDDEN_HOSTS = (
 #   * evo_buy_client.py — the N2S auto-cover buy + accept on EVO, operator-authorized
 #     2026-11-09 ("I authorize EVO only, build the live executor"). Its POST is
 #     path-pinned to /v9/orders and /v9/orders/{id}/accept by EVO_WRITE_PATHS, whose
-#     exact literal is required below (SANCTIONED_WRITE_TOKENS).
+#     exact literal is required below (SANCTIONED_WRITE_TOKENS). Operator-authorized
+#     2026-11-13 ("build the evo tax quote"): also /v9/tax_quotes, EVO's pre-purchase
+#     calculation of the total it will charge (buys, holds and changes nothing).
 #   * sale_accept_client.py — confirm OUR OWN pending sale on GoTickets / SeatGeek / Vivid /
 #     TickPick, operator-authorized 2026-11-10. Each write is pinned to (method, host, path)
 #     by SALE_ACCEPT_WRITES, whose exact literal is required below.
+#   * gotickets_sub_client.py — offer a customer replacement seats on OUR OWN GoTickets sale
+#     (POST /rest/substitution-requests), operator-authorized 2026-11-13 for sub finder
+#     gates 3-5 after the CRM confirms. Pinned by GT_SUB_WRITES, exact literal required below.
+#   * gotickets_buy_client.py — buy an N2S sub on GoTickets (POST /rest/pro/api/orders, paid
+#     from our gift cards), operator-authorized 2026-11-13 ("wire in gotickets similar to evo").
+#     Pinned by GT_BUY_WRITES, exact literal required below.
 CLIENT_FILES = {
     "evo_client.py": frozenset({"GET"}),
     "seatgeek_client.py": frozenset({"GET"}),
@@ -110,6 +124,8 @@ CLIENT_FILES = {
     "seatdata_client.py": frozenset({"GET", "POST"}),
     "evo_buy_client.py": frozenset({"GET", "POST"}),
     "sale_accept_client.py": frozenset({"GET", "PATCH", "POST"}),
+    "gotickets_sub_client.py": frozenset({"GET", "POST"}),
+    "gotickets_buy_client.py": frozenset({"GET", "POST"}),
     "ticketsdata_client.py": frozenset({"GET"}),
     "broadway_client.py": frozenset({"GET"}),
     "axs_client.py": frozenset({"GET"}),
@@ -119,6 +135,9 @@ CLIENT_FILES = {
     # locked by the same mechanical audit as every other source.
     "paciolan_client.py": frozenset({"GET"}),
     "s4kcs_client.py": frozenset({"GET"}),
+    # StubHub API — our own seller account's sales/listings, GET-only; the OAuth logins run in
+    # SQL (mig 20261113250040), never in Python. Operator 2026-11-13: "keep … read only".
+    "stubhub_client.py": frozenset({"GET"}),
 }
 
 # Exact path-allowlist literals a write-capable client must declare. Widening either
@@ -126,7 +145,9 @@ CLIENT_FILES = {
 # operator's written authorization (security-CRIT, CLAUDE.md §2).
 SANCTIONED_WRITE_TOKENS = {
     "seatdata_client.py": 'SANCTIONED_POST_PATHS = frozenset({"v0.4/events/event-request-add"})',
-    "evo_buy_client.py": 'EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\\d+/accept$")',
+    "gotickets_sub_client.py": 'GT_SUB_WRITES = (("POST", "sc.gotickets.com", r"^/rest/substitution-requests$"),)',
+    "gotickets_buy_client.py": 'GT_BUY_WRITES = (("POST", "gotickets.com", r"^/rest/pro/api/orders$"),)',
+    "evo_buy_client.py": 'EVO_WRITE_PATHS = (r"^/v9/orders$", r"^/v9/orders/\\d+/accept$", r"^/v9/tax_quotes$")',
     "sale_accept_client.py": 'SALE_ACCEPT_WRITES = (("POST", "sc.gotickets.com", r"^/rest/sales/\\d+/confirm$"), ("PATCH", "sellerdirect-api.seatgeek.com", r"^/order$"), ("POST", "brokers.vividseats.com", r"^/webservices/v1/confirmOrder$"), ("POST", "api.tickpick.com", r"^/1\\.0/orders/\\d+/confirmation$"))',
 }
 
@@ -326,9 +347,28 @@ def check_ts_writes() -> list[str]:
 # The ONLY write URLs a plpgsql migration may POST to on a forbidden host. Each is a login that
 # writes none of our data (operator-authorized; security-CRIT to extend):
 #   - TickPick OAuth2 password grant (2026-11-10): refreshes TICKPICK_API_TOKEN from vault creds.
+#   - StubHub OAuth2 token endpoint (2026-11-13, "wire the api but keep turned off and read only"):
+#     authorization_code + refresh_token grants for OUR seller account, read:* scopes only
+#     (stubhub_oauth_complete / stubhub_token_refresh, mig 20261113250040). Prod + sandbox.
 # A sanctioned URL is blanked out of the scanned window, so any OTHER forbidden-host URL near the
 # same POST still fails the build.
-SANCTIONED_PLPGSQL_WRITE_URLS = ("https://api.tickpick.com/1.0/token",)
+SANCTIONED_PLPGSQL_WRITE_URLS = (
+    "https://api.tickpick.com/1.0/token",
+    "https://account.stubhub.com/oauth2/token",
+    "https://sandbox.account.stubhub.com/oauth2/token",
+)
+
+# The ONLY built (non-literal) write URLs a plpgsql migration may POST to, each an exact
+# expression, blanked like the URLs above (security-CRIT to extend):
+#   - TickPick sale confirm (operator 2026-11-16, "Ok" to moving the TickPick sale read and
+#     confirm into the database: TickPick refuses the web service's address). The same single
+#     write sale_accept_client.py may send (SALE_ACCEPT_WRITES), confirming OUR OWN sale for an
+#     N2S row whose sub we bought: n2s_tickpick_confirm (mig 20261116181000) sends it once per
+#     row, only for a live 'sub_accepted' row the caller holds the lease on, with v_tp_order read
+#     from n2s_items and checked to be a plain number. No reject, cancel, price or listing write.
+SANCTIONED_PLPGSQL_WRITE_EXPRS = (
+    "'https://api.tickpick.com/1.0/orders/' || v_tp_order || '/confirmation'",
+)
 
 
 def check_plpgsql_writes() -> list[str]:
@@ -348,6 +388,8 @@ def check_plpgsql_writes() -> list[str]:
             snippet = text[start:end]
             for url in SANCTIONED_PLPGSQL_WRITE_URLS:
                 snippet = snippet.replace(f"'{url}'", "''")
+            for expr in SANCTIONED_PLPGSQL_WRITE_EXPRS:
+                snippet = snippet.replace(expr, "''")
             forbidden_hits = [h for h in FORBIDDEN_HOSTS if h in snippet]
             if forbidden_hits:
                 line_no = text[: m.start()].count("\n") + 1

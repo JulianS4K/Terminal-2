@@ -89,6 +89,12 @@ def _buy_job(**kw):
     return {"action": "buy", "row": _row(**kw), "cfg": CFG}
 
 
+def test_buy_total_falls_back_to_the_quoted_total_with_tax():
+    # 20261113410000: EVO answered no total: record what we priced the buy at, tax included
+    out, recs, _ = _tick(_buy_job(est_tax_usd=11.0), Client(create={"orders": [{"id": 9003, "state": "pending"}]}))
+    assert out["phase"] == "buy_sent" and recs[-1]["p_patch"]["buy_total_usd"] == 211.0
+
+
 def test_idle_when_nothing_to_claim():
     assert lv.tick(Rpc(None), Client(), now=NOW) == {"action": "idle"}
 
@@ -108,7 +114,8 @@ def test_buy_happy_path_sends_one_order():
     assert body["shipped_items"][0]["items"] == [{"ticket_group_id": 6744480374, "quantity": 2, "price": "100.00"}]
     assert [r["p_patch"]["phase"] for r in recs] == ["buying", "buy_sent"]
     assert recs[1] == {"p_exec_id": 7, "p_token": "tok-1", "p_patch": {"phase": "buy_sent", "buy_order_id": "9001",
-                                                                       "buy_state": "pending", "live_error": None}}
+                                                                       "buy_state": "pending", "live_error": None,
+                                                                       "buy_total_usd": 200.0}}  # EVO's total
     assert out["recorded"] == "buy_sent"
 
 
@@ -234,8 +241,9 @@ class Sales:
         self.calls.append(("state", market, key))
         return self.state
 
-    def accept(self, market, key):
+    def accept(self, market, key, *, exec_id=None, lease_token=None):
         self.calls.append(("accept", market, key))
+        self.held = (exec_id, lease_token)
         if isinstance(self.acc, Exception):
             raise self.acc
         self.state = self.after
@@ -309,7 +317,20 @@ def test_tickpick_buys_only_for_a_sale_our_login_still_shows_unconfirmed():
             raise EvoWriteRejected(404, "Not Found")
     c = Client(create={"id": 6})
     out = lv.tick(Rpc(_buy_job(sell_market="tickpick")), c, now=NOW, sales=Unreadable())
-    assert out["reasons"] == ["sale_read_failed"] and out["live_error"] == "EvoWriteRejected" and c.calls == []
+    # 2026-11-16: the row records TickPick's status and message, not just the error's type
+    assert out["reasons"] == ["sale_read_failed"] and out["live_error"] == "HTTP 404: Not Found" and c.calls == []
+
+    class Down(Sales):
+        def sale_state(self, market, key):
+            raise RuntimeError("TickPick read via the database: HTTP -1: timeout")
+
+    class Blank(Sales):
+        def sale_state(self, market, key):
+            raise RuntimeError()
+    for fake, err in ((Down(), "TickPick read via the database: HTTP -1: timeout"), (Blank(), "RuntimeError")):
+        c = Client(create={"id": 7})
+        out = lv.tick(Rpc(_buy_job(sell_market="tickpick")), c, now=NOW, sales=fake)
+        assert out["reasons"] == ["sale_read_failed"] and out["live_error"] == err and c.calls == []
 
 
 def test_tickpick_sale_accept_and_busted_after_accept():
@@ -317,6 +338,213 @@ def test_tickpick_sale_accept_and_busted_after_accept():
     out = lv.tick(Rpc(_poll_job(sell_market="tickpick")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
     assert out["phase"] == "accepted" and out["sale_state"] == "Confirmed"
     assert s.calls == [("state", "tickpick", "555"), ("accept", "tickpick", "555"), ("state", "tickpick", "555")]
+    job = _poll_job(sell_market="tickpick")
+    assert s.held == (job["row"]["exec_id"], job["row"]["lease_token"])   # what the DB checks before confirming
     s = Sales(state="Unconfirmed", after="Busted")
     out = lv.tick(Rpc(_poll_job(sell_market="tickpick")), Client(orders={"9001": {"state": "accepted"}}), now=NOW, sales=s)
     assert out["phase"] == "accept_failed" and out["reasons"] == ["sale_rejected_after_accept"]
+
+
+def test_lead_time_uses_the_real_event_start():
+    # EVO's occurs_at is local time with a fake "Z": 02:30 local ET is 07:30 UTC, 13.5 h after NOW.
+    tg = {**TG, "event": {"occurs_at": "2026-11-11T02:30:00Z", "occurs_at_local": "2026-11-11T02:30:00-05:00"}}
+    ok = lv.ticket_group_checks(tg, qty=2, sub_total=200.0, now=NOW, min_lead_s=12 * 3600)
+    assert "event_within_24h" not in ok
+    for ev in ({"occurs_at": "2026-11-11T02:30:00Z"},                                  # no offset: 8.5 h, blocks
+               {"occurs_at": "2026-11-11T02:30:00Z", "occurs_at_local": "not a date"},  # unreadable: falls back
+               {"occurs_at_local": "garbage"}, {}):                                     # nothing readable
+        assert "event_within_24h" in lv.ticket_group_checks({**TG, "event": ev}, qty=2, sub_total=200.0, now=NOW,
+                                                            min_lead_s=12 * 3600)
+
+
+def test_buy_guards_use_the_stored_real_start():
+    cfg = {**CFG, "min_event_lead_s": 12 * 3600}
+    tg = {**TG, "event": {"occurs_at_local": "2026-11-11T09:00:00-05:00"}}            # 20 h out
+    real = (NOW + timedelta(hours=13)).isoformat()
+    out = lv.tick(Rpc({"action": "buy", "row": _row(event_start_utc=real, event_dt_local="2026-11-11T02:00:00"),
+                       "cfg": cfg}), Client(tg=tg, create={"id": 9}), now=NOW)
+    assert out["phase"] == "buy_sent"                                                    # 13 h real start passes
+    out = lv.tick(Rpc({"action": "buy", "row": _row(event_dt_local="2026-11-11T02:00:00"), "cfg": cfg}),
+                  Client(tg=tg, create={"id": 9}), now=NOW)
+    assert out["reasons"] == ["event_within_24h"]                                        # local-as-UTC: 8 h, blocks
+
+
+# ---- 20261112020000: seller time, EVO tax, one retry on a dropped DB connection -----------
+
+def test_seller_time_uses_the_window_for_the_listing_in_hand_or_not():
+    left = 480                                   # _row: sub_confirm_by is NOW + 8 min
+    row = _row(seller_window_s=534, seller_window_in_hand_s=298)
+    assert lv.seller_time_checks({**TG, "in_hand": True}, row, now=NOW, floor_s=90) == []      # 480 >= 298
+    assert lv.seller_time_checks({**TG, "in_hand": "true"}, row, now=NOW, floor_s=90) == []
+    assert lv.seller_time_checks({**TG, "in_hand": False}, row, now=NOW, floor_s=90) == ["not_enough_time_for_seller"]
+    assert lv.seller_time_checks(TG, row, now=NOW, floor_s=90) == ["not_enough_time_for_seller"]  # unknown = not
+    assert lv.seller_time_checks(TG, _row(), now=NOW, floor_s=90) == []                          # no windows: floor
+    assert lv.seller_time_checks(TG, _row(), now=NOW, floor_s=left + 1) == ["not_enough_time_for_seller"]
+    assert lv.seller_time_checks(TG, _row(sub_confirm_by=None), now=NOW, floor_s=90) == ["not_enough_time_for_seller"]
+
+
+def test_no_buy_when_the_seller_may_not_accept_in_time():
+    job = _buy_job(seller_window_s=534, seller_window_in_hand_s=298)
+    out, _, calls = _tick(job, Client(tg={**TG, "in_hand": False}))
+    assert out["phase"] == "stopped" and out["reasons"] == ["not_enough_time_for_seller"]
+    assert [k[0] for k in calls] == ["tg"]                                     # read, never bought
+    out, _, calls = _tick(job, Client(tg={**TG, "in_hand": True}, create={"id": 9100, "state": "pending"}))
+    assert out["phase"] == "buy_sent" and [k[0] for k in calls] == ["tg", "buy"]
+
+
+def test_tax_is_in_the_guards_and_in_the_quote_evo_is_checked_against():
+    out, _, calls = _tick(_buy_job(sub_total_usd=240.0, est_tax_usd=13.2, sold_total_usd=400.0), Client())
+    assert out["phase"] == "stopped" and "over_per_order_cap" in out["reasons"] and calls == []
+    out, _, _ = _tick(_buy_job(est_tax_usd=11.0), Client(create={"id": 9101, "total": "211.00"}))
+    assert out["phase"] == "buy_sent" and out["live_error"] is None            # 200 + 11 tax, as quoted
+    out, _, _ = _tick(_buy_job(est_tax_usd=11.0), Client(create={"id": 9102, "total": "212.00"}))
+    assert out["live_error"] == "EVO total $212.00 is above the quoted $211.00"
+
+
+def test_retrying_repeats_a_call_once_when_the_connection_dropped(monkeypatch):
+    monkeypatch.setattr(lv, "DB_RETRY_PAUSE_S", 0)
+    calls = []
+
+    def flaky(name, params):
+        calls.append(name)
+        if len(calls) == 1:
+            raise lv.httpx.RemoteProtocolError("Server disconnected")
+        return "buy_sent"
+
+    assert lv.retrying(flaky)("n2s_autobuy_live_record", {}) == "buy_sent" and len(calls) == 2
+    calls.clear()
+    assert lv.retrying(lambda n, p: calls.append(n) or "ok")("x", {}) == "ok" and len(calls) == 1
+
+
+def test_retrying_gives_up_after_one_retry_and_leaves_other_errors_alone(monkeypatch):
+    monkeypatch.setattr(lv, "DB_RETRY_PAUSE_S", 0)
+    calls = []
+
+    def down(name, params):
+        calls.append(name)
+        raise lv.httpx.ConnectError("refused")
+
+    with pytest.raises(lv.httpx.ConnectError):
+        lv.retrying(down)("n2s_autobuy_live_claim", {})
+    assert len(calls) == 2
+    calls.clear()
+
+    def timeout(name, params):
+        calls.append(name)
+        raise lv.httpx.ReadTimeout("slow")          # may have run: never repeated
+
+    with pytest.raises(lv.httpx.ReadTimeout):
+        lv.retrying(timeout)("n2s_autobuy_live_claim", {})
+    assert len(calls) == 1
+
+
+# ---------- the EVO tax quote as a pre-buy check (operator 2026-11-13; config switch) ----------
+
+class QuoteClient(Client):
+    def __init__(self, quote, **kw):
+        super().__init__(**kw)
+        self.quote = quote
+
+    def tax_quote(self, tg_id, qty):
+        self.calls.append(("quote", tg_id, qty))
+        return self._maybe(self.quote)
+
+
+def _quote(total, tax):
+    return {"tax_signature": "sig-7", "wholesale": {"tax": tax, "total": total}}
+
+
+def _taxed_job(**kw):
+    return {"action": "buy", "row": _row(**kw), "cfg": {**CFG, "tax_quote": True}}
+
+
+def test_no_quote_is_asked_while_the_switch_is_off():
+    c = QuoteClient(_quote(211.0, 11.0), create={"id": 9200, "total": "200.0"})
+    out, _, calls = _tick(_buy_job(), c)
+    assert out["phase"] == "buy_sent" and [k[0] for k in calls] == ["tg", "buy"]
+    assert "tax_signature" not in calls[1][1]["orders"][0]
+
+
+def test_quote_within_the_guards_buys_with_its_signature():
+    c = QuoteClient(_quote(211.0, 11.0), create={"id": 9201, "total": "211.00"})
+    out, _, calls = _tick(_taxed_job(), c)
+    assert [k[0] for k in calls] == ["tg", "quote", "buy"] and calls[1] == ("quote", 6744480374, 2)
+    assert calls[2][1]["orders"][0]["tax_signature"] == "sig-7"
+    assert out["phase"] == "buy_sent" and out["live_error"] is None          # checked against the quote
+    c = QuoteClient(_quote(211.0, 11.0), create={"id": 9202, "total": "212.00"})
+    assert _tick(_taxed_job(), c)[0]["live_error"] == "EVO total $212.00 is above the quoted $211.00"
+
+
+def test_quoted_tax_that_breaks_a_guard_stops_before_the_buy():
+    # our estimate said no tax; EVO says 62: 262 against a 260 sale is not profitable, and over the cap
+    out, _, calls = _tick(_taxed_job(), QuoteClient(_quote(262.0, 62.0)))
+    assert out["phase"] == "stopped" and [k[0] for k in calls] == ["tg", "quote"]
+    assert "not_profitable" in out["reasons"] and "over_per_order_cap" in out["reasons"]
+    assert out["live_error"] == "EVO quoted $262.00 with tax"
+    # the quote replaces the estimate, it is not added to it
+    c = QuoteClient(_quote(205.0, 5.0), create={"id": 9203, "total": "205.00"})
+    assert _tick(_taxed_job(est_tax_usd=40.0), c)[0]["phase"] == "buy_sent"
+
+
+@pytest.mark.parametrize("quote", [EvoWriteRejected(403, "no"), EvoWriteUnknown("/v9/tax_quotes: HTTP 502"), {}])
+def test_no_usable_quote_means_no_buy(quote):
+    out, _, calls = _tick(_taxed_job(), QuoteClient(quote))
+    assert out["phase"] == "stopped" and out["reasons"] == ["tax_quote_failed"]
+    assert [k[0] for k in calls] == ["tg", "quote"]
+
+
+# ------------------------------------------------------------------ the one queue (20261113470000)
+# pre_buy / n2s_result are what the sub finder's worker calls for a buy N2S filed into the one
+# queue; our own worker (above) goes through the same two functions.
+
+def test_pre_buy_only_reads_and_builds_the_one_evo_request():
+    c = Client()
+    plan = lv.pre_buy(_buy_job(est_tax_usd=11.0), evo=c, now=NOW)
+    assert plan["stop"] == [] and plan["market"] == "evo" and plan["qty"] == 2
+    assert plan["expected_total"] == 211.0                        # our quote with the venue's estimated tax
+    assert plan["body"]["orders"][0]["shipped_items"][0]["items"][0]["ticket_group_id"] == 6744480374
+    assert [k[0] for k in c.calls] == ["tg"]                       # nothing was bought
+
+
+def test_pre_buy_stop_carries_the_patch_for_our_row():
+    plan = lv.pre_buy(_buy_job(), evo=Client(tg={**TG, "available_quantity": 1}), now=NOW)
+    assert plan == {"stop": ["short_quantity"], "state": "stopped",
+                    "n2s": {"phase": "stopped", "reasons": ["short_quantity"]}}
+    plan = lv.pre_buy(_buy_job(), evo=Client(tg=EvoWriteRejected(404, "gone")), now=NOW)
+    assert plan["stop"] == ["listing_gone"] and "404" in plan["n2s"]["live_error"]
+
+
+def test_pre_buy_without_a_job_stops():
+    for job in (None, {}, {"row": None, "cfg": CFG}, {"row": _row(), "cfg": None}):
+        assert lv.pre_buy(job, evo=Client())["stop"] == ["no_job"]
+
+
+def test_pre_buy_reads_the_clock_itself():
+    # a sale on a market we hold no accept token for: stopped before any read
+    assert lv.pre_buy(_buy_job(sell_market="vivid"), evo=Client())["stop"] == ["no_sale_accept_token"]
+
+
+def test_n2s_result_reads_every_answer_and_never_stops_silently():
+    plan = {"stop": [], "market": "evo", "body": {}, "expected_total": 200.0, "qty": 2}
+    out = lv.n2s_result(plan, {"orders": [{"id": 9001, "state": "pending", "total": "205.5"}]})
+    assert out == {"state": "bought", "n2s": {"phase": "buy_sent", "buy_order_id": "9001", "buy_state": "pending",
+                                              "live_error": "EVO total $205.5 is above the quoted $200.00",
+                                              "buy_total_usd": 205.5}}
+    out = lv.n2s_result(plan, error=EvoWriteRejected(422, "sold out"))
+    assert out["state"] == "stopped" and out["n2s"]["reasons"] == ["buy_failed"]   # the run is not given back
+    assert lv.n2s_result(plan, error=EvoWriteUnknown("/v9/orders: ReadTimeout"))["n2s"] == {
+        "phase": "buy_unknown", "reasons": ["buy_unknown"], "live_error": "/v9/orders: ReadTimeout"}
+    out = lv.n2s_result(plan, error=RuntimeError("socket closed"))
+    assert out["state"] == "unknown" and out["n2s"]["live_error"] == "RuntimeError: socket closed"
+    assert lv.n2s_result(plan, None)["state"] == "unknown"                            # no answer at all
+    assert lv.n2s_result(plan, {"orders": [{"state": "pending"}]})["n2s"]["live_error"].startswith("ValueError")
+
+
+def test_a_sent_buy_we_cannot_record_keeps_its_purchase_id():
+    out, _, _ = _tick(_buy_job(), Client(create={"orders": [{"id": 9001, "state": "pending"}]}), boom={"buy_sent"})
+    assert out["phase"] == "buy_unknown" and out["buy_order_id"] == "9001"
+
+
+def test_a_refusal_we_cannot_record_is_raised_not_hidden():
+    with pytest.raises(RuntimeError):   # the tick fails; the row's lease runs out and the claim fails closed
+        _tick(_buy_job(), Client(create=EvoWriteRejected(422, "sold out")), boom={"stopped"})

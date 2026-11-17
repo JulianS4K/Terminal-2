@@ -177,6 +177,36 @@ def test_require_human_accepts_fresh_recaptcha_token(monkeypatch):
     assert captured["ip"] == "203.0.113.5"
 
 
+def test_require_human_behind_cloudflare_uses_the_caller_cloudflare_reports(monkeypatch):
+    monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
+    monkeypatch.setattr(app_module, "_valid_human_token", lambda tok: False)
+    seen = []
+    monkeypatch.setattr(app_module, "_verify_recaptcha", lambda token, action, ip: seen.append(ip) or True)
+    # on Render: X-Forwarded-For is "<caller>, <Cloudflare edge>" and Cloudflare names the caller
+    req = _make_request(headers={"x-forwarded-for": "203.0.113.5, 172.71.150.51", "cf-connecting-ip": "203.0.113.5"})
+    assert app_module._require_human(req, {"recaptcha_token": "t"}) is None
+    # not through Cloudflare: the header is ignored and the last hop stands
+    req = _make_request(headers={"x-forwarded-for": "9.9.9.9, 198.51.100.9", "cf-connecting-ip": "203.0.113.5"})
+    assert app_module._require_human(req, {"recaptcha_token": "t"}) is None
+    assert seen == ["203.0.113.5", "198.51.100.9"]
+
+
+def test_rate_limit_middleware_buckets_by_caller_not_by_cloudflare_edge(client, monkeypatch):
+    keys = []
+    monkeypatch.setattr(app_module._ip_limiter, "check", lambda key, *a, **k: keys.append(key) or True)
+    # one caller arriving through three different edges is ONE bucket
+    for edge in ("172.71.150.51", "172.68.22.192", "104.22.105.66"):
+        client.get("/api/public/config", headers={"x-forwarded-for": f"203.0.113.5, {edge}",
+                                                  "cf-connecting-ip": "203.0.113.5"})
+    assert len(set(keys)) == 1 and keys[0].startswith("203.0.113.5")
+    # two callers behind the same edge are TWO buckets
+    keys.clear()
+    for caller in ("203.0.113.5", "198.51.100.9"):
+        client.get("/api/public/config", headers={"x-forwarded-for": f"{caller}, 172.71.150.51",
+                                                  "cf-connecting-ip": caller})
+    assert len(set(keys)) == 2
+
+
 def test_require_human_uses_client_host_when_no_xff(monkeypatch):
     monkeypatch.setattr(app_module, "RECAPTCHA_ENABLED", True)
     monkeypatch.setattr(app_module, "_valid_human_token", lambda tok: False)
@@ -1007,21 +1037,22 @@ def test_autobuy_live_tick_runs_one_step_and_records(monkeypatch):
     from core import n2s_autobuy_live
     seen = {}
 
-    def _fake_tick(rpc, client, sales=None):
+    def _fake_tick(rpc, client, sales=None, gt=None):
         seen["claim"] = rpc("n2s_autobuy_live_claim", {})
-        seen["client"], seen["sales"] = client, sales
+        seen["client"], seen["sales"], seen["gt"] = client, sales, gt
         return {"action": "buy", "phase": "buy_sent"}
 
     fake = _WatchdogSb({"action": "buy"})
     monkeypatch.setattr(app_module, "require_sb", lambda: fake)
     monkeypatch.setattr(n2s_autobuy_live, "tick", _fake_tick)
     monkeypatch.setattr(app_module, "_autobuy_sale_client", lambda: "SALES")
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", lambda: "GT")
     out = anyio.run(app_module._autobuy_live_tick)
     assert out["phase"] == "buy_sent" and seen["claim"] == {"action": "buy"}
     assert fake.calls == [("n2s_autobuy_live_claim", {})]
-    assert seen["client"].token == app_module.TOKEN and seen["sales"] == "SALES"
+    assert seen["client"].token == app_module.TOKEN and seen["sales"] == "SALES" and seen["gt"] == "GT"
     assert app_module._autobuy_live_last["result"]["phase"] == "buy_sent"
-    monkeypatch.setattr(n2s_autobuy_live, "tick", lambda rpc, client, sales=None: {"action": "idle"})
+    monkeypatch.setattr(n2s_autobuy_live, "tick", lambda rpc, client, sales=None, gt=None: {"action": "idle"})
     assert anyio.run(app_module._autobuy_live_tick) == {"action": "idle"}
 
 
@@ -1064,6 +1095,168 @@ def test_autobuy_live_status_route(client, monkeypatch):
     monkeypatch.setenv("N2S_AUTOBUY_LIVE", "1")
     r = client.get("/api/admin/n2s-autobuy-live/status")
     assert r.status_code == 200 and r.json()["enabled"] is True
+
+
+# ---- MANUAL sub buy worker loop (D0, operator 2026-11-11) ------------------
+
+def test_manual_sub_buy_tick_runs_one_step_and_records(monkeypatch):
+    import anyio
+    from core import manual_sub_buy
+    seen = {}
+
+    def _fake_tick(rpc, client, gt):
+        seen["claim"], seen["client"], seen["gt"] = rpc("manual_sub_buy_claim", {}), client, gt
+        return {"action": "buy", "state": "bought"}
+
+    fake = _WatchdogSb({"row": 1})
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", lambda: "GT")
+    monkeypatch.setattr(manual_sub_buy, "tick", _fake_tick)
+    monkeypatch.setattr(manual_sub_buy, "follow", lambda rpc, client, gt: {"action": "idle"})
+    out = anyio.run(app_module._manual_sub_buy_tick)
+    assert out["state"] == "bought" and seen["claim"] == {"row": 1}
+    assert fake.calls == [("manual_sub_buy_claim", {})]          # never an n2s_* call
+    assert seen["client"].token == app_module.TOKEN and seen["gt"] == "GT"
+    assert app_module._manual_sub_buy_last["result"]["state"] == "bought"
+    monkeypatch.setattr(manual_sub_buy, "tick", lambda rpc, client, gt: {"action": "idle"})
+    assert anyio.run(app_module._manual_sub_buy_tick) == {"action": "idle", "follow": {"action": "idle"}}
+    # an idle buy step still follows a bought order, with the same clients
+    monkeypatch.setattr(manual_sub_buy, "follow",
+                        lambda rpc, client, gt: {"action": "follow", "outcome": "confirmed", "gt": gt,
+                                                 "same_client": client.token == app_module.TOKEN})
+    out = anyio.run(app_module._manual_sub_buy_tick)
+    assert out["action"] == "idle" and out["follow"] == {"action": "follow", "outcome": "confirmed", "gt": "GT",
+                                                         "same_client": True}
+
+
+def test_manual_sub_buy_runs_its_evo_side_when_the_gotickets_client_cannot_be_built(monkeypatch):
+    def _boom():
+        raise RuntimeError("vault blip")
+
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", _boom)
+    assert app_module._manual_sub_buy_gt() is None
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", lambda: "GT")
+    assert app_module._manual_sub_buy_gt() == "GT"
+
+
+def test_manual_sub_buy_loop_is_off_without_its_own_env_flag(monkeypatch):
+    import anyio
+    monkeypatch.delenv("MANUAL_SUB_BUY_LIVE", raising=False)
+    monkeypatch.setenv("N2S_AUTOBUY_LIVE", "1")                  # the N2S flag does not turn this on
+    anyio.run(app_module._manual_sub_buy_loop)  # returns at once
+
+
+def test_manual_sub_buy_loop_ticks_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.setenv("MANUAL_SUB_BUY_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "TOKEN", "t")
+    monkeypatch.setattr(app_module, "SECRET", "s")
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("db blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_manual_sub_buy_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._manual_sub_buy_loop)
+    assert ticks["n"] == 2 and app_module._manual_sub_buy_last["error"] == "db blip"
+
+
+def test_manual_sub_buy_status_route(client, monkeypatch):
+    monkeypatch.setenv("MANUAL_SUB_BUY_LIVE", "1")
+    r = client.get("/api/admin/manual-sub-buy/status")
+    assert r.status_code == 200 and r.json()["enabled"] is True
+
+
+# ---- GoTickets sub offer worker loop (D0, operator 2026-11-13) --------------
+
+def test_gt_sub_offer_tick_offers_then_follows(monkeypatch):
+    import anyio
+    import core.vault as vault
+    from core import gt_sub_offer
+    creds = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": "b"}
+    fake = _WatchdogSb({"offer_id": 1})
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    monkeypatch.setattr(vault, "vault_secret", lambda db, name: creds[name])
+    seen = {}
+
+    def _fake_tick(rpc, client):
+        seen["claim"], seen["ready"] = rpc("sub_finder_gt_offer_claim", {}), client.ready()
+        return {"action": "offer", "state": "sent"}
+
+    monkeypatch.setattr(gt_sub_offer, "tick", _fake_tick)
+    monkeypatch.setattr(gt_sub_offer, "follow", lambda rpc, client: {"action": "idle"})
+    out = anyio.run(app_module._gt_sub_offer_tick)
+    assert out == {"action": "offer", "state": "sent", "follow": {"action": "idle"}}
+    assert seen == {"claim": {"offer_id": 1}, "ready": True}
+    assert fake.calls == [("sub_finder_gt_offer_claim", {})]
+    assert app_module._gt_sub_offer_last["result"]["state"] == "sent"
+    monkeypatch.setattr(gt_sub_offer, "tick", lambda rpc, client: {"action": "idle"})
+    assert anyio.run(app_module._gt_sub_offer_tick) == {"action": "idle", "follow": {"action": "idle"}}
+    creds["GOTICKETS_API_SECRET"] = None                          # no credentials: nothing is claimed
+    assert anyio.run(app_module._gt_sub_offer_tick)["action"] == "no_credentials"
+
+
+def test_gt_sub_offer_loop_off_by_default_then_ticks_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.delenv("GT_SUB_OFFER_LIVE", raising=False)
+    monkeypatch.setenv("MANUAL_SUB_BUY_LIVE", "1")               # another worker's flag does not turn this on
+    anyio.run(app_module._gt_sub_offer_loop)  # returns at once
+    monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("db blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_gt_sub_offer_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._gt_sub_offer_loop)
+    assert ticks["n"] == 2 and app_module._gt_sub_offer_last["error"] == "db blip"
+
+
+def test_gt_sub_offer_status_route(client, monkeypatch):
+    monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")
+    r = client.get("/api/admin/gt-sub-offer/status")
+    assert r.status_code == 200 and r.json()["enabled"] is True
+
+
+def test_autobuy_gt_buy_client_caches_only_with_both_keys(monkeypatch):
+    import core.vault as vault
+    vals = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": None}
+    monkeypatch.setattr(vault, "vault_secret", lambda db, name: vals[name])
+    monkeypatch.setattr(app_module, "require_sb", lambda: object())
+    monkeypatch.setattr(app_module, "_autobuy_gt_client", [])
+    c = app_module._autobuy_gt_buy_client()
+    assert not c.ready() and app_module._autobuy_gt_client == []
+    vals["GOTICKETS_API_SECRET"] = "b"
+    c2 = app_module._autobuy_gt_buy_client()
+    assert c2.ready() and app_module._autobuy_gt_client == [c2] and app_module._autobuy_gt_buy_client() is c2
 
 
 def test_autobuy_sale_client_caches_only_when_every_token_is_there(monkeypatch):

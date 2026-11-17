@@ -34,11 +34,12 @@ def _client(*responses):
     return eb.EvoBuyClient("tok", "xyz", session=FakeSession(responses))
 
 
-def test_guard_allows_get_and_only_the_two_write_paths():
+def test_guard_allows_get_and_only_the_pinned_post_paths():
     eb._assert_readonly_method("GET", "/v9/anything")
     eb._assert_readonly_method("post", "/v9/orders")
     eb._assert_readonly_method("POST", "/v9/orders/123/accept")
-    for path in ("/v9/orders/123/reject", "/v9/orders/123", "/v9/ticket_groups/1", "/v9/orders/x/accept",
+    eb._assert_readonly_method("POST", "/v9/tax_quotes")
+    for path in ("/v9/tax_quotes/1", "/v9/tax_quotes?x=1", "/v9/orders/123/reject", "/v9/orders/123", "/v9/ticket_groups/1", "/v9/orders/x/accept",
                  "/v9/orders/1/accept/../reject", "/v9/orders?x=1", "", None):
         with pytest.raises(eb.EvoBuyError, match="not sanctioned"):
             eb._assert_readonly_method("POST", path)
@@ -46,7 +47,7 @@ def test_guard_allows_get_and_only_the_two_write_paths():
         with pytest.raises(eb.EvoBuyError, match="RULE 2"):
             eb._assert_readonly_method(m, "/v9/orders")
     assert eb.ALLOWED_HTTP_METHODS == frozenset({"GET", "POST"})
-    assert eb.EVO_WRITE_PATHS == (r"^/v9/orders$", r"^/v9/orders/\d+/accept$")
+    assert eb.EVO_WRITE_PATHS == (r"^/v9/orders$", r"^/v9/orders/\d+/accept$", r"^/v9/tax_quotes$")
 
 
 def test_guard_runs_before_any_request():
@@ -136,6 +137,18 @@ def test_buy_order_body():
                                                       "items": [{"ticket_group_id": 1, "quantity": 1,
                                                                  "price": "1.00"}]}
     assert eb.SHIPMENT_FOR_FORMAT["TM_mobile"] == "TMMobile"
+    assert "tax_signature" not in o and "tax_signature" not in fedex["orders"][0]
+    signed = eb.buy_order_body(ticket_group_id=1, quantity=1, price_ea=1, seller_office_id=1, buyer_office_id=2,
+                               shipment_type="Eticket", email_address_id=None, note="", tax_signature="sig-1")
+    assert signed["orders"][0]["tax_signature"] == "sig-1" and signed["orders"][0]["tax"] == 0
+
+
+def test_tax_quote_posts_only_the_ticket_group_and_quantity():
+    c = _client(_resp(200, {"tax_signature": "sig-1", "wholesale": {"tax": 5.5, "total": 105.5}}))
+    assert c.tax_quote("6744480374", 2)["tax_signature"] == "sig-1"
+    method, url, kw = c.session.calls[0]
+    assert (method, url) == ("POST", "https://api.ticketevolution.com/v9/tax_quotes")
+    assert json.loads(kw["data"]) == {"ticket_group_id": 6744480374, "quantity": 2, "payment_type": "evopay"}
 
 
 def test_an_unreadable_write_response_is_unknown_and_a_read_one_raises():
