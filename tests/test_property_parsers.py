@@ -102,6 +102,49 @@ def test_client_ip_from_xff_takes_rightmost_hop(chain_parts):
 def test_client_ip_from_xff_empty_returns_fallback():
     assert client_ip_from_xff("", "fb") == "fb"
     assert client_ip_from_xff(None, "fb") == "fb"
+    assert client_ip_from_xff(None, "fb", "203.0.113.7") == "fb"       # the header alone names nobody
+
+
+EDGE = "172.71.150.51"            # inside Cloudflare's published 172.64.0.0/13
+
+
+def test_client_ip_behind_cloudflare_is_the_address_cloudflare_reports():
+    """What the app receives on Render: `<caller>, <Cloudflare edge>` plus CF-Connecting-IP.
+    The edge changes per request; the caller is what a per-IP bucket must key on."""
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}", "x", "203.0.113.7") == "203.0.113.7"
+    assert client_ip_from_xff(f"1.2.3.4, 203.0.113.7, {EDGE}", "x", " 203.0.113.7 ") == "203.0.113.7"
+    assert client_ip_from_xff("2001:db8::9, 2606:4700::1", "x", "2001:DB8::9") == "2001:db8::9"
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}", "x", "2001:db8::9") == "2001:db8::9"   # v6 caller, v4 edge
+
+
+def test_client_ip_steps_over_the_hosts_own_private_hop_after_the_edge():
+    """A free-plan Render service receives `<caller>, <Cloudflare edge>, <10.x proxy>`."""
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}, 10.192.21.100", "x", "203.0.113.7") == "203.0.113.7"
+    # one hop, because that is what the host adds: a longer run of private addresses is not read past
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}, 10.1.1.1, 10.2.2.2", "x", "203.0.113.7") == "10.2.2.2"
+    assert client_ip_from_xff("10.192.21.100", "x", "203.0.113.7") == "10.192.21.100"      # nothing before it
+    # private hops with no edge before them prove nothing: the last hop stands
+    assert client_ip_from_xff("203.0.113.7, 198.51.100.9, 10.192.21.100", "x", "203.0.113.7") == "10.192.21.100"
+    assert client_ip_from_xff("10.0.0.1, 10.192.21.100", "x", "203.0.113.7") == "10.192.21.100"
+    # without the header there is nothing to step over for
+    assert client_ip_from_xff(f"203.0.113.7, {EDGE}, 10.192.21.100", "x") == "10.192.21.100"
+
+
+def test_client_ip_ignores_the_cloudflare_header_on_a_request_that_did_not_come_through_it():
+    # the last hop is the sender itself (not our edge): a made-up header changes nothing
+    assert client_ip_from_xff("9.9.9.9, 198.51.100.9", "x", "203.0.113.7") == "198.51.100.9"
+    assert client_ip_from_xff("198.51.100.9", "x", "203.0.113.7") == "198.51.100.9"
+    assert client_ip_from_xff("9.9.9.9, unknown", "x", "203.0.113.7") == "unknown"
+
+
+def test_client_ip_behind_cloudflare_falls_back_to_the_edge_hop_without_one_clean_address():
+    for bad in (None, "", "garbage", "203.0.113.7, 198.51.100.9", "203.0.113.0/24"):
+        assert client_ip_from_xff(f"203.0.113.7, {EDGE}", "x", bad) == EDGE
+
+
+@given(st.text(), st.one_of(st.none(), st.text(max_size=20)), st.one_of(st.none(), st.text(max_size=40)))
+def test_client_ip_from_xff_never_raises_with_the_cloudflare_header(xff, fallback, cf):
+    client_ip_from_xff(xff, fallback, cf)
 
 
 # --- decrypt_barcode (adversarial forgery) -----------------------------------

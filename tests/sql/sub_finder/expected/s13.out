@@ -1,0 +1,18 @@
+submit pulled with the SeatGeek flag:
+requested
+live helper (1001 yes, 1002 no):
+t|f|f
+{"events": 5, "jobs_rematched": 1}
+pull: SeatGeek flag true; event 30 still pulled (order 1006 watches it):
+t|{30,31,32,33,34}
+1001 (offer out) keeps listing 3001; 1002 and 1006 moved to the cheaper seats:
+1001|3001|f
+1002|3102|t
+1006|3002|t
+an event watched ONLY by an offered order is not pulled:
+{"events": 4, "jobs_rematched": 1}
+{31,32,33,34}
+offer denied -> 1001 is polled and re-matched again:
+{"events": 5, "jobs_rematched": 1}
+{30,31,32,33,34}
+1001|3003
