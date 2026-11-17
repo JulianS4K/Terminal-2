@@ -320,6 +320,7 @@
  tickpick_catalog_pull      | f    | t
  tickpick_catalog_tick      | f    | t
 
-         jobname         |  schedule  
--------------------------+------------
- tickpick_catalog_hourly | 41 * * * *
+         jobname          |  schedule  
+--------------------------+------------
+ tickpick_catalog_hourly  | 41 * * * *
+ vivid_catalog_map_hourly | 43 * * * *
