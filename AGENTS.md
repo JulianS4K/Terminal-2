@@ -6,7 +6,7 @@ then read [`PROJECT_BIBLE.md`](PROJECT_BIBLE.md) before writing anything. The ru
 faithful mirror of the operator lockdown in `CLAUDE.md §1–3`; that file remains the canonical source —
 where they ever disagree, `CLAUDE.md` wins.
 
-> **Doc version:** v1.0.0 (2026-07-13) — initial multi-agent entry pointer. Mirrors `CLAUDE.md §1–3`
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- AGENTS.md`). Do not edit this line (README *Doc-writing rules* §5).
 > (hard rules) + the lane map, so agents that don't auto-load `CLAUDE.md` inherit the same guardrails.
 > Companion configs: `.github/copilot-instructions.md` (Copilot) · `.cursor/rules/terminal2.mdc` (Cursor).
 

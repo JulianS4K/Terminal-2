@@ -297,6 +297,7 @@ def _require_human(request: Request, payload: dict | None = None):
     ip = _client_ip_from_xff(
         request.headers.get("x-forwarded-for"),
         request.client.host if request.client else None,
+        request.headers.get("cf-connecting-ip"),
     )
     if _verify_recaptcha(token, "submit", ip):
         return
@@ -520,15 +521,75 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "form-action 'self'"
     )
 
+    # Exos SPA (/bridge/*, D4; source in JulianS4K/EXP). The retail CSP above
+    # broke three shipped Exos features: Google Fonts (style/font hosts), the
+    # organizer's consent-gated marketing pixels (Meta / GA4 / TikTok script +
+    # beacon hosts), and the venue embed (frame-ancestors 'none'). It also
+    # needs Stripe.js, the Maps Embed iframe, and Supabase realtime (wss).
+    # Pixel hosts are only allowed on public listing pages; the door scanner
+    # and account pages get the same policy minus the pixel vendors (EXP
+    # src/lib/pixels.ts isPixelRoute mirrors this split).
+    _BRIDGE_PIXEL_SCRIPT = (
+        " https://connect.facebook.net https://www.googletagmanager.com"
+        " https://analytics.tiktok.com"
+    )
+    _BRIDGE_PIXEL_CONNECT = (
+        " https://www.facebook.com https://*.google-analytics.com"
+        " https://*.analytics.google.com https://www.googletagmanager.com"
+        " https://analytics.tiktok.com"
+    )
+    _BRIDGE_PIXEL_PREFIXES = (
+        "/bridge/event/", "/bridge/e/", "/bridge/o/", "/bridge/organizer/", "/bridge/embed/event/",
+    )
+    # Google Maps JavaScript API (interactive venue map + /bridge/map), per
+    # Google's allowlist CSP guidance, only on the pages that render a map.
+    # Geocoding never runs in the browser (exos-geocode edge fn).
+    _BRIDGE_MAPS_SCRIPT = " https://*.googleapis.com https://*.gstatic.com https://*.google.com https://*.ggpht.com https://*.googleusercontent.com blob:"
+    _BRIDGE_MAPS_CONNECT = " https://*.googleapis.com https://*.google.com https://*.gstatic.com data: blob:"
+    _BRIDGE_MAPS_PREFIXES = ("/bridge/event/", "/bridge/map")
+
+    @classmethod
+    def _bridge_csp(cls, path: str) -> str:
+        pixels = path in ("/bridge", "/bridge/") or path.startswith(cls._BRIDGE_PIXEL_PREFIXES)
+        maps = path.startswith(cls._BRIDGE_MAPS_PREFIXES)
+        embed = path.startswith("/bridge/embed/")
+        return (
+            "default-src 'self'; "
+            "script-src 'self' https://js.stripe.com"
+            + (cls._BRIDGE_PIXEL_SCRIPT if pixels else "")
+            + (cls._BRIDGE_MAPS_SCRIPT if maps else "") + "; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: blob: https:; "
+            # checkout.stripe.com: Stripe Embedded Checkout (the /bridge/embed buy flow).
+            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://checkout.stripe.com"
+            + (cls._BRIDGE_PIXEL_CONNECT if pixels else "")
+            + (cls._BRIDGE_MAPS_CONNECT if maps else "") + "; "
+            "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://www.google.com; "
+            + ("worker-src 'self' blob:; " if maps else "worker-src 'self'; ")
+            + "manifest-src 'self'; "
+            # The embed is meant to be framed by any venue's site; nothing else is.
+            + ("frame-ancestors *; " if embed else "frame-ancestors 'none'; ")
+            + "base-uri 'self'; "
+            "form-action 'self'"
+        )
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        path = request.url.path
         csp = self._CSP
-        if RECAPTCHA_ENABLED and request.url.path.startswith("/store"):
+        if RECAPTCHA_ENABLED and path.startswith("/store"):
             csp = self._CSP_RECAPTCHA
+        is_bridge = path == "/bridge" or path.startswith("/bridge/")
+        if is_bridge:
+            csp = self._bridge_csp(path)
         response.headers.setdefault("Content-Security-Policy", csp)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault("X-Frame-Options", "DENY")
+        # X-Frame-Options can't express "any origin"; the embed relies on the
+        # CSP frame-ancestors above instead.
+        if not (is_bridge and path.startswith("/bridge/embed/")):
+            response.headers.setdefault("X-Frame-Options", "DENY")
         # Permissions-Policy: deny powerful features by default. The Bridge
         # surface (/bridge/*) hosts the organizer door scanner, which needs
         # getUserMedia — without camera=(self) here the browser blocks the
@@ -617,6 +678,10 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         ("/api/store/verify-human", 30, 60.0),  # bot gate — once per session, generous
         ("/api/store/reserve",  10,  60.0),  # mock reserve, but hits TEvo (tightened for demo)
         ("/api/store/",         60,  60.0),  # public catalog reads
+        ("/api/prices/",       120,  60.0),  # public price tracker (cached reads)
+        ("/api/mcp/",           60,  60.0),  # developer catalog (cached)
+        ("/mcp",               600,  60.0),  # MCP endpoint — per-key limits apply inside MCPApp
+        ("/api/v1/subs",       600,  60.0),  # sub finder API — per-key limits apply in routers/subs_api.py
         ("/api/config",         30,  60.0),  # auth-validates against Supabase per call
         ("/api/public/config", 120,  60.0),  # cheap, but worth a cap
         ("/api/admin/",          5,  60.0),  # admin write surface
@@ -642,9 +707,13 @@ class _RateLimitMiddleware(BaseHTTPMiddleware):
         # by our own edge proxy and is the only one a client can't forge. The
         # leftmost entry is client-supplied — keying on it let a single client
         # rotate fake IPs and bypass every per-IP bucket (audit 2026-06-10).
+        # When that rightmost hop is Cloudflare's edge (every public request on
+        # Render), the caller is in CF-Connecting-IP, which Cloudflare writes
+        # itself; the helper takes it only then (2026-11-16).
         ip = _client_ip_from_xff(
             request.headers.get("x-forwarded-for"),
             request.client.host if request.client else "unknown",
+            request.headers.get("cf-connecting-ip"),
         ) or "unknown"
         n, w = self._bucket(path)
         # Key is ip + bucket-prefix, NOT the full path. Using the raw path lets
@@ -724,11 +793,37 @@ from routers.pages import build_pages_router  # noqa: E402
 # monkeypatch app._BRIDGE_DIR; the pages router resolves it at request time.
 _BRIDGE_DIR = os.path.join(STATIC_DIR, "bridge")
 
+def _exos_link_preview(page: str, query: str) -> str | None:
+    """Per-event / per-org link-preview tags for Exos /bridge pages (D4,
+    core/exos_seo.py). Reads only the public views. None when there's no
+    Supabase client or nothing to preview."""
+    from core.exos_seo import build_preview, preview_target
+    target = preview_target(page, query)
+    if target is None or sb is None:
+        return None
+    base = (os.environ.get("EXOS_PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if not base:
+        return None
+    return build_preview(sb, target, base)
+
+
+def _exos_sitemap() -> str | None:
+    """sitemap.xml for the Exos storefront (D4, core/exos_seo.build_sitemap).
+    None without a Supabase client or a public base URL."""
+    from core.exos_seo import build_sitemap
+    base = (os.environ.get("EXOS_PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if sb is None or not base:
+        return None
+    return build_sitemap(sb, base)
+
+
 app.include_router(build_pages_router(
     STATIC_DIR,
     get_storefront_as_landing=lambda: STOREFRONT_AS_LANDING,
     get_storefront_version=lambda: _STOREFRONT_VERSION,
     get_bridge_dir=lambda: _BRIDGE_DIR,
+    get_exos_preview=lambda page, query: _exos_link_preview(page, query),
+    get_exos_sitemap=lambda: _exos_sitemap(),
 ))
 
 
@@ -911,7 +1006,23 @@ app.include_router(build_broker_router(
     get_discover_payload=lambda: _discover_payload,
     get_client=lambda: client,
     get_bulk_performer_assets=lambda: _bulk_performer_assets,
+    get_s4kcs_client=lambda: _s4kcs_client(),
 ))
+
+
+def _s4kcs_client():
+    """Build the read-only S4K CRM marketplace client, or None when no key is
+    configured. The order lookup treats None as "CRM unavailable" and answers
+    from the four ingested books, so a missing key degrades rather than 500s.
+    Construction is cheap (no network); the client memoises the order fetch
+    itself, which is what the 10/min upstream rate limit actually cares about.
+    """
+    try:
+        from s4kcs_client import S4KCSClient
+        return S4KCSClient(db=require_sb())
+    except Exception as e:  # noqa: BLE001 - missing key / import / client init
+        print(f"s4kcs: client unavailable: {type(e).__name__}")
+        return None
 
 
 # Trip-planner payload builders moved to core/trip_payloads.py (BR-CODE-1 core/
@@ -1858,6 +1969,228 @@ def scheduler_watchdog_status(_=Depends(require_auth)):
     return _sched_watchdog_last
 
 
+# ---------------------------------------------------------------------------
+# N2S auto-buy LIVE worker (D7) — EVO subs, one live run (operator 2026-11-09); GoTickets subs,
+# their own one live run and caps (operator 2026-11-13).
+#
+# Off unless N2S_AUTOBUY_LIVE=1 on this service AND n2s_autobuy_config.mode = 'live'.
+# Each tick claims at most one row through n2s_autobuy_live_claim() (a row lock + lease,
+# so several web workers never act on the same row) and runs one market step via
+# core/n2s_autobuy_live.py → evo_buy_client.py / gotickets_buy_client.py (path-pinned writes).
+# ---------------------------------------------------------------------------
+_AUTOBUY_LIVE_INTERVAL_S = float(os.environ.get("N2S_AUTOBUY_LIVE_INTERVAL_SECONDS", "15"))
+_autobuy_live_last: dict = {"at": None, "result": None, "error": None}
+
+
+_autobuy_sales_client: list = []  # built once per process from Vault (GoTickets / SeatGeek / Vivid tokens)
+
+
+def _autobuy_sale_client():
+    if not _autobuy_sales_client:
+        from core import n2s_autobuy_live
+        from core.vault import vault_secret
+        from sale_accept_client import SaleAcceptClient
+        db = require_sb()
+        c = SaleAcceptClient(
+            gt_id=vault_secret(db, "GOTICKETS_ACCESS_ID"), gt_secret=vault_secret(db, "GOTICKETS_API_SECRET"),
+            sg_token=vault_secret(db, "SEATGEEK_API_TOKEN"), vivid_token=vault_secret(db, "VIVID_API_TOKEN"),
+            # read on every use: tickpick_token_refresh replaces it about daily
+            tickpick_token=lambda: vault_secret(require_sb(), "TICKPICK_API_TOKEN"),
+            # TickPick refuses this service's address: its read and confirm go out from the database
+            # (mig 20261116181000). One retry on a dropped connection is safe: the confirm is once-only.
+            tickpick_db=n2s_autobuy_live.retrying(lambda name, params: require_sb().rpc(name, params).execute().data))
+        if not all(c.has_market(m) for m in ("gotickets", "seatgeek", "vivid")):
+            return c  # a token is missing (or Vault blipped): don't cache, re-read next tick
+        _autobuy_sales_client.append(c)
+    return _autobuy_sales_client[0]
+
+
+_autobuy_gt_client: list = []  # the GoTickets buy client, built once per process from Vault
+
+
+def _autobuy_gt_buy_client():
+    """GoTickets buy client (operator 2026-11-13): same Vault key pair as the sale accept."""
+    if not _autobuy_gt_client:
+        from core.vault import vault_secret
+        from gotickets_buy_client import GoTicketsBuyClient
+        db = require_sb()
+        c = GoTicketsBuyClient(vault_secret(db, "GOTICKETS_ACCESS_ID"), vault_secret(db, "GOTICKETS_API_SECRET"))
+        if not c.ready():
+            return c  # a key is missing (or Vault blipped): don't cache, re-read next tick
+        _autobuy_gt_client.append(c)
+    return _autobuy_gt_client[0]
+
+
+async def _autobuy_live_tick():
+    from core import n2s_autobuy_live
+    from evo_buy_client import EvoBuyClient
+
+    def _call():
+        def rpc(name, params):
+            return require_sb().rpc(name, params).execute().data
+        # one retry when the DB connection dropped ("Server disconnected"; 20261112020000)
+        return n2s_autobuy_live.tick(n2s_autobuy_live.retrying(rpc), EvoBuyClient(TOKEN, SECRET),
+                                     sales=_autobuy_sale_client(), gt=_autobuy_gt_buy_client())
+
+    out = await asyncio.to_thread(_call)
+    _autobuy_live_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    if out.get("action") != "idle":
+        _log.warning("n2s_autobuy_live: %s", out)
+    return out
+
+
+async def _autobuy_live_loop():
+    if os.environ.get("N2S_AUTOBUY_LIVE") != "1" or sb is None or not (TOKEN and SECRET) or SANDBOX:
+        _log.info("n2s_autobuy_live: disabled (N2S_AUTOBUY_LIVE != 1, no DB / EVO creds, or sandbox)")
+        return
+    _log.warning("n2s_autobuy_live: started (every %ss)", _AUTOBUY_LIVE_INTERVAL_S)
+    while True:
+        try:
+            await _autobuy_live_tick()
+        except Exception as e:  # never let the loop die; the row's lease lapses and it is re-polled
+            _autobuy_live_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("n2s_autobuy_live: tick failed: %s", e)
+        await asyncio.sleep(_AUTOBUY_LIVE_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_autobuy_live():  # pragma: no cover - startup hook; loop covered via _autobuy_live_loop
+    asyncio.create_task(_autobuy_live_loop())
+
+
+@app.get("/api/admin/n2s-autobuy-live/status")
+def autobuy_live_status(_=Depends(require_auth)):
+    """Last live auto-buy tick (auth-gated)."""
+    return {"enabled": os.environ.get("N2S_AUTOBUY_LIVE") == "1", **_autobuy_live_last}
+
+
+# ---------------------------------------------------------------------------
+# MANUAL sub buy worker (D0) — an EVO listing the operator chose for one sale
+# (operator 2026-11-11). Separate from the N2S worker above: its own env flag, its own
+# tables and config (manual_sub_buy*), its own kill switch. Off unless
+# MANUAL_SUB_BUY_LIVE=1 on this service AND manual_sub_buy_config.enabled is true.
+# Each tick claims at most one requested row and buys it once via core/manual_sub_buy.py →
+# evo_buy_client.py (the path-pinned EVO write client), or, for a row whose market is
+# 'gotickets' (operator 2026-11-13, mig 20261113300000; off unless manual_sub_buy_config.gt_enabled),
+# gotickets_buy_client.py (the path-pinned GoTickets buy).
+# ---------------------------------------------------------------------------
+_MANUAL_SUB_BUY_INTERVAL_S = float(os.environ.get("MANUAL_SUB_BUY_INTERVAL_SECONDS", "15"))
+_manual_sub_buy_last: dict = {"at": None, "result": None, "error": None}
+
+
+def _manual_sub_buy_gt():
+    """The GoTickets buy client for a 'gotickets' row (the same Vault key pair the N2S buyer uses).
+    None when it cannot be built: EVO rows still run, a GoTickets row stops with no_gt_buy_client."""
+    try:
+        return _autobuy_gt_buy_client()
+    except Exception as e:  # noqa: BLE001 - a Vault blip must not stop the EVO side of this worker
+        _log.warning("manual_sub_buy: GoTickets client unavailable: %s", type(e).__name__)
+        return None
+
+
+async def _manual_sub_buy_tick():
+    from core import manual_sub_buy
+    from evo_buy_client import EvoBuyClient
+
+    def _call():
+        def rpc(name, params):
+            return require_sb().rpc(name, params).execute().data
+        client = EvoBuyClient(TOKEN, SECRET)
+        gt = _manual_sub_buy_gt()
+        out = manual_sub_buy.tick(rpc, client, gt)
+        # then follow one already-bought order toward confirmed / rejected (a GET, never a write)
+        return {**out, "follow": manual_sub_buy.follow(rpc, client, gt)}
+
+    out = await asyncio.to_thread(_call)
+    _manual_sub_buy_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    if out.get("action") != "idle" or out["follow"].get("action") != "idle":
+        _log.warning("manual_sub_buy: %s", out)
+    return out
+
+
+async def _manual_sub_buy_loop():
+    if os.environ.get("MANUAL_SUB_BUY_LIVE") != "1" or sb is None or not (TOKEN and SECRET) or SANDBOX:
+        _log.info("manual_sub_buy: disabled (MANUAL_SUB_BUY_LIVE != 1, no DB / EVO creds, or sandbox)")
+        return
+    _log.warning("manual_sub_buy: started (every %ss)", _MANUAL_SUB_BUY_INTERVAL_S)
+    while True:
+        try:
+            await _manual_sub_buy_tick()
+        except Exception as e:  # never let the loop die; an unfinished row is swept to 'unknown' by the DB
+            _manual_sub_buy_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("manual_sub_buy: tick failed: %s", e)
+        await asyncio.sleep(_MANUAL_SUB_BUY_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_manual_sub_buy():  # pragma: no cover - startup hook; loop covered via _manual_sub_buy_loop
+    asyncio.create_task(_manual_sub_buy_loop())
+
+
+# ---------------------------------------------------------------------------
+# GoTickets sub offer worker (D0) — a substitution request the CRM confirmed through the sub
+# finder API (operator 2026-11-13). Off unless GT_SUB_OFFER_LIVE=1 on this service AND
+# sub_finder_config.gt_offer_enabled. Each tick sends at most one confirmed offer via
+# core/gt_sub_offer.py -> gotickets_sub_client.py (path-pinned), then follows one sent offer (GET).
+# ---------------------------------------------------------------------------
+_GT_SUB_OFFER_INTERVAL_S = float(os.environ.get("GT_SUB_OFFER_INTERVAL_SECONDS", "20"))
+_gt_sub_offer_last: dict = {"at": None, "result": None, "error": None}
+
+
+async def _gt_sub_offer_tick():
+    from core import gt_sub_offer
+    from core.vault import vault_secret
+    from gotickets_sub_client import GoTicketsSubClient
+
+    def _call():
+        db = require_sb()
+
+        def rpc(name, params):
+            return db.rpc(name, params).execute().data
+        client = GoTicketsSubClient(vault_secret(db, "GOTICKETS_ACCESS_ID"), vault_secret(db, "GOTICKETS_API_SECRET"))
+        if not client.ready():
+            return {"action": "no_credentials", "follow": {"action": "idle"}}
+        out = gt_sub_offer.tick(rpc, client)
+        return {**out, "follow": gt_sub_offer.follow(rpc, client)}
+
+    out = await asyncio.to_thread(_call)
+    _gt_sub_offer_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    if out.get("action") != "idle" or out["follow"].get("action") != "idle":
+        _log.warning("gt_sub_offer: %s", out)
+    return out
+
+
+async def _gt_sub_offer_loop():
+    if os.environ.get("GT_SUB_OFFER_LIVE") != "1" or sb is None or SANDBOX:
+        _log.info("gt_sub_offer: disabled (GT_SUB_OFFER_LIVE != 1, no DB, or sandbox)")
+        return
+    _log.warning("gt_sub_offer: started (every %ss)", _GT_SUB_OFFER_INTERVAL_S)
+    while True:
+        try:
+            await _gt_sub_offer_tick()
+        except Exception as e:  # never let the loop die; a row left 'sending' is swept to 'unknown' by the DB
+            _gt_sub_offer_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("gt_sub_offer: tick failed: %s", e)
+        await asyncio.sleep(_GT_SUB_OFFER_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_gt_sub_offer():  # pragma: no cover - startup hook; loop covered via _gt_sub_offer_loop
+    asyncio.create_task(_gt_sub_offer_loop())
+
+
+@app.get("/api/admin/gt-sub-offer/status")
+def gt_sub_offer_status(_=Depends(require_auth)):
+    """Last GoTickets sub offer tick (auth-gated)."""
+    return {"enabled": os.environ.get("GT_SUB_OFFER_LIVE") == "1", **_gt_sub_offer_last}
+
+
+@app.get("/api/admin/manual-sub-buy/status")
+def manual_sub_buy_status(_=Depends(require_auth)):
+    """Last manual sub buy tick (auth-gated)."""
+    return {"enabled": os.environ.get("MANUAL_SUB_BUY_LIVE") == "1", **_manual_sub_buy_last}
+
+
 # ---------- Site essentials (SEO + browser-tab UX) ----------
 #
 # Browsers + crawlers probe /robots.txt + /sitemap.xml + /favicon.ico at fixed
@@ -1867,6 +2200,75 @@ def scheduler_watchdog_status(_=Depends(require_auth)):
 from routers.site_essentials import build_site_essentials_router  # noqa: E402
 
 app.include_router(build_site_essentials_router(_STOREFRONT_BASE_URL))
+
+
+# ---------- Public price tracker (/prices) ----------
+# Public, no-login get-in price pages (home / event / performer / venue) + the
+# /api/prices/* JSON reads behind them -> routers/prices.py. Reads go through
+# the service-role client to the price_tracker_* SQL fns (mig 20261013190000),
+# which anon/authenticated cannot execute. Operator-directed 2026-10-13.
+from routers.prices import build_prices_router  # noqa: E402
+
+app.include_router(build_prices_router(STATIC_DIR, get_require_sb=lambda: require_sb))
+
+# ---------- Developer portal (/developers) ----------
+#
+# Where anyone signs in and mints an external key for /mcp (the key is issued
+# by mcp_self_issue_key from the browser's own session), plus the public
+# /api/mcp/catalog (tool list + per-feed freshness) -> routers/developers.py.
+from routers.developers import build_developers_router  # noqa: E402
+
+app.include_router(build_developers_router(STATIC_DIR, get_require_sb=lambda: require_sb))
+
+# ---------- StubHub OAuth (our seller account, read-only, OFF by default) ----------
+#
+# /api/admin/stubhub/{status,connect} + /api/stubhub/oauth/callback -> routers/stubhub_oauth.py.
+# The code→token swap and refresh run in SQL (mig 20261113250040); answers 503 until
+# STUBHUB_API_ENABLED=1 and stubhub_api_config.enabled (operator 2026-11-13).
+from routers.stubhub_oauth import build_stubhub_oauth_router  # noqa: E402
+
+app.include_router(build_stubhub_oauth_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
+
+
+# ---------- MCP server (/mcp) ----------
+#
+# The terminal's read surface as an MCP server for Claude / other MCP clients
+# (routers/mcp_api.py). Bearer API keys from mcp_api_keys pick the tier:
+# external = public market data, internal = + our book. Its session managers
+# run inside the app lifespan, so the default lifespan (which still fires the
+# @app.on_event hooks above) is wrapped rather than replaced.
+import contextlib  # noqa: E402
+
+from routers.mcp_api import MCPApp  # noqa: E402
+
+mcp_app = MCPApp(lambda: require_sb(), limiter=_ip_limiter)
+app.mount("/mcp", mcp_app)
+
+# The N2S desk as its own MCP server (routers/n2s_mcp.py): internal keys only, same key
+# check / limits / usage stamp, different tools. Kept off /mcp so the market-data server's
+# tool list never grows N2S tools.
+from routers.n2s_mcp import make_n2s_app  # noqa: E402
+
+n2s_mcp_app = make_n2s_app(lambda: require_sb(), limiter=_ip_limiter)
+app.mount("/n2s-mcp", n2s_mcp_app)
+
+# Sub finder API (/api/v1/subs, routers/subs_api.py): a CRM user sends orders and reads back
+# the best substitute per order. Same API keys as /mcp, allow-listed per key in
+# sub_finder_config; shaped like the CRM's own API (X-API-Key, updated_since cursor).
+from routers.subs_api import make_router as _make_subs_api_router  # noqa: E402
+
+app.include_router(_make_subs_api_router(lambda: require_sb(), limiter=_ip_limiter))
+_default_lifespan = app.router.lifespan_context
+
+
+@contextlib.asynccontextmanager
+async def _lifespan_with_mcp(asgi_app):
+    async with mcp_app.lifespan(), n2s_mcp_app.lifespan():
+        async with _default_lifespan(asgi_app) as state:
+            yield state
+
+
+app.router.lifespan_context = _lifespan_with_mcp
 
 
 # Static assets (CSS / JS / images) served from /static.

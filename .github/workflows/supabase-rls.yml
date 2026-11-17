@@ -1,16 +1,10 @@
 name: supabase (migrations-from-zero + RLS)
 
 # Testing-recommendations #1 (migrations-from-zero) + #2 (RLS as first-class
-# security tests). Two jobs with deliberately different gating:
+# security tests).
 #
-#   rls-security      — BLOCKING. Validates the row/column-level security policies
-#                       against Postgres. Uses the self-contained SQL harness
-#                       (tests/exos), which builds the exact exos_tickets secret-
-#                       visibility model + applies the least-privilege migration,
-#                       so it runs GREEN today without depending on the full
-#                       historical migration set. Covers the barcode_secret
-#                       finding (finance/content cannot read the secret; owner/
-#                       buyer/scanner can).
+#   (rls-security, the blocking barcode_secret RLS harness over tests/exos,
+#    moved to JulianS4K/EXP's CI on 2026-09-26 with the *exos* migrations.)
 #
 #   migrations-from-zero — INFORMATIONAL (continue-on-error). Applies the whole
 #                       committed set from an empty DB via `supabase db start`
@@ -25,6 +19,10 @@ name: supabase (migrations-from-zero + RLS)
 #                       real prod state, so this job REPORTS them (job log +
 #                       ::warning::) without blocking. Flip continue-on-error off
 #                       once A1 has reconciled the committed set end-to-end.
+#                       Since 2026-09-26 the *exos* migrations live in
+#                       JulianS4K/EXP; the cross-cutting sweeps here that touch
+#                       exos_* objects (security/RLS/index passes) need them, so
+#                       a faithful from-zero replay needs both repos.
 on:
   pull_request:
     branches: [main]
@@ -32,7 +30,6 @@ on:
       - "supabase/migrations/**"
       - "supabase/config.toml"
       - "tests/rls/**"
-      - "tests/exos/**"
       - "scripts/ci_dedupe_migrations.py"
       - ".github/workflows/supabase-rls.yml"
   push:
@@ -41,41 +38,12 @@ on:
       - "supabase/migrations/**"
       - "supabase/config.toml"
       - "tests/rls/**"
-      - "tests/exos/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  rls-security:
-    name: RLS security (barcode_secret least-privilege)
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: RLS assertions (self-contained SQL harness)
-        # The SQL file creates the anon/authenticated/service_role roles + auth
-        # shim, builds the real exos_tickets shape, applies the migration under
-        # test, then SET ROLEs to `authenticated` and asserts secret visibility
-        # per org role. ON_ERROR_STOP=on makes any failed assertion fail the job.
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 \
-            -f tests/exos/test_barcode_secret_rls.sql
-
   migrations-from-zero:
     name: migrations-from-zero (informational)
     runs-on: ubuntu-latest

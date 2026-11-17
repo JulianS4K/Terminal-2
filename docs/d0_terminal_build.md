@@ -99,6 +99,7 @@ Pages call `TerminalAuth.client.rpc('fn_name', {args})` or `.from('table').selec
 | **Performer** (`performer.html` / `performer.js`) | A + C | index rpc `get_broker_performer_index` (`:48`); detail `T.api('/api/broker/performer/{id}/assets')` + `T.api('/api/portfolio?performer_id={id}')` (`:111-112`); ESPN rpc `get_broker_performer_page({p_performer_id})` (`:355`); Market Carpet reads `event_listing_snapshot_daily`/`event_movers_index`/`discovery_gap_alerts` (`:491-508`) | `performer_metadata`, `entity_performer_map`, `espn_*`, portfolio |
 | **Venue** (`venue.html` / `venue.js`) | C | index rpc `get_broker_venue_index` (`:45`); detail rpc `get_broker_venue_page({p_venue_id})` — one round-trip for 4 tabs (`:108`); Market Carpet same 3 tables (`:332-349`) | `venue_assets`, `entity_venue_map` |
 | **Subs** (`subs.html` / `subs.js`) | A + C | `T.api('/api/broker/event/{id}/substitutions?section=&row=&quantity=&revenue=&source=&fee_pct=')` (`subs.js`); event-name typeahead rpc `terminal_search` | `listings_snapshots`, `seatgeek_seller_listings`, `section_metrics` (logic in `core/substitutions.py`) |
+| **Pickups** (`pickups.html` / `pickups.js`; top-8 panel on Home via `home.js` `loadPickups`) | A | `T.api('/api/broker/pickups?mode=hot\|cold&days=&min_days_out=&max_days_out=&limit=')` → service-role rpc `get_d0_pickups` (mig 20261006170000) | our order book: `v_s4kcs_orders` (CRM, ex-SeatGeek) + `seatgeek_orders` + `evo_orders`/`evo_order_items`; listed qty from `event_listing_snapshot_daily`; SG MKT column = distinct `seatgeek_sales_snapshots` sales on the event (all sellers) + our share (mig 20261006180000) |
 | **Orders** (`orders.html` / `orders.js`) | — | health ping to `https://d2-orders-dashboard.onrender.com/healthz` (`orders.js:9,25`); **no broker API** | (D2 dashboard, separate service) |
 | **Login** (`login.html` / `login.js`) | C (auth) | Supabase Google OAuth via `TerminalAuth.signInWithGoogle`; no broker API | Supabase auth |
 | **(global)** `nav.js` | C | rpc `terminal_search({p_q, p_limit:6})` (`nav.js:115`) | `terminal_search` |
@@ -110,6 +111,8 @@ Pages call `TerminalAuth.client.rpc('fn_name', {args})` or `.from('table').selec
 4. **Path A fallback** — 5 parallel `T.api()` calls (`event.js:259-265`): `/api/broker/event/{id}/overview`, `/chart-data?hours=720`, `/zones`, `/orders`, `/cadences`, reshaped by `legacyToV2Shape`.
 
 Plus 6 parallel enrichment loaders in `init()` (`event.js:78-86`): `loadCrossSourceMetrics`, `loadWeatherLocalized`, `loadSgZonesSplits`, `loadTdSplits`, `loadCrossPlatformSales`, `loadChartExtended`.
+
+**GoTickets mapping chip** (`loadGoticketsBridge`, mig 20260917010000): fire-and-forget rpc `get_event_gotickets_bridge({p_event_id})` → appends a chip to `#eventMode`: `GoTickets ↗ #<gt_event_id> · N sales · N buys` (deep link), or `GoTickets: N claimants · unresolved` (double-claimed — no link on purpose), or `No GoTickets mapping`. Resolution: single `gotickets_event` claimant, else single distinct `aq_event_map` id. Distinct from the GOT price/listing series, which shows GoTickets *prices*; this shows *which* GoTickets event. **Subs** rows carry the obligation's own `gt_event_id` (`v_n2s_orders`, same migration) as a `GT ↗` link beside the event name.
 
 **Discovery gap-type values** (`discovery.js:8-9`, priority map `:140-144`):
 `value_gap_large` · `fill_rate_spike` · `sg_no_evo` · `td_sh_no_evo` · `td_gt_no_evo` · `td_vd_no_evo` · `td_gt_premium` · `td_vd_premium` · `td_sh_no_gt` · `evo_no_sg`
@@ -133,6 +136,18 @@ Route handlers live in `routers/`, not the shell. The relevant pieces for the te
 - **CORS** (`server.py`): `_CORS_ORIGINS` from env `CORS_ALLOWED_ORIGINS`; **default is localhost-only** (`http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000`). Wildcards and non-concrete URLs are rejected at boot. `allow_credentials=True`; methods `GET/POST/DELETE/OPTIONS`; headers `Authorization/Content-Type/X-Cron-Secret`. **⚠ The CDN origin is not in the default — see §B10 gap #1.**
 - **Security headers** (`_SecurityHeadersMiddleware`, `server.py`): CSP `connect-src 'self' https://*.supabase.co`.
 - **Token verification** (`core/auth.py` `require_auth`): backend POSTs the incoming bearer to `{SUPABASE_URL}/auth/v1/user` with the anon apikey to validate the session server-side.
+
+## B5a. MCP server (`/mcp`)
+
+The terminal's read surface is also an **MCP server** (`routers/mcp_api.py`, mounted at `/mcp` in `server.py`; Streamable HTTP, stateless, JSON responses). Any MCP client (Claude Code/Desktop, the API's MCP connector, other agents) connects to `https://<render-host>/mcp/` with a bearer API key.
+
+- **Keys** live hashed (sha256) in `mcp_api_keys` (mig 20261008150000; RLS on, service-role only). Issue one from the Supabase SQL editor: `select public.mcp_issue_key('<who/what>', 'internal'|'external', '<your email>');` returns the plaintext **once**; revoke with `select public.mcp_revoke_key(<id>);`. The server resolves a key with `mcp_verify_key(<sha256 hex>)` (bumps `last_used_at` ≤ once a minute). Header: `Authorization: Bearer s4k_…` (or `X-API-Key`).
+- **Tiers** are separate MCP servers behind one URL, so an external caller never sees internal tools:
+  - **external** (partners) — `search_events`, `event_market` (SeatGeek public sales per day, deduped by `sg_sale_id`, + `event_competitors_snapshot`).
+  - **internal** (our team) — the external tools + `pickups` (`get_d0_pickups_v2`), `event_orders` (`get_event_orders_daily`), `event_source_links`, `home_stats`, `market_chart` (`get_sg_market_chart`), `owned_events` (`get_owned_events_upcoming`), `query_view`.
+- **`query_view`** is the ad-hoc read path: a whitelisted view + column list (`QUERY_VIEWS` in `mcp_api.py`; buyer PII excluded), filters `eq|neq|gt|gte|lt|lte|ilike|in`, `order_by`, ≤ 500 rows — built with the parameterized PostgREST client. **No raw SQL**: 553 public functions are PUBLIC-executable and the `http` extension is installed, so a "read-only role" running caller SQL could still make outbound requests.
+- The four email-gated terminal RPCs it calls (`get_home_stats`, `get_sg_market_chart`, `get_owned_events_upcoming`, `get_event_source_links`) also admit `service_role` (same gate as `get_event_orders_daily`).
+- Everything is read-only; no upstream marketplace API is touched (CLAUDE.md rules 1–2). To add a tool: write a plain `fn(db, ...)` in `mcp_api.py`, add it to `EXTERNAL_TOOLS` or `INTERNAL_TOOLS`, test it in `tests/test_mcp_api.py`.
 
 ## B6. Auth flow
 

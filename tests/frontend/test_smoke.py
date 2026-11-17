@@ -40,6 +40,7 @@ PAGES = [
     ("/fantasy/", "fantasy"),
     ("/store", "catalog"),
     ("/store/discover", "discover"),
+    ("/developers", "developers"),
     ("/store/tour", "tour"),
     ("/store/event/1", "event"),
     ("/store/about", "about"),
