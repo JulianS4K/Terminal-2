@@ -114,10 +114,11 @@ BEGIN
                               'aq_link_gotickets_catalogue_hourly', 'axs_aq_link_hourly',
   -- unit 2: the two repeats of the hourly GoTickets pass
                               'gotickets_match_us_6h', 'gt_map_events_wide_daily') LOOP
-    INSERT INTO public.cron_policy (jobname, enabled, notes)
-    VALUES (j.jobname, false, format('retired 2026-11-17 (mig 20261117060000, consolidated into %s). was: schedule %L command %L',
-                                     CASE WHEN j.jobname IN ('gotickets_match_us_6h', 'gt_map_events_wide_daily') THEN 'gt_map_events_hourly' ELSE 'hub_link_hourly' END,
-                                     j.schedule, j.command))
+    INSERT INTO public.cron_policy (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min, enabled, notes)
+    VALUES (j.jobname, '{}'::int[], 60, 60, false,
+            format('retired 2026-11-17 (mig 20261117060000, consolidated into %s). was: schedule %L command %L',
+                   CASE WHEN j.jobname IN ('gotickets_match_us_6h', 'gt_map_events_wide_daily') THEN 'gt_map_events_hourly' ELSE 'hub_link_hourly' END,
+                   j.schedule, j.command))
     ON CONFLICT (jobname) DO UPDATE SET enabled = false, notes = EXCLUDED.notes, updated_at = now();
     PERFORM cron.unschedule(j.jobname);
   END LOOP;
@@ -130,8 +131,8 @@ BEGIN
                         $j$BEGIN; SET LOCAL statement_timeout = '300s'; SELECT public.event_mapper_run('gotickets_event'); COMMIT;$j$);
 
   -- unit 1: one ordered pass at :45
-  INSERT INTO public.cron_policy (jobname, enabled, notes)
-  VALUES ('hub_link_hourly', true, 'the eight hub fills in dependency order (hub_link_tick), mig 20261117060000')
+  INSERT INTO public.cron_policy (jobname, peak_hours_et, peak_min_interval_min, offpeak_min_interval_min, enabled, notes)
+  VALUES ('hub_link_hourly', '{}'::int[], 55, 55, true, 'the eight hub fills in dependency order (hub_link_tick), mig 20261117060000')
   ON CONFLICT (jobname) DO UPDATE SET enabled = true, notes = EXCLUDED.notes, updated_at = now();
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'hub_link_hourly') THEN
     PERFORM cron.unschedule('hub_link_hourly');
