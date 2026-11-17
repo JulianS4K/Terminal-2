@@ -750,7 +750,7 @@ WITH c AS (
   SELECT 'vivid', count(*), count(tevo_event_id), max(last_seen_at)
     FROM public.vivid_catalog_event WHERE event_date >= current_date AND coalesce(venue_country, 'US') IN ('US', 'CA', 'MX')
   UNION ALL
-  SELECT 'mlb', count(*), count(tevo_event_id), max(updated_at)
+  SELECT 'mlb', count(*), count(tevo_event_id), max(last_seen_at)
     FROM public.mlb_ticket_game WHERE game_date >= current_date
 )
 SELECT catalogue, upcoming, mapped, upcoming - mapped AS unmapped,

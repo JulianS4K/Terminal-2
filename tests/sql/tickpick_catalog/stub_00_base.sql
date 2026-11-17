@@ -69,5 +69,5 @@ CREATE FUNCTION cron.unschedule(name text) RETURNS boolean LANGUAGE sql AS $$ DE
 CREATE TABLE IF NOT EXISTS public.sg_events_canonical (sg_event_id bigint PRIMARY KEY, tevo_event_id bigint, sg_event_date date, updated_at timestamptz);
 CREATE TABLE IF NOT EXISTS public.gotickets_event (gt_event_id bigint PRIMARY KEY, tevo_event_id bigint, event_time_utc timestamptz, status text, updated_at timestamptz);
 CREATE TABLE IF NOT EXISTS public.axs_export_event (axs_event_id bigint PRIMARY KEY, tevo_event_id bigint, gone_at timestamptz, event_date_local text, venue_country text, matched_at timestamptz);
-CREATE TABLE IF NOT EXISTS public.mlb_ticket_game (schedule_id bigint PRIMARY KEY, tevo_event_id bigint, game_date date, updated_at timestamptz);
+CREATE TABLE IF NOT EXISTS public.mlb_ticket_game (schedule_id bigint PRIMARY KEY, tevo_event_id bigint, game_date date, last_seen_at timestamptz);
 CREATE TABLE IF NOT EXISTS public.vivid_catalog_event (vivid_event_id bigint PRIMARY KEY, tevo_event_id bigint, event_date date, venue_country text, last_seen_at timestamptz);
