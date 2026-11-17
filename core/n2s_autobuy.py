@@ -60,6 +60,10 @@ BUY_SIDE: dict[str, dict] = {
     },
 }
 
+# The EVO user who accepts our EVO sales (operator 2026-11-09: tu3@s4kent.com, user 53658, in
+# Office 3 — the office that is the seller on our N2S EVO orders).
+EVO_REVIEWER_ID = 53658
+
 # Marketplaces whose API token was checked working (read-only, 2026-10-28). TickPick's token
 # returns 401 and StubHub's credentials are invalid; Gametime/Viagogo/Ticketmaster have none.
 # Re-add a market here when its token is fixed (mirror 20261028213000's capture filter).
@@ -200,6 +204,10 @@ def index_match(order: dict) -> dict:
     a, b = _level(order.get("section")), _level(order.get("sub_section"))
     if a and b and a != b:
         reasons.append("level_mismatch")
+    # Single-letter vs double-letter rows (H vs AA) are ambiguous: AA can be the back or the front.
+    r1, r2 = str(order.get("order_row") or "").strip(), str(order.get("sub_row") or "").strip()
+    if r1.isalpha() and r2.isalpha() and (len(r1) == 1) != (len(r2) == 1):
+        reasons.append("row_letter_mismatch")
     if (order.get("sub_qty") or 0) < (order.get("quantity") or 0):
         reasons.append("short_quantity")
     if order.get("sub_view") == "obstructed":
@@ -237,7 +245,7 @@ def _buy_body(src: str, order: dict, gt_event_id: Any) -> dict | None:
 def _accept_body(market: str, order: dict) -> dict | None:
     oid = order.get("n2s_order_key") or order.get("order_number")
     if market == "evo":
-        return {"reviewer_id": None}
+        return {"reviewer_id": EVO_REVIEWER_ID}
     if market == "tickpick":
         return {"broker_id": None, "seat_numbers": None}
     if market == "seatgeek":
