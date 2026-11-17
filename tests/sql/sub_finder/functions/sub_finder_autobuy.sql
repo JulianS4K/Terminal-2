@@ -56,6 +56,12 @@ BEGIN
                          AND jsonb_array_length(public.sub_finder_cover_flags(x)) = 0)
         THEN 'needs_crm_confirm'
       ELSE 'profit_too_thin' END;
+    -- 20261117020000: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
+    -- other. The matcher no longer quotes such a cover; this stops one quoted before that rule.
+    IF v_note IS NULL AND public.sub_finder_seat_is_ada(o.section, o.seat_row)
+                       <> public.sub_finder_seat_is_ada(cv->>'section', cv->>'row') THEN
+      v_note := 'ada_seating';
+    END IF;
     -- 20261116000000: an order whose details the caller sent (order_source 'request') is never
     -- bought automatically, even if our own books later show the same seats and price
     IF v_note IS NULL AND o.order_source = 'request' THEN
