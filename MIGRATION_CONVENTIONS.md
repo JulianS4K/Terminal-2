@@ -1,6 +1,6 @@
 # MIGRATION_CONVENTIONS.md
 
-> **Doc version:** v2.3.0 (2026-09-26; §3: Exos (`*exos*`) migrations are authored in `JulianS4K/EXP` and share this project's version history, so prefix collisions span both repos) · v2.2.0 (2026-06-30; §14: +9 landmark rows for the TD sourcing redesign `20260630160000`–`250000`). Full prior doc-version history → [`docs/archive/2026-07-02-doc-version-history.md`](docs/archive/2026-07-02-doc-version-history.md).
+> **Doc version:** not hand-numbered — this file's history is its git history (`git log -- MIGRATION_CONVENTIONS.md`). Do not edit this line (README *Doc-writing rules* §5).
 
 Authoritative reference for how migrations are authored, named, reviewed, and shipped across the Terminal-2 multi-bot environment. **Read this before writing any migration.** Read it again before merging one.
 
@@ -269,6 +269,20 @@ grep -B1 "FRED_API_KEY" supabase/migrations/*.sql
 When a migration breaks production, the first 30 seconds of debugging is reading the header. Make those 30 seconds productive.
 
 ---
+
+## 6a. Changing a function: ship the whole definition (2026-11-13)
+
+**A migration that changes an existing function carries that function's full `CREATE OR REPLACE`.** Do not patch a function in place by reading `pg_get_functiondef()` and replacing text inside it.
+
+Why: a text patch only works while the function in the database matches, character for character, what the author assumed. Prod has drifted from the repo before (comments stripped, an earlier patch applied by hand), so every patch needed its anchors checked against prod first, and the review showed a few replaced lines instead of the function that would result.
+
+For the sub finder and the manual sub buy path the full text is in the repo, checked in CI:
+
+- `tests/sql/sub_finder/functions/<name>.sql` is each function exactly as the migrations listed in `tests/sql/sub_finder/build.sh` leave it. The `sub finder SQL scenarios` job fails when a file and the built function differ.
+- **To change one:** copy its file into the new migration, edit it there, add the migration to `build.sh`, run `tests/sql/sub_finder/run.sh --update`, and commit the changed file with the migration. The diff of that file is the review.
+- Applying a full definition also brings prod's copy of that function back in line with the repo, so no anchor check is needed.
+
+The in-place patches already merged (2026-11-11 to 2026-11-13) stay as they are: they have run. A function owned by another lane is still changed by that lane's own rules; when a migration here has to touch one, a patch guarded against the exact prod text is acceptable, and say so in the header.
 
 ## 7. Vault secrets (process; current name list → `RESOURCES_BIBLE §7`)
 
@@ -592,6 +606,7 @@ Emergency override  → tag `urgent-prod-write`, human approval, audit-lane back
 | 2026-06-30 | 20260630250000 | **Ticketmaster → MSG-only** (venue 896): deactivate non-MSG TM, seed the 22 MSG events with a tm_event_id. |
 | **2026-07-05** | 20260705153000 | **Unified retention engine** — NEW `retention_policy` (per-table keep_days/enabled = THE kill switch) + `retention_run_log` + `retention_tick()` (hourly cron `retention_tick_hourly`, ctid-batched, dual wall-clock budgets, per-policy error capture). Retires the `sweep-old-*` cron family (all 6 unscheduled WITH a migration trail — they'd been toggled off out-of-band 2026-07-01 and listings_snapshots hit 75 GB/227M rows unswept; audit AUD-16). Ladder re-armed: listings 15d · TD 30d · section_metrics 60d · section_rows 30d · event_metrics 120d · espn_injuries 90d; **SG row seeded DISABLED** (pollers dark since 06-26 — operator decision). Deadman watch +2 rows. |
 | 2026-07-05 | 20260705153500 | **Venue-anchored section medians** — NEW `venue_section_price_daily` (one row per event × venue-section × day = day's last `section_metrics` capture; INDEFINITE retention; venue-keyed via `venue_section_map` evo tokens) + performer/AWAY-TEAM dims (name-parse → `performer_metadata`, else 2-performer pair rule; 12/12 on live sample) + `rollup_venue_section_price_daily()` / `venue_section_rollup_catchup()` (hourly cron `venue_section_rollup_hourly`: today refresh + trailing-70d backfill). **Read layer**: `venue_section_{performer,opponent}_agg` (kind `team`\|`other` keeps concert performers separate from teams; exact percentile_cont medians from each event's latest daily row) rebuilt by `refresh_venue_section_aggs()` after each rollup; views `v_venue_section_medians_by_{performer,opponent}` read the aggs; RPC `get_venue_section_medians` (email-gated) feeds the NEW D0 venue-page SECTIONS tab (`static/terminal/venue.{html,js}`). Preserves per-section median history across events before the 60d raw TTL deletes it. |
+| **2026-11-16** | 20261116190000 + 20261116200000 | **MLB schedule with official ticket links** — NEW `mlb_ticket_team` / `mlb_ticket_sync` / `mlb_ticket_game`, collector `mlb_ticket_tick()` (cron `mlb_ticket_tick_1min`) reading MLB's public ticketing schedule per club × season, fill-only match to TEvo `events` (`mlb_ticket_match()`), and the outbound view `v_mlb_schedule_feed` (direct seller links only, + EVO event + terminal hub ids), served to the CRM as `GET /api/v1/subs/mlb/schedule`. Detail: `RESOURCES_BIBLE.md` §1. |
 
 ---
 

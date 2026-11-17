@@ -1,0 +1,6 @@
+M1 numbers only, CRM split key, unknown number, spelled-out order:
+{"error": "forbidden", "detail": "this key may not use the sub finder"}
+M2 nothing known at all:
+{"error": "forbidden"}
+M3 address by order number:
+|t|t

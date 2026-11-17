@@ -27,6 +27,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from core.config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY
+from core.helpers import client_ip_from_xff
 
 _RETAIL_CHAT_MAX_TURNS = 24
 _RETAIL_CHAT_MAX_CHARS = 4000
@@ -101,11 +102,12 @@ def _client_ip(request: Request) -> str:
     # own edge proxy and is the only one a client can't forge. Keying on the
     # leftmost (client-supplied) entry let a single client rotate fake IPs to
     # bypass the edge function's per-IP rate limit (audit 2026-06-10/06-22).
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        last = xff.split(",")[-1].strip()
-        if last:
-            return last
+    # Behind Cloudflare that hop is the edge and the caller is in CF-Connecting-IP;
+    # the shared helper takes it only then (2026-11-16).
+    ip = client_ip_from_xff(request.headers.get("x-forwarded-for"), None,
+                            request.headers.get("cf-connecting-ip"))
+    if ip:
+        return ip
     real = request.headers.get("x-real-ip")
     if real:
         return real.strip()
