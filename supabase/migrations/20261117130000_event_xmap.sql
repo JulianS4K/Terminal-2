@@ -100,9 +100,9 @@ BEGIN
   FOREACH t IN ARRAY ARRAY['event_xmap', 'event_xmap_audit', 'event_xmap_run'] LOOP
     IF NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = ('public.' || t)::regclass) THEN
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-      EXECUTE format('REVOKE ALL ON public.%I FROM anon, authenticated', t);
-      EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
     END IF;
+    EXECUTE format('REVOKE ALL ON public.%I FROM anon, authenticated', t);   -- every apply: the grants are the contract, not a one-time step
+    EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
   END LOOP;
 END
 $rls$;
