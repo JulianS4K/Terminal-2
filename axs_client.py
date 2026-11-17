@@ -108,7 +108,130 @@ def _c2d(cents: Any) -> float | None:
 
 
 def distill(doc: dict) -> dict:
+    """Distill a raw AXS /fetch document into the canonical summary shape.
+
+    Handles BOTH TicketsData response formats — the new v2 harvest envelope
+    (``body.event`` + ``price_points``/``sections``/``offers``/``onsale``) is the
+    default; the legacy "veritix" envelope (``body.meta``/``prices``/``offers.offers``
+    /``startflow``) is the fallback. Both branches return the identical summary
+    dict, so ``normalize()``/``persist()`` are format-agnostic.
+    """
     body = doc.get("body", {}) or {}
+    if isinstance(body.get("event"), dict):
+        return _distill_v2(body, doc)
+    return _distill_veritix(body, doc)
+
+
+def _distill_v2(body: dict, doc: dict) -> dict:
+    """New TicketsData/AXS envelope (2026-07).
+
+    Same per-seat manifest + price book as the veritix format, just relocated to
+    ``body.inventory.offer_search[0].offers[].items[]`` and
+    ``body.inventory.inventory_v4[0].offerPrices``. Aggregates seats to section
+    rows (section/qty/price) — the DB ingest additionally keeps per-seat rows.
+    """
+    event = body.get("event", {}) or {}
+    venue = event.get("venue", {}) or {}
+    status = (body.get("onsale", {}) or {}).get("status", {}) or {}
+    inv = body.get("inventory", {}) or {}
+    offer_search = inv.get("offer_search") or []
+    offers = (offer_search[0].get("offers") or []) if offer_search else []
+    iv4 = inv.get("inventory_v4") or []
+    offer_prices = (iv4[0].get("offerPrices") or []) if iv4 else []
+
+    # price_level_id -> face (dollars); mirrors the DB max(base)/100.
+    # offerID -> offerType: the v2 resale signal ('Single' = primary, '…Resale…'
+    # = resale). The old offerID '9…' prefix is a stale FlashSeats artifact that is
+    # WRONG in v2 (v2 primary offerIDs also start with 9).
+    pl_price: dict[str, float] = {}
+    offer_type: dict[str, str] = {}
+    for op in offer_prices:
+        offer_type[str(op.get("offerID"))] = op.get("offerType") or ""
+        for zp in op.get("zonePrices", []) or []:
+            for pl in zp.get("priceLevels", []) or []:
+                prices = pl.get("prices") or []
+                base = prices[0].get("base") if prices else None
+                if base is not None:
+                    plid = str(pl.get("priceLevelID"))
+                    d = _c2d(base)
+                    pl_price[plid] = d if plid not in pl_price else max(pl_price[plid], d)
+
+    sec: dict[str, dict] = {}
+    faces: list[float] = []
+    primary_faces: list[float] = []
+    seats_primary = 0
+    seats_resale = 0
+    for o in offers:
+        for it in (o.get("items") or []):
+            price = pl_price.get(str(it.get("priceLevelID")))
+            if price is None and it.get("originalPrice") is not None:
+                price = float(it["originalPrice"])
+            # FlashSeats is AXS's resale/transfer channel — count it as resale even
+            # when offerType reads 'Single' (operator directive 2026-08-03).
+            is_resale = (
+                "resale" in offer_type.get(str(it.get("offerID")), "").lower()
+                or it.get("seatType") == "FLASHSEATS"
+            )
+            if is_resale:
+                seats_resale += 1
+            else:
+                seats_primary += 1
+                if price is not None:
+                    primary_faces.append(price)
+            if price is not None:
+                faces.append(price)
+            row = sec.setdefault(it.get("sectionLabel"), {
+                "section": it.get("sectionLabel"), "neighborhood": None, "ga": False,
+                "sold_out": False, "avail_qty": 0, "price_min": None, "price_max": None,
+                "seat_types": set(), "has_resale": False, "connection_fee": None,
+            })
+            row["avail_qty"] += 1
+            if it.get("isGASection"):
+                row["ga"] = True
+            if it.get("seatType"):
+                row["seat_types"].add(it["seatType"])
+            if row["neighborhood"] is None:
+                row["neighborhood"] = it.get("neighborhoodPrintDescription") or it.get("neighborhoodLabel")
+            if is_resale:
+                row["has_resale"] = True
+            if price is not None:
+                row["price_min"] = price if row["price_min"] is None else min(row["price_min"], price)
+                row["price_max"] = price if row["price_max"] is None else max(row["price_max"], price)
+
+    for row in sec.values():
+        row["seat_types"] = sorted(row["seat_types"]) or None
+
+    return {
+        "event": event.get("title"),
+        "venue": venue.get("name"),
+        "event_date": event.get("starts_local"),
+        "tz": event.get("timezone") or venue.get("timezone"),
+        "api": "veritix",  # normalize source tag so downstream stays uniform
+        "onsale_status": {
+            "onSaleNow": status.get("onSaleNow"),
+            "onSaleDate": status.get("onSaleDate"),
+            "offSaleDate": status.get("offSaleDate"),
+        },
+        "currency": event.get("currency") or "USD",
+        "response_s": doc.get("response_s"),
+        "quota_remaining": doc.get("quota_remaining"),
+        "totals": {
+            "listings": (seats_primary + seats_resale) or None,
+            "sections": len(sec) or None,
+            "offers": len(body.get("offers", []) or []) or None,
+            "price_min": min(faces) if faces else None,
+            "price_max": max(faces) if faces else None,
+            "get_in_available": min(primary_faces) if primary_faces else None,
+            "seats_primary": seats_primary,
+            "seats_resale": seats_resale,
+        },
+        "sections": sorted(
+            sec.values(), key=lambda r: (r["price_min"] is None, r["price_min"] or 0)
+        ),
+    }
+
+
+def _distill_veritix(body: dict, doc: dict) -> dict:
     meta = body.get("meta", {}) or {}
     sections = body.get("sections", {}) or {}
     prices = body.get("prices", {}) or {}
