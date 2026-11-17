@@ -101,8 +101,14 @@ BEGIN
     IF NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = ('public.' || t)::regclass) THEN
       EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     END IF;
-    EXECUTE format('REVOKE ALL ON public.%I FROM anon, authenticated', t);   -- every apply: the grants are the contract, not a one-time step
-    EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
+    -- the grants are the contract and are checked on every apply; the statements themselves run only when a
+    -- privilege is off (GRANT / REVOKE take an exclusive lock on the table and would wait on a running pass)
+    IF has_table_privilege('anon', 'public.' || t, 'SELECT, INSERT, UPDATE, DELETE') OR has_table_privilege('authenticated', 'public.' || t, 'SELECT, INSERT, UPDATE, DELETE') THEN
+      EXECUTE format('REVOKE ALL ON public.%I FROM anon, authenticated', t);
+    END IF;
+    IF NOT has_table_privilege('service_role', 'public.' || t, 'SELECT') THEN
+      EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
+    END IF;
   END LOOP;
 END
 $rls$;
@@ -177,6 +183,8 @@ DECLARE
   v_srcs  constant text[] := ARRAY['mlb', 'tickpick', 'vivid', 'sg', 'gotickets', 'axs'];
   v_cols  constant text[] := ARRAY['mlb_schedule_id', 'tp_event_id', 'vivid_event_id', 'sg_event_id', 'gt_event_id', 'axs_event_id'];
   i       int;
+  v_t     timestamptz := clock_timestamp();
+  v_ms    jsonb := '{}'::jsonb;
 BEGIN
   -- one run at a time: the hourly cron must not start while a nightly or a by-hand run is still clustering
   IF NOT pg_try_advisory_xact_lock(hashtext('event_xmap')) THEN
@@ -286,6 +294,7 @@ BEGIN
              'rows_by_source', (SELECT jsonb_object_agg(src, n) FROM (SELECT src, count(*) n FROM _xm_ev GROUP BY 1) s),
              'rows_with_evo', (SELECT count(*) FROM _xm_ev WHERE tevo_event_id IS NOT NULL));
 
+  v_ms := v_ms || jsonb_build_object('working_set', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- D1. verification first: a member gone from its source, or now on another day or venue, leaves its cluster
   DROP TABLE IF EXISTS _xm_detach;
   CREATE TEMP TABLE _xm_detach (xmap_id bigint, src text, sid bigint, why text) ON COMMIT DROP;
@@ -314,6 +323,7 @@ BEGIN
   END IF;
   v_out := v_out || jsonb_build_object('detached', (SELECT count(*) FROM _xm_detach));
 
+  v_ms := v_ms || jsonb_build_object('verify', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- A. EVO-keyed clusters: every row with an EVO id belongs to the cluster of that id
   DROP TABLE IF EXISTS _xm_evo;
   CREATE TEMP TABLE _xm_evo ON COMMIT DROP AS
@@ -348,6 +358,7 @@ BEGIN
           SELECT x.xmap_id, p.sid, p.n FROM pick p JOIN public.event_xmap x ON x.tevo_event_id = p.tevo_event_id
            WHERE x.%2$I IS DISTINCT FROM p.sid)
         INSERT INTO _xm_tgt SELECT * FROM tgt$q$, v_srcs[i], v_cols[i]);
+      CREATE INDEX ON _xm_tgt (sid); CREATE INDEX ON _xm_tgt (xmap_id); ANALYZE _xm_tgt;
       EXECUTE format($q$
         WITH freed AS (
           UPDATE public.event_xmap o SET %2$I = NULL, methods = o.methods - %1$L, updated_at = now()
@@ -366,6 +377,7 @@ BEGIN
     END LOOP;
   END IF;
 
+  v_ms := v_ms || jsonb_build_object('evo_clusters', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- A2. merge: a cluster without an EVO id whose bucket now holds an EVO cluster of the same event (one of its
   --     members was mapped and moved there) hands its other members over and goes
   IF p_apply THEN
@@ -406,6 +418,7 @@ BEGIN
     v_out := v_out || jsonb_build_object('merged', v_n);
   END IF;
 
+  v_ms := v_ms || jsonb_build_object('merge', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- B/C. the rows without an EVO id, not yet in a cluster
   --     (the members of the spine in the window, one indexed lookup per source — a six-way OR against event_xmap
   --      made the planner scan the spine once per loose row: 164k × 73k on the first prod pass, 2026-11-17 20:21Z)
@@ -423,8 +436,11 @@ BEGIN
    WHERE e.tevo_event_id IS NULL
      AND NOT EXISTS (SELECT 1 FROM _xm_member m WHERE m.src = e.src AND m.sid = e.sid);
   CREATE INDEX ON _xm_loose (venue_key, local_day);
+  CREATE INDEX ON _xm_loose (src, sid);
+  ANALYZE _xm_loose;
   v_out := v_out || jsonb_build_object('loose', (SELECT count(*) FROM _xm_loose));
 
+  v_ms := v_ms || jsonb_build_object('loose', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- a bucket is worth working only when two or more sources are in it (existing clusters count as a source)
   DROP TABLE IF EXISTS _xm_bucket;
   CREATE TEMP TABLE _xm_bucket ON COMMIT DROP AS
@@ -439,7 +455,9 @@ BEGIN
   -- the attach rule, as a temp view over the current state of event_xmap and _xm_loose
   DROP TABLE IF EXISTS _xm_attach;
   CREATE TEMP TABLE _xm_attach (src text, sid bigint, xmap_id bigint, method text) ON COMMIT DROP;
+  CREATE INDEX ON _xm_attach (src, sid); CREATE INDEX ON _xm_attach (xmap_id);
 
+  v_ms := v_ms || jsonb_build_object('buckets', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- round 1: attach to clusters that already exist (EVO-keyed or earlier seeds)
   INSERT INTO _xm_attach
   WITH fit AS (
@@ -479,6 +497,7 @@ BEGIN
   DELETE FROM _xm_loose l USING _xm_attach a WHERE a.src = l.src AND a.sid = l.sid;
   TRUNCATE _xm_attach;
 
+  v_ms := v_ms || jsonb_build_object('attach_1', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- C. seeds: in a bucket with two or more sources still loose, the rows of the most structured source present
   DROP TABLE IF EXISTS _xm_seed;
   CREATE TEMP TABLE _xm_seed ON COMMIT DROP AS
@@ -501,6 +520,7 @@ BEGIN
   v_out := v_out || jsonb_build_object('seeded', (SELECT count(*) FROM _xm_seed), 'seeded_by_source', (SELECT coalesce(jsonb_object_agg(src, n), '{}') FROM (SELECT src, count(*) n FROM _xm_seed GROUP BY 1) s));
   DELETE FROM _xm_loose l USING _xm_seed s WHERE s.src = l.src AND s.sid = l.sid;
 
+  v_ms := v_ms || jsonb_build_object('seeds', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int); v_t := clock_timestamp();
   -- round 2: the other sources attach to the fresh seeds (and anything else in the bucket)
   IF p_apply THEN
     INSERT INTO _xm_attach
@@ -545,7 +565,8 @@ BEGIN
     v_out := v_out || jsonb_build_object('deleted_single', v_n);
   END IF;
 
-  v_out := v_out || jsonb_build_object(
+  v_ms := v_ms || jsonb_build_object('attach_2', (extract(epoch FROM clock_timestamp() - v_t) * 1000)::int);
+  v_out := v_out || jsonb_build_object('ms', v_ms,
     'clusters_in_window', (SELECT count(*) FROM public.event_xmap WHERE local_day BETWEEN v_from AND v_to),
     'cross_mapped_without_evo', (SELECT count(*) FROM public.event_xmap WHERE local_day BETWEEN v_from AND v_to AND tevo_event_id IS NULL AND sources >= 2),
     'with_evo_and_others', (SELECT count(*) FROM public.event_xmap WHERE local_day BETWEEN v_from AND v_to AND tevo_event_id IS NOT NULL AND sources >= 2));
@@ -592,12 +613,12 @@ GRANT EXECUTE ON FUNCTION public.event_xmap_tick(integer, boolean), public.xmap_
 
 -- ───────────────────────── 5. crons ─────────────────────────
 -- hourly at :47 (after the catalogue mappers at :41/:43, before the hub fills at :45 of the next hour) for the next
--- 45 days; the whole year once a night
+-- 45 days, 600 s (the first passes build the spine; later ones are incremental); the whole year once a night
 DO $cron$
 BEGIN
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'event_xmap_hourly') THEN PERFORM cron.unschedule('event_xmap_hourly'); END IF;
   PERFORM cron.schedule('event_xmap_hourly', '47 * * * *',
-                        $j$BEGIN; SET LOCAL statement_timeout = '300s'; SELECT public.event_xmap_tick(45, true); COMMIT;$j$);
+                        $j$BEGIN; SET LOCAL statement_timeout = '600s'; SELECT public.event_xmap_tick(45, true); COMMIT;$j$);
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'event_xmap_daily') THEN PERFORM cron.unschedule('event_xmap_daily'); END IF;
   PERFORM cron.schedule('event_xmap_daily', '20 2 * * *',
                         $j$BEGIN; SET LOCAL statement_timeout = '900s'; SELECT public.event_xmap_tick(365, true); COMMIT;$j$);

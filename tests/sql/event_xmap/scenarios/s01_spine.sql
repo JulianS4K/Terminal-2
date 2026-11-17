@@ -7,7 +7,7 @@
 CREATE FUNCTION d(n int) RETURNS date LANGUAGE sql AS $$ SELECT current_date + n $$;
 CREATE FUNCTION at_(n int, hm text) RETURNS text LANGUAGE sql AS $$ SELECT to_char(current_date + n, 'YYYY-MM-DD') || 'T' || hm || ':00' $$;
 CREATE FUNCTION ts_(n int, hm text) RETURNS timestamp LANGUAGE sql AS $$ SELECT at_(n, hm)::timestamp $$;
-CREATE FUNCTION out_(j jsonb) RETURNS text LANGUAGE sql AS $$ SELECT (j - 'run_id' - 'window')::text $$;
+CREATE FUNCTION out_(j jsonb) RETURNS text LANGUAGE sql AS $$ SELECT (j - 'run_id' - 'window' - 'ms')::text $$;
 
 -- the TEvo mirror: venue 100 (Yankee Stadium, New York NY, Eastern) and 300 (Kennedy Center, Washington DC)
 INSERT INTO events (id, name, occurs_at_local, state, venue_id, venue_name, venue_location, primary_performer_name) VALUES
