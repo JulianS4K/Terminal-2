@@ -11,7 +11,9 @@ import os
 from typing import Callable
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+
+from core import exos_proxy
 
 
 def build_pages_router(
@@ -20,12 +22,23 @@ def build_pages_router(
     get_storefront_as_landing: Callable[[], bool] = lambda: False,
     get_storefront_version: Callable[[], str] = lambda: "dev",
     get_bridge_dir: Callable[[], str],
+    get_exos_preview: Callable[[str, str], str | None] | None = None,
+    get_exos_sitemap: Callable[[], str | None] | None = None,
+    get_exos_origin: Callable[[], str | None] = exos_proxy.exos_origin,
 ) -> APIRouter:
     # get_bridge_dir resolves the test-patched server symbol (app._BRIDGE_DIR)
     # at request time — not captured at mount time — so the route tests'
     # monkeypatch binds. It is required (no default) because the bridge dir is
     # only meaningful relative to the live server module.
     router = APIRouter()
+
+    def _from_exos(request: Request) -> Response | None:
+        """/bridge/* via exos-web when EXOS_ORIGIN is set (core/exos_proxy.py);
+        None → serve static/bridge/ as before."""
+        origin = get_exos_origin()
+        if not origin:
+            return None
+        return exos_proxy.proxy_bridge(request, origin)
 
     @router.get("/")
     def root_landing():
@@ -170,17 +183,22 @@ def build_pages_router(
 
 
     # --- D4 / Exos (Bridge) ----------------------------------------------------
-    # Serve the d4_bridge Vite SPA from this Railway app — same origin as the hub,
+    # Serve the Exos Vite SPA (source: JulianS4K/EXP) from this Railway app — same origin as the hub,
     # Terminal, Store, and Undelivered (PR #318 — Railway is now the primary host).
     # Landing redirect, index handler, path-catch-all for assets + SPA deep links.
     # App is built with Vite base '/bridge/' (vite.config.ts) and
     # <BrowserRouter basename="/bridge">, so asset refs + client routes resolve
     # under this prefix. Build artifact: static/bridge/ (rebuild via
-    # `npm --prefix d4_bridge run build` then copy dist → static/bridge/).
+    # `npm run build` in JulianS4K/EXP, then copy its dist/ → static/bridge/).
     # Same-origin means the Supabase session in localStorage is shared with the
     # hub — a user signed in on the home page is automatically signed into Bridge.
     # Returns 404 cleanly until the build artifact is present.
     # (bridge dir resolved at request time via get_bridge_dir() — patchable.)
+    #
+    # Since 2026-09-26 Exos can run on its own Render service (exos-web, from
+    # JulianS4K/EXP render.yaml). With EXOS_ORIGIN set, the routes below
+    # reverse-proxy there (core/exos_proxy.py) and static/bridge/ is only the
+    # fallback. Same URL and origin either way, so the shared login holds.
 
 
     @router.get("/bridge")
@@ -191,20 +209,36 @@ def build_pages_router(
 
 
     @router.get("/bridge/")
-    def bridge_index():
+    def bridge_index(request: Request):
         """Serve the Exos/Bridge SPA shell. 404 (not 500) when the build isn't
         present yet, so the route is safe to ship ahead of the first dist copy."""
+        if (proxied := _from_exos(request)) is not None:
+            return proxied
         index_path = os.path.join(get_bridge_dir(), "index.html")
         if not os.path.isfile(index_path):
-            raise HTTPException(404, "bridge build not present — run `npm --prefix d4_bridge run build` then copy dist → static/bridge/")
+            raise HTTPException(404, "bridge build not present — run `npm run build` in JulianS4K/EXP then copy dist/ → static/bridge/")
         return FileResponse(index_path)
 
 
+    @router.get("/bridge/sitemap.xml", include_in_schema=False)
+    def bridge_sitemap(request: Request):
+        """Published Exos events + organizer pages for search engines
+        (core/exos_seo.build_sitemap). 404 when there's no data source."""
+        if (proxied := _from_exos(request)) is not None:
+            return proxied
+        xml = get_exos_sitemap() if get_exos_sitemap is not None else None
+        if not xml:
+            raise HTTPException(404, "not found")
+        return Response(content=xml, media_type="application/xml; charset=utf-8")
+
+
     @router.get("/bridge/{page:path}")
-    def bridge_static_proxy(page: str):
+    def bridge_static_proxy(page: str, request: Request):
         """Proxy /bridge/<anything> → static/bridge/<anything>. SPA deep links
         (/bridge/event/123 etc.) fall back to index.html for client-side routing.
         Path-traversal guarded + extension-whitelisted (UI bundle pieces only)."""
+        if (proxied := _from_exos(request)) is not None:
+            return proxied
         if not page or page in ("", "/"):  # pragma: no cover - shadowed by the explicit /bridge/ index route
             index_path = os.path.join(get_bridge_dir(), "index.html")
             if not os.path.isfile(index_path):
@@ -224,6 +258,21 @@ def build_pages_router(
         index_path = os.path.join(get_bridge_dir(), "index.html")
         if not os.path.isfile(index_path):
             raise HTTPException(404, "bridge build not present")
+        # Link-unfurl bots don't run JS: give them the event / org preview
+        # server-side (core/exos_seo.py). Humans get the plain shell.
+        if get_exos_preview is not None:
+            from core.seo import is_link_crawler
+            if is_link_crawler(request.headers.get("user-agent")):
+                try:
+                    tags = get_exos_preview(page, request.url.query)
+                except Exception as e:  # noqa: BLE001 — a preview must never break the page
+                    print(f"[bridge] link preview failed for {page!r}: {e!r}")
+                    tags = None
+                if tags:
+                    from core.exos_seo import inject
+                    with open(index_path, encoding="utf-8") as f:
+                        shell = f.read()
+                    return HTMLResponse(inject(shell, tags))
         return FileResponse(index_path)
 
 

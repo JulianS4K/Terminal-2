@@ -57,6 +57,18 @@
     // (mig 20260714220000).
     { id: 'cast-watch', label: 'CAST WATCH', href: 'cast-watch.html' },
     { id: 'movers',    label: 'MOVERS',    href: 'movers.html' },
+    // Pickups — the pricing desk's morning list, automated: OUR daily order
+    // pace per future event, ranked relative to how far out it is (hot), plus
+    // listed inventory not clearing by event day (cold). Backed by
+    // /api/broker/pickups → get_d0_pickups (mig 20261006170000). Wired 2026-10-06.
+    { id: 'pickups',   label: 'PICKUPS',   href: 'pickups.html' },
+    // Deals — GoTickets BUYABLE deals, benchmarked against the OTHER sources'
+    // prices (EVO/amalgam) for the same event×zone: a GoTickets listing priced
+    // well below the cross-market zone median = an arbitrage opportunity. Zone is
+    // the common key via derive_zone_fallback (both sides). GoTickets-exclusive
+    // for now; the other sites are the metric, not the inventory. Sits in the
+    // movers "what to trade" cluster. Wired 2026-08-11.
+    { id: 'deals',     label: 'DEALS',     href: 'deals.html' },
     // Sales — realized-sales analytics per league + per team (home/away split,
     // owned-vs-market, price distribution, top sections). Backed by
     // /api/d0/sales/* over the d0_sales_fact snapshot. See docs/d0-sales-reports.md.
@@ -77,6 +89,11 @@
     // its latest snapshot get-in / price band / listing depth. Backed by
     // /api/axs/events (service-role read; axs_* tables are RLS-locked). 2026-06-20.
     { id: 'axs',       label: 'AXS',       href: 'axs.html' },
+    // Paciolan / eVenue — every event captured from <tenant>.evenue.net (PRIMARY
+    // box office), with face band + AQ mapping + the autonomous pull-loop health.
+    // Browser twin of the AXS tab. Backed by /api/paciolan/events + /health
+    // (service-role read; paciolan_* tables are RLS-locked). 2026-07-27.
+    { id: 'paciolan',  label: 'PACIOLAN',  href: 'paciolan.html' },
     // Eventbrite — organizer events discovered via the TicketsData /events feed
     // (td_discovered_events, platform=eventbrite) with face price band +
     // sold-out / availability. Backed by /api/eventbrite/events (service-role
@@ -95,6 +112,11 @@
     { id: 'season-tickets', label: 'SEASON TIX', href: 'season-tickets.html' },
     { id: 'orders',    label: 'ORDERS',    href: 'orders.html' },
     { id: 'health',    label: 'HEALTH',    href: 'health.html' },
+    // Help — the in-app onboarding guide + feature tour + glossary for
+    // first-time operators (static/terminal/help.html). Kept last so it reads
+    // as the always-available "lost? start here" tab. The full design brief for
+    // the richer onboarding overlay lives in docs/d0_onboarding_guide.md.
+    { id: 'help',      label: 'HELP',      href: 'help.html' },
   ];
 
   function inject() {

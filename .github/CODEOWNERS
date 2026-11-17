@@ -52,16 +52,29 @@
 
 # ── D4 / The Bridge (Exos primary-ticketing) ─────────────────────────────
 # Grouped for clear lane categorization (ownership is unchanged — the `*`
-# rule above already assigns @JulianS4K). The Bridge's footprint is the
-# d4_bridge React app + its build output, the exos-* edge functions, and the
-# *exos* migrations. NOT the A1/D0 "*bridge*" items (sg_to_tevo_search_bridge,
+# rule above already assigns @JulianS4K). The Bridge's SPA source lives in
+# JulianS4K/EXP (moved 2026-09-24), and so do its edge functions, *exos*
+# migrations and tests/exos (moved 2026-09-26); what remains here is its
+# build output (the DB is still shared, but its Exos source isn't here). NOT the A1/D0 "*bridge*" items (sg_to_tevo_search_bridge,
 # espn_bridge, etc.). Auto-labelled `area:bridge` via .github/labeler.yml.
-/d4_bridge/                                 @JulianS4K
 /static/bridge/                             @JulianS4K
-/supabase/functions/exos-api/               @JulianS4K
-/supabase/functions/exos-checkout/          @JulianS4K
-/supabase/functions/exos-connect-onboard/   @JulianS4K
-/supabase/functions/exos-distribute/        @JulianS4K
-/supabase/functions/exos-mail-drain/        @JulianS4K
-/supabase/functions/exos-webhook-drain/     @JulianS4K
-/docs/d4_bridge_charter.md                  @JulianS4K
+/docs/d4_exos_rls_b1_review.md              @JulianS4K
+/docs/exos_event_preflight.md               @JulianS4K
+
+# D7 — N2S ("Need to Sub") obligation-covering pipeline. Carved out of D0's
+# terminal/broker surface 2026-09-10. The subs page, the n2s_* schema, and the
+# /api/broker/n2s-* route block (which lives inside D0-owned routers/broker.py
+# — a §2.6 seam by definition, not an ownership gap).
+# Auto-labelled `area:d7` via .github/labeler.yml (PROJECT_BIBLE §2.3).
+/static/terminal/subs.html                  @JulianS4K
+/static/terminal/subs.js                    @JulianS4K
+
+# Paciolan/eVenue primary box-office ingest (browser-extension-sourced).
+# The normalizer, Chrome collector, /api/paciolan route block, and paciolan_*
+# schema. Auto-labelled `area:paciolan` via .github/labeler.yml.
+# Owned by A1 since 2026-09-10 — the D6 lane was retired into the data plane
+# (PROJECT_BIBLE §2.3 retirement note). The paths stay listed explicitly:
+# paciolan_extension/ is matched by no other rule.
+/paciolan_client.py                         @JulianS4K
+/paciolan_extension/                        @JulianS4K
+/routers/paciolan.py                        @JulianS4K

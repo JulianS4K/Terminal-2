@@ -18,7 +18,6 @@ omit =
     trip_planner/*
     scripts/*
     broadway_extension/*
-    d4_bridge/*
     conftest.py
 
 [report]

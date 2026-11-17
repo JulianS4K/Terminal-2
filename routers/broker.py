@@ -16,19 +16,77 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+from zoneinfo import ZoneInfo
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.concurrency import run_parallel
 from core.helpers import clean_section, delta, listings_cadence_seconds
-from core.substitutions import find_row_substitutions, find_section_substitutions
+from core.substitutions import (find_row_substitutions, find_section_substitutions,
+                                gotickets_buy_url)
 
 # Auto-hide parking/garage/hospitality zones unless the caller opts in. Names
 # like "Parking East", "Garage A", "Premium Parking", "Hospitality Tent".
 _PARKING_ZONE_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park)\b", re.IGNORECASE)
 _PARKING_SECTION_RE = re.compile(r"\b(parking|garage|valet|lot|hospitality|premium\s*park|prepaid|preferred\s*parking|guest\s*parking|vip\s*lot|vip\s*parking)\b", re.IGNORECASE)
+
+
+def _s4kcs_payload(payload, row: dict, *, via: str) -> dict:
+    """Shape one S4K CRM order row into the order-lookup response.
+
+    Identical whether the row came from the stored table or a live fetch, so
+    the caller can't drift the two shapes apart. `tevo_event_id` rides along
+    when the AQ mapper has filled it and is None otherwise — the CRM knows an
+    event by name/date/venue only (PROJECT_BIBLE §0), so an unmapped row tells
+    the caller to pick the event rather than guessing one here.
+    """
+    tev = row.get("tevo_event_id")
+    note = None if tev else ("event not mapped to a tevo_event_id — pick the "
+                             "event above to run the search")
+    return payload(
+        (row.get("source") or "s4k_crm"), tev, row.get("event_name"),
+        row.get("section"), row.get("row"), row.get("quantity"), row.get("price"),
+        via=via,
+        event_date=row.get("event_date"),
+        venue_name=row.get("venue_name"),
+        seats=row.get("seats"),
+        order_status=row.get("order_status"),
+        inhand_date=row.get("inhand_date"),
+        delivery=row.get("delivery"),
+        note=note,
+    )
+
+
+def _n2s_narrow(q, kind: str | None, gate: str | None, reason: str | None):
+    """The Subs page's Type / Gate / Reason filters, applied identically to the
+    page query and the hidden_late count.
+
+    kind: PED rows are the peddled sales from the Gmail Need2Buy/WaitToBuy
+    label (status 'n2b': no timer, re-priced until the label comes off);
+    everything else is a CRM N2S order. "n2s" is the complement, not
+    status='n2s', so a status added later still shows somewhere.
+
+    gate: one cover gate 1-6, or a group: "direct" (1-2, the buyer's own
+    section) / "offer" (3-6, the buyer is moved and must accept first). A gate
+    implies a cover, so it hides every uncovered row.
+
+    reason: why an order has no cover (no_cover_reason). Implies uncovered.
+    """
+    if kind == "ped":
+        q = q.eq("n2s_status", "n2b")
+    elif kind == "n2s":
+        q = q.neq("n2s_status", "n2b")
+    if gate == "direct":
+        q = q.lte("cover_gate", 2)
+    elif gate == "offer":
+        q = q.gte("cover_gate", 3)
+    elif gate:
+        q = q.eq("cover_gate", int(gate))
+    if reason:
+        q = q.eq("no_cover_reason", reason)
+    return q
 
 
 def _batch_fallback_zones(db, pairs: list[tuple]) -> dict[tuple, str | None]:
@@ -110,6 +168,10 @@ def build_broker_router(
     # Bulk performer assets (logos/colors) — core/broker_helpers, but tests patch
     # the server alias `app._bulk_performer_assets`, so resolve via getter.
     get_bulk_performer_assets: Callable[[], Callable] = lambda: (lambda *a: {}),
+    # S4K CRM marketplace-orders client (read-only). Returns a client or None
+    # when no API key is configured — the order lookup degrades to the four
+    # ingested books rather than failing. Getter so tests can bind a fake.
+    get_s4kcs_client: Callable[[], Any] = lambda: None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -374,8 +436,20 @@ def build_broker_router(
                  `is_owned=true` rows (TEvo, cost≈list `retail_price`) MERGED
                  with our SeatGeek SellerDirect book (`seatgeek_seller_listings`,
                  real `cost` basis) — a free swap from stock we already hold
-          market the rest of the `listings_snapshots` book — a buy-in when we
-                 hold no sub
+          market a buy-in when we hold no sub, across BOTH books we can buy
+                 from: the rest of the `listings_snapshots` exchange book
+                 (`retail_price` is an ask, so `fee_pct` applies) and the
+                 GoTickets book (`gotickets_listings_snapshots.all_in_price`
+                 is already what checkout charges, so those rows are
+                 fee-exempt and carry a `buy_url` per PROJECT_BIBLE §6b)
+
+        GoTickets labels a section "Promenade  311" where the exchange says
+        "311"; core.substitutions reconciles a bare label with a zoned one. It
+        will NOT equate two zoned labels sharing a number ("Loge 106" vs
+        "Lower 106" are different places), and when the sold section is bare
+        and several zoned labels carry its number, those land in `ambiguous`
+        for a human instead of being claimed as a cover.
+
         `revenue` (total $ received for the sale) turns on per-sub P&L so the
         loss/margin of each cover is explicit. Ranking/matching is pure logic in
         core.substitutions; "better SECTION" matching is a deliberate future phase.
@@ -437,8 +511,49 @@ def build_broker_router(
                     "inv_source": "sg_seller",
                 })
 
+        # Market buy-ins also span the GoTickets book — a cover we can actually
+        # purchase, often cheaper than the same row's exchange ask because GT
+        # quotes all-in retail. Never part of the owned pool: we don't hold it.
+        gt_captured_at = None
+        if source == "market":
+            gt_latest = (
+                db.table("gotickets_listings_snapshots").select("captured_at")
+                .eq("tevo_event_id", event_id).order("captured_at", desc=True)
+                .limit(1).execute().data or []
+            )
+            gt_captured_at = gt_latest[0]["captured_at"] if gt_latest else None
+            if gt_captured_at is not None:
+                gt_rows = (
+                    db.table("gotickets_listings_snapshots")
+                    .select("gt_listing_id,gt_event_id,section,section_id,row,"
+                            "quantity,splits,all_in_price,display_price")
+                    .eq("tevo_event_id", event_id).eq("captured_at", gt_captured_at)
+                    .execute().data or []
+                )
+                seen_listings = set()
+                for r in gt_rows:
+                    lid = r.get("gt_listing_id")
+                    if lid in seen_listings:
+                        continue
+                    seen_listings.add(lid)
+                    price = r.get("all_in_price")
+                    if price is None:
+                        price = r.get("display_price")
+                    pool.append({
+                        "id": lid,
+                        "section": r.get("section"),
+                        "row": r.get("row"),
+                        "quantity": r.get("quantity"),
+                        "splits": r.get("splits"),
+                        # all-in already includes buyer fees — see fee_exempt.
+                        "cost": price,
+                        "fee_exempt": True,
+                        "inv_source": "gotickets",
+                        "buy_url": gotickets_buy_url(r.get("gt_event_id"), r.get("section_id")),
+                    })
+
         # Buy-in fees only apply to a market purchase; an owned swap is stock we
-        # already hold (no fee).
+        # already hold (no fee). GoTickets rows opt out per-candidate above.
         eff_fee_pct = fee_pct if source == "market" else 0.0
         result = find_row_substitutions(section, row, qty, pool,
                                         revenue_per_ticket=rev_per_ticket,
@@ -463,8 +578,11 @@ def build_broker_router(
             section, qty, pool, section_quality, revenue_per_ticket=rev_per_ticket,
             fee_pct=eff_fee_pct)
 
+        pools = (["tevo_owned", "sg_seller"] if source == "owned"
+                 else ["tevo_market"] + (["gotickets"] if gt_captured_at else []))
         result.update({"captured_at": captured_at, "event_id": event_id,
-                       "source": source, "fee_pct": eff_fee_pct})
+                       "source": source, "fee_pct": eff_fee_pct,
+                       "pools": pools, "gt_captured_at": gt_captured_at})
         return result
 
     @router.get("/api/broker/order-lookup")
@@ -475,11 +593,21 @@ def build_broker_router(
         paste an order # instead of typing the sold ticket by hand.
 
         Searches the 4 ingested order sources (seatgeek / tickpick / vivid /
-        evo). `source` narrows the search; omit it to try all. StubHub is NOT
-        ingested as an order source — those orders won't resolve here, use the
-        manual fields. `revenue` is the order's own total/payment (editable in
+        evo), then `s4kcs_orders` — the S4K CRM's open sell-side book across
+        six marketplaces, polled every 10 minutes, and our only source for
+        **StubHub and Gametime** orders — and finally the CRM live, which
+        catches an order created since the last poll. `source` narrows the
+        first four; omit it to try all.
+
+        A CRM hit carries no `tevo_event_id`: the CRM is keyed on marketplace
+        ids and identifies an event by name/date/venue only. Mapping those to a
+        canonical event is the AQ mapper's job, never a name+date guess in a
+        lookup path (`PROJECT_BIBLE §0`), so the response returns the event
+        name/date for the caller to resolve and leaves the id null. `revenue` is the order's own total/payment (editable in
         the UI). EVO orders use the first line item for section/row and report
-        `line_items` so a multi-section order can be flagged.
+        `line_items` so a multi-section order can be flagged; they accept both
+        the bare `evo_order_id` and the composite "<po>-<order_id>" number TEvo
+        displays, and echo the id that matched as `evo_order_id`.
         """
         db = get_require_sb()()
         oid = (order_id or "").strip()
@@ -524,9 +652,15 @@ def build_broker_router(
                                o.get("section"), o.get("row"), o.get("quantity"), o.get("total"))
 
         if src in (None, "evo"):
+            # TEvo shows an order as "<purchase_order>-<order_id>" (the `oid`
+            # field in the raw payload, e.g. "8036615-19056200") but we key on
+            # the trailing `evo_order_id`. Brokers paste what TEvo shows them,
+            # so accept the composite and fall back to the whole string.
+            # The trailing segment IS the whole string when there's no
+            # hyphen, so this covers the bare id and the composite alike.
             try:
-                eoid = int(oid)
-            except (TypeError, ValueError):
+                eoid = int(oid.rsplit("-", 1)[-1])
+            except ValueError:
                 eoid = None
             if eoid is not None:
                 hdr = (db.table("evo_orders")
@@ -541,10 +675,38 @@ def build_broker_router(
                     rev = hdr[0].get("subtotal") if hdr[0].get("subtotal") is not None else hdr[0].get("total")
                     return payload("evo", tev, it.get("event_name"),
                                    it.get("ticket_group_section"), it.get("ticket_group_row"),
-                                   it.get("quantity"), rev, line_items=len(items))
+                                   it.get("quantity"), rev, line_items=len(items),
+                                   evo_order_id=eoid)
+
+        # The CRM book is ingested into s4kcs_orders every 10 minutes
+        # (mig 20260901180000). Read that before paying for a live fetch: the
+        # upstream returns the WHOLE book (~22.7k rows, ~10MB) against a 10/min
+        # limit, which is not something a UI click should trigger.
+        # Via v_s4kcs_orders, which repairs the feed's Vivid rows from our own
+        # vivid_orders book — the CRM ships them with no price at all, and our
+        # book also supplies the tevo_event_id the CRM lacks.
+        stored = (db.table("v_s4kcs_orders")
+                  .select("source,s4k_order_id,order_status,event_name,event_date,"
+                          "venue_name,section,row,seats,quantity,price,delivery,"
+                          "inhand_date,tevo_event_id")
+                  .eq("s4k_order_id", oid).limit(1).execute().data or [])
+        if stored:
+            return _s4kcs_payload(payload, stored[0], via="s4kcs_orders")
+
+        # Not stored yet — an order created since the last poll. Ask upstream.
+        crm = get_s4kcs_client()
+        if crm is not None:
+            try:
+                row = crm.find_order(oid)
+            except Exception as e:  # noqa: BLE001 - upstream/network/key failure
+                return {"found": False, "order_id": oid, "source": src,
+                        "note": f"not in our ingested books; S4K CRM lookup failed ({type(e).__name__})"}
+            if row:
+                return _s4kcs_payload(payload, row, via="s4k_crm")
 
         return {"found": False, "order_id": oid, "source": src,
-                "note": "no matching order in seatgeek/tickpick/vivid/evo (StubHub orders aren't ingested — enter details manually)"}
+                "note": "no matching order in seatgeek/tickpick/vivid/evo, "
+                        "nor in the S4K CRM marketplace book"}
 
     # --- Trip-planner delegates (D0 terminal). Thin auth-gated wrappers over the
     # shared payload builders in server.py — the D0 twins of the D1 store routes
@@ -918,6 +1080,521 @@ def build_broker_router(
         out = (rows_with + rows_without)[: max(1, min(int(limit), 100))]
 
         return {"window_hours": window_hours, "sort": sort, "count": len(out), "events": out}
+
+    @router.get("/api/broker/n2s-covers")
+    def broker_n2s_covers(
+        limit: int = 200,
+        offset: int = 0,
+        source: str | None = None,
+        days: int | None = None,
+        with_sub: bool | None = None,
+        include_late: bool = False,
+        profitable: bool = False,
+        kind: Literal["n2s", "ped"] | None = None,
+        gate: Literal["1", "2", "3", "4", "5", "6", "direct", "offer"] | None = None,
+        reason: Literal["unmapped", "awaiting_source_pull", "event_not_catalogued",
+                        "no_match", "window_closed"] | None = None,
+        _=Depends(require_auth),
+    ):
+        """N2S ("Need to Sub") — the WHOLE open book, with the sub attached
+        where one exists.
+
+        Reads `v_n2s_orders`, which LEFT JOINs the precomputed
+        `n2s_cover_queue` onto every open obligation. It is deliberately NOT
+        just the covered rows: measured when this was written, 8 orders had a
+        cover against 105 open ones, so serving only the queue showed 8 and
+        silently omitted 97 that still have to be settled — the ones that most
+        need a person, because nothing automatic is going to happen to them.
+        An order with no cover is the work, not missing data.
+
+        This is a different book from `/api/broker/sub-worklist`. That queue is
+        our own order book looking for a PROFITABLE swap. This one is the CRM's
+        Need-to-Sub list: orders that already failed and must be covered
+        whether or not it pays. Most rows here appear in no order book we hold.
+
+        Read `cover_cost` as what honouring the order COSTS over what it sold
+        for — positive is a loss, negative means the cover is cheaper than the
+        sale. It is NULL where there is no cover.
+
+        `no_cover_reason` separates three situations a bare dash would conflate,
+        and they call for opposite responses:
+
+        * ``unmapped`` — we cannot identify the event, so we never looked. A
+          mapping problem; more inventory will not help.
+        * ``awaiting_source_pull`` — mapped, the four-source pull is in flight.
+          Wait a couple of minutes.
+        * ``no_match`` — we looked at live listings and none satisfied same
+          section / same-or-better row / a usable quantity. The only one of the
+          three that means "go find tickets".
+
+        `sub_qty` is how many tickets to BUY, which is not always how many we
+        owe. Read it against the other two quantity columns:
+
+        * ``sub_qty == quantity``, ``sub_avail == sub_qty`` — an exact match.
+        * ``sub_qty == quantity``, ``sub_avail > sub_qty`` — a SPLIT take: the
+          listing is bigger than the obligation and its published splits permit
+          buying exactly what is owed.
+        * ``sub_qty > quantity`` — an OVER-DELIVERY: nothing sold the owed
+          quantity, so the whole (quantity + 1) lot is bought and the spare
+          seat is paid for. Only ever allocated when the order has no exact or
+          split candidate at all, however cheap the spare seat looks.
+
+        `sub_total` and `cover_cost` are computed on `sub_qty`, so the spare
+        seat is charged to the cover rather than quietly omitted.
+
+        `profitable=true` narrows to covers where `cover_cost < 0` — the
+        obligation settles for less than the seat sold for, so the difference
+        is kept. Break-even is excluded: it is not making money. Note this
+        filter necessarily empties the uncovered book, since a gap row has a
+        NULL `cover_cost`; it is the one view of this panel where absent rows
+        are not the work.
+
+        `cover_label` is a WORKFLOW INSTRUCTION, not a quality score, and
+        `cover_gate` (1-6) is its stable machine form — filter on the gate, not
+        the label text.
+
+        * gates 1-2 (`Index`, `S4KTrading`) keep the buyer in the exact section
+          they purchased, so they are directly actionable.
+        * gates 3-6 carry ``offer subs`` because they MOVE the buyer — a
+          different section within the same curated zone, or up to five rows
+          further back. The substitute must be offered and accepted BEFORE it
+          is bought; acting on one unasked turns a covered order into a dispute.
+        * ``Index`` vs ``S4KTrading`` is profit, not quality: Index covers make
+          money, S4KTrading covers cost more than the sale but stay inside a
+          200% ceiling. Nothing above 200% is offered on any gate.
+        * suffix ``repost single`` means `sub_qty` is one over the obligation
+          and the spare seat is reposted — buy `sub_qty`, not `quantity`.
+
+        `n2s_order_key` is the marketplace's order id on its own. For every
+        source but EVO it equals `order_number`; EVO's `order_number` is an
+        `<invoice>-<order>` composite, and pasting the whole thing into its
+        console finds nothing.
+
+        `cover_rank` is which of that order's own candidates it was allocated:
+        1 = its cheapest, >1 = an earlier order (FIFO by alert time) claimed
+        the cheaper listing. Each listing is offered to exactly one order.
+
+        `refreshed_at` is load-bearing, not decoration. Covers are only true
+        while the listing is live, and the matcher only considers listings seen
+        in the last hour, so a stale payload means "no answer", never "no
+        covers". It is NULL on an uncovered row because nothing was computed.
+
+        Pass `with_sub=true` for only the actionable rows, `false` for only the
+        gaps. Omit it for the whole book, which is the default on purpose.
+
+        ⚠ `include_late` DEFAULTS TO FALSE AND THAT HIDES ALMOST EVERYTHING.
+        The CRM gives each N2S alert a 15-minute response timer; `timer_expired`
+        is true once it lapses and it never goes back. Measured when this was
+        added: **108 of 108** open obligations were expired — least 42 minutes
+        over, most 4 days, mean ~50 hours — so the default returns an EMPTY
+        page and will almost always do so. That is the operator's explicit
+        choice (2026-09-10), made after being shown those numbers, not an
+        oversight.
+
+        Because of that, `hidden_late` is always returned. A caller MUST show
+        it: an empty page here means "everything was filtered", never "nothing
+        needs covering", and the two are opposite. Pass `include_late=true` to
+        see the whole book.
+        """
+        db = get_require_sb()()
+        q = (db.table("v_n2s_orders")
+             .select("n2s_id,order_number,s4k_source,n2s_status,fail_reason,"
+                     "timer_expired,alert_at,event_name,event_date,venue,"
+                     "tevo_event_id,section,order_row,quantity,sold_ea,"
+                     "sub_source,sub_listing_id,sub_section,sub_row,sub_qty,"
+                     "sub_avail,"
+                     "sub_ea,sub_total,cover_cost,rows_closer,buy_url,"
+                     "captured_at,cover_rank,fifo_position,refreshed_at,"
+                     "has_cover,no_cover_reason,open_intent_id,open_intent_by,"
+                     "n2s_order_key,cover_gate,cover_label,sub_view,sub_notes,"
+                     "gt_event_id,gt_mapped_via,"
+                     # 20260928174500: the panel shows the last 24 h. An order
+                     # past its 10-minute window has no live cover
+                     # (no_cover_reason='window_closed'); last_* is the most
+                     # recent cover we found for it, from n2s_cover_history.
+                     "in_window,event_live,last_sub_source,last_sub_section,"
+                     "last_sub_row,last_sub_qty,last_sub_ea,last_cover_cost,"
+                     "last_cover_label,last_cover_at"))
+        if source:
+            q = q.eq("s4k_source", source)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+            q = q.lte("event_date", cutoff)
+        if with_sub is not None:
+            q = q.eq("has_cover", with_sub)
+        if not include_late:
+            # timer_expired is COALESCEd to false at ingest, never NULL, so a
+            # plain equality is safe and an untimed row is not treated as late.
+            q = q.eq("timer_expired", False)
+        if profitable:
+            # cover_cost is outlay MINUS revenue, so negative means the cover
+            # settles for less than the seat sold for and we keep the
+            # difference. Strictly < 0: break-even is not making money.
+            #
+            # ⚠ THIS NECESSARILY HIDES THE UNCOVERED BOOK. An order with no
+            # cover has a NULL cover_cost and cannot satisfy the comparison, so
+            # every gap row disappears — including the ones most needing a
+            # person. That is the point of the filter, but it inverts this
+            # panel's usual "gaps are the work" stance, so `uncovered` and
+            # `by_no_cover_reason` come back as zeros here and the UI says
+            # which book you are looking at.
+            q = q.lt("cover_cost", 0)
+        q = _n2s_narrow(q, kind, gate, reason)
+        # Actionable rows first, cheapest cover first; then the uncovered block
+        # oldest-alert first, since that is the longest-unsettled obligation.
+        # Postgres sorts NULLs last on ASC, so uncovered rows fall through
+        # cover_cost without any special handling.
+        rows = (q.order("has_cover", desc=True)
+                 .order("cover_cost", desc=False)
+                 .order("alert_at", desc=False)
+                 .range(offset, offset + max(limit, 1) - 1)
+                 .execute().data) or []
+
+        # ⚠ THESE AGGREGATES COVER THE PAGE, NOT THE BOOK. They are computed
+        # from `rows`, which `range()` has already truncated to `limit`. Named
+        # page_* so a caller cannot read "to settle" as a total obligation when
+        # it is only the first N. `truncated` says when that matters.
+        # How many the timer filter removed. Counted separately and ALWAYS
+        # reported: without it an empty page is indistinguishable from a clear
+        # book, which is the one confusion this filter is guaranteed to cause.
+        hidden_late = 0
+        if not include_late:
+            lq = (db.table("v_n2s_orders").select("n2s_id", count="exact")
+                    .eq("timer_expired", True))
+            if source:
+                lq = lq.eq("s4k_source", source)
+            if days is not None:
+                lq = lq.lte("event_date", cutoff)
+            if with_sub is not None:
+                lq = lq.eq("has_cover", with_sub)
+            if profitable:
+                # ⚠ MUST MIRROR EVERY FILTER ABOVE. This counts what the timer
+                # filter removed, so it has to count the same book the page is
+                # showing. Without this it reports the whole timer-expired book
+                # under profitable=true — "108 hidden (timer expired)" when
+                # including them would in fact reveal zero profitable covers,
+                # which sends the operator to a switch that cannot help.
+                lq = lq.lt("cover_cost", 0)
+            lq = _n2s_narrow(lq, kind, gate, reason)
+            # count="exact" makes PostgREST return the row count, which is the
+            # whole point of the query — the rows themselves are discarded.
+            hidden_late = int(getattr(lq.execute(), "count", 0) or 0)
+
+        costs = [r.get("cover_cost") for r in rows if r.get("cover_cost") is not None]
+        covered = [r for r in rows if r.get("has_cover")]
+
+        # ⚠ THE STAMP DESCRIBES THE PIPELINE, NOT THIS PAGE. Sourcing it only
+        # from the rows we served makes a *filter* look like an outage: with
+        # include_late=false and every open order late — which is the normal
+        # state of this book — the page is empty, so no served row carries a
+        # refreshed_at and the panel reads "never refreshed" while the matcher
+        # is in fact running every minute. `range()` can do the same on a later
+        # page. So when the page yields no stamp, ask the view directly. The
+        # probe is deliberately unfiltered: the question it answers is "when
+        # did the matcher last run", which no display filter changes.
+        stamp = next((r.get("refreshed_at") for r in covered
+                      if r.get("refreshed_at")), None)
+        if stamp is None:
+            probe = ((db.table("v_n2s_orders").select("refreshed_at")
+                      .eq("has_cover", True)
+                      .order("refreshed_at", desc=True)
+                      .limit(1).execute().data) or [])
+            # Still None on a genuinely empty book — an absent payload must read
+            # as "no answer", never as "no covers".
+            stamp = probe[0].get("refreshed_at") if probe else None
+        reasons: dict[str, int] = {}
+        for r in rows:
+            why = r.get("no_cover_reason")
+            if why:
+                reasons[why] = reasons.get(why, 0) + 1
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "covered": len(covered),
+            "uncovered": len(rows) - len(covered),
+            "by_no_cover_reason": reasons,
+            "at_or_below_sale": sum(1 for c in costs if c <= 0),
+            "displaced": sum(1 for r in covered if (r.get("cover_rank") or 1) > 1),
+            "total_cover_cost": (round(sum(costs), 2) if costs else 0),
+            "truncated": len(rows) >= max(limit, 1),
+            "hidden_late": hidden_late,
+            "refreshed_at": stamp,
+            "filters": {"source": source, "days": days, "with_sub": with_sub,
+                        "include_late": include_late, "profitable": profitable,
+                        "kind": kind, "gate": gate, "reason": reason,
+                        "limit": limit, "offset": offset},
+        }
+
+    @router.get("/api/broker/n2s-gt-dryrun")
+    def broker_n2s_gt_dryrun(
+        limit: int = 100,
+        decision: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """GoTickets auto-buy DRY RUN — what an auto-buyer would have ordered.
+
+        Reads `n2s_gt_order_dryrun` (mig 20261021180000), which a trigger on
+        the cover-queue rebuild fills with one row per new GoTickets cover and
+        its `would_buy` / `skip` decision. Nothing here — or anywhere — sends
+        the order; `payload` is the body that WOULD be posted, kept for
+        review. Read-only by RULE 2: there is no route that buys.
+
+        `would_buy` is gate 1 (Index, same section) only since mig
+        20261021223000; gates 2-6 are logged as `skip` with
+        `gate_moves_buyer`. `cover_cost` keeps the queue's sign: positive is
+        a loss.
+
+        `today` is tallied on the New York day (an auto-buyer's daily cap
+        resets on ET), from its own read so the `decision` filter cannot skew
+        it.
+        """
+        if decision not in (None, "", "would_buy", "skip"):
+            raise HTTPException(status_code=400, detail="decision must be would_buy or skip")
+        db = get_require_sb()()
+        cols = ("dryrun_id,captured_at,order_number,s4k_source,event_name,event_date,"
+                "sold_section,sold_row,sold_qty,sold_ea,sub_section,sub_row,sub_qty,"
+                "quoted_ea,quoted_total,cover_cost,cover_gate,cover_label,"
+                # 20261112030000: the seller's note on the sub, and our reading of it
+                "sub_view,sub_notes,"
+                "decision,skip_reasons,payload")
+        q = db.table("n2s_gt_order_dryrun").select(cols)
+        if decision:
+            q = q.eq("decision", decision)
+        rows = (q.order("dryrun_id", desc=True)
+                 .limit(max(1, min(int(limit), 500))).execute().data) or []
+
+        et = ZoneInfo("America/New_York")
+        today = datetime.now(et).date()
+        start = datetime.combine(today, datetime.min.time(), tzinfo=et)
+        day = (db.table("n2s_gt_order_dryrun").select("decision,quoted_total")
+                 .gte("captured_at", start.astimezone(timezone.utc).isoformat())
+                 .execute().data) or []
+        buys = [r for r in day if r.get("decision") == "would_buy"]
+        return {
+            "count": len(rows),
+            "rows": rows,
+            "today": {
+                "date": today.isoformat(),
+                "logged": len(day),
+                "would_buy": len(buys),
+                "skipped": len(day) - len(buys),
+                "would_spend": round(sum(float(r.get("quoted_total") or 0) for r in buys), 2),
+            },
+        }
+
+    @router.get("/api/broker/n2s-covers/verify")
+    def broker_n2s_covers_verify(
+        freshness_minutes: int = 60,
+        _=Depends(require_auth),
+    ):
+        """Pre-purchase gate: is each queued cover still good to buy RIGHT NOW?
+
+        A cover is two claims made at different moments — the listing was live
+        when its snapshot was captured (up to an hour ago), and the order was
+        open when the queue last refreshed. Both can go stale before anyone
+        acts, and a stale cover costs money in a way a stale read never does.
+
+        Verdicts: `ok`, `price_up` (still there, dearer — `price_delta_ea` says
+        by how much), `gone` (absent from the newest snapshot of that event),
+        `order_closed` (the N2S order is already resolved or allocated), and
+        `stale_data`.
+
+        `gone` and `order_closed` are hard blocks. `price_up` is a judgement
+        call reported WITH the delta, because a slightly dearer cover may still
+        be the right buy on an obligation.
+
+        `stale_data` means "we cannot tell", NOT "fine" — it is returned when
+        nothing has been captured for that event inside the window, and it is
+        never `buyable`. This endpoint re-checks the newest data we HOLD; it
+        does not pull upstream. TicketsData always reads stale_data because it
+        is a change feed, where absence means unchanged rather than sold.
+
+        See docs/evo_buy_side.md for the buy-side flow this gates.
+        """
+        db = get_require_sb()()
+        rows = db.rpc("n2s_cover_verify",
+                      {"p_freshness": f"{max(1, freshness_minutes)} minutes"}
+                      ).execute().data or []
+        by_verdict: dict[str, int] = {}
+        for r in rows:
+            v = r.get("verdict") or "unknown"
+            by_verdict[v] = by_verdict.get(v, 0) + 1
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "buyable": sum(1 for r in rows if r.get("buyable")),
+            "by_verdict": by_verdict,
+            "freshness_minutes": freshness_minutes,
+        }
+
+    @router.post("/api/broker/n2s-covers/{n2s_id}/buy-intent")
+    def broker_n2s_buy_intent(
+        n2s_id: int,
+        requested_by: str | None = None,
+        notes: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """Record that a human wants to buy this cover. **Buys nothing.**
+
+        This is OUR write surface, added because the CRM has none — its API is
+        GET-only per its own docs and our keys are read-scoped, so data cannot
+        be pushed into it. The CRM (or the terminal) pulls covers from
+        `/api/broker/n2s-covers` and calls this to trigger a buy.
+
+        An intent is refused unless the cover verifies buyable RIGHT NOW: a
+        `gone` or `order_closed` cover cannot become one, and `stale_data` is
+        refused too — "we cannot tell" is not consent to spend money. The
+        verdict is stored on the row, so it records what was true when the
+        human asked rather than whenever someone reads it back.
+
+        Only ONE open intent may exist per order. Two people acting on the same
+        failed order would otherwise buy two covers for one obligation.
+
+        The intent is a FILL SHEET, not a request we send. Nothing in this
+        codebase places an order; the buy happens by hand in the vendor
+        console. `payload` is what we know, and the two absence lists are split
+        by who owes them:
+
+        * ``operator_fills`` — what the human types at checkout (payment token,
+          delivery method, buyer contact, recipient). Expected and normal; a
+          non-empty list is the ordinary case for both vendors.
+        * ``payload_gaps`` — data OUR side owed and could not produce, e.g. an
+          unmapped ``gt_event_id``, or a match on a source we hold no purchase
+          path to. A real defect, and what ``payload_ready`` reports on.
+
+        Keeping them apart matters: if the human's checkout fields counted as
+        gaps, every intent would read defective and a genuine gap would be
+        ignored along with them. See docs/buy_side_evo_gotickets.md.
+        """
+        db = get_require_sb()()
+        try:
+            rows = db.rpc("n2s_buy_intent_create",
+                          {"p_n2s_id": n2s_id,
+                           "p_requested_by": requested_by,
+                           "p_notes": notes}).execute().data or []
+        except Exception as exc:  # noqa: BLE001 - surfaced verbatim below
+            # The refusals are deliberate and each says why (not buyable, no
+            # queued cover, duplicate open intent). Return the reason rather
+            # than a bare 500, so the caller can show it to the operator.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not rows:
+            raise HTTPException(status_code=409,
+                                detail="intent not created (no cover, or not buyable)")
+        return {"intent": rows[0], "bought": False,
+                "note": "intent recorded only — nothing was purchased"}
+
+    @router.post("/api/broker/buy-intents/{intent_id}/cancel")
+    def broker_n2s_buy_intent_cancel(
+        intent_id: int,
+        by: str | None = None,
+        reason: str | None = None,
+        _=Depends(require_auth),
+    ):
+        """Cancel an open buy intent, freeing the order for a new one."""
+        db = get_require_sb()()
+        ok = db.rpc("n2s_buy_intent_cancel",
+                    {"p_intent_id": intent_id, "p_by": by,
+                     "p_reason": reason}).execute().data
+        cancelled = bool(ok[0] if isinstance(ok, list) and ok else ok)
+        if not cancelled:
+            raise HTTPException(status_code=409,
+                                detail="no open intent with that id")
+        return {"intent_id": intent_id, "status": "cancelled"}
+
+    @router.get("/api/broker/buy-intents")
+    def broker_n2s_buy_intents(
+        status: str | None = "requested",
+        limit: int = 100,
+        _=Depends(require_auth),
+    ):
+        """Open buy intents — what someone has committed to acting on.
+
+        Defaults to `requested` (still open). Pass `status=` empty for all.
+
+        Each row carries its fill sheet: `payload` plus `operator_fills` (the
+        human's checkout fields) and `payload_gaps` (what our side still owes).
+        """
+        db = get_require_sb()()
+        q = db.table("n2s_buy_intent").select(
+            "intent_id,n2s_id,order_number,s4k_source,sub_source,sub_listing_id,"
+            "sub_section,sub_row,sub_qty,quoted_ea,quoted_total,cover_cost,"
+            "buy_url,verify_verdict,verify_delta,status,requested_by,"
+            "requested_at,payload,payload_ready,payload_gaps,operator_fills,notes")
+        if status:
+            q = q.eq("status", status)
+        rows = (q.order("requested_at", desc=True)
+                 .range(0, max(limit, 1) - 1).execute().data) or []
+        # `complete` counts sheets with nothing left on OUR side. It is not
+        # "ready to send" — nothing sends, and the operator's checkout fields
+        # are still theirs to fill.
+        return {"rows": rows, "count": len(rows),
+                "complete": sum(1 for r in rows if r.get("payload_ready")),
+                "needs_us": sum(1 for r in rows if not r.get("payload_ready")),
+                "status": status}
+
+    @router.get("/api/broker/sub-worklist")
+    def broker_sub_worklist(
+        limit: int = 100,
+        offset: int = 0,
+        source: str | None = None,
+        with_sub: bool | None = None,
+        days: int | None = None,
+        _=Depends(require_auth),
+    ):
+        """Substitution QUEUE — the whole order book with its best sub, if any.
+
+        Reads `s4kcs_sub_worklist`, which a scheduled refresh rebuilds off the
+        GoTickets and EVO pull cadence. This is deliberately a CHEAP read of
+        precomputed current state: it answers "which orders should I look at",
+        ranked by the money on the table. The authoritative per-order answer is
+        still `/api/broker/event/{id}/substitutions`, which recomputes live
+        against the current book and carries the GA / splits / ambiguous
+        handling the queue's summary row cannot.
+
+        A row with `candidates == 0` is in scope but had nothing qualify — it
+        stays in the queue on purpose, so the screen shows the real book rather
+        than only the orders that happened to match.
+
+        Query params:
+          limit/offset  page size (default 100) and cursor
+          source        filter to one marketplace (StubHub, Gametime, …)
+          with_sub      true = only orders with a candidate; false = only those
+                        without; omit for everything
+          days          only events inside the next N days
+        """
+        db = get_require_sb()()
+        q = (db.table("s4kcs_sub_worklist")
+             .select("source,s4k_order_id,tevo_event_id,event_name,event_date,venue_name,"
+                     "order_status,sub_signal,section,order_row,quantity,sold_ea,sold_total,"
+                     "candidates,best_sub_source,best_price_basis,best_listing_id,"
+                     "best_section,best_row,best_qty,best_ea,best_total,margin_ea,"
+                     "margin_total,rows_closer,buy_url,listing_captured_at,refreshed_at"))
+        if source:
+            q = q.eq("source", source)
+        if with_sub is True:
+            q = q.gt("candidates", 0)
+        elif with_sub is False:
+            q = q.eq("candidates", 0)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+            q = q.lte("event_date", cutoff)
+        # ⚠ NULLS LAST IS REQUIRED, NOT COSMETIC. Postgres sorts NULLs FIRST on
+        # DESC, and margin_total is NULL for every candidates=0 row (LEFT JOIN
+        # in the refresh). Without this the first page is entirely rows with no
+        # sub — with_candidate reads 0 on a healthy book — and the table's own
+        # (margin_total DESC NULLS LAST) index cannot be used.
+        rows = (q.order("margin_total", desc=True, nullsfirst=False)
+                 .range(offset, offset + max(limit, 1) - 1)
+                 .execute().data) or []
+        with_candidate = sum(1 for r in rows if (r.get("candidates") or 0) > 0)
+        return {
+            "rows": rows,
+            "count": len(rows),
+            "with_candidate": with_candidate,
+            "refreshed_at": (rows[0].get("refreshed_at") if rows else None),
+            "filters": {"source": source, "with_sub": with_sub, "days": days,
+                        "limit": limit, "offset": offset},
+        }
 
     @router.get("/api/broker/event/{event_id}/orders")
     def broker_event_orders(event_id: int, _=Depends(require_auth)):
@@ -1942,6 +2619,67 @@ def build_broker_router(
             "summary":            summary,
         }
 
+
+    _pickups_cache: dict[tuple, tuple[float, dict]] = {}
+
+    @router.get("/api/broker/pickups")
+    def broker_pickups(mode: str = "hot", days: int = 4, min_days_out: int = 7,
+                       max_days_out: int = 365, limit: int = 50, _=Depends(require_auth)):
+        """Pricing-desk pickups — OUR daily order pace per future event.
+
+        mode=hot  : events selling now, weighted up by how far out they are and
+                    by lift vs the event's own prior-28-day pace (catch the
+                    further-out game people are chipping away at, early).
+        mode=cold : events where we still list tickets (open_qty) that won't
+                    clear by event day at the current pace, closest first.
+
+        `days` = complete ET days in the window (ending yesterday; today so far
+        rides separately as orders_today). Backed by `get_d0_pickups_v2`
+        (mig 20261006180000; falls back to v1 `get_d0_pickups`, mig 20261006170000;
+        both service_role-only) over the CRM book + SeatGeek market feed +
+        TEvo orders; cached 5 minutes per parameter set — the CRM ingest is
+        10-minutely, so a fresher read buys nothing.
+        """
+        mode = "cold" if str(mode).lower() == "cold" else "hot"
+        days = max(1, min(int(days), 14))
+        min_days_out = max(0, min(int(min_days_out), 730))
+        max_days_out = max(min_days_out, min(int(max_days_out), 730))
+        limit = max(1, min(int(limit), 200))
+        key = (mode, days, min_days_out, max_days_out, limit)
+        now = datetime.now(timezone.utc).timestamp()
+        hit = _pickups_cache.get(key)
+        if hit and now - hit[0] < 300:
+            return hit[1]
+        db = get_require_sb()()
+        args = {
+            "p_mode": mode, "p_window_days": days, "p_min_days_out": min_days_out,
+            "p_max_days_out": max_days_out, "p_limit": limit,
+        }
+
+        def _missing(msg: str, fn: str) -> bool:
+            return fn in msg and ("does not exist" in msg or "42883" in msg or "PGRST202" in msg)
+
+        # v2 (mig 20261006180000) adds the SeatGeek market columns; v1 is the
+        # fallback while v2 is unapplied (the page renders SG MKT as "—").
+        try:
+            rows = db.rpc("get_d0_pickups_v2", args).execute().data or []
+        except Exception as e:
+            if not _missing(str(e), "get_d0_pickups_v2"):
+                raise HTTPException(502, f"pickups query failed: {str(e)[:200]}")
+            try:
+                rows = db.rpc("get_d0_pickups", args).execute().data or []
+            except Exception as e1:  # neither migration applied
+                msg = str(e1)
+                if _missing(msg, "get_d0_pickups"):
+                    raise HTTPException(503, "pickups not available yet — migration 20261006170000 not applied")
+                raise HTTPException(502, f"pickups query failed: {msg[:200]}")
+        out = {
+            "mode": mode, "window_days": days, "min_days_out": min_days_out,
+            "max_days_out": max_days_out, "count": len(rows), "events": rows,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _pickups_cache[key] = (now, out)
+        return out
 
     @router.get("/api/broker/movers")
     def broker_movers(window_hours: int = 24, source: str = "merged", window_days: int | None = None,

@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font: 13px/1.4 system-ui, sans-serif; width: 360px; margin: 0; padding: 12px; }
+    h1 { font-size: 14px; margin: 0 0 4px; }
+    .sub { color: #777; font-size: 12px; margin: 0 0 10px; }
+    label { display: block; margin: 8px 0 2px; font-weight: 600; font-size: 12px; }
+    input[type=text], input[type=url], input[type=password] { width: 100%; box-sizing: border-box; padding: 5px; }
+    .big { width: 100%; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+           background: #1a7f37; color: #fff; border: 0; border-radius: 6px; margin: 10px 0 6px; }
+    .big:disabled { background: #9bbfa6; cursor: default; }
+    .row { display: flex; gap: 8px; }
+    .row button { flex: 1; padding: 6px; cursor: pointer; }
+    details { margin: 6px 0; }
+    summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+    /* export-health verdict */
+    #verdict { display: none; border-radius: 6px; padding: 9px 10px; margin: 6px 0; }
+    #verdict .head { font-weight: 700; font-size: 13px; }
+    #verdict ul { margin: 6px 0 0; padding-left: 18px; }
+    #verdict li { font-size: 12px; }
+    .v-good { background: #e7f5ec; border: 1px solid #7fbf95; }
+    .v-good .head { color: #1a7f37; }
+    .v-warn { background: #fdf4e3; border: 1px solid #d9b25c; }
+    .v-warn .head { color: #9a6b00; }
+    .v-fail { background: #fdecec; border: 1px solid #e0a0a0; }
+    .v-fail .head { color: #b3261e; }
+    .v-drift { background: #f6ecfb; border: 1px solid #c69adf; }
+    .v-drift .head { color: #7b1fa2; }
+    .ok  { color: #1a7f37; } .no { color: #b3261e; }
+    #recent { max-height: 120px; overflow: auto; border-top: 1px solid #ddd; margin-top: 8px; padding-top: 6px; }
+    .cap { font-size: 12px; padding: 3px 0; border-bottom: 1px solid #f0f0f0; }
+    .muted { color: #777; }
+    footer { display: flex; justify-content: space-between; align-items: center;
+             margin-top: 10px; padding-top: 6px; border-top: 1px solid #eee; font-size: 11px; color: #888; }
+    footer button { font-size: 11px; padding: 3px 6px; cursor: pointer; }
+    #update.avail { color: #9a6b00; font-weight: 600; }
+    /* autonomous driver panel */
+    #driver { border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+    #driver .tog { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 0; cursor: pointer; }
+    #driver .tog input { width: auto; }
+    #driverStatus { font-size: 12px; margin-top: 6px; }
+    #driver.on { background: #e7f5ec; border-color: #7fbf95; }
+  </style>
+</head>
+<body>
+  <h1>eVenue / Paciolan Seat Collector</h1>
+  <p class="sub">Open an eVenue event, expand the sections you want, then click below.</p>
+
+  <button id="grab" class="big">Get seats &amp; upload to Supabase</button>
+  <div id="verdict"></div>
+  <div id="status" class="muted">Configure Supabase below (one time), then click above.</div>
+
+  <div id="driver">
+    <label class="tog"><input type="checkbox" id="armed" /> Autonomous auto-pull (SQL-driven)</label>
+    <div id="driverStatus" class="muted">Off. When armed, this Chrome polls the pull queue and refreshes due events on its own.</div>
+  </div>
+
+  <details id="cfg">
+    <summary>Supabase settings</summary>
+    <label>Supabase URL</label>
+    <input id="supabaseUrl" type="url" placeholder="https://xxxx.supabase.co" />
+    <label>Anon (public) key</label>
+    <input id="supabaseAnonKey" type="password" placeholder="eyJ… (anon key — safe to embed)" />
+    <label>Ingest secret</label>
+    <input id="ingestSecret" type="password" placeholder="shared secret (matches paciolan_ingest_config)" />
+    <div class="row" style="margin-top:8px">
+      <button id="save">Save settings</button>
+      <button id="export">Export JSON</button>
+    </div>
+  </details>
+
+  <div id="recent"></div>
+
+  <footer>
+    <span>v<span id="version">?</span></span>
+    <span id="update" class="muted">up to date</span>
+    <button id="checkUpdate">Check for updates</button>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

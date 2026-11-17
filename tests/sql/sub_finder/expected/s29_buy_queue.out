@@ -1,0 +1,63 @@
+N2S files a buy: one row per exec row, with its ceiling and the last instant it may be sent
+t
+vivid|N1|evo|n2s|1|5001|2|100.0000|210.00|n2s auto (exec 1)|110 min left
+not filed: the same exec row again, a sale that already has a live buy, a listing id that is not a number, a row out of time, a row that is not live, no such row
+no no no no no no
+the caller may pass its own deadline and ceiling
+t
+N2|gotickets|9001|123.45|20
+a worker that does not know N2S rows gets only the buys of this path
+M1 (manual, evo)
+bought
+a worker that does gets the N2S buy first, though M2 was asked for earlier; the N2S job comes from N2S
+N1 (n2s, evo), N2S job for exec 1
+one buy at a time, whoever it is for
+nothing handed out
+its result goes to N2S in the same step; the kill switch of this path is untouched
+buying
+bought
+N2S was told: exec 1 bought {"buy_order_id": "7001", "buy_total_usd": "212.00"}
+our kill switch: false
+this path switched off: an N2S buy still goes (its own switches decide)
+N2 (n2s, gotickets), N2S job for exec 2
+stopped
+nothing handed out
+the N2S kill switch set after filing: its buy waits, ours goes
+t
+M2 (manual, evo)
+bought
+the N2S stop for EVO, N2S not live, the shared stop: each holds the N2S buy (this path is off here, so nothing else can go)
+nothing handed out
+nothing handed out
+nothing handed out
+past its deadline it is stopped unsent, and N2S is told so the run goes back
+nothing handed out
+N6|stopped|queue_expired
+N2S was told: exec 6 stopped {"reasons": ["queue_expired"]}
+M3 (manual, evo)
+stopped
+an N2S buy with no clear answer: N2S is told (its kill switch), ours is not flipped
+t|t
+N7 (n2s, evo), N2S job for exec 7
+unknown
+N2S was told: exec 7 unknown {"error": "timeout", "state": "unknown"}
+our kill switch: false, N2S kill switch: true
+it holds back other N2S buys even with the N2S switch cleared, but not ours
+M4 (manual, evo)
+and one of ours with no clear answer flips our switch and holds ours back, not N2S
+unknown
+our kill switch: true
+N8 (n2s, evo), N2S job for exec 8
+a worker lost in the middle of an N2S buy: unknown, N2S is told, nothing is handed out
+nothing handed out
+N8|unknown|worker_lost_mid_buy
+N2S was told: exec 8 unknown {"reasons": ["worker_lost_mid_buy"]}
+following, alerts, the feed and the shared counts leave an N2S buy to its own row
+followed: M1
+followed: M2
+followed: nothing
+in the feed from this path: evo-9001, evo-9002
+bought rows by origin: manual 2, n2s 1
+spent today, counted once: 300.00
+alerts sent: 3
+alerted, by origin: manual 3, n2s 0

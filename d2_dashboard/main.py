@@ -224,6 +224,7 @@ from core.d0_orders import (  # noqa: F401  (re-exported for route + monkeypatch
     _deep_order_seatgeek_sales_sql,
     _deep_order_tickpick_sql,
     _deep_order_vivid_sql,
+    _deep_order_s4kcs_sql,
     _deep_order_gotickets,
     _DEEP_ORDER,
     _metrics_window_rows,

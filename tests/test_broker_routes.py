@@ -51,12 +51,22 @@ class _FakeQuery:
 
     def __init__(self, data):
         self._data = data
+        self._count = False
 
     # builder methods used across broker routes — all return self
     def select(self, *_a, **_k):
+        # PostgREST returns a row count alongside the data whenever the caller
+        # asks for count="exact". Model that, so routes reading `.count` are
+        # exercised against the shape the real client actually returns rather
+        # than a fallback that only exists for this double.
+        if _k.get("count"):
+            self._count = True
         return self
 
     def eq(self, *_a, **_k):
+        return self
+
+    def neq(self, *_a, **_k):
         return self
 
     def in_(self, *_a, **_k):
@@ -68,8 +78,26 @@ class _FakeQuery:
     def limit(self, *_a, **_k):
         return self
 
+    def gt(self, *_a, **_k):
+        return self
+
+    def lt(self, *_a, **_k):
+        return self
+
+    def lte(self, *_a, **_k):
+        return self
+
+    def gte(self, *_a, **_k):
+        return self
+
+    def range(self, *_a, **_k):
+        return self
+
     def execute(self):
-        return type("_Res", (), {"data": self._data})()
+        attrs = {"data": self._data}
+        if self._count:
+            attrs["count"] = len(self._data)
+        return type("_Res", (), attrs)()
 
 
 class FakeSupabase:
@@ -645,6 +673,162 @@ def test_substitutions_quantity_filter_and_ambiguous_bucket(client, monkeypatch)
     assert [s["ticket_group_id"] for s in body["ambiguous"]] == ["alpha"]
 
 
+def test_substitutions_market_pool_spans_gotickets(client, monkeypatch):
+    # The merged pool: same physical section under two labels. GoTickets quotes
+    # all-in retail, which here undercuts the exchange ask for the same row.
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "O", "quantity": 2, "splits": [2],
+         "retail_price": 262.10, "is_owned": False},
+    ]
+    gt = [
+        {"gt_listing_id": 7086439326, "gt_event_id": 1252283,
+         "captured_at": "2026-09-01T15:34:00Z", "section": "Promenade  311",
+         "section_id": 3262193, "row": "O", "quantity": 2, "splits": [2],
+         "all_in_price": 254.44, "display_price": 254.44},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&revenue=560&source=market").json()
+    assert body["pools"] == ["tevo_market", "gotickets"]
+    assert body["gt_captured_at"] == "2026-09-01T15:34:00Z"
+    # Both are same-section (the GT zone prefix is reconciled) better-row subs;
+    # cheapest first puts GoTickets on top.
+    assert [x["inv_source"] for x in body["subs"]] == ["gotickets", "tevo_market"]
+    best = body["best"]
+    assert best["unit_cost"] == 254.44
+    assert best["buy_url"] == ("https://pro.gotickets.com/tickets/1252283/"
+                              "?sortBy=price&sortDirection=asc&sections=3262193")
+    assert best["pnl_total"] == round((280.0 - 254.44) * 2, 2)
+
+
+def test_substitutions_market_all_in_price_is_not_fee_marked_up(client, monkeypatch):
+    # fee_pct applies to the exchange ask only — GoTickets is already all-in.
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 250.0,
+         "is_owned": False},
+    ]
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "splits": [2], "all_in_price": 255.0, "display_price": 255.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market&fee_pct=10").json()
+    landed = {x["inv_source"]: x["landed_cost"] for x in body["subs"]}
+    assert landed["tevo_market"] == 275.0   # 250 + 10%
+    assert landed["gotickets"] == 255.0     # unchanged
+    assert body["best"]["inv_source"] == "gotickets"
+
+
+def test_substitutions_owned_pool_never_reads_gotickets(client, monkeypatch):
+    ls = [
+        {"tevo_ticket_group_id": "mine", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 300.0,
+         "is_owned": True},
+    ]
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": 1.0, "display_price": 1.0},
+    ]
+    fake = FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": gt,
+    })
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2").json()
+    # We don't hold GoTickets stock, so an owned swap must not see it — not
+    # even the $1 bait row.
+    assert body["pools"] == ["tevo_owned", "sg_seller"]
+    assert body["gt_captured_at"] is None
+    assert "gotickets_listings_snapshots" not in fake.table_calls
+    assert [x["inv_source"] for x in body["subs"]] == ["tevo_owned"]
+
+
+def test_substitutions_market_without_gotickets_data(client, monkeypatch):
+    ls = [
+        {"tevo_ticket_group_id": "ask", "captured_at": "2026-09-01T16:00:00Z",
+         "section": "311", "row": "M", "quantity": 2, "retail_price": 250.0,
+         "is_owned": False},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": ls, "gotickets_listings_snapshots": [],
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    assert body["pools"] == ["tevo_market"]
+    assert body["gt_captured_at"] is None
+    assert body["best"]["inv_source"] == "tevo_market"
+
+
+def test_substitutions_gotickets_ambiguous_section_labels_need_a_human(client, monkeypatch):
+    # A venue fielding both "Loge 106" and "Lower 106" can't resolve a bare
+    # sold section "106" — those surface as ambiguous, never as a cover.
+    gt = [
+        {"gt_listing_id": 1, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "Loge 106", "section_id": 11, "row": "5", "quantity": 2,
+         "all_in_price": 100.0, "display_price": 100.0},
+        {"gt_listing_id": 2, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "Lower 106", "section_id": 12, "row": "5", "quantity": 2,
+         "all_in_price": 110.0, "display_price": 110.0},
+        # Unlabelled row: no section at all, so it can never match either.
+        {"gt_listing_id": 3, "gt_event_id": 900, "captured_at": "2026-09-01T15:00:00Z",
+         "section": "", "section_id": None, "row": "5", "quantity": 2,
+         "all_in_price": 90.0, "display_price": 90.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/900/substitutions"
+                      "?section=106&row=9&quantity=2&source=market").json()
+    assert body["subs"] == []
+    assert {a["section"] for a in body["ambiguous"]} == {"Loge 106", "Lower 106"}
+    assert body["best"] is None
+
+
+def test_substitutions_gotickets_dedupes_and_falls_back_to_display_price(client, monkeypatch):
+    # Same listing twice in one capture (first wins), and a null all_in_price
+    # falls back to the display price rather than dropping the listing.
+    gt = [
+        {"gt_listing_id": 55, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": None, "display_price": 258.96},
+        {"gt_listing_id": 55, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": 3262193, "row": "M",
+         "quantity": 2, "all_in_price": 999.0, "display_price": 999.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    assert len(body["subs"]) == 1
+    assert body["subs"][0]["unit_cost"] == 258.96
+
+
+def test_substitutions_gotickets_link_omitted_without_section_id(client, monkeypatch):
+    gt = [
+        {"gt_listing_id": 7, "gt_event_id": 1252283, "captured_at": "2026-09-01T15:34:00Z",
+         "section": "Promenade  311", "section_id": None, "row": "M",
+         "quantity": 2, "all_in_price": 200.0, "display_price": 200.0},
+    ]
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "listings_snapshots": [], "gotickets_listings_snapshots": gt,
+    }))
+    body = client.get("/api/broker/event/3170362/substitutions"
+                      "?section=311&row=R&quantity=2&source=market").json()
+    # Still linkable to the event page; just not filtered to the section.
+    assert body["best"]["buy_url"] == (
+        "https://pro.gotickets.com/tickets/1252283/?sortBy=price&sortDirection=asc")
+
+
 # ---------- /api/broker/order-lookup (order # -> sub fields) ----------
 
 def test_order_lookup_seatgeek(client, monkeypatch):
@@ -685,8 +869,794 @@ def test_order_lookup_evo_uses_first_item_and_counts(client, monkeypatch):
     assert body["line_items"] == 2
 
 
+def test_order_lookup_evo_accepts_composite_tevo_order_number(client, monkeypatch):
+    # TEvo displays "<purchase_order>-<order_id>"; we key on the trailing id.
+    _use_db(monkeypatch, FakeSupabase(table_data={
+        "evo_orders": [{"evo_order_id": 19056200, "tevo_event_id": 3170362,
+                        "total": 560, "subtotal": 560}],
+        "evo_order_items": [
+            {"ticket_group_section": "311", "ticket_group_row": "R", "quantity": 2,
+             "event_name": "US Open Session 8", "event_id": 3170362},
+        ],
+    }))
+    body = client.get("/api/broker/order-lookup?order_id=8036615-19056200").json()
+    assert body["found"] is True and body["source"] == "evo"
+    assert body["evo_order_id"] == 19056200
+    assert body["section"] == "311" and body["row"] == "R"
+    assert body["quantity"] == 2 and body["revenue"] == 560
+
+
 def test_order_lookup_not_found(client, monkeypatch):
     _use_db(monkeypatch, FakeSupabase())
     body = client.get("/api/broker/order-lookup?order_id=NOPE").json()
     assert body["found"] is False
     assert "note" in body
+
+
+# ---------- order-lookup → S4K CRM fallback (the two markets we don't ingest) ----------
+
+class _FakeCRM:
+    """Stands in for s4kcs_client.S4KCSClient."""
+
+    def __init__(self, row=None, raises=None):
+        self._row, self._raises = row, raises
+        self.asked = []
+
+    def find_order(self, order_id):
+        self.asked.append(order_id)
+        if self._raises is not None:
+            raise self._raises
+        return self._row
+
+
+def _use_crm(monkeypatch, crm):
+    monkeypatch.setattr(app_module, "_s4kcs_client", lambda: crm)
+
+
+def test_order_lookup_reads_the_stored_s4kcs_book_first(client, monkeypatch):
+    # Ingested every 10 min, so the table answers without a 10MB live fetch.
+    crm = _FakeCRM(row={"source": "StubHub", "id": "644308803"})
+    _use_crm(monkeypatch, crm)
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
+        "source": "StubHub", "s4k_order_id": "644308803",
+        "order_status": "Upload Transfer Receipts",
+        "event_name": "US Open Tennis: Session 11", "event_date": "2026-09-04",
+        "venue_name": "Louis Armstrong Stadium", "section": "3", "row": "N",
+        "seats": "", "quantity": 2, "price": 870.34,
+        "delivery": "Mobile Tickets", "inhand_date": "2026-09-02",
+        "tevo_event_id": None,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is True and body["via"] == "s4kcs_orders"
+    assert body["source"] == "StubHub" and body["revenue"] == 870.34
+    assert body["section"] == "3" and body["row"] == "N"
+    assert crm.asked == []  # the live API was never touched
+
+
+def test_order_lookup_takes_the_vivid_price_from_our_own_book(client, monkeypatch):
+    # The CRM ships Vivid rows with no price; v_s4kcs_orders substitutes the
+    # total from vivid_orders, so the lookup reports real revenue.
+    _use_crm(monkeypatch, _FakeCRM())
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
+        "source": "Vivid Seats", "s4k_order_id": "81252078", "section": "5",
+        "row": "12", "quantity": 2, "price": 240.0, "crm_price": None,
+        "price_source": "vivid_orders", "tevo_event_id": 3100123,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=81252078").json()
+    assert body["revenue"] == 240.0
+    assert body["tevo_event_id"] == 3100123
+
+
+def test_order_lookup_stored_row_carries_a_mapped_event_id(client, monkeypatch):
+    # Once the AQ mapper fills tevo_event_id the lookup can search directly,
+    # so no "pick the event" note is emitted.
+    _use_crm(monkeypatch, _FakeCRM())
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_s4kcs_orders": [{
+        "source": "Gametime", "s4k_order_id": "G1", "section": "12", "row": "4",
+        "quantity": 2, "price": 100.0, "tevo_event_id": 3170362,
+    }]}))
+    body = client.get("/api/broker/order-lookup?order_id=G1").json()
+    assert body["tevo_event_id"] == 3170362
+    assert body["note"] is None
+
+
+def test_order_lookup_falls_back_to_s4k_crm(client, monkeypatch):
+    # A StubHub order: real shape from the CRM book. We ingest no StubHub
+    # orders, so before this fallback it resolved to nothing at all.
+    _use_db(monkeypatch, FakeSupabase())
+    crm = _FakeCRM(row={
+        "source": "StubHub", "id": "644308803", "section": "3", "row": "N",
+        "quantity": 2, "price": 870.34, "event_name": "US Open Tennis: Session 11",
+        "event_date": "2026-09-04", "venue_name": "Louis Armstrong Stadium",
+        "inhand_date": "2026-09-02", "delivery": "Mobile Tickets", "seats": "",
+        "order_status": "Upload Transfer Receipts",
+    })
+    _use_crm(monkeypatch, crm)
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is True
+    # Nothing stored for it yet (created since the last 10-min poll), so the
+    # live book answered.
+    assert body["source"] == "StubHub" and body["via"] == "s4k_crm"
+    assert body["section"] == "3" and body["row"] == "N" and body["quantity"] == 2
+    assert body["revenue"] == 870.34
+    assert body["event_date"] == "2026-09-04"
+    assert body["order_status"] == "Upload Transfer Receipts"
+    # The CRM knows no canonical event id — that's the AQ mapper's job, not a
+    # name+date guess here, so the caller is told to pick the event.
+    assert body["tevo_event_id"] is None
+    assert "pick the event" in body["note"]
+    assert crm.asked == ["644308803"]
+
+
+def test_order_lookup_prefers_an_ingested_book_over_the_crm(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"tickpick_orders": [{
+        "tp_order_id": "TP9", "tevo_event_id": 5, "event_name": "X",
+        "section": "A", "row": "2", "quantity": 2, "total": 100,
+    }]}))
+    crm = _FakeCRM(row={"source": "StubHub", "id": "TP9"})
+    _use_crm(monkeypatch, crm)
+    body = client.get("/api/broker/order-lookup?order_id=TP9").json()
+    assert body["source"] == "tickpick" and body["tevo_event_id"] == 5
+    assert crm.asked == []  # never consulted — we had it already
+
+
+def test_order_lookup_crm_miss_reports_both_books(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    _use_crm(monkeypatch, _FakeCRM(row=None))
+    body = client.get("/api/broker/order-lookup?order_id=NOPE").json()
+    assert body["found"] is False
+    assert "S4K CRM" in body["note"]
+
+
+def test_order_lookup_crm_failure_degrades(client, monkeypatch):
+    # Upstream down / key revoked: say so rather than claiming "not found".
+    _use_db(monkeypatch, FakeSupabase())
+    _use_crm(monkeypatch, _FakeCRM(raises=RuntimeError("HTTP 401")))
+    body = client.get("/api/broker/order-lookup?order_id=644308803").json()
+    assert body["found"] is False
+    assert "lookup failed" in body["note"] and "RuntimeError" in body["note"]
+
+
+# ---------- server-side client factory ----------
+
+def test_s4kcs_client_factory_builds_when_key_present(monkeypatch):
+    monkeypatch.setenv("S4KCS_API_KEY", "s4k_env")
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    c = app_module._s4kcs_client()
+    assert c is not None and c.api_key == "s4k_env"
+
+
+def test_s4kcs_client_factory_returns_none_without_a_key(monkeypatch, capsys):
+    monkeypatch.delenv("S4KCS_API_KEY", raising=False)
+    monkeypatch.setattr(app_module, "require_sb", lambda: None)
+    assert app_module._s4kcs_client() is None
+    assert "s4kcs: client unavailable" in capsys.readouterr().out
+
+
+# ---------- /api/broker/sub-worklist (the substitution QUEUE) ----------
+
+def _wl_row(**over):
+    row = {
+        "source": "StubHub", "s4k_order_id": "abc", "tevo_event_id": 3287886,
+        "event_name": "Vikings at Patriots", "event_date": "2026-12-10",
+        "venue_name": "Gillette Stadium", "order_status": "Under Review",
+        "sub_signal": "probable", "section": "112", "order_row": "21",
+        "quantity": 2, "sold_ea": 382.0, "sold_total": 764.0,
+        "candidates": 3, "best_sub_source": "tevo", "best_price_basis": "tevo_retail",
+        "best_listing_id": 99, "best_section": "112", "best_row": "17",
+        "best_qty": 2, "best_ea": 300.0, "best_total": 600.0,
+        "margin_ea": 82.0, "margin_total": 164.0, "rows_closer": 4,
+        "buy_url": None, "listing_captured_at": "2026-09-09T19:00:00Z",
+        "refreshed_at": "2026-09-09T19:05:00Z",
+    }
+    row.update(over)
+    return row
+
+
+def test_sub_worklist_empty_reports_no_refresh_time(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_sub_worklist": []}))
+    body = client.get("/api/broker/sub-worklist").json()
+    assert body["rows"] == [] and body["count"] == 0
+    # no rows -> nothing to report a refresh time from, rather than "now"
+    assert body["refreshed_at"] is None
+    assert body["with_candidate"] == 0
+    assert body["filters"]["source"] is None
+
+
+def test_sub_worklist_counts_only_rows_with_a_candidate(client, monkeypatch):
+    # candidates=0 rows stay in the queue on purpose (the whole book is in
+    # scope), so with_candidate must not simply equal the row count.
+    rows = [_wl_row(), _wl_row(s4k_order_id="def", candidates=0,
+                              best_listing_id=None, margin_total=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_sub_worklist": rows}))
+    body = client.get("/api/broker/sub-worklist").json()
+    assert body["count"] == 2
+    assert body["with_candidate"] == 1
+    assert body["refreshed_at"] == "2026-09-09T19:05:00Z"
+
+
+def test_sub_worklist_applies_every_filter(client, monkeypatch):
+    fake = FakeSupabase(table_data={"s4kcs_sub_worklist": [_wl_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/sub-worklist"
+                      "?source=StubHub&with_sub=true&days=30&limit=5&offset=10").json()
+    assert body["filters"] == {"source": "StubHub", "with_sub": True, "days": 30,
+                               "limit": 5, "offset": 10}
+    assert body["count"] == 1
+
+
+def test_sub_worklist_with_sub_false_selects_the_gap(client, monkeypatch):
+    # the "nothing qualified" side of the filter is its own branch
+    rows = [_wl_row(candidates=0, best_listing_id=None, margin_total=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"s4kcs_sub_worklist": rows}))
+    body = client.get("/api/broker/sub-worklist?with_sub=false").json()
+    assert body["filters"]["with_sub"] is False
+    assert body["with_candidate"] == 0
+
+
+def _cov_row(**over):
+    row = {
+        "n2s_id": 436, "order_number": "P8L5T1EUKG", "s4k_source": "Gametime",
+        "n2s_order_key": "P8L5T1EUKG",
+        "n2s_status": "n2s", "fail_reason": "Unknown", "timer_expired": True,
+        "event_name": "US Open Tennis - Session 21", "event_date": "2026-09-12",
+        "venue": "Arthur Ashe Stadium", "tevo_event_id": 3287886,
+        "section": "317", "order_row": "P", "quantity": 2, "sold_ea": 42.0,
+        "sub_source": "gotickets", "sub_listing_id": "7167764492",
+        "sub_section": "317", "sub_row": "H", "sub_qty": 2, "sub_avail": 2,
+        "sub_ea": 61.0,
+        "sub_total": 122.0, "cover_cost": 38.0, "rows_closer": 8,
+        "buy_url": None, "captured_at": "2026-09-09T22:00:00Z",
+        "cover_rank": 1, "fifo_position": 3,
+        "cover_gate": 2, "cover_label": "S4KTrading",
+        "refreshed_at": "2026-09-09T22:05:00Z", "alert_at": "2026-09-09T21:00:00Z",
+        "has_cover": True, "no_cover_reason": None,
+        "open_intent_id": None, "open_intent_by": None,
+    }
+    row.update(over)
+    return row
+
+
+def _gap_row(**over):
+    """An open obligation with NO cover — the majority of the real book, and
+    what this panel used to omit entirely."""
+    row = _cov_row(**over)
+    row.update({
+        "sub_source": None, "sub_listing_id": None, "sub_section": None,
+        "sub_row": None, "sub_qty": None, "sub_avail": None,
+        "sub_ea": None, "sub_total": None,
+        "cover_cost": None, "rows_closer": None, "buy_url": None,
+        "captured_at": None, "cover_rank": None, "fifo_position": None,
+        "refreshed_at": None, "has_cover": False, "no_cover_reason": "no_match",
+    })
+    row.update(over)
+    return row
+
+
+def test_n2s_covers_empty_reports_no_refresh_time(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": []}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["rows"] == [] and body["count"] == 0
+    # A stale/absent payload must read as "no answer", never "no covers", so an
+    # empty page reports no refresh time rather than now().
+    assert body["refreshed_at"] is None
+    assert body["total_cover_cost"] == 0
+    assert body["at_or_below_sale"] == 0 and body["displaced"] == 0
+
+
+def test_n2s_covers_separates_cost_from_saving(client, monkeypatch):
+    # cover_cost is signed: positive costs us, negative means the cover is
+    # cheaper than the sale. The count must not be "all rows".
+    rows = [_cov_row(), _cov_row(n2s_id=437, cover_cost=-93.62)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["count"] == 2
+    assert body["at_or_below_sale"] == 1
+    assert body["total_cover_cost"] == -55.62
+    assert body["refreshed_at"] == "2026-09-09T22:05:00Z"
+
+
+def test_n2s_covers_counts_fifo_displaced_orders(client, monkeypatch):
+    # cover_rank > 1 means an earlier order claimed the cheaper listing; that
+    # is contention worth surfacing, not a row to hide.
+    rows = [_cov_row(), _cov_row(n2s_id=438, cover_rank=2)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["displaced"] == 1
+
+
+def test_n2s_covers_treats_missing_cover_rank_as_first_choice(client, monkeypatch):
+    rows = [_cov_row(cover_rank=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["displaced"] == 0
+
+
+def test_n2s_covers_ignores_rows_with_no_cost(client, monkeypatch):
+    rows = [_cov_row(cover_cost=None)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["total_cover_cost"] == 0
+    assert body["at_or_below_sale"] == 0
+
+
+def test_n2s_covers_keeps_orders_that_have_no_sub(client, monkeypatch):
+    """The whole point of the rewrite: an uncovered obligation is the WORK, so
+    it must be served, counted and explained — not omitted the way reading
+    n2s_cover_queue directly used to omit it."""
+    rows = [_cov_row(), _gap_row(n2s_id=500),
+            _gap_row(n2s_id=501, no_cover_reason="unmapped")]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["count"] == 3
+    assert body["covered"] == 1
+    assert body["uncovered"] == 2
+    assert body["by_no_cover_reason"] == {"no_match": 1, "unmapped": 1}
+    # A row with no cover contributes no cost — NULL is "nothing allocated",
+    # not a free settlement.
+    assert body["total_cover_cost"] == 38.0
+
+
+def test_n2s_covers_refreshed_at_comes_from_a_covered_row(client, monkeypatch):
+    """Uncovered rows carry no refreshed_at (nothing was computed for them), so
+    a book that leads with gaps must still report when the covers were built —
+    otherwise the freshness stamp reads as 'never' on a healthy pipeline."""
+    rows = [_gap_row(n2s_id=500), _cov_row()]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["refreshed_at"] == "2026-09-09T22:05:00Z"
+
+
+def test_n2s_covers_reports_pipeline_freshness_when_the_page_is_empty(client, monkeypatch):
+    """A filter must not look like an outage. With every open order late and
+    include_late=false the page is empty, so no SERVED row carries a
+    refreshed_at — but the matcher is still running, and reading "never
+    refreshed" there would send the operator hunting a dead pipeline."""
+    late = _cov_row(timer_expired=True, refreshed_at="2026-09-09T22:05:00Z")
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [late]}))
+    body = client.get("/api/broker/n2s-covers?with_sub=true").json()
+    assert body["refreshed_at"] == "2026-09-09T22:05:00Z"
+
+
+def test_n2s_covers_with_sub_filter_is_passed_through(client, monkeypatch):
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers?with_sub=false").json()
+    assert body["filters"]["with_sub"] is False
+
+
+def test_n2s_covers_serves_the_lot_size_of_a_split_take(client, monkeypatch):
+    """sub_qty is what we buy and what the vendor payload owes; sub_avail is the
+    listing's whole lot. Both must reach the panel — dropping sub_avail makes a
+    2-of-4 split take indistinguishable from a 2-seat listing, and the operator
+    finds out only in the vendor console."""
+    split = _cov_row(sub_qty=2, sub_avail=4)
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [split]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["sub_qty"] == 2 and row["sub_avail"] == 4
+    # Economics stay on what is owed, not on the lot we happen to draw from.
+    assert row["sub_total"] == 122.0
+
+
+def test_n2s_covers_serves_an_over_delivery_cover(client, monkeypatch):
+    """An over-delivery buys a lot one seat bigger than the obligation. The
+    panel needs sub_qty (3) and quantity (2) both intact to say so; collapsing
+    them would have the operator buy 2 of a lot that only sells as 3."""
+    over = _cov_row(quantity=2, sub_qty=3, sub_avail=3,
+                    sub_total=1099.20, cover_cost=601.20)
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [over]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["quantity"] == 2 and row["sub_qty"] == 3
+    # A whole-lot buy is not a split take — the two markers are exclusive.
+    assert row["sub_avail"] == row["sub_qty"]
+    # The spare seat is inside the cost, not omitted from it.
+    assert row["cover_cost"] == 601.20
+
+
+def test_n2s_covers_profitable_filter_is_passed_through(client, monkeypatch):
+    """Profitable means cover_cost < 0 — the obligation settles for less than
+    the seat sold for. Break-even is excluded on purpose: it is not money."""
+    _use_db(monkeypatch, FakeSupabase(
+        table_data={"v_n2s_orders": [_cov_row(cover_cost=-99.62)]}))
+    body = client.get("/api/broker/n2s-covers?profitable=true").json()
+    assert body["filters"]["profitable"] is True
+    # Default must stay off, or the panel would silently hide the gap rows
+    # that are the whole point of this book.
+    assert client.get("/api/broker/n2s-covers").json()["filters"]["profitable"] is False
+
+
+def test_n2s_covers_hidden_late_count_respects_the_profit_filter(client, monkeypatch):
+    """hidden_late says what the TIMER removed, so it must count the same book
+    the page is showing. Counting the whole late book under profitable=true
+    would advertise "N hidden" and send the operator to a Timer switch that
+    reveals no profitable covers at all."""
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row(cover_cost=-99.62)]})
+    _use_db(monkeypatch, fake)
+    client.get("/api/broker/n2s-covers?profitable=true")
+    # The double records each builder call; the count query must have narrowed
+    # on cover_cost the same way the page query did.
+    assert fake.table_calls.count("v_n2s_orders") == 2
+
+
+def test_n2s_covers_kind_filter_narrows_page_and_late_count(client, monkeypatch):
+    """Type filter: ped = Gmail Need2Buy rows (status n2b), n2s = the rest.
+    The hidden_late count query must narrow the same way as the page."""
+    seen = []
+
+    class _Rec(type(FakeSupabase().table("x"))):
+        def eq(self, col, val):
+            seen.append(("eq", col, val))
+            return self
+
+        def neq(self, col, val):
+            seen.append(("neq", col, val))
+            return self
+
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    fake.table = lambda name: (fake.table_calls.append(name),
+                               _Rec(fake.table_data.get(name, [])))[1]
+    _use_db(monkeypatch, fake)
+
+    body = client.get("/api/broker/n2s-covers?kind=ped").json()
+    assert body["filters"]["kind"] == "ped"
+    assert seen.count(("eq", "n2s_status", "n2b")) == 2
+
+    seen.clear()
+    client.get("/api/broker/n2s-covers?kind=n2s")
+    assert seen.count(("neq", "n2s_status", "n2b")) == 2
+    assert ("eq", "n2s_status", "n2b") not in seen
+
+    assert client.get("/api/broker/n2s-covers").json()["filters"]["kind"] is None
+    assert client.get("/api/broker/n2s-covers?kind=bogus").status_code == 422
+
+
+def test_n2s_covers_gate_and_reason_filters(client, monkeypatch):
+    """Gate takes one gate 1-6 or a group (direct = 1-2, offer = 3-6); reason
+    is no_cover_reason. Both narrow the page AND the hidden_late count."""
+    seen = []
+
+    class _Rec(type(FakeSupabase().table("x"))):
+        def eq(self, col, val):
+            seen.append(("eq", col, val))
+            return self
+
+        def lte(self, col, val):
+            seen.append(("lte", col, val))
+            return self
+
+        def gte(self, col, val):
+            seen.append(("gte", col, val))
+            return self
+
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    fake.table = lambda name: (fake.table_calls.append(name),
+                               _Rec(fake.table_data.get(name, [])))[1]
+    _use_db(monkeypatch, fake)
+
+    for qs, call in (("gate=4", ("eq", "cover_gate", 4)),
+                     ("gate=direct", ("lte", "cover_gate", 2)),
+                     ("gate=offer", ("gte", "cover_gate", 3)),
+                     ("reason=no_match", ("eq", "no_cover_reason", "no_match"))):
+        seen.clear()
+        body = client.get(f"/api/broker/n2s-covers?{qs}").json()
+        assert seen.count(call) == 2, qs
+    assert body["filters"]["reason"] == "no_match"
+    assert client.get("/api/broker/n2s-covers?gate=7").status_code == 422
+    assert client.get("/api/broker/n2s-covers?reason=bogus").status_code == 422
+
+
+def test_n2s_covers_serves_the_source_order_key(client, monkeypatch):
+    """The panel needs the marketplace's own order id to look the obligation up
+    while it is still live. EVO's order_number is an <invoice>-<order>
+    composite, so the key is carried separately rather than parsed out here."""
+    evo = _cov_row(s4k_source="EVO", order_number="8047273-19083928",
+                   n2s_order_key="19083928")
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [evo]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["order_number"] == "8047273-19083928"
+    assert row["n2s_order_key"] == "19083928"
+
+
+def test_n2s_covers_displaced_ignores_uncovered_rows(client, monkeypatch):
+    """cover_rank is NULL on a gap row; it must not be read as first choice and
+    counted into the contention figure."""
+    rows = [_gap_row(n2s_id=500), _cov_row(n2s_id=438, cover_rank=2)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["displaced"] == 1
+
+
+def test_n2s_covers_hides_late_by_default_and_says_how_many(client, monkeypatch):
+    """The default filters out every order past its 15-minute CRM timer, which
+    measured 108 of 108. An empty page must therefore report the hidden count —
+    otherwise it reads as "nothing needs covering", the exact opposite of true."""
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row(), _cov_row(n2s_id=2)]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers").json()
+    assert body["filters"]["include_late"] is False
+    # The fake does not filter, so both the page query and the late-count query
+    # see the same rows; what matters is that the count is reported at all.
+    assert body["hidden_late"] == 2
+
+
+def test_n2s_covers_include_late_skips_the_hidden_count(client, monkeypatch):
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers?include_late=true").json()
+    assert body["filters"]["include_late"] is True
+    assert body["hidden_late"] == 0
+
+
+def test_n2s_covers_applies_every_filter(client, monkeypatch):
+    fake = FakeSupabase(table_data={"v_n2s_orders": [_cov_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers"
+                      "?source=Gametime&days=14&kind=ped&limit=5&offset=10").json()
+    assert body["filters"] == {"source": "Gametime", "days": 14,
+                               "with_sub": None, "include_late": False,
+                               "profitable": False, "kind": "ped",
+                               "gate": None, "reason": None,
+                               "limit": 5, "offset": 10}
+    assert body["count"] == 1
+
+
+def _verify_row(**over):
+    row = {
+        "n2s_id": 436, "order_number": "P8L5T1EUKG", "s4k_source": "Gametime",
+        "sub_source": "gotickets", "sub_listing_id": "7167764492",
+        "quoted_ea": 61.0, "price_now": 61.0, "price_delta_ea": 0.0,
+        "verdict": "ok", "buyable": True,
+        "checked_at": "2026-09-09T23:40:00Z",
+    }
+    row.update(over)
+    return row
+
+
+def test_n2s_verify_empty_queue(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_cover_verify": []}))
+    body = client.get("/api/broker/n2s-covers/verify").json()
+    assert body["count"] == 0 and body["buyable"] == 0
+    assert body["by_verdict"] == {}
+
+
+def test_n2s_verify_counts_only_buyable_rows(client, monkeypatch):
+    # `gone` and `order_closed` are hard blocks; `stale_data` means "cannot
+    # tell", which must NOT count as buyable either.
+    rows = [
+        _verify_row(),
+        _verify_row(n2s_id=437, verdict="price_up", price_now=70.0,
+                    price_delta_ea=9.0, buyable=True),
+        _verify_row(n2s_id=438, verdict="gone", price_now=None,
+                    price_delta_ea=None, buyable=False),
+        _verify_row(n2s_id=439, verdict="order_closed", buyable=False),
+        _verify_row(n2s_id=440, verdict="stale_data", buyable=False),
+    ]
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_cover_verify": rows}))
+    body = client.get("/api/broker/n2s-covers/verify").json()
+    assert body["count"] == 5
+    assert body["buyable"] == 2
+    assert body["by_verdict"] == {"ok": 1, "price_up": 1, "gone": 1,
+                                  "order_closed": 1, "stale_data": 1}
+
+
+def test_n2s_verify_labels_a_missing_verdict(client, monkeypatch):
+    rows = [_verify_row(verdict=None, buyable=False)]
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_cover_verify": rows}))
+    body = client.get("/api/broker/n2s-covers/verify").json()
+    assert body["by_verdict"] == {"unknown": 1}
+
+
+def test_n2s_verify_freshness_floor_is_one_minute(client, monkeypatch):
+    # A zero/negative window would ask for "captured after now", which can only
+    # ever answer stale_data — clamp it so the gate stays meaningful.
+    fake = FakeSupabase(rpc_data={"n2s_cover_verify": [_verify_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-covers/verify?freshness_minutes=0").json()
+    assert fake.rpc_calls[0][1]["p_freshness"] == "1 minutes"
+    assert body["freshness_minutes"] == 0
+
+
+class _RaisingSupabase(FakeSupabase):
+    """RPC that raises, to prove a deliberate DB refusal reaches the caller."""
+
+    def __init__(self, exc, **kw):
+        super().__init__(**kw)
+        self._exc = exc
+
+    def rpc(self, name, params=None):
+        self.rpc_calls.append((name, params or {}))
+        raise self._exc
+
+
+def _intent_row(**over):
+    row = {
+        "intent_id": 1, "n2s_id": 436, "order_number": "81364906",
+        "s4k_source": "Vivid Seats", "sub_source": "gotickets",
+        "sub_listing_id": "7167764492", "sub_section": "623", "sub_row": "H",
+        "sub_qty": 2, "quoted_ea": 140.0, "quoted_total": 280.0,
+        "cover_cost": -99.62, "buy_url": "https://pro.gotickets.com/tickets/1/",
+        "verify_verdict": "ok", "verify_delta": 0.0, "status": "requested",
+        "requested_by": "julian@s4kent.com", "requested_at": "2026-09-09T23:50:00Z",
+        "payload": {"endpoint": "POST https://gotickets.com/rest/pro/api/orders"},
+        "payload_ready": True, "payload_gaps": [],
+        "operator_fills": ["paymentMethodToken", "recipient__original_buyer_pii"],
+        "notes": None,
+    }
+    row.update(over)
+    return row
+
+
+def test_buy_intent_records_without_buying(client, monkeypatch):
+    # The buy is placed by hand in the vendor console, so the response carries
+    # a fill sheet: what WE produced, plus what the human types at checkout.
+    created = {"intent_id": 1, "status": "requested", "verdict": "ok",
+               "payload_ready": True, "payload_gaps": [],
+               "operator_fills": ["paymentMethodToken", "deliveryMethodId"]}
+    fake = FakeSupabase(rpc_data={"n2s_buy_intent_create": [created]})
+    _use_db(monkeypatch, fake)
+    body = client.post("/api/broker/n2s-covers/436/buy-intent"
+                       "?requested_by=julian").json()
+    # The whole point: an intent is a record, never a purchase.
+    assert body["bought"] is False
+    assert body["intent"]["intent_id"] == 1
+    # A sheet the operator must still complete is NOT a defect — it stays
+    # "ready", because payload_ready reports only on what our side owes.
+    assert body["intent"]["payload_ready"] is True
+    assert body["intent"]["operator_fills"]
+    assert fake.rpc_calls[0][1]["p_n2s_id"] == 436
+
+
+def test_buy_intent_surfaces_a_refusal_as_409(client, monkeypatch):
+    # "not buyable" / "no cover" / duplicate are deliberate DB refusals — the
+    # caller must see the reason, not a bare 500.
+    _use_db(monkeypatch, _RaisingSupabase(RuntimeError("cover is not buyable (gone)")))
+    r = client.post("/api/broker/n2s-covers/436/buy-intent")
+    assert r.status_code == 409
+    assert "not buyable" in r.json()["detail"]
+
+
+def test_buy_intent_empty_result_is_also_a_refusal(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_create": []}))
+    r = client.post("/api/broker/n2s-covers/436/buy-intent")
+    assert r.status_code == 409
+
+
+def test_buy_intent_cancel_frees_the_order(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_cancel": [True]}))
+    body = client.post("/api/broker/buy-intents/1/cancel?by=julian").json()
+    assert body["status"] == "cancelled"
+
+
+def test_buy_intent_cancel_missing_is_409(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_cancel": [False]}))
+    assert client.post("/api/broker/buy-intents/9/cancel").status_code == 409
+
+
+def test_buy_intent_cancel_scalar_response(client, monkeypatch):
+    # supabase may hand back a bare scalar rather than a list
+    _use_db(monkeypatch, FakeSupabase(rpc_data={"n2s_buy_intent_cancel": True}))
+    assert client.post("/api/broker/buy-intents/1/cancel").json()["status"] == "cancelled"
+
+
+def test_buy_intents_list_counts_what_our_side_still_owes(client, monkeypatch):
+    # `complete` counts sheets with nothing left on OUR side. It deliberately
+    # ignores operator_fills: if the human's checkout fields counted against a
+    # sheet, none would ever read complete and the number would say nothing.
+    rows = [_intent_row(),
+            _intent_row(intent_id=2, payload_ready=False,
+                        payload_gaps=["no_purchase_integration_for_seatgeek"],
+                        operator_fills=[])]
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_buy_intent": rows}))
+    body = client.get("/api/broker/buy-intents").json()
+    assert body["count"] == 2
+    assert body["complete"] == 1
+    assert body["needs_us"] == 1
+    assert body["status"] == "requested"
+
+
+def test_buy_intents_list_selects_the_operator_fill_list(client, monkeypatch):
+    # A sheet without operator_fills cannot be acted on — the operator would
+    # not know what the console still wants from them.
+    fake = FakeSupabase(table_data={"n2s_buy_intent": [_intent_row()]})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/buy-intents").json()
+    assert "recipient__original_buyer_pii" in body["rows"][0]["operator_fills"]
+
+
+def test_buy_intents_list_all_statuses(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase(table_data={"n2s_buy_intent": [_intent_row()]}))
+    body = client.get("/api/broker/buy-intents?status=").json()
+    assert body["status"] == "" and body["count"] == 1
+
+
+def test_n2s_covers_exposes_gate_and_label(client, monkeypatch):
+    """The gate cascade's classification must survive to the API.
+
+    Regression guard for a real break: the cascade added cover_gate/cover_label
+    to n2s_cover_candidates, but n2s_cover_queue, n2s_covers() and v_n2s_orders
+    each had to be widened separately. Until the last landed, the label died one
+    step downstream and the panel showed nothing — with no error anywhere.
+    """
+    rows = [_cov_row(),
+            _cov_row(n2s_id=437, cover_gate=5,
+                     cover_label="Index Down offer subs", cover_cost=-12.5)]
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": rows}))
+    body = client.get("/api/broker/n2s-covers").json()
+    got = {r["n2s_id"]: r for r in body["rows"]}
+    assert got[436]["cover_gate"] == 2
+    assert got[436]["cover_label"] == "S4KTrading"
+    # gates 3-6 carry "offer subs": the buyer is MOVED and must consent first.
+    assert got[437]["cover_gate"] == 5
+    assert "offer subs" in got[437]["cover_label"]
+
+
+def test_n2s_covers_gap_row_carries_no_gate(client, monkeypatch):
+    """An uncovered obligation must not claim a gate.
+
+    A gap row is the work, not a cover — labelling it would tell an operator
+    there is something to act on when there is not.
+    """
+    _use_db(monkeypatch, FakeSupabase(table_data={"v_n2s_orders": [
+        _gap_row(cover_gate=None, cover_label=None)]}))
+    row = client.get("/api/broker/n2s-covers").json()["rows"][0]
+    assert row["has_cover"] is False
+    assert row["cover_gate"] is None and row["cover_label"] is None
+
+
+# ---------- /api/broker/n2s-gt-dryrun ----------
+
+def _dry_row(**kw):
+    r = {"dryrun_id": 96, "captured_at": "2026-10-26T18:02:40Z", "decision": "skip",
+         "skip_reasons": ["gate_moves_buyer"], "cover_gate": 5, "quoted_total": 755.96,
+         "cover_cost": -235.64, "payload": {"_dry_run": True}}
+    r.update(kw)
+    return r
+
+
+def test_n2s_gt_dryrun_tallies_today_from_would_buys_only(client, monkeypatch):
+    rows = [_dry_row(),
+            _dry_row(dryrun_id=95, decision="would_buy", skip_reasons=[], cover_gate=1,
+                     quoted_total=175.83),
+            _dry_row(dryrun_id=94, decision="would_buy", skip_reasons=[], cover_gate=1,
+                     quoted_total=670.48)]
+    fake = FakeSupabase(table_data={"n2s_gt_order_dryrun": rows})
+    _use_db(monkeypatch, fake)
+    body = client.get("/api/broker/n2s-gt-dryrun").json()
+    assert body["count"] == 3
+    # Spend is what would actually be ordered: skips cost nothing.
+    assert body["today"]["would_buy"] == 2 and body["today"]["skipped"] == 1
+    assert body["today"]["would_spend"] == 846.31
+    # Read-only: only the dry-run table is touched, no RPC is called.
+    assert fake.rpc_calls == []
+    assert set(fake.table_calls) == {"n2s_gt_order_dryrun"}
+
+
+def test_n2s_gt_dryrun_returns_the_seller_note(client, monkeypatch):
+    """20261112030000: the dry-run panel shows the note the dry run judged."""
+    fake = FakeSupabase(table_data={"n2s_gt_order_dryrun": [
+        _dry_row(sub_view="obstructed", sub_notes="Limited View,Mobile Xfer")]})
+    selected: list[str] = []
+    real_table = fake.table
+
+    def table(name):
+        q = real_table(name)
+        real_select = q.select
+        q.select = lambda cols, **k: (selected.append(cols), real_select(cols, **k))[1]
+        return q
+
+    fake.table = table
+    _use_db(monkeypatch, fake)
+    row = client.get("/api/broker/n2s-gt-dryrun").json()["rows"][0]
+    assert row["sub_notes"] == "Limited View,Mobile Xfer" and row["sub_view"] == "obstructed"
+    assert {"sub_view", "sub_notes"} <= set(selected[0].split(","))
+
+
+def test_n2s_gt_dryrun_rejects_unknown_decision(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    assert client.get("/api/broker/n2s-gt-dryrun?decision=buy").status_code == 400
+
+
+def test_n2s_gt_dryrun_empty(client, monkeypatch):
+    _use_db(monkeypatch, FakeSupabase())
+    body = client.get("/api/broker/n2s-gt-dryrun?decision=would_buy").json()
+    assert body["rows"] == [] and body["today"]["would_spend"] == 0

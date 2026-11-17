@@ -20,7 +20,7 @@
        style.css so its var() refs resolve (same as index.html). Without it the
        event page renders on a white background. -->
   <link rel="stylesheet" href="/static/_shared/design-tokens.css" />
-  <link rel="stylesheet" href="style.css?v=20260721a" />
+  <link rel="stylesheet" href="style.css?v=20261006stats" />
 </head>
 <body data-page="event">
 
@@ -54,6 +54,10 @@
           <span class="light" data-src="seatgeek" title="SeatGeek"></span>
           <span class="light" data-src="seatdata" title="SeatData"></span>
           <span class="light" data-src="espn"     title="ESPN"></span>
+          <span class="light" data-src="td-sh"    title="StubHub (SH)"></span>
+          <span class="light" data-src="td-gt"    title="GameTime (GT)"></span>
+          <span class="light" data-src="td-vd"    title="VividSeats (VD)"></span>
+          <span class="light" data-src="got"      title="GoTickets (GOT)"></span>
         </div>
         <div class="freshness" id="freshness">
           <span class="fr-chip" data-src="tevo">TEvo —</span>
@@ -64,6 +68,7 @@
           <span class="fr-chip" data-src="td-sh">SH —</span>
           <span class="fr-chip" data-src="td-gt">GT —</span>
           <span class="fr-chip" data-src="td-vd">VD —</span>
+          <span class="fr-chip" data-src="got">GoT —</span>
         </div>
         <div class="event-mode" id="eventMode"></div>
       </div>
@@ -77,6 +82,7 @@
       <button class="event-tab" data-tab="sh-listings" role="tab" aria-selected="false">SH Listings <span class="tab-count" id="tabCountShListings"></span></button>
       <button class="event-tab" data-tab="gt-listings" role="tab" aria-selected="false">GT Listings <span class="tab-count" id="tabCountGtListings"></span></button>
       <button class="event-tab" data-tab="vd-listings" role="tab" aria-selected="false">VD Listings <span class="tab-count" id="tabCountVdListings"></span></button>
+      <button class="event-tab" data-tab="got-listings" role="tab" aria-selected="false">GoTickets Listings <span class="tab-count" id="tabCountGotListings"></span></button>
       <!-- TP Listings tab removed 2026-06-07 (D0): TickPick demoted to per-event opt-in;
            TM Listings is its replacement. Opted-in TP rows still surface in the TD Markets tab. -->
       <button class="event-tab" data-tab="tm-listings" role="tab" aria-selected="false">TM Listings <span class="tab-count" id="tabCountTmListings"></span></button>
@@ -84,6 +90,7 @@
       <button class="event-tab" data-tab="seatdata-sales" role="tab" aria-selected="false">SeatData Sales <span class="tab-count" id="tabCountSeatdataSales"></span></button>
       <button class="event-tab" data-tab="axs-sections" role="tab" aria-selected="false">AXS Box Office <span class="tab-count" id="tabCountAxsSections"></span></button>
       <button class="event-tab" data-tab="td-markets" role="tab" aria-selected="false">TD Markets <span class="tab-count" id="tabCountTdMarkets"></span></button>
+      <button class="event-tab" data-tab="outliers" role="tab" aria-selected="false">🎯 Outliers <span class="tab-count" id="tabCountOutliers"></span></button>
       <button class="event-tab" data-tab="cast" role="tab" aria-selected="false" id="tabBtnCast" hidden style="display:none">Cast <span class="tab-count" id="tabCountCast"></span></button>
       <span class="event-tabs-sep" aria-hidden="true">|</span>
       <button class="event-tab" data-tab="predictions" role="tab" aria-selected="false">🔮 Predictions <span class="tab-count" id="tabCountPredictions"></span></button>
@@ -312,6 +319,21 @@
       </section>
     </div>
 
+    <!-- Price-outlier engine (mig 20260810180000 / get_event_listing_outliers).
+         Event-level robust (median+MAD) detection over the FULL market book for
+         EVO + GoTickets; non-seating (parking) excluded from the baseline via the
+         zone map; each source's summary + the flagged rows render below. -->
+    <div class="tab-pane" id="paneOutliers" role="tabpanel" hidden>
+      <section id="listing-outliers">
+        <div class="panel-title row">
+          <span>🎯 PRICE OUTLIERS — EVO &amp; GOTICKETS · ZONE-LEVEL · LATEST BOOK</span>
+          <span class="muted small" id="outliersMeta">tap tab to load</span>
+        </div>
+        <div id="outliersSummary" class="outliers-summary"></div>
+        <div id="outliersBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
     <!-- TD Listings split into 3 top-level per-source tabs (SH · GT · VD) — WP-1.
          Each is its own .tab-pane (peer of SG/EVO Listings); lazy-loads on first activation. -->
     <div class="tab-pane" id="paneShListings" role="tabpanel" hidden>
@@ -341,6 +363,19 @@
           <span class="muted small" id="tdListingsVdMeta">tap tab to load</span>
         </div>
         <div id="tdListingsVdBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+    </div>
+
+    <!-- GoTickets (GOT) listings — the Pro-API firehose (gotickets_listings_snapshots),
+         latest capture batch via get_gotickets_event_listings. Distinct source from
+         GameTime (the GT Listings tab above). Lazy-loads on first activation. -->
+    <div class="tab-pane" id="paneGotListings" role="tabpanel" hidden>
+      <section id="td-listings-got" class="td-platform-section td-got-section">
+        <div class="panel-title row">
+          <span><span class="badge td-got">GOT</span> LISTINGS — GoTickets (latest capture batch)</span>
+          <span class="muted small" id="tdListingsGotMeta">tap tab to load</span>
+        </div>
+        <div id="tdListingsGotBody"><div class="empty">Click the tab to load.</div></div>
       </section>
     </div>
 
@@ -492,6 +527,17 @@
     </div>
 
     <div class="tab-pane" id="paneOurOrders" role="tabpanel" hidden>
+      <section id="all-orders">
+        <div class="panel-title row">
+          <span>ALL OUR ORDERS — CRM (StubHub · Gametime · Vivid · TickPick · GoTickets) + SeatGeek + TEvo</span>
+          <span id="tabCountAllOrders" hidden></span>
+          <span class="muted small" id="allOrdersMeta">tap tab to load</span>
+        </div>
+        <div id="allOrdersSummary"></div>
+        <div id="allOrdersDaily"></div>
+        <div id="allOrdersBody"><div class="empty">Click the tab to load.</div></div>
+      </section>
+
       <section id="sg-seller-listings-full">
         <div class="panel-title row">
           <span>OUR SG INVENTORY — SellerDirect listings (our account, AQ-mapped)</span>
@@ -577,10 +623,10 @@
   <script src="pwa.js?v=20260702"></script>
   <!-- Cache-busting: first-party JS/CSS carry ?v=<token>. Bump the token (date) on ANY first-party asset change so the static CDN/browser fetch fresh bundles instead of serving a stale cached copy. -->
   <script src="auth.js?v=20260608"></script>
-  <script src="app.js?v=20260608"></script>
-  <script src="nav.js?v=20260710nav"></script>
+  <script src="app.js?v=20260910api"></script>
+  <script src="nav.js?v=20261006pk"></script>
   <script src="alerts.js?v=20260608"></script>
   <script src="lib/cast-panel.js?v=20260703b"></script>
-  <script src="event.js?v=20260708zones"></script>
+  <script src="event.js?v=20261006orders"></script>
 </body>
 </html>

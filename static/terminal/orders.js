@@ -21,12 +21,23 @@
     seatgeek_sales: 'SG',
     tickpick: 'TickPick',
     vivid: 'Vivid',
+    // The S4K CRM book. Only its StubHub + Gametime rows reach unified_orders
+    // (the other four markets are ingested natively and would double-count),
+    // so the per-row marketplace is shown from source_type.
+    s4kcs: 'S4K',
   };
 
   // Sources hidden from this view. seatdata is third-party completed-sales
   // analytics (a market feed), not our broker order book — exclude its rows
   // and freshness chip entirely.
   const HIDDEN_SOURCES = new Set(['seatdata']);
+
+  // "S4K · StubHub" reads better than a bare "S4K" when one pill fronts two
+  // marketplaces. Other sources have no meaningful source_type to append.
+  function sourceLabel(r) {
+    const base = SOURCE_LABELS[r.source] || r.source || '—';
+    return (r.source === 's4kcs' && r.source_type) ? `${base} · ${r.source_type}` : base;
+  }
 
   const state = {
     source: 'all',        // 'all' | one of SOURCE_LABELS keys
@@ -200,7 +211,7 @@
     rows.forEach(r => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><span class="badge muted">${esc(SOURCE_LABELS[r.source] || r.source || '—')}</span></td>
+        <td><span class="badge muted">${esc(sourceLabel(r))}</span></td>
         <td>${esc(r.event_name || '—')}</td>
         <td class="muted small">${r.event_date ? esc(T.fmtDate(r.event_date)) : '—'}</td>
         <td class="num">${r.qty != null ? r.qty : '—'}</td>

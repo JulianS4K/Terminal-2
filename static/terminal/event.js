@@ -76,11 +76,16 @@
   // (started 2026-05-27) so depth is shallow today and deepens as it fills.
   // Shape: { med:{evo_owned,evo_mkt,sg_list,sg_own,sh,gt,vd}, cnt:{evo_own,evo_tix,sg_tix,sh,gt,vd} }.
   let _dailyDurable = null;
+  // GoTickets (source GOT — NOT GameTime/GT) per-event series from the Pro-API
+  // firehose (gotickets_listings_snapshots), read via the get_gotickets_event_series
+  // RPC. Populated by loadGoticketsSeries(); shape { med:[{t,v}], cnt:[{t,v}] }.
+  let _gotSeries = null;
   // TD inv listing-count series: StubHub shows by default; the other five
   // (GT/VD/TP/TM/TMr) start hidden and are user-togglable in the legend
   // (operator request 2026-06-08 — keep first paint clean, SH as the reference).
+  // GoTickets' count (got_cnt) joins them hidden-by-default; its median shows.
   ['td-gt-cnt', 'td-vd-cnt',
-   'td-tp-cnt', 'td-tm-cnt', 'td-tmr-cnt'].forEach(k => _chartVisible.set(k, false));
+   'td-tp-cnt', 'td-tm-cnt', 'td-tmr-cnt', 'got_cnt'].forEach(k => _chartVisible.set(k, false));
   // Declutter the default view (UI rebuild 2026-06-03): the redundant/secondary
   // medians start hidden — the user opts them in from the legend. Keeps the
   // first paint to one clean line per source instead of 9 overlapping lines.
@@ -757,6 +762,8 @@
       loadAxsChartSeries(eventId).catch(e => console.error('[axs-series]', e));
       // TD freshness + data-freshness table (fire-and-forget; non-blocking)
       loadTdFreshness(eventId).catch(e => console.error('[td-freshness]', e));
+      loadGoticketsSeries(eventId).catch(e => console.error('[gotickets]', e));
+      loadGoticketsBridge(eventId).catch(e => console.error('[gotickets-bridge]', e));
       // Prediction markets (Kalshi/Polymarket) — fire-and-forget; hides itself
       // when the event has no matched markets or the pipeline isn't applied yet.
       loadPredictionMarkets(eventId).catch(e => console.error('[prediction-markets]', e));
@@ -1363,6 +1370,7 @@
     tm:   _tok('--src-tm',       '#d55181'),
     axs:  _tok('--src-axs',      '#d95926'),
     tp:   _tok('--src-tp',       '#8a8a8a'),
+    got:  _tok('--src-got',      '#14b8a6'),   // GoTickets (GOT) — teal; distinct from GameTime's green (gt)
     hero: _tok('--series-hero',  '#f5f5f5'),
   };
   const X_AXIS = {
@@ -1494,6 +1502,12 @@
       if (famMed('tp').length)  specs.push({ key: 'td_tp_med',  label: 'TickPick',     color: SRC.tp, width: 1.25, dash: null,   data: famMed('tp') });
       if (famMed('tm').length)  specs.push({ key: 'td_tm_med',  label: 'Ticketmaster', color: SRC.tm, width: 1.5,  dash: null,   data: famMed('tm') });
       if (famMed('tmr').length) specs.push({ key: 'td_tmr_med', label: 'TM resale',    color: SRC.tm, width: 1.25, dash: [5, 3], data: famMed('tmr') });
+    }
+    // GoTickets (GOT) median list price — from the Pro-API firehose via
+    // loadGoticketsSeries(). A distinct source from GameTime (td_gt). Conditional
+    // push: absent until the read RPC is applied to prod + the event has polled.
+    if (_gotSeries && _gotSeries.med.length) {
+      specs.push({ key: 'got_med', label: 'GoTickets', color: SRC.got, width: 1.5, dash: null, data: _gotSeries.med });
     }
     const { xs } = buildSeriesData(specs);
 
@@ -1779,6 +1793,9 @@
       if (famCnt('tmr').length) specs.push(
         { key: 'td-tmr-cnt', label: 'TMr listings', color: SRC.tm, width: 1, dash: [2, 3], scale: 'y', data: famCnt('tmr') });
     }
+    // GoTickets (GOT) listing-count overlay (hidden by default, user-togglable).
+    if (_gotSeries && _gotSeries.cnt.length) specs.push(
+      { key: 'got_cnt', label: 'GoTickets listings', color: SRC.got, width: 1, dash: [4, 3], scale: 'y', data: _gotSeries.cnt });
     const { xs } = buildSeriesData(specs);
     // Stack the two market-sales bar series (SeatData on top of SG): SeatData's
     // DRAWN value becomes SG+SeatData while SG keeps its own; with opaque fills
@@ -2110,6 +2127,7 @@
     { src: 'SH',   color: SRC.sh,   keys: ['td_sh_med', 'td-sh-cnt'] },
     { src: 'GT',   color: SRC.gt,   keys: ['td_gt_med', 'td-gt-cnt'] },
     { src: 'VD',   color: SRC.vd,   keys: ['td_vd_med', 'td-vd-cnt'] },
+    { src: 'GOT',  color: SRC.got,  keys: ['got_med', 'got_cnt'] },
     { src: 'AXS',  color: SRC.axs,  keys: ['prices_axs', 'counts_axs'] },
     { src: 'TP',   color: SRC.tp,   keys: ['td_tp_med', 'td-tp-cnt'] },
     { src: 'TM',   color: SRC.tm,   keys: ['td_tm_med', 'td-tm-cnt'] },
@@ -3070,13 +3088,13 @@
     return {
       tevo: 'TEvo', 'sg-lst': 'SG L', 'sg-sales': 'SG S',
       weather: 'Wx', espn: 'ESPN',
-      'td-sh': 'SH', 'td-gt': 'GT', 'td-vd': 'VD',
+      'td-sh': 'SH', 'td-gt': 'GT', 'td-vd': 'VD', got: 'GoT',
     }[src] || src;
   }
   function staleLimit(src) {
     return {
       tevo: 180, 'sg-lst': 60, 'sg-sales': 30, weather: 360, espn: 1440,
-      'td-sh': 1440, 'td-gt': 1440, 'td-vd': 1440,
+      'td-sh': 1440, 'td-gt': 1440, 'td-vd': 1440, got: 180,
     }[src] || 360;
   }
   function formatAge(min) {
@@ -3201,7 +3219,11 @@
       cadSel.disabled = true;
       const r = await rpcOrNull('event_watchlist_set_cadence', { p_event_id: eventId, p_cadence: cadSel.value });
       cadSel.disabled = false;
-      if (r.error) { console.error('[alerts cadence]', r.error); }
+      if (r.error) {
+        console.error('[alerts cadence]', r.error);
+        // RPC not applied yet → don't leave a control that silently does nothing.
+        if (_wlRpcMissing(r)) { cadSel.disabled = true; cadSel.title = 'Alert cadence is not enabled yet'; }
+      }
     });
     wireAlertPreview(eventId);
   }
@@ -3480,17 +3502,22 @@
     // Update the TD fr-chips in the hero
     const tdMap = { 'td-sh': snap?.td_sh_listings, 'td-gt': snap?.td_gt_listings, 'td-vd': snap?.td_vd_listings };
     for (const [src, listings] of Object.entries(tdMap)) {
+      const label = chipLabel(src);
+      const ageMin = snapTs ? Math.round((Date.now() - new Date(snapTs).getTime()) / 60000) : null;
+      const noData = listings == null || listings === 0;
+      // Coverage light (hero COVERAGE row) mirrors the chip: lit only when the
+      // snapshot is fresh AND the platform has a book; stale when it aged out or
+      // the book is empty; off (dim) when there's no snapshot at all. Set before
+      // the chip-element guard so the light reflects state even if the chip is absent.
+      setLight(src, snapTs == null ? null : (ageMin <= staleLimit(src) && !noData));
       const el = document.querySelector(`.fr-chip[data-src="${src}"]`);
       if (!el) continue;
-      const label = chipLabel(src);
       el.classList.remove('fresh', 'stale', 'dim');
       if (!snapTs) {
         el.textContent = `${label} —`;
         el.classList.add('dim');
         continue;
       }
-      const ageMin = Math.round((Date.now() - new Date(snapTs).getTime()) / 60000);
-      const noData = listings == null || listings === 0;
       el.textContent = `${label} ${formatAge(ageMin)}${noData ? ' ∅' : ''}`;
       el.classList.add(ageMin > staleLimit(src) ? 'stale' : 'fresh');
       el.title = `${label}: snapshot ${snap.snapshot_date} ${snap.snapshot_slot}${noData ? ' (no listings)' : ` — ${listings} listings`}`;
@@ -3581,6 +3608,102 @@
     // (SH/GT/VD) paint now that _lastTdSnap is cached (WP-2). No new
     // fetch — feeds the cached daily snapshot into the Listings/Price section.
     try { rerenderCrossSource(); } catch (e) { console.error('[td-crosssource-rerender]', e); }
+  }
+
+  // ---------- GoTickets (GOT) per-event series ----------
+  // Reads the Pro-API listings firehose (gotickets_listings_snapshots, keyed on
+  // tevo_event_id) via the get_gotickets_event_series SECURITY DEFINER RPC. That
+  // table is REVOKEd from anon, so the read needs the signed-in user's JWT
+  // (rpcOrNull). Builds _gotSeries { med, cnt }, drives the GOT coverage light +
+  // freshness chip, and repaints the price + inventory charts — the same shape as
+  // loadTdFreshness. Graceful no-op until the RPC is applied to prod (42883 /
+  // "does not exist") or when there's no auth: the GOT light/chip stay dim.
+  // GoTickets MAPPING chip (mig 20260917010000). The GOT series above shows
+  // GoTickets *prices* for this event; this says WHICH GoTickets event it is,
+  // how that resolved (single claimant / hub / double-claimed / none) and what
+  // we hold on it. Double-claimed is shown as such -- a wrong deep link is worse
+  // than none. Fire-and-forget; appends to #eventMode after renderEventMode ran.
+  async function loadGoticketsBridge(eventId) {
+    const el = document.getElementById('eventMode');
+    if (!el) return;
+    const res = await rpcOrNull('get_event_gotickets_bridge', { p_event_id: eventId });
+    if (res.error || !res.data) return;
+    const b = res.data;
+    const esc = escapeHtml;
+    const sales = (b.our_sales && +b.our_sales.count) || 0;
+    const buys  = (b.our_purchases && +b.our_purchases.count) || 0;
+    const crm   = b.crm_orders || {};
+    let chip = '';
+    if (b.gt_event_id != null) {
+      const held = [sales ? `${sales} sale${sales === 1 ? '' : 's'}` : null,
+                    buys  ? `${buys} buy${buys === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ');
+      const tip = `GoTickets event ${b.gt_event_id} · resolved via ${b.resolved_via}` +
+                  (crm.count ? ` · CRM orders ${crm.with_gt}/${crm.count} carry it` : '') +
+                  (b.listings_latest_at ? ` · listings as of ${new Date(b.listings_latest_at).toLocaleString()}` : ' · no GoTickets listing snapshots');
+      chip = `<span class="mode-chip" title="${esc(tip)}">` +
+             `<a class="gt-open-btn" href="${esc(b.gt_url)}" target="_blank" rel="noopener noreferrer">GoTickets&nbsp;↗</a>` +
+             ` #${esc(String(b.gt_event_id))}${held ? ' · ' + esc(held) : ''}</span>`;
+    } else if (b.resolved_via === 'double_claim' || b.resolved_via === 'aq_conflict') {
+      chip = `<span class="mode-chip warn" title="${esc(String(b.claimants || ''))} GoTickets rows claim this TEvo event; no single link is safe to show until an operator picks one.">GoTickets: ${esc(String(b.claimants || 'several'))} claimants · unresolved</span>`;
+    } else {
+      chip = '<span class="mode-chip dim" title="No GoTickets event is mapped to this TEvo event (not in the mirror, not in the hub).">No GoTickets mapping</span>';
+    }
+    el.insertAdjacentHTML('beforeend', (el.innerHTML ? ' ' : '') + chip);
+  }
+
+  async function loadGoticketsSeries(eventId) {
+    const res = await rpcOrNull('get_gotickets_event_series', { p_tevo_event_id: eventId, p_hours: 720 });
+    if (res.error) {
+      setGotChip(null, null);
+      setLight('got', null);
+      return;
+    }
+    const rows = Array.isArray(res.data) ? res.data : [];
+    const med = [], cnt = [];
+    for (const r of rows) {
+      const ts = r.captured_at;
+      if (r.median_price  != null) med.push({ t: ts, v: +r.median_price });
+      if (r.listing_count != null) cnt.push({ t: ts, v: +r.listing_count });
+    }
+    _gotSeries = { med, cnt };
+
+    // Latest capture drives the coverage light + freshness chip (rows are ORDER BY
+    // captured_at ASC, so the last row is newest).
+    const last = rows.length ? rows[rows.length - 1] : null;
+    const lastTs = last ? last.captured_at : null;
+    const lastCount = last ? last.listing_count : null;
+    setGotChip(lastTs, lastCount);
+    if (!lastTs) {
+      setLight('got', null);
+    } else {
+      const ageMin = Math.round((Date.now() - new Date(lastTs).getTime()) / 60000);
+      setLight('got', ageMin <= staleLimit('got') && lastCount > 0);
+    }
+
+    // Repaint the charts now that GOT series exist (same hook loadTdFreshness uses).
+    if (_gotSeries.med.length && _lastPayload && _lastPayload.chart_data) {
+      try {
+        const chart = adaptChart(_lastPayload.chart_data);
+        renderChartPrice(chart, _chartExtAlerts);
+        renderChartInventory(chart);
+        refreshChartLegends();
+      } catch (e) { console.error('[gotickets-chart]', e); }
+    }
+  }
+
+  // Paint the GOT freshness chip — mirror of the TD chip block in loadTdFreshness
+  // (fresh when the latest capture is recent AND has a book; ∅ flags an empty book).
+  function setGotChip(ts, count) {
+    const el = document.querySelector('.fr-chip[data-src="got"]');
+    if (!el) return;
+    const label = chipLabel('got');
+    el.classList.remove('fresh', 'stale', 'dim');
+    if (!ts) { el.textContent = `${label} —`; el.classList.add('dim'); return; }
+    const ageMin = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
+    const noData = count == null || count === 0;
+    el.textContent = `${label} ${formatAge(ageMin)}${noData ? ' ∅' : ''}`;
+    el.classList.add(ageMin > staleLimit('got') ? 'stale' : 'fresh');
+    el.title = `${label}: last capture ${T.fmtDate(ts)}${noData ? ' (no listings)' : ` — ${count} listings`}`;
   }
 
   function renderDataFreshness(tdSnap, tdTs) {
@@ -3871,19 +3994,33 @@
       body.innerHTML = '<div class="empty">no competing events within +/-24h / 20mi</div>';
       return;
     }
+    // event_competitors_snapshot items: {tevo_event_id, name, venue_name,
+    // distance_mi, hours_offset} — the 10 nearest; c.count is the full count.
     const ul = document.createElement('ul');
     ul.className = 'competing-list';
     c.events.slice(0, 10).forEach(e => {
       const li = document.createElement('li');
-      const eid = e.event_id || e.id;
+      const eid = e.tevo_event_id || e.event_id || e.id;
       const name = e.name || e.event_name || ('Event ' + eid);
-      const dist = e.distance_miles != null ? `${Number(e.distance_miles).toFixed(1)}mi` : '';
+      const mi = e.distance_mi != null ? e.distance_mi : e.distance_miles;
+      const dist = mi != null ? `${Number(mi).toFixed(1)}mi` : '';
       const venue = e.venue_name || e.venue || '';
-      const when = T.fmtDate(e.occurs_at_local || e.occurs_at || e.starts_at);
-      li.innerHTML = `<a href="event.html?event=${eid}">${escapeHtml(name)}</a> <span class="muted">${escapeHtml(venue)}${venue && dist ? ' · ' : ''}${dist} · ${escapeHtml(when)}</span>`;
+      const h = Number(e.hours_offset);
+      const when = Number.isFinite(h)
+        ? (h === 0 ? 'same time' : `${h > 0 ? '+' : '−'}${Math.abs(h)}h`)
+        : escapeHtml(T.fmtDate(e.occurs_at_local || e.occurs_at || e.starts_at));
+      const parts = [escapeHtml(venue), dist, when].filter(Boolean).join(' · ');
+      li.innerHTML = `<a href="event.html?event=${encodeURIComponent(eid)}">${escapeHtml(name)}</a> <span class="muted">${parts}</span>`;
       ul.appendChild(li);
     });
     body.innerHTML = '';
+    const total = Number(c.count) || c.events.length;
+    const head = document.createElement('div');
+    head.className = 'muted small';
+    head.textContent = `${total} competing event${total === 1 ? '' : 's'} within ±24h / 20mi` +
+      (total > 10 ? ' · 10 nearest shown' : '') +
+      (c.refreshed_at ? ` · as of ${T.fmtDate(c.refreshed_at)}` : '');
+    body.appendChild(head);
     body.appendChild(ul);
   }
 
@@ -3908,7 +4045,7 @@
     const arr = Array.isArray(ctx) ? ctx : (ctx.events || []);
     const teamId = (performer && performer.espn_team_id) || '';
     const league = (performer && performer.espn_league) || '';
-    body.innerHTML = `<div class="muted small">${escapeHtml(league)}${teamId ? ` · team ${escapeHtml(teamId)}` : ''} — next ${arr.length} games (this event has no ESPN xref)</div>`;
+    body.innerHTML = `<div class="muted small">${escapeHtml(league)}${teamId ? ` · team ${escapeHtml(teamId)}` : ''} — next ${arr.length} games</div>`;
     const ul = document.createElement('ul');
     ul.className = 'performer-espn-list';
     arr.slice(0, 5).forEach(g => {
@@ -3992,6 +4129,7 @@
   const _tabState = { loaded: {
     'sg-listings': false, 'evo-listings': false,
     'sh-listings': false, 'gt-listings': false, 'vd-listings': false,
+    'got-listings': false,  // GoTickets (GOT) — distinct from GameTime (gt-listings)
     'tm-listings': false,  // tp-listings removed 2026-06-07: TP demoted to opt-in, TM replaces it
     'sg-sales': false, 'seatdata-sales': false, 'axs-sections': false,
     'our-orders': false, 'alerts': false, 'cast': false, 'predictions': false,
@@ -4021,6 +4159,9 @@
         _tabState.loaded['vd-listings'] = true;
         await loadTdPlatformListings(eventId, 'VD');
         updateTdListingsTabCount();
+      } else if (tabId === 'got-listings' && !_tabState.loaded['got-listings']) {
+        _tabState.loaded['got-listings'] = true;
+        await loadGoticketsListings(eventId);
       } else if (tabId === 'tm-listings' && !_tabState.loaded['tm-listings']) {
         _tabState.loaded['tm-listings'] = true;
         await loadTdPlatformListings(eventId, 'TM');
@@ -4053,6 +4194,7 @@
         // into its own stacked sub-section inside #paneOurOrders.
         _tabState.loaded['our-orders'] = true;
         await Promise.all([
+          loadAllOrders(eventId),
           loadSgSellerListingsFull(eventId),
           loadEvoOrdersFull(eventId),
           loadSgSellerOrdersFull(eventId),
@@ -4063,6 +4205,9 @@
         await loadCastTab(eventId);
       } else if (tabId === 'predictions' && !_tabState.loaded['predictions']) {
         await loadPredictions(eventId);
+      } else if (tabId === 'outliers' && !_tabState.loaded['outliers']) {
+        _tabState.loaded['outliers'] = true;
+        await loadListingOutliers(eventId);
       }
     });
   }
@@ -4080,6 +4225,7 @@
       'sh-listings':  'paneShListings',
       'gt-listings':  'paneGtListings',
       'vd-listings':  'paneVdListings',
+      'got-listings': 'paneGotListings',
       'tm-listings':  'paneTmListings',
       'sg-sales':     'paneSgSales',
       'seatdata-sales': 'paneSeatdataSales',
@@ -4090,6 +4236,7 @@
       'seatmap':      'paneSeatmap',
       'our-orders':   'paneOurOrders',
       'predictions':  'panePredictions',
+      'outliers':     'paneOutliers',
     };
     Object.entries(paneIds).forEach(([id, paneId]) => {
       const pane = document.getElementById(paneId);
@@ -4111,7 +4258,10 @@
     const evo  = parseInt(document.getElementById('tabCountEvoOrders')?.textContent || '0', 10) || 0;
     const sg   = parseInt(document.getElementById('tabCountSgSellerOrders')?.textContent || '0', 10) || 0;
     const xb   = parseInt(document.getElementById('tabCountCrossBroker')?.textContent || '0', 10) || 0;
-    const total = evo + sg + xb;
+    // The all-source count already includes TEvo, SeatGeek and the CRM's
+    // TickPick/Vivid rows — prefer it so nothing is counted twice.
+    const all  = parseInt(document.getElementById('tabCountAllOrders')?.textContent || '0', 10) || 0;
+    const total = all || (evo + sg + xb);
     chip.textContent = total ? String(total) : '';
   }
 
@@ -4135,6 +4285,14 @@
       if (body) body.innerHTML = '<div class="empty">Loading…</div>';
       await loadSeatdataSalesFull(eventId);
     });
+  }
+
+  // Human age for a minute count: 45m · 5h · 9d.
+  function fmtAge(min) {
+    if (min == null || !Number.isFinite(min)) return '—';
+    if (min < 90) return `${Math.max(0, min)}m`;
+    if (min < 48 * 60) return `${Math.round(min / 60)}h`;
+    return `${Math.round(min / 1440)}d`;
   }
 
   async function rpcOrNull(rpcName, args) {
@@ -5419,6 +5577,70 @@
     if (body) { body.innerHTML = ''; body.appendChild(host); }
   }
 
+  // ---------- GoTickets (GOT) Listings tab ----------
+  // Latest capture batch from the GoTickets Pro-API firehose
+  // (gotickets_listings_snapshots) via get_gotickets_event_listings — a DISTINCT
+  // source from GameTime (loadTdPlatformListings 'GT'). The RPC is REVOKEd from
+  // anon, so this needs the signed-in user's JWT (rpcOrNull). Lazy, renders once.
+  async function loadGoticketsListings(eventId) {
+    const body = document.getElementById('tdListingsGotBody');
+    const meta = document.getElementById('tdListingsGotMeta');
+    const countChip = document.getElementById('tabCountGotListings');
+    if (body) body.innerHTML = '<div class="empty">Loading GoTickets listings…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_gotickets_event_listings', { p_tevo_event_id: eventId, p_hours: 26 });
+    const elapsed = performance.now() - t0;
+    if (res.error) {
+      // RPC not applied yet, or no auth → honest empty state (no half-feature).
+      const missing = /does not exist/i.test(res.error.message || '') || res.error.code === '42883';
+      if (body) body.innerHTML = `<div class="empty">${missing ? 'GoTickets read RPC not applied yet (pending apply).' : 'error: ' + escapeHtml(res.error.message || '')}</div>`;
+      if (meta) meta.textContent = missing ? 'pending apply' : 'error';
+      return;
+    }
+    const rows = res.data || [];
+    if (countChip) countChip.textContent = rows.length ? String(rows.length) : '';
+    if (!rows.length) {
+      if (body) body.innerHTML = '<div class="empty">No GoTickets listings in the latest capture batch (last 26h).</div>';
+      if (meta) meta.textContent = '0 rows';
+      return;
+    }
+    const batchDate = T.fmtDate ? T.fmtDate(rows[0].captured_at) : rows[0].captured_at;
+    const prices = rows.map(r => +r.display_price).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+    const getIn = prices.length ? prices[0] : null;
+    const med = prices.length ? prices[Math.floor(prices.length / 2)] : null;
+    const $r = v => (v != null ? '$' + Math.round(v) : '—');
+    if (meta) meta.textContent = `${rows.length} rows · get-in ${$r(getIn)} · med ${$r(med)} · batch ${batchDate} · ${elapsed.toFixed(0)}ms`;
+
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl td-listings-tbl';
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Section</th><th>Row</th>
+        <th class="num">Qty</th><th class="num">List $</th><th class="num">All-in $</th>
+        <th>Stock</th><th>Captured</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    const $p = v => (v != null && +v > 0 ? '$' + T.fmtNum(Math.round(+v)) : '—');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const sec = r.general_admission ? `${r.section || 'GA'} (GA)` : (r.section || '—');
+      tr.innerHTML = `
+        <td>${escapeHtml(sec)}</td>
+        <td>${escapeHtml(r.row || '—')}</td>
+        <td class="num">${r.quantity != null ? T.fmtNum(+r.quantity) : '—'}</td>
+        <td class="num">${$p(r.display_price)}</td>
+        <td class="num">${$p(r.all_in_price)}</td>
+        <td class="muted small">${escapeHtml(r.stock_type || '—')}</td>
+        <td class="muted small">${T.fmtDate(r.captured_at)}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    if (body) { body.innerHTML = ''; body.appendChild(host); }
+  }
+
   // Per-source row-count chips for the 3 top-level TD tabs (SH/GT/VD). Reads the
   // count each loadTdPlatformListings() writes into its section meta ("<n> rows · …").
   // Idempotent: updates all three chips on every call.
@@ -5434,6 +5656,110 @@
       }
       chip.textContent = n ? String(n) : '';
     }
+  }
+
+  // ---------- Price Outliers (Outliers tab) ----------
+  // Event-level robust price-outlier engine over the FULL market book for EVO +
+  // GoTickets. One SECDEF RPC (get_event_listing_outliers, mig 20260810180000)
+  // returns per-source summary + the flagged rows; non-seating (parking) is
+  // excluded from the baseline via the zone map. See the migration header for the
+  // median+MAD / IQR-fallback algorithm.
+  async function loadListingOutliers(eventId) {
+    const summaryEl = document.getElementById('outliersSummary');
+    const body = document.getElementById('outliersBody');
+    const meta = document.getElementById('outliersMeta');
+    if (body) body.innerHTML = '<div class="empty">Scanning the latest book for outliers…</div>';
+    if (summaryEl) summaryEl.innerHTML = '';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_listing_outliers', { p_event_id: Number(eventId) });
+    if (!res || res.error) {
+      const msg = res && res.error ? (res.error.message || '') : 'unavailable';
+      if (meta) meta.textContent = 'error';
+      if (body) body.innerHTML = `<div class="empty">RPC error: ${escapeHtml(msg)}</div>`;
+      return;
+    }
+    const data = res.data || {};
+    const sources = data.sources || [];
+    const outliers = data.outliers || [];
+    const elapsed = performance.now() - t0;
+    const $r = v => (v != null && isFinite(+v) ? '$' + T.fmtNum(Math.round(+v)) : '—');
+
+    // Per-source summary cards: get-in / median / zones-scored + LOW/HIGH counts.
+    // Detection is ZONE-level, so the source median/get-in are context only — the
+    // flags come from per-zone baselines (zones_scored = zones with enough listings).
+    if (summaryEl) {
+      if (!sources.length) {
+        summaryEl.innerHTML = '<div class="empty">No seating listings in the latest EVO/GoTickets book for this event.</div>';
+      } else {
+        summaryEl.innerHTML = sources.map(s => {
+          const lo = +s.low_count || 0, hi = +s.high_count || 0;
+          const excl = +s.n_nonseating_excluded || 0;
+          const zs = +s.zones_scored || 0;
+          return `<div class="outlier-src-card">
+            <div class="outlier-src-head"><span class="badge src-${escapeHtml((s.source||'').toLowerCase())}">${escapeHtml(s.source||'')}</span>
+              <span class="muted small">${(+s.n_seating||0)} seating${excl ? ` · ${excl} parking/anc. excluded` : ''}</span></div>
+            <div class="outlier-src-stats">
+              <span>get-in <b>${$r(s.getin)}</b></span>
+              <span>median <b>${$r(s.median)}</b></span>
+              <span>zones scored <b>${zs}</b></span>
+            </div>
+            <div class="outlier-src-counts">
+              <span class="pill low">${lo} low</span>
+              <span class="pill high">${hi} high</span>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    if (meta) {
+      meta.textContent = `${outliers.length} outlier${outliers.length === 1 ? '' : 's'} · ${sources.length} source${sources.length === 1 ? '' : 's'} · ${elapsed.toFixed(0)}ms`;
+    }
+    const chip = document.getElementById('tabCountOutliers');
+    if (chip) chip.textContent = outliers.length ? String(outliers.length) : '';
+
+    if (!outliers.length) {
+      if (body) body.innerHTML = '<div class="empty">No price outliers — every seating listing sits within the robust band of its <b>zone</b>.</div>';
+      return;
+    }
+
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl outliers-tbl';
+    // Price is compared to the listing's ZONE peers: "vs zone" = price vs zone median,
+    // "zone n" = how many seating listings formed that zone's baseline.
+    tbl.innerHTML = `
+      <thead><tr>
+        <th>Src</th><th>Dir</th><th>Section</th><th>Row</th><th>Zone</th>
+        <th class="num">Zone n</th><th class="num">Qty</th><th class="num">Price</th>
+        <th class="num">vs zone</th><th class="num">rob-z</th><th>Own</th>
+      </tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    outliers.forEach(o => {
+      const tr = document.createElement('tr');
+      const dir = o.direction === 'HIGH' ? 'high' : 'low';
+      const dev = (o.deviation_pct != null && isFinite(+o.deviation_pct))
+        ? (o.deviation_pct > 0 ? '+' : '') + T.fmtNum(+o.deviation_pct) + '%' : '—';
+      const z = (o.mod_z != null && isFinite(+o.mod_z)) ? T.fmtNum(+o.mod_z) : '—';
+      tr.className = 'outlier-row ' + dir + (o.is_owned ? ' owned' : '');
+      tr.innerHTML = `
+        <td><span class="badge src-${escapeHtml((o.source||'').toLowerCase())}">${escapeHtml(o.source||'')}</span></td>
+        <td><span class="dir-badge ${dir}">${o.direction === 'HIGH' ? '▲ HIGH' : '▼ LOW'}</span></td>
+        <td>${escapeHtml(o.section || '—')}</td>
+        <td>${escapeHtml(o.row || '—')}</td>
+        <td class="muted small">${escapeHtml(o.zone || '—')}</td>
+        <td class="num muted">${o.zone_n != null ? T.fmtNum(+o.zone_n) : '—'}</td>
+        <td class="num">${o.quantity != null ? T.fmtNum(+o.quantity) : '—'}</td>
+        <td class="num"><b>${$r(o.price)}</b></td>
+        <td class="num ${dir}">${dev}</td>
+        <td class="num muted">${z}</td>
+        <td>${o.is_owned ? '<span class="own-badge">OURS</span>' : ''}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    if (body) { body.innerHTML = ''; body.appendChild(host); }
   }
 
   // ---------- Cross-Platform Sales panel (Overview tab) ----------
@@ -5910,6 +6236,97 @@
   }
 
   // ---------- Our TEvo Orders (full) ----------
+  // ---------- All our orders (CRM + SeatGeek + TEvo) + per-day pace ----------
+  // get_event_orders_daily (mig 20261006220000): every book we sell through,
+  // cancelled/rejected excluded from totals, and per-ET-day orders next to the
+  // SeatGeek public market (distinct sales; null when SG doesn't cover it).
+  async function loadAllOrders(eventId) {
+    const body = document.getElementById('allOrdersBody');
+    const meta = document.getElementById('allOrdersMeta');
+    if (body) body.innerHTML = '<div class="empty">Loading our orders…</div>';
+    if (meta) meta.textContent = 'loading…';
+    const t0 = performance.now();
+    const res = await rpcOrNull('get_event_orders_daily', { p_event_id: eventId, p_days: 30 });
+    if (res.error) {
+      if (meta) meta.textContent = _wlRpcMissing(res) ? 'not enabled yet' : 'error';
+      if (body) body.innerHTML = _wlRpcMissing(res)
+        ? '<div class="empty">All-source orders RPC pending apply.</div>'
+        : `<div class="empty">RPC error: ${escapeHtml(res.error.message || '')}</div>`;
+      return;
+    }
+    renderAllOrders(res.data || {}, performance.now() - t0);
+  }
+
+  function renderAllOrders(d, ms) {
+    const body = document.getElementById('allOrdersBody');
+    const meta = document.getElementById('allOrdersMeta');
+    const sum = document.getElementById('allOrdersSummary');
+    const daily = document.getElementById('allOrdersDaily');
+    const chip = document.getElementById('tabCountAllOrders');
+    if (!body) return;
+    const money = v => (v == null ? '—' : '$' + T.fmtNum(Math.round(+v)));
+    const num = v => (v == null ? '—' : T.fmtNum(v));
+    const tot = d.totals || {};
+    const rows = d.orders || [];
+    if (meta) meta.textContent = `${num(tot.orders)} orders · ${num(tot.tix)} tix · ${money(tot.sales)}` +
+      (tot.cancelled ? ` · ${num(tot.cancelled)} cancelled` : '') + ` · ${ms.toFixed(0)}ms`;
+    if (chip) chip.textContent = String(tot.orders || 0);
+
+    // By source
+    const src = Object.entries(d.by_source || {}).sort((a, b) => (b[1].orders || 0) - (a[1].orders || 0));
+    if (sum) {
+      sum.innerHTML = src.length
+        ? '<table class="sales-tbl"><thead><tr><th>SOURCE</th><th class="num">ORDERS</th><th class="num">TIX</th><th class="num">SALES</th><th class="num">AVG/TIX</th></tr></thead><tbody>' +
+          src.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${num(v.orders)}</td><td class="num">${num(v.tix)}</td>` +
+            `<td class="num">${money(v.sales)}</td><td class="num">${v.tix ? money(v.sales / v.tix) : '—'}</td></tr>`).join('') +
+          '</tbody></table>'
+        : '';
+    }
+
+    // Per-day pace (last 30 ET days), ours vs SeatGeek market
+    const days = d.daily || [];
+    if (daily) {
+      const active = days.filter(x => x.orders || x.mkt_sales);
+      daily.innerHTML = active.length
+        ? `<div class="panel-subtitle muted small">DAILY — last ${num(d.days)} days (ET)` +
+          (d.mkt_tracked ? ' · SG mkt = all sellers on SeatGeek' : ' · SG market not covered for this event') + '</div>' +
+          '<table class="sales-tbl"><thead><tr><th>DAY</th><th class="num">ORDERS</th><th class="num">TIX</th><th class="num">SALES</th><th>BY SOURCE</th>' +
+          (d.mkt_tracked ? '<th class="num">SG MKT SALES</th><th class="num">SG MKT TIX</th>' : '') + '</tr></thead><tbody>' +
+          active.slice().reverse().map(x => {
+            const bs = Object.entries(x.by_source || {}).map(([k, n]) => `${escapeHtml(k)} ${num(n)}`).join(' · ');
+            return `<tr><td>${escapeHtml(T.fmtDate(x.d))}</td><td class="num">${num(x.orders)}</td><td class="num">${num(x.tix)}</td>` +
+              `<td class="num">${money(x.sales)}</td><td class="muted small">${bs || '—'}</td>` +
+              (d.mkt_tracked ? `<td class="num">${num(x.mkt_sales)}</td><td class="num">${num(x.mkt_tix)}</td>` : '') + '</tr>';
+          }).join('') + '</tbody></table>'
+        : '';
+    }
+
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">no orders for this event in any book</div>';
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'full-list-host';
+    const tbl = document.createElement('table');
+    tbl.className = 'full-list-tbl';
+    tbl.innerHTML = `<thead><tr><th>Date</th><th>Source</th><th>Order</th><th>Status</th>
+      <th>Section</th><th>Row</th><th class="num">Qty</th><th class="num">$/tix</th><th class="num">Total</th></tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      if (r.cancelled) tr.className = 'muted';
+      tr.innerHTML = `<td>${escapeHtml(T.fmtDate(r.d))}</td><td>${escapeHtml(r.source || '')}</td>` +
+        `<td>${escapeHtml(String(r.order_id || ''))}</td>` +
+        `<td><span class="pill">${escapeHtml(r.status || '—')}</span>${r.cancelled ? ' <span class="neg small">cancelled</span>' : ''}</td>` +
+        `<td>${escapeHtml(r.section || '—')}</td><td>${escapeHtml(r.row || '—')}</td>` +
+        `<td class="num">${num(r.qty)}</td><td class="num">${money(r.price)}</td><td class="num">${money(r.total)}</td>`;
+      tb.appendChild(tr);
+    });
+    host.appendChild(tbl);
+    body.innerHTML = '';
+    body.appendChild(host);
+  }
+
   async function loadEvoOrdersFull(eventId) {
     const body = document.getElementById('evoOrdersFullBody');
     const meta = document.getElementById('evoOrdersFullMeta');
@@ -6544,8 +6961,10 @@
     if (ageEl) {
       const ageMin = captured ? Math.round((Date.now() - new Date(captured).getTime()) / 60000) : null;
       ageEl.textContent = captured
-        ? `latest ${T.fmtDate(captured)} (${ageMin}m ago)`
+        ? `latest ${T.fmtDate(captured)} (${fmtAge(ageMin)} ago)` +
+          (ageMin > 24 * 60 ? ' · STALE — no TEvo listing poll since then' : '')
         : 'latest —';
+      ageEl.classList.toggle('neg', ageMin != null && ageMin > 24 * 60);
     }
 
     // Walk back through rows to fill any null fields with the most recent

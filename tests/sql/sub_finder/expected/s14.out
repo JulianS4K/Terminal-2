@@ -1,0 +1,37 @@
+done
+2001|gotickets|4001|3
+2002|evo|4101|3
+requested|requested
+A pending: neither order is polled
+{"events": 0, "jobs_rematched": 0}
+0
+B accepted: EVO-offered 2002 is bought at once; GoTickets-offered 2001 has no EVO seats yet
+ACCEPTED
+ACCEPTED
+2001|gotickets|f|not_on_evo|t
+2002|evo|t||t
+C accepted orders are polled again
+{"events": 2, "jobs_rematched": 0}
+{40,41}
+2001|not_on_evo
+2001|offer|buy_manually|t
+2002|auto_bought|auto_bought|t
+2001|true|buy_manually|t
+2002|true|buy_requested|t
+D offered GoTickets seats still listed -> buy_manually; nothing bought on EVO seats in the offered section
+{"events": 2, "jobs_rematched": 1}
+2001|buy_manually|false|buy_manually|null
+0
+E offered seats gone, only other-section covers -> new_sub_needed with the new best and gate, no buy
+{"events": 2, "jobs_rematched": 1}
+2001|offer|true|new_sub_needed|{"row": "1", "gate": 3, "label": "Index offer subs", "total": 170.00, "market": "evo", "profit": 30.00, "buy_qty": 2, "section": "102", "listing_id": "4012"}
+0
+F a one-to-one EVO cover in the ORIGINAL section appears -> the standing rule buys it
+{"events": 2, "jobs_rematched": 1}
+2002|4101|2|90|sub finder auto (gotickets offer accepted, key crm)
+2001|4020|2|95|sub finder auto (key crm)
+2001|auto_bought|buy_requested
+2002|auto_bought|buy_requested
+G the EVO-offered buy stops (listing gone) -> released, reported
+{"events": 2, "jobs_rematched": 1}
+2002|t|offered_seats_gone|t|true|new_sub_needed
