@@ -33,7 +33,7 @@
 --   D. verification: a member whose row is gone, cancelled, or now on another day or venue is detached; a cluster
 --      left with no EVO id and fewer than two members is deleted. Every attach, detach and delete is a row in
 --      event_xmap_audit; each run a row in event_xmap_run.
--- Nothing here writes to a catalogue table or the hub: a derived EVO link (a Vivid row in a cluster whose TickPick
+-- One run at a time (an advisory lock; a second caller returns {skipped}). Nothing here writes to a catalogue table or the hub: a derived EVO link (a Vivid row in a cluster whose TickPick
 -- row is mapped) is visible in the spine and is a candidate for a later, separately reviewed fill — not written back
 -- by this migration. RULE 2: nothing upstream is called.
 
@@ -167,11 +167,14 @@ DECLARE
   v_n     int;
   v_from  date := current_date - 1;
   v_to    date := current_date + coalesce(p_days, 45);
-  sd      record;
   v_srcs  constant text[] := ARRAY['mlb', 'tickpick', 'vivid', 'sg', 'gotickets', 'axs'];
   v_cols  constant text[] := ARRAY['mlb_schedule_id', 'tp_event_id', 'vivid_event_id', 'sg_event_id', 'gt_event_id', 'axs_event_id'];
   i       int;
 BEGIN
+  -- one run at a time: the hourly cron must not start while a nightly or a by-hand run is still clustering
+  IF NOT pg_try_advisory_xact_lock(hashtext('event_xmap')) THEN
+    RETURN jsonb_build_object('skipped', 'another event_xmap_tick is running');
+  END IF;
   INSERT INTO public.event_xmap_run (run_id, days, applied) VALUES (v_run, p_days, p_apply);
 
   -- 0. the working set: every source's rows in the window, normalised
@@ -470,13 +473,15 @@ BEGIN
     JOIN (SELECT venue_key, local_day, min(pri) AS pri FROM _xm_loose GROUP BY 1, 2 HAVING count(DISTINCT src) >= 2) b
       ON b.venue_key = l.venue_key AND b.local_day = l.local_day AND b.pri = l.pri;
   IF p_apply THEN
-    FOR sd IN SELECT * FROM _xm_seed LOOP
-      EXECUTE format($q$INSERT INTO public.event_xmap (venue_key, local_day, tevo_venue_id, venue_name, venue_city, venue_state, name, perfs, start_local, seed_source, %1$I, methods)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, jsonb_build_object($10, 'seed')) RETURNING xmap_id$q$,
-                     v_cols[array_position(v_srcs, sd.src)])
-        INTO v_n
-        USING sd.venue_key, sd.local_day, sd.tevo_venue_id, sd.venue_name, sd.city, sd.state, sd.name, sd.perfs, sd.start_local, sd.src, sd.sid;
-      INSERT INTO public.event_xmap_audit (run_id, xmap_id, action, source, source_id, note) VALUES (v_run, v_n, 'cluster', sd.src, sd.sid, 'seed');
+    FOR i IN 1..6 LOOP
+      EXECUTE format($q$
+        WITH ins AS (
+          INSERT INTO public.event_xmap (venue_key, local_day, tevo_venue_id, venue_name, venue_city, venue_state, name, perfs, start_local, seed_source, %2$I, methods)
+          SELECT s.venue_key, s.local_day, s.tevo_venue_id, s.venue_name, s.city, s.state, s.name, s.perfs, s.start_local, s.src, s.sid, jsonb_build_object(%1$L, 'seed')
+            FROM _xm_seed s WHERE s.src = %1$L
+          RETURNING xmap_id, %2$I AS sid)
+        INSERT INTO public.event_xmap_audit (run_id, xmap_id, action, source, source_id, note)
+        SELECT $1, ins.xmap_id, 'cluster', %1$L, ins.sid, 'seed' FROM ins$q$, v_srcs[i], v_cols[i]) USING v_run;
     END LOOP;
   END IF;
   v_out := v_out || jsonb_build_object('seeded', (SELECT count(*) FROM _xm_seed), 'seeded_by_source', (SELECT coalesce(jsonb_object_agg(src, n), '{}') FROM (SELECT src, count(*) n FROM _xm_seed GROUP BY 1) s));
