@@ -1,0 +1,306 @@
+== the window pull: two pages, resumed by cursor
+         out_          
+-----------------------
+ {                    +
+     "done": false,   +
+     "kind": "window",+
+     "pages": 1,      +
+     "events": 6      +
+ }
+
+  kind  | pages_total | events_total | next_cursor | open 
+--------+-------------+--------------+-------------+------
+ window |           1 |            6 | C2          | t
+
+         out_          
+-----------------------
+ {                    +
+     "done": true,    +
+     "kind": "window",+
+     "pages": 1,      +
+     "events": 8      +
+ }
+
+  kind  | pages_total | events_total | next_cursor | open 
+--------+-------------+--------------+-------------+------
+ window |           2 |           14 |             | f
+
+== the catalogue as stored (relative day, confirmed flags, merged, category)
+ tp_event_id |                name                |  status   | merged_into | day | timed | dated | tp_venue_id | cat_parent | perfs 
+-------------+------------------------------------+-----------+-------------+-----+-------+-------+-------------+------------+-------
+        9001 | Billy Joel                         | scheduled |             |   3 | t     | t     |        1100 | CONCERTS   |     1
+        9002 | New York Knicks vs. Boston Celtics | scheduled |             |   5 | t     | t     |        1100 | CONCERTS   |     2
+        9003 | Warriors vs. Celtics               | scheduled |             |   5 | t     | t     |        1200 | CONCERTS   |     2
+        9004 | Dave Matthews Band                 | scheduled |             |  10 | t     | t     |        1300 | CONCERTS   |     0
+        9005 | Hamilton                           | scheduled |             |   2 | t     | t     |        1400 | CONCERTS   |     0
+        9006 | Billy Joel                         | canceled  |             |   3 | t     | t     |        1100 | CONCERTS   |     0
+        9007 | Billy Joel (merged)                | scheduled |        9001 |   3 | t     | t     |        1100 | CONCERTS   |     0
+        9008 | Placeholder Show                   | scheduled |             |   3 | f     | f     |        1100 | CONCERTS   |     0
+        9010 | Lady Gaga                          | scheduled |             |   7 | t     | t     |        1100 | CONCERTS   |     0
+        9011 | Phish                              | scheduled |             |   8 | t     | t     |        1100 | CONCERTS   |     0
+        9012 | Taylor Swift | The Eras Tour       | scheduled |             |  20 | t     | t     |        1200 | CONCERTS   |     1
+        9013 | Billy Joel Parking                 | scheduled |             |   3 | t     | t     |        1100 | CONCERTS   |     0
+        9014 | Knicks vs Celtics                  | scheduled |             |   5 | t     | t     |        1100 | CONCERTS   |     0
+        9015 | Knicks vs Celtics (matinee)        | scheduled |             |   5 | t     | t     |        1100 | CONCERTS   |     0
+
+ tp_venue_id |         name          | state |     timezone     
+-------------+-----------------------+-------+------------------
+        1100 | Madison Square Garden | NY    | America/New_York
+        1200 | Chase Center          | CA    | America/New_York
+        1300 | Fenway Park           | MA    | America/New_York
+        1400 | Kennedy Center        | DC    | America/New_York
+
+== every request was a GET with the vault token
+ method |       auth        | count 
+--------+-------------------+-------
+ GET    | Bearer stub-token |     4
+
+== dry run
+             out_             
+------------------------------
+ {                           +
+     "picked": 7,            +
+     "applied": false,       +
+     "dropped": 0,           +
+     "identity": 2,          +
+     "no_venue": 2,          +
+     "ambiguous": 0,         +
+     "by_method": {          +
+         "hub_identity": 1,  +
+         "order_identity": 1,+
+         "venue_day_name": 4,+
+         "venue_time_name": 1+
+     },                      +
+     "unmatched": 4,         +
+     "candidates": 11,       +
+     "venues_resolved": 2    +
+ }
+
+ matched_after_dry_run 
+-----------------------
+                     0
+
+ audit_after_dry_run 
+---------------------
+                   0
+
+== apply
+             out_             
+------------------------------
+ {                           +
+     "picked": 7,            +
+     "applied": true,        +
+     "dropped": 0,           +
+     "identity": 2,          +
+     "no_venue": 2,          +
+     "ambiguous": 0,         +
+     "by_method": {          +
+         "hub_identity": 1,  +
+         "order_identity": 1,+
+         "venue_day_name": 4,+
+         "venue_time_name": 1+
+     },                      +
+     "unmatched": 4,         +
+     "candidates": 11,       +
+     "hub_tp_filled": 5,     +
+     "orders_filled": 1,     +
+     "venues_written": 2,    +
+     "venues_resolved": 2,   +
+     "venue_map_filled": 1,  +
+     "orders_disagree_new": 1+
+ }
+
+ tp_event_id |                name                | tevo_event_id | tevo_match_method 
+-------------+------------------------------------+---------------+-------------------
+        9001 | Billy Joel                         |             1 | venue_day_name
+        9002 | New York Knicks vs. Boston Celtics |             2 | venue_time_name
+        9003 | Warriors vs. Celtics               |             4 | venue_day_name
+        9004 | Dave Matthews Band                 |               | 
+        9005 | Hamilton                           |               | 
+        9006 | Billy Joel                         |               | 
+        9007 | Billy Joel (merged)                |               | 
+        9008 | Placeholder Show                   |               | 
+        9010 | Lady Gaga                          |            10 | hub_identity
+        9011 | Phish                              |            11 | order_identity
+        9012 | Taylor Swift | The Eras Tour       |            12 | venue_day_name
+        9013 | Billy Joel Parking                 |             5 | venue_day_name
+        9014 | Knicks vs Celtics                  |               | 
+        9015 | Knicks vs Celtics (matinee)        |               | 
+
+-- venues: aq_venue_map for MSG, cross_source for Chase (2 matched events corroborate), Fenway contested, Kennedy unknown
+ tp_venue_id | tevo_venue_id |    method    | events 
+-------------+---------------+--------------+--------
+        1100 |           100 | aq_venue_map |      5
+        1200 |           200 | cross_source |      2
+        1300 |               |              |       
+        1400 |               |              |       
+
+-- the hub: TickPick ids filled on the rows of matched events
+ aq_short_event_id | tevo_event_id | tp_event_id 
+-------------------+---------------+-------------
+ AQ-1              |             1 |        9001
+ AQ-10             |            10 |        9010
+ AQ-11             |            11 |        9011
+ AQ-12             |            12 |        9012
+ AQ-2              |             2 |        9002
+ AQ-4              |             4 |        9003
+
+-- orders: O2 filled by id with the concert, O3 (mapped to the parking row) disagrees: audited, kept; O1 untouched
+ tp_order_id | tevo_event_id |  matched_via   | match_confidence 
+-------------+---------------+----------------+------------------
+ O1          |            11 | venue_day_name |                 
+ O2          |             1 | tp_catalog_id  |              1.0
+ O3          |             5 | venue_day_name |                 
+
+-- aq_venue_map: Chase gets its TickPick id (corroborated); Fenway and Kennedy stay empty
+ venue_short_id | tevo_venue_id | tickpick_venue_id 
+----------------+---------------+-------------------
+ V-100          |           100 |              1100
+ V-200          |           200 |              1200
+ V-300          |           300 |                  
+ V-400          |           400 |                  
+
+     action     |         target         | count 
+----------------+------------------------+-------
+ hub_tp         | aq_event_map           |     5
+ match          | tickpick_catalog_event |     7
+ order_disagree | tickpick_orders        |     1
+ order_tevo     | tickpick_orders        |     1
+ venue_map      | aq_venue_map           |     1
+ venue_xref     | tickpick_catalog_venue |     2
+
+     action     | target_key | old_tevo | new_tevo |      note      
+----------------+------------+----------+----------+----------------
+ order_disagree | O3         |        5 |        1 | venue_day_name
+
+== second run: nothing changes
+             out_             
+------------------------------
+ {                           +
+     "picked": 0,            +
+     "applied": true,        +
+     "dropped": 0,           +
+     "identity": 0,          +
+     "no_venue": 2,          +
+     "ambiguous": 0,         +
+     "by_method": {          +
+     },                      +
+     "unmatched": 4,         +
+     "candidates": 11,       +
+     "hub_tp_filled": 0,     +
+     "orders_filled": 0,     +
+     "venues_written": 1,    +
+     "venues_resolved": 2,   +
+     "venue_map_filled": 0,  +
+     "orders_disagree_new": 0+
+ }
+
+     action     | count 
+----------------+-------
+ hub_tp         |     5
+ match          |     7
+ order_disagree |     1
+ order_tevo     |     1
+ venue_map      |     1
+ venue_xref     |     3
+
+== Taylor Swift moves a day in the catalogue: the match is dropped; a Kennedy Center venue row lets Hamilton map
+               out_               
+----------------------------------
+ {                               +
+     "map": {                    +
+         "picked": 1,            +
+         "applied": true,        +
+         "dropped": 1,           +
+         "identity": 0,          +
+         "no_venue": 1,          +
+         "ambiguous": 0,         +
+         "by_method": {          +
+             "venue_day_name": 1 +
+         },                      +
+         "unmatched": 4,         +
+         "candidates": 11,       +
+         "hub_tp_filled": 0,     +
+         "orders_filled": 0,     +
+         "venues_written": 1,    +
+         "venues_resolved": 3,   +
+         "venue_map_filled": 1,  +
+         "orders_disagree_new": 0+
+     },                          +
+     "walk": {                   +
+         "done": true,           +
+         "kind": "walk",         +
+         "pages": 1,             +
+         "events": 1             +
+     },                          +
+     "window": {                 +
+         "done": true,           +
+         "kind": "window",       +
+         "pages": 2,             +
+         "events": 14            +
+     }                           +
+ }
+
+ tp_event_id |             name             | day | tevo_event_id | tevo_match_method 
+-------------+------------------------------+-----+---------------+-------------------
+        9005 | Hamilton                     |   2 |             8 | venue_day_name
+        9012 | Taylor Swift | The Eras Tour |  21 |               | 
+        9020 | Far Future Fest              | 500 |               | 
+
+ action |            note            
+--------+----------------------------
+ match  | venue_day_name
+ hub_tp | 
+ drop   | day_moved (venue_day_name)
+
+  kind  | pages_total | events_total | at_start | done 
+--------+-------------+--------------+----------+------
+ walk   |           1 |            1 | t        | t
+ window |           2 |           14 | t        | t
+
+== a manual Fenway row: two matches there write the aq_venue_map id; one Dave Matthews show gone, the other is unambiguous
+             out_             
+------------------------------
+ {                           +
+     "picked": 2,            +
+     "applied": true,        +
+     "dropped": 0,           +
+     "identity": 0,          +
+     "no_venue": 0,          +
+     "ambiguous": 0,         +
+     "by_method": {          +
+         "venue_day_name": 2 +
+     },                      +
+     "unmatched": 3,         +
+     "candidates": 12,       +
+     "hub_tp_filled": 0,     +
+     "orders_filled": 0,     +
+     "venues_written": 0,    +
+     "venues_resolved": 4,   +
+     "venue_map_filled": 1,  +
+     "orders_disagree_new": 0+
+ }
+
+ tp_event_id | tevo_event_id | tevo_match_method 
+-------------+---------------+-------------------
+        9004 |             6 | venue_day_name
+        9021 |            13 | venue_day_name
+
+ venue_short_id | tevo_venue_id | tickpick_venue_id 
+----------------+---------------+-------------------
+ V-100          |           100 |              1100
+ V-200          |           200 |              1200
+ V-300          |           300 |              1300
+ V-400          |           400 |              1400
+
+== grants
+          proname           | anon | service_role 
+----------------------------+------+--------------
+ tickpick_catalog_map       | f    | t
+ tickpick_catalog_name_fits | f    | t
+ tickpick_catalog_pull      | f    | t
+ tickpick_catalog_tick      | f    | t
+
+         jobname         |  schedule  
+-------------------------+------------
+ tickpick_catalog_hourly | 41 * * * *
