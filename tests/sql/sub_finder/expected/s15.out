@@ -1,0 +1,10 @@
+done
+requested|requested|requested
+3001 denied, sale live -> watched; 3002 denied, worker saw the sale cancelled -> closed; 3003 denied, read failed but our copy says cancelled -> closed
+DENIED|DENIED|CANCELLED
+3001|t|-
+3002|f|order_cancelled
+3003|f|order_cancelled
+only the live sale is polled again
+{"events": 1, "jobs_rematched": 0}
+{50}
