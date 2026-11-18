@@ -54,5 +54,25 @@ vivid|49|Boondocks Pub|||pair_sibling
 vivid|50|Boca Black Box|Boca Black Box Center for the Arts|Boca Raton, FL|pair_affix
 vivid|53|Harrahs Cabaret at Harrahs Las Vegas|Harrah's Cabaret At Harrah's Las Vegas|Las Vegas, NV|pair_eq_city
 vivid|54|KA Theatre at MGM Grand Hotel and Casino|KA Theatre at MGM Grand|Las Vegas, NV|pair_eq_city
-catalog_venue_pair_hourly|33 * * * *
+catalog_venue_pair_hourly|33 * * * *|t
 f|t
+G Ticketmaster (mig 20261118002000): the Discovery venues through the same rules; ids are text; a venue the Discovery match paired is never touched
+{"paired": 3, "sample": ["Majestic Theatre Dallas => Majestic Theatre - Dallas [pair_eq_city]", "Boondocks Pub => tickpick venue 21 [pair_sibling]", "Grand Theater => vivid venue 42 [pair_sibling]"], "source": "tm", "applied": true, "written": 3, "ambiguous": {}, "by_method": {"pair_eq_city": 1, "pair_sibling": 2}, "unpaired_in": 4, "paired_events": 4, "still_unpaired": 1, "events_by_method": {"pair_eq_city": 1, "pair_sibling": 3}, "unpaired_events_in": 5, "still_unpaired_events": 1}
+KovZ_K1|Majestic Theatre Dallas|100|pair_eq_city
+KovZ_K2|Boondocks Pub|160|pair_sibling
+KovZ_K3|Grand Theater|110|pair_sibling
+KovZ_K4|Moody Center ATX|130|norm_city
+KovZ_K5|Dallas Parking Lot C||
+KovZ_K6|Old Venue|240|manual
+tm_venue_xref|KovZ_K1|tevo_venue 100 via pair_eq_city: Majestic Theatre - Dallas
+tm_venue_xref|KovZ_K2|tevo_venue 160 via pair_sibling: tickpick venue 21
+tm_venue_xref|KovZ_K3|tevo_venue 110 via pair_sibling: vivid venue 42
+G1 TickPick leans on a Ticketmaster pairing: Old Venue (TEvo venue 240 has no upcoming EVO event, so no name rule can see it)
+{"paired": 1, "sample": ["Old Venue => ticketmaster venue KovZ_K6 [pair_sibling]"], "source": "tickpick", "applied": true, "written": 1, "ambiguous": {}, "by_method": {"pair_sibling": 1}, "unpaired_in": 2, "paired_events": 1, "still_unpaired": 1, "events_by_method": {"pair_sibling": 1}, "unpaired_events_in": 2, "still_unpaired_events": 1}
+33|Old Venue|240|pair_sibling
+G2 the review view shows the Ticketmaster rows
+ticketmaster|KovZ_K1|Majestic Theatre Dallas|Majestic Theatre - Dallas|pair_eq_city
+ticketmaster|KovZ_K2|Boondocks Pub||pair_sibling
+ticketmaster|KovZ_K3|Grand Theater|Grand Theater|pair_sibling
+ticketmaster|KovZ_K4|Moody Center ATX|Moody Center|norm_city
+ticketmaster|KovZ_K6|Old Venue|Old Venue|manual

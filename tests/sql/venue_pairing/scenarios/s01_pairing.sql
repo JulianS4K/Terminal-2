@@ -99,5 +99,32 @@ SELECT tp_venue_id, name, tevo_venue_id, method FROM tickpick_catalog_venue ORDE
 
 \echo F the review view and the cron
 SELECT source, venue_id, name, tevo_name, tevo_location, method FROM v_catalog_venue_pairs WHERE method LIKE 'pair_%' ORDER BY source, venue_id;
-SELECT jobname, schedule FROM cron.job ORDER BY 1;
+SELECT jobname, schedule, command LIKE '%catalog_venue_pair(''tm'')%' AS runs_tm FROM cron.job ORDER BY 1;
 SELECT has_function_privilege('anon', 'catalog_venue_pair(text,boolean)', 'EXECUTE'), has_function_privilege('service_role', 'catalog_venue_pair(text,boolean)', 'EXECUTE');
+
+\echo G Ticketmaster (mig 20261118002000): the Discovery venues through the same rules; ids are text; a venue the Discovery match paired is never touched
+INSERT INTO tm_venue_xref (tm_venue_id, name, city, state, country, tevo_venue_id, method) VALUES
+  ('KovZ_K1', 'Majestic Theatre Dallas', 'Dallas', 'TX', 'US', NULL, NULL),          -- eq_city
+  ('KovZ_K2', 'Boondocks Pub', 'Springfield', 'IL', 'US', NULL, NULL),              -- sibling via TickPick venue 21
+  ('KovZ_K3', 'Grand Theater', 'Wausau', 'WI', 'US', NULL, NULL),                   -- two TEvo venues of the name in the city: the events decide
+  ('KovZ_K4', 'Moody Center ATX', 'Austin', 'TX', 'US', 130, 'norm_city'),          -- paired by the Discovery match: never touched
+  ('KovZ_K5', 'Dallas Parking Lot C', 'Dallas', 'TX', 'US', NULL, NULL),            -- nothing fits: stays
+  ('KovZ_K6', 'Old Venue', 'Dallas', 'TX', 'US', 240, 'manual');                    -- a manual pairing TickPick leans on below
+INSERT INTO tm_discovery_event (tm_event_id, name, local_date, tm_venue_id, is_product, status_code) VALUES
+  ('G1', 'Hamilton', d(5), 'KovZ_K1', false, 'onsale'),
+  ('G2', 'Open Mic', d(31), 'KovZ_K2', false, 'onsale'),
+  ('G3', 'Blue Man Group', d(10), 'KovZ_K3', false, 'onsale'), ('G4', 'Weird Al Yankovic', d(12), 'KovZ_K3', false, 'onsale'),
+  ('G5', 'Moody Blues', d(9), 'KovZ_K4', false, 'onsale'),
+  ('G6', 'Parking: Hamilton', d(5), 'KovZ_K5', true, 'onsale'), ('G7', 'Lot C Event', d(6), 'KovZ_K5', false, 'onsale'),
+  ('G8', 'Old Show', d(40), 'KovZ_K6', false, 'onsale'),
+  ('G9', 'Cancelled Show', d(3), 'KovZ_K5', false, 'cancelled');
+SELECT out_(catalog_venue_pair('tm'));
+SELECT tm_venue_id, name, tevo_venue_id, method FROM tm_venue_xref ORDER BY 1;
+SELECT target, target_key, note FROM tm_discovery_audit WHERE action = 'venue_xref' ORDER BY target_key;
+\echo G1 TickPick leans on a Ticketmaster pairing: Old Venue (TEvo venue 240 has no upcoming EVO event, so no name rule can see it)
+INSERT INTO tickpick_catalog_venue (tp_venue_id, name, city, state, country) VALUES (33, 'Old Venue', 'Dallas', 'TX', 'US');
+INSERT INTO tickpick_catalog_event (tp_event_id, name, status, event_date, tp_venue_id) VALUES (3006, 'Old Show', 'active', d(40), 33);
+SELECT out_(catalog_venue_pair('tickpick'));
+SELECT tp_venue_id, name, tevo_venue_id, method FROM tickpick_catalog_venue WHERE tp_venue_id = 33;
+\echo G2 the review view shows the Ticketmaster rows
+SELECT source, venue_id, name, tevo_name, method FROM v_catalog_venue_pairs WHERE source = 'ticketmaster' ORDER BY venue_id;

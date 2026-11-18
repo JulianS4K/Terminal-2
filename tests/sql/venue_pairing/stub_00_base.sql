@@ -19,6 +19,10 @@ CREATE TABLE public.vivid_catalog_event (vivid_event_id bigint PRIMARY KEY, name
 CREATE TABLE public.vivid_catalog_audit (id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), run_id uuid NOT NULL, vivid_event_id bigint, action text NOT NULL, target text NOT NULL,
                                          target_key text, old_tevo bigint, new_tevo bigint, note text);
 CREATE TABLE public.axs_export_event (axs_event_id bigint PRIMARY KEY, venue_name text, venue_city text, venue_state text, tevo_venue_id bigint, gone_at timestamptz);
+-- Ticketmaster Discovery (mig 20261117180000), the pairer's third source since mig 20261118002000: text venue ids
+CREATE TABLE public.tm_venue_xref (tm_venue_id text PRIMARY KEY, name text, city text, state text, country text, tevo_venue_id bigint, method text, events int, derived_at timestamptz);
+CREATE TABLE public.tm_discovery_event (tm_event_id text PRIMARY KEY, name text, local_date date, tm_venue_id text, is_product boolean NOT NULL DEFAULT false, status_code text);
+CREATE TABLE public.tm_discovery_audit (id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now(), run_id uuid NOT NULL, action text NOT NULL, target text, target_key text, tevo_event_id bigint, method text, note text);
 
 -- pg_cron
 CREATE SCHEMA cron;
