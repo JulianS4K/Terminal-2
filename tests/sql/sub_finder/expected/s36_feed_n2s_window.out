@@ -1,0 +1,44 @@
+A where an order stands in the N2S book: kind, timer, inside its time
+N401|n2s|t|t|true
+N402|n2s|t|t|false
+N403|need2buy|f|f|true
+N404|need2buy|f|f|true
+N405|need2buy|f|f|false
+t
+B every order looked up once; N401 and N404 a second time
+done
+done
+M406|1|1|cover
+M407|1|1|cover
+N401|2|1|cover
+N402|1|1|cover
+N403|1|1|cover
+N404|2|1|cover
+N405|1|1|cover
+C the feed: one row per order, inside its time (order, kind, watched, has a timer)
+n2s|3|3
+N401|n2s|true|t|f
+N403|need2buy|true|f|f
+N404|need2buy|true|f|f
+the old name answers the same feed
+3|n2s
+scope all: every answered lookup, nothing merged
+all|9
+M406|1|-
+M407|1|-
+N401|2|n2s
+N402|1|n2s
+N403|1|need2buy
+N404|2|need2buy
+N405|1|need2buy
+invalid|forbidden
+D the timer runs out: the alert leaves; the item closes: need2buy leaves
+N404
+E an order with a purchase stays, in or out of the N2S book, until a week after it is final
+requested
+M407, N404
+M407, N404
+N404
+F updated_since and paging work on the merged set
+0|0
+1|1|1|0

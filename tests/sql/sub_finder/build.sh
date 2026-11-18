@@ -68,4 +68,6 @@ stub_80_td_mapper.sql
 stub_90_health.sql
 20261116210000_sub_finder_health.sql
 20261117101530_sub_finder_ada_block.sql
+stub_95_feed.sql
+20261118172530_sub_finder_feed_n2s_window.sql
 STEPS
