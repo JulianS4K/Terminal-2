@@ -47,7 +47,7 @@ SELECT params ? 'apikey' AS key_in_plan FROM tm_discovery_query LIMIT 1;
 
 \echo B a tick of two calls: the two pages of the Sports week land five events (one a parking product); the query is complete; the budget counts 2
 SELECT tm_discovery_tick(2) - 'run_id';
-SELECT tm_event_id, name, local_date - current_date AS day, local_time, status_code, tm_venue_id, segment, is_product, array_to_string(attraction_names, '|') AS attractions, jsonb_array_length(presales) AS presales, tevo_event_id, tevo_match_method FROM tm_discovery_event ORDER BY 1;
+SELECT tm_event_id, name, local_date - current_date AS day, local_time, status_code, tm_venue_id, segment, is_product, array_to_string(attraction_names, '|') AS attractions, jsonb_array_length(presales) AS presales, tevo_event_id, tevo_match_method FROM tm_discovery_event ORDER BY tm_event_id COLLATE "C";
 SELECT label, page, total_pages, events_seen, last_ok_at IS NOT NULL AS complete FROM tm_discovery_query WHERE events_seen > 0;
 SELECT day = current_date AS today, calls, refused, cap FROM tm_discovery_quota;
 \echo B1 GET only, size 200, and the key in the request but nowhere stored
@@ -55,9 +55,9 @@ SELECT method, count(*), bool_and(uri LIKE 'https://app.ticketmaster.com/discove
 SELECT count(*) AS rows_with_the_key FROM (SELECT params::text AS t FROM tm_discovery_query UNION ALL SELECT note FROM tm_discovery_audit UNION ALL SELECT coalesce(last_error, '') FROM tm_discovery_query UNION ALL SELECT raw::text FROM tm_discovery_event) s WHERE s.t LIKE '%STUBKEY%';
 
 \echo C the xrefs and the match: MSG and Barclays Ctr (ctr reads as center) by name; two TEvo performers called Billy Joel: the attraction stays unpaired; Knicks games by venue + date + name with the Heat game told from its parking; Billy Joel: two shows that day, the 20:00 one by the hour
-SELECT tm_venue_id, name, tevo_venue_id, method FROM tm_venue_xref ORDER BY 1;
-SELECT tm_attraction_id, name, tevo_performer_id, method FROM tm_attraction_xref ORDER BY 1;
-SELECT tm_event_id, tm_name, evo_name, tevo_match_method FROM v_tm_discovery_link ORDER BY 1;
+SELECT tm_venue_id, name, tevo_venue_id, method FROM tm_venue_xref ORDER BY tm_venue_id COLLATE "C";
+SELECT tm_attraction_id, name, tevo_performer_id, method FROM tm_attraction_xref ORDER BY tm_attraction_id COLLATE "C";
+SELECT tm_event_id, tm_name, evo_name, tevo_match_method FROM v_tm_discovery_link ORDER BY tm_event_id COLLATE "C";
 SELECT action, count(*) FROM tm_discovery_audit GROUP BY 1 ORDER BY 1;
 
 \echo D the budget: at 100 the call is refused, counted, audited; nothing is fetched
