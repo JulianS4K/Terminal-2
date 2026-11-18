@@ -122,3 +122,36 @@ SELECT count(*) AS audit_rows_for_them FROM event_xmap_audit WHERE (source = 'ti
 UPDATE events SET occurs_at_local = at_(13, '19:00') WHERE id = 401;
 SELECT (event_xmap_tick(45, true))->'evo_clusters_refreshed', (event_xmap_tick(45, true))->'detached';
 SELECT local_day - current_date AS day, tevo_event_id, gt_event_id FROM event_xmap WHERE tevo_event_id = 401;
+
+\echo I the internal event key (mig 20261117170000)
+\echo I1 ESPN is the seventh source and seeds its bucket: a game at Capital One Arena (Vivid venue 77 paired to TEvo 500) with no EVO listing; Vivid 2201 and GoTickets 3201 attach by name; the game ESPN tied to EVO 401 joins that cluster by id
+INSERT INTO vivid_catalog_venue (vivid_venue_id, name, city, state, country, tevo_venue_id, method) VALUES (77, 'Capital One Arena', 'Washington', 'DC', 'US', 500, 'name_state');
+INSERT INTO espn_ticket_game (espn_event_id, espn_league, name, game_at_utc, time_valid, status, home_team_id, home_name, away_team_id, away_name, venue_name, venue_city, venue_state, vivid_production_id, vivid_venue_id, tevo_event_id) VALUES
+  ('401909901', 'NHL', 'Boston Bruins at Washington Capitals', (ts_(15, '19:00') AT TIME ZONE 'America/New_York'), true, 'STATUS_SCHEDULED', '23', 'Washington Capitals', '1', 'Boston Bruins', 'Capital One Arena', 'Washington', 'DC', 2201, 77, NULL),
+  ('401909902', 'NHL', 'Pittsburgh Penguins at Washington Capitals', (ts_(13, '19:00') AT TIME ZONE 'America/New_York'), true, 'STATUS_SCHEDULED', '23', 'Washington Capitals', '16', 'Pittsburgh Penguins', 'Capital One Arena', 'Washington', 'DC', NULL, 77, 401),
+  ('401909903', 'NHL', 'TBD at Washington Capitals', (ts_(16, '19:00') AT TIME ZONE 'America/New_York'), true, 'STATUS_SCHEDULED', '23', 'Washington Capitals', '-1', 'TBD', 'Capital One Arena', 'Washington', 'DC', NULL, 77, NULL);
+INSERT INTO vivid_catalog_event (vivid_event_id, name, event_local, event_date, vivid_venue_id, venue_country, performers) VALUES
+  (2201, 'Boston Bruins at Washington Capitals', ts_(15, '19:00'), d(15), 77, 'US', '[{"name":"Washington Capitals"},{"name":"Boston Bruins"}]');
+INSERT INTO gotickets_event (gt_event_id, name, performer, venue_name, venue_city, venue_state, event_time_utc, status, tevo_event_id) VALUES
+  (3201, 'Boston Bruins at Washington Capitals', 'Washington Capitals', 'Capital One Arena', 'Washington', 'DC', (ts_(15, '19:00') AT TIME ZONE 'America/New_York'), 'AS_SCHEDULED', NULL);
+SELECT (event_xmap_tick(45, true)) - 'run_id' - 'window' - 'ms' - 'rows_by_source' - 'rows' - 'rows_with_evo' - 'loose' - 'buckets' - 'clusters_in_window' - 'with_evo_and_others' - 'cross_mapped_without_evo' - 'merged' - 'evo_clusters_new' - 'evo_clusters_refreshed' - 'detached' - 'deleted_single' - 'attached_existing' - 'seed_candidates_by_source' - 'seeds_unjoined' - 'seed_candidates';
+SELECT local_day - current_date AS day, seed_source, espn_event_id, tevo_event_id, vivid_event_id, gt_event_id, sources, methods FROM event_xmap WHERE espn_event_id IS NOT NULL ORDER BY local_day;
+SELECT source, in_spine, with_evo, without_evo_but_cross_mapped FROM v_event_xmap_coverage WHERE source IN ('espn', 'vivid') ORDER BY 1;
+SELECT internal_event_id = xmap_id AS key_is_the_row_id, espn_name, vivid_name, gotickets_name FROM v_event_xmap WHERE espn_event_id = 401909901;
+
+\echo I2 the key is addressable by any source id, and the same key for every member
+SELECT event_key_lookup('vivid', 2201) = event_key_lookup('espn', 401909901) AS same_key, event_key_lookup('gotickets', 3201) = event_key_lookup('espn', 401909901) AS same_key_gt,
+       event_key_lookup('tevo', 401) = event_key_lookup('espn', 401909902) AS evo_game_same_key, event_key_lookup('vivid', 99999999) IS NULL AS unknown_is_null;
+
+\echo I3 a merge retires a key into the survivor: the Vivid mapper maps 2201 to a new EVO listing of the Bruins game; the seed cluster folds into the EVO cluster; the old key still resolves
+INSERT INTO events (id, name, occurs_at_local, state, venue_id, venue_name, venue_location, primary_performer_name) VALUES
+  (402, 'Boston Bruins at Washington Capitals', at_(15, '19:00'), 'shown', 500, 'Capital One Arena', 'Washington, DC', 'Washington Capitals');
+UPDATE vivid_catalog_event SET tevo_event_id = 402 WHERE vivid_event_id = 2201;
+CREATE TEMP TABLE _old_key AS SELECT event_key_lookup('espn', 401909901) AS k;
+SELECT (event_xmap_tick(45, true))->'merged';
+SELECT (SELECT k FROM _old_key) <> event_key_lookup('espn', 401909901) AS key_changed,
+       event_key_resolve((SELECT k FROM _old_key)) = event_key_lookup('espn', 401909901) AS old_key_resolves_to_survivor,
+       event_key_resolve(event_key_lookup('espn', 401909901)) = event_key_lookup('espn', 401909901) AS live_key_resolves_to_itself,
+       event_key_resolve(123456789) IS NULL AS unknown_key_is_null;
+SELECT xmap_id = event_key_lookup('espn', 401909901) AS alias_points_at_survivor FROM event_xmap_alias WHERE old_xmap_id = (SELECT k FROM _old_key);
+SELECT tevo_event_id, espn_event_id, vivid_event_id, gt_event_id, sources FROM event_xmap WHERE espn_event_id = 401909901;

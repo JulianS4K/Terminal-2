@@ -46,3 +46,6 @@ CREATE FUNCTION cron.schedule(name text, schedule text, command text) RETURNS bi
   INSERT INTO cron.job (jobname, schedule, command) VALUES (name, schedule, command)
   ON CONFLICT (jobname) DO UPDATE SET schedule = excluded.schedule, command = excluded.command RETURNING jobid $$;
 CREATE FUNCTION cron.unschedule(name text) RETURNS boolean LANGUAGE sql AS $$ DELETE FROM cron.job WHERE jobname = name RETURNING true $$;
+-- ESPN's games with their Vivid links (mig 20261117160000), the spine's seventh source (mig 20261117170000)
+CREATE TABLE public.espn_ticket_game (espn_event_id text PRIMARY KEY, espn_league text, name text, game_at_utc timestamptz, time_valid boolean, status text, home_team_id text, home_name text,
+                                      away_team_id text, away_name text, venue_name text, venue_city text, venue_state text, vivid_production_id bigint, vivid_venue_id bigint, tevo_event_id bigint);

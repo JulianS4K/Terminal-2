@@ -20,4 +20,6 @@ done <<'STEPS'
 stub_00_base.sql
 20261117130000_event_xmap.sql
 20261117150000_event_xmap_steady.sql
+20261117170000_internal_event_key.sql
+20261117171000_resolver_reads_the_key.sql
 STEPS
