@@ -13,15 +13,15 @@
 --   - One row per order: the lookup that holds a purchase or an offer, else the one still being
 --     refreshed, else the newest.
 --   - An order is shown while it is being watched AND it is in the Need-to-Sub book inside its
---     time:
---       an N2S alert: from the alert until its timer runs out (n2s_items.timer_expires_at, 15
---                     minutes after the alert);
---       need2buy:     while the item is open. PED items (the e-mailed Need2Buy list,
---                     item_source 'gmail', status 'n2b') ARE need2buy here: one group, not two.
+--     time: its item is open and the event day has not passed. That holds for an N2S alert and
+--     for need2buy alike. PED items (the e-mailed Need2Buy list, item_source 'gmail', status
+--     'n2b') ARE need2buy here: one group, not two.
+--     The alert's 15-minute timer is NOT the cut-off: the CRM's "Find sub" button (2026-11-18)
+--     looks up open alerts of any age and fills its column from this feed, and an alert's timer
+--     has nearly always run out by then. The timer is carried on the row instead.
 --   - An order with a purchase or an offer that is not final, or that became final in the last 7
 --     days, stays whatever its timer says: the caller is following that outcome.
---   - Each row carries `n2s`: {"kind": "n2s" | "need2buy", "alert_at", "timer_expires_at"}, so a
---     caller knows when an N2S order will leave.
+--   - Each row carries `n2s`: {"kind": "n2s" | "need2buy", "alert_at", "timer_expires_at"}.
 -- Scope 'all' is the feed as it was: every answered lookup, nothing merged (and the same `n2s`).
 --
 -- NOT CHANGED: what may be bought. A PED item is still report-only (sub_finder_report_only), and
@@ -43,11 +43,12 @@ AS $function$
            'alert_at', to_char(x.alert_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
            'timer_expires_at', CASE WHEN x.kind = 'n2s'
                                     THEN to_char(x.timer_expires_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') END,
-           -- need2buy: while the item is open. An alert: until its timer runs out.
-           'in_window', x.open AND (x.kind = 'need2buy' OR coalesce(x.timer_expires_at > now(), false)))
+           -- inside its time: the item is open and the event day has not passed
+           'in_window', x.open AND (x.event_dt IS NULL
+                                    OR x.event_dt::date >= (now() AT TIME ZONE 'America/New_York')::date))
     FROM (SELECT CASE WHEN n.item_source = 'gmail' OR public.sub_finder_need2buy(n.status, n.status_label, n.raw)
                       THEN 'need2buy' ELSE 'n2s' END AS kind,
-                 NOT coalesce(n.is_terminal, false) AS open, n.alert_at, n.timer_expires_at
+                 NOT coalesce(n.is_terminal, false) AS open, n.alert_at, n.timer_expires_at, n.event_dt
             FROM public.n2s_items n
            WHERE n.order_number = p_order_number OR n.n2s_order_key = p_order_number
            ORDER BY coalesce(n.is_terminal, false), n.last_seen_at DESC NULLS LAST, n.n2s_id DESC
