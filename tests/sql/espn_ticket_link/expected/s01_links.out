@@ -1,0 +1,49 @@
+A one league, a 60-day horizon: the first tick queues the periods and fires the pages (nothing to land yet)
+{"fired": 3, "games": 0, "errors": 0, "landed": 0, "matched": 0}
+NBA|3|3|6
+https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard|202611|1000
+B the responses arrive: the page of this month carries six games (one bracket game with TBD sides, one without a ticket link), the others are empty
+{"fired": 0, "games": 6, "errors": 0, "landed": 3, "matched": 4}
+401909305|Charlotte Hornets at Atlanta Hawks|20 19:00|t|7419725|1327|501|espn_time_name
+401909306|Orlando Magic at Brooklyn Nets|22 00:00|f|7418387|9671|503|espn_day_name
+401909307|Indiana Pacers at Cleveland Cavaliers|24 00:00|f|7419581|684||
+401909400|Boston Celtics at Atlanta Hawks|23 18:30|t|7419800|1327|502|espn_time_name
+401909500|Miami Heat at Atlanta Hawks|25 19:00|t|7419900|1327|506|espn_time_name
+401909600|TBD at TBD|27 19:00|t||||
+B1 (305, 400, 500 by time; 306 by day, the time unknown; 307 has two EVO listings that day and no time: none; 600 has no sides)
+C the map, dry run then live: 7419725 and 7419800 take the EVO ids of their games; 7419900 does not (the Vivid day is wrong); game 307 takes 505 from the Vivid match; venue 1327 pairs through its two matched games
+{"games": 6, "applied": false, "vivid_sample": ["NBA Cup - Orlando Magic at Brooklyn Nets  =>  Orlando Magic at Brooklyn Nets", "NBA Cup - Charlotte Hornets at Atlanta Hawks  =>  Charlotte Hornets at Atlanta Hawks", "Boston Celtics at Atlanta Hawks  =>  Boston Celtics at Atlanta Hawks"], "games_with_tevo": 4, "games_with_vivid": 5, "games_fill_candidates": 1, "venue_pair_candidates": 1, "vivid_fill_candidates": 3}
+{"games": 6, "applied": true, "vivid_filled": 3, "vivid_sample": ["NBA Cup - Orlando Magic at Brooklyn Nets  =>  Orlando Magic at Brooklyn Nets", "NBA Cup - Charlotte Hornets at Atlanta Hawks  =>  Charlotte Hornets at Atlanta Hawks", "Boston Celtics at Atlanta Hawks  =>  Boston Celtics at Atlanta Hawks"], "venues_paired": 1, "games_with_tevo": 4, "games_with_vivid": 5, "games_fill_candidates": 1, "venue_pair_candidates": 1, "vivid_fill_candidates": 3, "games_filled_from_vivid": 1}
+7418387|503|espn_link
+7419581|505|venue_time_name
+7419725|501|espn_link
+7419800|502|espn_link
+7419900||
+401909307|505|vivid_link
+684|614|name_state
+1327|1228|pair_espn
+9671|27950|name_state
+match|vivid_catalog_event|7419800|502|espn_link: ESPN game 401909400 "Boston Celtics at Atlanta Hawks"
+match|vivid_catalog_event|7419725|501|espn_link: ESPN game 401909305 "Charlotte Hornets at Atlanta Hawks"
+match|vivid_catalog_event|7418387|503|espn_link: ESPN game 401909306 "Orlando Magic at Brooklyn Nets"
+venue_xref|vivid_catalog_venue|1327||tevo_venue 1228 via pair_espn: State Farm Arena (3 ESPN games)
+C1 a second map writes nothing
+{"games": 6, "applied": true, "vivid_filled": 0, "vivid_sample": [], "venues_paired": 0, "games_with_tevo": 5, "games_with_vivid": 5, "games_fill_candidates": 0, "venue_pair_candidates": 0, "vivid_fill_candidates": 0, "games_filled_from_vivid": 0}
+D a refresh that moves a game by more than an hour drops its match; one that keeps the time keeps it; a page that fails is recorded and retried later
+{"fired": 3, "games": 0, "errors": 0, "landed": 0, "matched": 0}
+{"fired": 0, "games": 2, "errors": 2, "landed": 1, "matched": 0}
+401909305|20 21:30||
+401909400|23 18:30|502|espn_time_name
+t|0|f|t
+f|1|t|t
+f|1|t|t
+E the review view; who may run what; the crons
+401909305|NBA Cup - Charlotte Hornets at Atlanta Hawks|espn_link||
+401909306|NBA Cup - Orlando Magic at Brooklyn Nets|espn_link|espn_day_name|Orlando Magic at Brooklyn Nets
+401909307|NBA Cup - Indiana Pacers at Cleveland Cavaliers|venue_time_name|vivid_link|Indiana Pacers at Cleveland Cavaliers
+401909400|Boston Celtics at Atlanta Hawks|espn_link|espn_time_name|Boston Celtics at Atlanta Hawks
+401909500|Miami Heat at Atlanta Hawks||espn_time_name|Miami Heat at Atlanta Hawks
+401909600||||
+f|t|f
+espn_ticket_map_hourly|38 * * * *
+espn_ticket_tick_1min|* * * * *
