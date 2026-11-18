@@ -5,6 +5,8 @@ N403|need2buy|f|f|true
 N404|need2buy|f|f|true
 N405|need2buy|f|f|false
 t
+status n2b from any source is need2buy, with no timer
+need2buy|t|true
 B every order looked up once; N401 and N404 a second time
 done
 done

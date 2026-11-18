@@ -51,7 +51,10 @@ AS $function$
            'in_window', x.open AND CASE WHEN x.kind = 'n2s' THEN coalesce(x.timer_expires_at > now(), false)
                                         ELSE x.event_dt IS NULL
                                              OR x.event_dt::date >= (now() AT TIME ZONE 'America/New_York')::date END)
-    FROM (SELECT CASE WHEN n.item_source = 'gmail' OR public.sub_finder_need2buy(n.status, n.status_label, n.raw)
+    -- need2buy: the PED list (item_source 'gmail'), the CRM's label `need2buy`, or its status `n2b`.
+    -- Everything else in the book is a Need-to-Sub alert, and only those have a timer.
+    FROM (SELECT CASE WHEN n.item_source = 'gmail' OR n.status = 'n2b'
+                        OR public.sub_finder_need2buy(n.status, n.status_label, n.raw)
                       THEN 'need2buy' ELSE 'n2s' END AS kind,
                  NOT coalesce(n.is_terminal, false) AS open, n.alert_at, n.timer_expires_at, n.event_dt
             FROM public.n2s_items n

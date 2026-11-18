@@ -24,6 +24,9 @@ UPDATE manual_sub_buy_config SET enabled=true WHERE id;
 SELECT o, w->>'kind', (w->>'alert_at') IS NOT NULL, (w->>'timer_expires_at') IS NOT NULL, w->>'in_window'
   FROM (SELECT o, sub_finder_n2s_window(o) w FROM unnest(ARRAY['N401','N402','N403','N404','N405']) o) x;
 SELECT sub_finder_n2s_window('M406') IS NULL;
+\echo status n2b from any source is need2buy, with no timer
+INSERT INTO n2s_items (n2s_id,order_number,marketplace,status,item_source,is_terminal,alert_at,timer_expires_at) VALUES (499,'N499','StubHub','n2b','automatiq',false, now()-interval '2 hours', now()-interval '105 minutes');
+SELECT w->>'kind', w->>'timer_expires_at' IS NULL, w->>'in_window' FROM sub_finder_n2s_window('N499') w;
 
 \echo B every order looked up once; N401 and N404 a second time
 CREATE TEMP TABLE j1 AS SELECT (sub_finder_submit(7,'crm','[{"order_number":"N401"},{"order_number":"N402"},{"order_number":"N403"},{"order_number":"N404"},{"order_number":"N405"},{"order_number":"M406"},{"order_number":"M407"}]')->>'job_id')::uuid AS id;
