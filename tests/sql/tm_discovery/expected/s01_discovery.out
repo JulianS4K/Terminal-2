@@ -1,0 +1,46 @@
+A the plan: three segments x 13 weeks; nothing called yet
+39
+39|39|seg:Arts & Theatre:2026-11-16|200
+f
+B a tick of two calls: the two pages of the Sports week land five events (one a parking product); the query is complete; the budget counts 2
+{"calls": 2, "errors": 0, "events": 5, "landed": 2, "matched": 4, "refused": 0, "budget_today": {"cap": 100, "calls": 2, "refused": 0}}
+3B006511E92086|Billy Joel|6|20:00:00|onsale|KovZpZA7AAEA|Music|f|Billy Joel|1|604|venue_time_name
+G5diZ_o6tFFbU|New York Knicks vs. Boston Celtics|3|19:30:00|onsale|KovZpZA7AAEA|Sports|f|New York Knicks|Boston Celtics|1|601|venue_date_name
+G5diZ_o6tFFbV|Brooklyn Nets vs. Orlando Magic|4|19:30:00|onsale|KovZpZAEkn6A|Sports|f|Brooklyn Nets|Orlando Magic|1|606|venue_date_name
+G5diZ_o6tFFbW|New York Knicks vs. Miami Heat|5|19:30:00|onsale|KovZpZA7AAEA|Sports|f|New York Knicks|Miami Heat|1|602|venue_date_name
+G5diZ_o6tFFbX|Knicks Parking: Miami Heat|5|19:30:00|onsale|KovZpZA7AAEA|Miscellaneous|t||1||
+seg:Sports:2026-11-16|0|2|5|t
+t|2|0|100
+B1 GET only, size 200, and the key in the request but nowhere stored
+GET|2|t|t|t
+0
+C the xrefs and the match: MSG and Barclays Ctr (ctr reads as center) by name; two TEvo performers called Billy Joel: the attraction stays unpaired; Knicks games by venue + date + name with the Heat game told from its parking; Billy Joel: two shows that day, the 20:00 one by the hour
+KovZpZA7AAEA|Madison Square Garden|1000|norm_city
+KovZpZAEkn6A|Barclays Ctr|1001|norm_city
+K8vZ9171o70|Brooklyn Nets||
+K8vZ9171oC0|Boston Celtics|52|name
+K8vZ9171oE7|Miami Heat||
+K8vZ9171oZ0|New York Knicks|51|name
+K8vZ9171ok7|Orlando Magic||
+K8vZ917Gku7|Billy Joel||
+3B006511E92086|Billy Joel|Billy Joel|venue_time_name
+G5diZ_o6tFFbU|New York Knicks vs. Boston Celtics|Boston Celtics at New York Knicks|venue_date_name
+G5diZ_o6tFFbV|Brooklyn Nets vs. Orlando Magic|Orlando Magic at Brooklyn Nets|venue_date_name
+G5diZ_o6tFFbW|New York Knicks vs. Miami Heat|Miami Heat at New York Knicks|venue_date_name
+G5diZ_o6tFFbX|Knicks Parking: Miami Heat||
+attraction_xref|2
+call|2
+match|4
+venue_xref|2
+D the budget: at 100 the call is refused, counted, audited; nothing is fetched
+{"calls": 0, "errors": 0, "events": 0, "landed": 0, "refused": 1, "budget_today": {"cap": 100, "calls": 100, "refused": 1}}
+100|1
+2
+D1 a cap raised by data stays at 100
+f
+D2 no key: nothing is called
+{"error": "no usable key"}
+2
+E who may run what; the cron
+f|t|f
+tm_discovery_tick_hourly|27 * * * *|t
