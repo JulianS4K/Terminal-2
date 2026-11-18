@@ -27,13 +27,19 @@ CREATE FUNCTION extensions.urlencode(p text) RETURNS text LANGUAGE sql IMMUTABLE
   SELECT replace(replace(replace(replace(replace(p, '%', '%25'), ' ', '%20'), '&', '%26'), ',', '%2C'), ':', '%3A') $$;
 CREATE TABLE public.stub_http_page (id serial PRIMARY KEY, match text NOT NULL, status int NOT NULL DEFAULT 200, body text);
 CREATE TABLE public.stub_http_log (id serial PRIMARY KEY, method text, uri text);
+CREATE TABLE public.stub_http_rate (start_available int NOT NULL);   -- what Ticketmaster reports left before the first logged call
+INSERT INTO public.stub_http_rate VALUES (5000);
 CREATE FUNCTION extensions.http(r extensions.http_request) RETURNS extensions.http_response LANGUAGE plpgsql AS $$
 DECLARE p public.stub_http_page;
 BEGIN
   INSERT INTO public.stub_http_log (method, uri) VALUES (r.method, r.uri);
   SELECT * INTO p FROM public.stub_http_page s WHERE position(s.match IN r.uri) > 0 ORDER BY length(s.match) DESC, s.id LIMIT 1;
   IF NOT FOUND THEN RETURN ROW(404, 'text/plain', NULL, 'stub: no page')::extensions.http_response; END IF;
-  RETURN ROW(p.status, 'application/json', NULL, p.body)::extensions.http_response;
+  RETURN ROW(p.status, 'application/json',
+             ARRAY[ROW('Rate-Limit', '5000')::extensions.http_header,
+                   ROW('Rate-Limit-Available', ((SELECT start_available FROM public.stub_http_rate) - (SELECT count(*) FROM public.stub_http_log))::text)::extensions.http_header,
+                   ROW('Rate-Limit-Reset', '1795069548383')::extensions.http_header],
+             p.body)::extensions.http_response;
 END $$;
 -- pg_cron
 CREATE SCHEMA cron;

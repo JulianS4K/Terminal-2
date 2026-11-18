@@ -46,10 +46,10 @@ SELECT count(*), count(*) FILTER (WHERE active), min(label), (SELECT params->>'s
 SELECT params ? 'apikey' AS key_in_plan FROM tm_discovery_query LIMIT 1;
 
 \echo B a tick of two calls: the two pages of the Sports week land five events (one a parking product); the query is complete; the budget counts 2
-SELECT tm_discovery_tick(2) - 'run_id';
+SELECT tm_discovery_tick(2) - 'run_id' - 'seconds';
 SELECT tm_event_id, name, local_date - current_date AS day, local_time, status_code, tm_venue_id, segment, is_product, array_to_string(attraction_names, '|') AS attractions, jsonb_array_length(presales) AS presales, tevo_event_id, tevo_match_method FROM tm_discovery_event ORDER BY tm_event_id COLLATE "C";
 SELECT label, page, total_pages, events_seen, last_ok_at IS NOT NULL AS complete FROM tm_discovery_query WHERE events_seen > 0;
-SELECT day = current_date AS today, calls, refused, cap FROM tm_discovery_quota;
+SELECT day = current_date AS today, calls, refused, cap, burst_calls, tm_available, tm_limit, tm_reset_at AT TIME ZONE 'UTC' AS tm_reset FROM tm_discovery_quota;
 \echo B1 GET only, size 200, and the key in the request but nowhere stored
 SELECT method, count(*), bool_and(uri LIKE 'https://app.ticketmaster.com/discovery/v2/events.json?%') AS discovery_host, bool_and(uri LIKE '%size=200%') AS size_200, bool_and(uri LIKE '%apikey=STUBKEY%') AS key_in_request FROM stub_http_log GROUP BY 1;
 SELECT count(*) AS rows_with_the_key FROM (SELECT params::text AS t FROM tm_discovery_query UNION ALL SELECT note FROM tm_discovery_audit UNION ALL SELECT coalesce(last_error, '') FROM tm_discovery_query UNION ALL SELECT raw::text FROM tm_discovery_event) s WHERE s.t LIKE '%STUBKEY%';
@@ -63,7 +63,7 @@ SELECT action, count(*) FROM tm_discovery_audit GROUP BY 1 ORDER BY 1;
 \echo D the budget: at 100 the call is refused, counted, audited; nothing is fetched
 UPDATE tm_discovery_quota SET calls = 100 WHERE day = current_date;
 UPDATE tm_discovery_query SET last_ok_at = NULL WHERE label LIKE 'seg:Music:%';
-SELECT (tm_discovery_tick(3) - 'run_id') - 'matched';
+SELECT (tm_discovery_tick(3) - 'run_id' - 'seconds') - 'matched';
 SELECT calls, refused FROM tm_discovery_quota WHERE day = current_date;
 SELECT count(*) FROM stub_http_log;
 \echo D1 a cap raised by data stays at 100
@@ -72,9 +72,43 @@ SELECT tm_discovery_call_allowed();
 \echo D2 no key: nothing is called
 UPDATE tm_discovery_quota SET calls = 0 WHERE day = current_date;
 UPDATE vault.decrypted_secrets SET decrypted_secret = '' WHERE name = 'TMR CLIENT ID';
-SELECT (tm_discovery_tick(1) - 'run_id');
+SELECT (tm_discovery_tick(1) - 'run_id' - 'seconds');
 SELECT count(*) FROM stub_http_log;
 
 \echo E who may run what; the cron
-SELECT has_function_privilege('anon', 'tm_discovery_tick(integer)', 'EXECUTE'), has_function_privilege('service_role', 'tm_discovery_tick(integer)', 'EXECUTE'), has_table_privilege('anon', 'tm_discovery_event', 'SELECT');
-SELECT jobname, schedule, command LIKE '%tm_discovery_tick(4)%' AS four_calls FROM cron.job ORDER BY 1;
+SELECT has_function_privilege('anon', 'tm_discovery_tick(integer, boolean, integer)', 'EXECUTE'), has_function_privilege('service_role', 'tm_discovery_tick(integer, boolean, integer)', 'EXECUTE'), has_table_privilege('anon', 'tm_discovery_event', 'SELECT');
+SELECT jobname, schedule, command LIKE '%tm_discovery_tick(4)%' AS four_calls, command LIKE '%tm_discovery_burst_tick()%' AS burst FROM cron.job ORDER BY 1;
+
+\echo F the one-time burst (mig 20261118001000): the row waits for its window; in it, a probe reads what Ticketmaster says is left; armed above min_available; the state plan exists; the spend is capped per minute and never touches the drip budget
+UPDATE vault.decrypted_secrets SET decrypted_secret = 'STUBKEYSTUBKEYSTUBKEYSTUBKEY1234' WHERE name = 'TMR CLIENT ID';
+UPDATE tm_discovery_quota SET calls = 0, refused = 0, tm_available = NULL, last_call_at = NULL WHERE day = current_date;
+DELETE FROM stub_http_log;
+UPDATE stub_http_rate SET start_available = 4100;
+SELECT id, min_available, max_per_minute, armed, done, window_start AT TIME ZONE 'UTC' AS starts, window_end AT TIME ZONE 'UTC' AS ends FROM tm_discovery_burst;
+UPDATE tm_discovery_burst SET window_start = now() + interval '1 hour', window_end = now() + interval '2 hours';
+SELECT tm_discovery_burst_tick() ->> 'state';
+UPDATE tm_discovery_burst SET window_start = now() - interval '1 minute', window_end = now() + interval '1 minute';
+SELECT (tm_discovery_burst_tick() - 'budget_today' - 'seconds' - 'probe') AS first_run;
+SELECT armed, available_at_arm, done, runs, calls, events FROM tm_discovery_burst;
+SELECT calls AS drip_calls, burst_calls, refused, tm_available FROM tm_discovery_quota WHERE day = current_date;
+SELECT count(*) AS queries, count(*) FILTER (WHERE label LIKE 'st:%') AS state_queries, count(*) FILTER (WHERE label LIKE 'ca:%') AS canada_queries, min(priority) FILTER (WHERE label LIKE 'st:%') AS state_priority FROM tm_discovery_query;
+SELECT count(*) AS requests, bool_and(method = 'GET') AS all_get, bool_and(uri LIKE 'https://app.ticketmaster.com/discovery/v2/events.json?%') AS discovery_host, count(*) FILTER (WHERE uri LIKE '%stateCode=%') AS state_requests FROM stub_http_log;
+\echo F1 the reserve: with Ticketmaster reporting 12 left, one call goes (its answer says 10 left) and the next is refused
+UPDATE tm_discovery_quota SET tm_available = 12 WHERE day = current_date;
+UPDATE stub_http_rate SET start_available = 11 + (SELECT count(*) FROM stub_http_log);
+SELECT (tm_discovery_burst_tick() - 'budget_today' - 'seconds') AS reserve_run;
+SELECT calls AS drip_calls, burst_calls, refused, tm_available FROM tm_discovery_quota WHERE day = current_date;
+\echo F2 the window closes: the row is done and the cron is gone; a later run says done
+UPDATE tm_discovery_burst SET window_end = now() - interval '1 second';
+SELECT tm_discovery_burst_tick() - 'runs' - 'calls' - 'events';
+SELECT done, done_reason, armed FROM tm_discovery_burst;
+SELECT jobname FROM cron.job ORDER BY 1;
+SELECT tm_discovery_burst_tick() ->> 'state';
+\echo F3 a window that finds too few left never arms
+UPDATE tm_discovery_burst SET done = false, armed = false, window_start = now() - interval '1 minute', window_end = now() + interval '1 minute';
+UPDATE tm_discovery_quota SET tm_available = 3000, last_call_at = now() WHERE day = current_date;
+SELECT tm_discovery_burst_tick();
+SELECT done, done_reason FROM tm_discovery_burst;
+SELECT action, count(*) FROM tm_discovery_audit WHERE action IN ('burst', 'refused') GROUP BY 1 ORDER BY 1;
+\echo F4 the key is still nowhere stored
+SELECT count(*) AS rows_with_the_key FROM (SELECT params::text AS t FROM tm_discovery_query UNION ALL SELECT note FROM tm_discovery_audit UNION ALL SELECT coalesce(last_error, '') FROM tm_discovery_query UNION ALL SELECT raw::text FROM tm_discovery_event UNION ALL SELECT coalesce(last_result::text, '') FROM tm_discovery_burst) s WHERE s.t LIKE '%STUBKEY%';
