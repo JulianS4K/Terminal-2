@@ -30,6 +30,8 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
   GET  /api/v1/subs/health                                  one overall status + one per thing the CRM depends on (its feed read, lookups, buying, ...)
   GET  /api/v1/subs/mlb/schedule?team=&season=&since=       every MLB game with the club's direct ticket link + EVO / terminal event (routers/mlb_feed.py)
+  GET  /api/v1/subs/tm/events?date_from=&segment=&since=    Ticketmaster's catalogue of upcoming events + the EVO event each matched (routers/tm_feed.py)
+  GET  /api/v1/subs/tm/markets?site=&since=                 the other sites each mapped Ticketmaster event pairs to (routers/tm_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
@@ -89,6 +91,8 @@ from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
 from routers.mlb_feed import changes_response as mlb_changes_response
 from routers.mlb_feed import events_response as mlb_events_response
 from routers.mlb_feed import schedule_response as mlb_schedule_response
+from routers.tm_feed import events_response as tm_events_response
+from routers.tm_feed import markets_response as tm_markets_response
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
 MAX_LIMIT = 1000           # the CRM's own page ceiling
@@ -604,6 +608,22 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         20261117060000). Page with after_id. Same keys as /mlb/schedule."""
         denied = _mlb_reader(request, "mlb_changes")
         return denied or mlb_changes_response(get_db(), request.query_params)
+
+    @router.get("/tm/events")
+    def tm_events(request: Request):
+        """Ticketmaster's own catalogue of upcoming events, with the EVO event each matched (operator
+        2026-11-18: "add the tmr discovery feed into the mlb api"). Same keys as /mlb/schedule. Query
+        and columns: routers/tm_feed.py. Reads our own tables only."""
+        denied = _mlb_reader(request, "tm_events")
+        return denied or tm_events_response(get_db(), request.query_params)
+
+    @router.get("/tm/markets")
+    def tm_markets(request: Request):
+        """For each Ticketmaster event that matched an EVO event: the same event's id on SeatGeek,
+        Vivid Seats, TickPick, StubHub, GoTickets and AXS where we can pair it (operator 2026-11-18:
+        "the sites it pairs to ... as a seperate get call"). Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "tm_markets")
+        return denied or tm_markets_response(get_db(), request.query_params)
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):

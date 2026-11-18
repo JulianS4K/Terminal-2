@@ -6,7 +6,7 @@ For the CRM team. You send us orders that need a substitute ("sub"); we pull fre
 
 Code: `routers/subs_api.py` · SQL: migrations `20261112000000` (buy follow-up) and `20261112010000` (the API) · operator switches: [§9](#9-for-s4k-operators-switching-it-on).
 
-**Contents:** [What changed for you](#what-changed-for-you) · [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [6e Audit log](#6e-the-audit-log) · [6f Your limits](#6f-your-own-limits-on-rebates-and-buys) · [6g MLB schedule](#6g-the-mlb-schedule-with-ticket-links) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+**Contents:** [What changed for you](#what-changed-for-you) · [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [6e Audit log](#6e-the-audit-log) · [6f Your limits](#6f-your-own-limits-on-rebates-and-buys) · [6g MLB schedule](#6g-the-mlb-schedule-with-ticket-links) · [6h Ticketmaster events](#6h-ticketmasters-events-and-the-sites-they-pair-to) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
 
 ## Keeping this guide current
 
@@ -23,6 +23,8 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-18** New: `GET /tm/markets` lists, for each Ticketmaster event we have matched to an EVO event, the id of the same event on SeatGeek, Vivid Seats, TickPick, StubHub, GoTickets and AXS where we can pair it. One row per event, `site=` to ask for one site, `since` for what changed (section 6h).
+- **2026-11-18** New: `GET /tm/events` lists Ticketmaster's own catalogue of upcoming US events (name, date and time, venue, status, on-sale and presale dates, the Ticketmaster page) with the EVO event each one matched. It is filling in now: Sports first, then Music and Arts & Theatre, about 13 weeks ahead. No prices or inventory (section 6h).
 - **2026-11-18** `GET /results` now returns only orders still in play, one row per order: a Need-to-Sub alert while its 15-minute timer is running, a need2buy order (S4K's PED list is part of need2buy now) while its item is open and the event day has not passed, and any order with a purchase or an offer you are following. Older lookups and repeats of the same order are gone from it. An alert leaves the feed when its timer runs out, so drop it then; its lookup can still be read with `GET /orders/{n}`. Each row carries `n2s` with the timer. `scope=all` returns every lookup as before (section 6).
 - **2026-11-18** The buy key is now registered to the address `crm.s4kcs.com` resolves to, so from that server it can buy, offer and set limits; nothing more is needed from you if that is where your calls come from. From any other address it answers 403 `forbidden` on every call, `/ping` included. If your first call with it is refused, call `GET /ping` with the read key from the same server and send us the `your_ip` it returns (section 2).
 - **2026-11-17** Accessible seats are never swapped with ordinary seats. A sold seat in an accessible (ADA / wheelchair) section or row, such as `204LWC`, `103WC` or row `WC`, is covered only by accessible seats, and an ordinary seat is never covered by accessible ones. This is a block, not a review: such a listing is not returned as a cover, and a buy or offer for one is refused. The `wheelchair_row` flag is gone (section 8).
@@ -73,6 +75,8 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 | `GET /settings/limits` | your own limits on rebates and buys as they stand ([§6f](#6f-your-own-limits-on-rebates-and-buys)) |
 | `GET /audit?since=` | every buy, offer and limit change asked with your keys, with the address each call came from ([§6e](#6e-the-audit-log)) |
 | `GET /mlb/schedule?since=` | every MLB club's games (and, with `level`, every minor league club's), this season and next: teams, venue, start time, the club's direct ticket link, and the EVO event and terminal event each game maps to. Not tied to an order; it fills itself in as clubs release times and links ([§6g](#6g-the-mlb-schedule-with-ticket-links)) |
+| `GET /tm/events?since=` | Ticketmaster's catalogue of upcoming US events with the EVO event each matched ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
+| `GET /tm/markets?since=` | for each matched Ticketmaster event, its id on SeatGeek, Vivid Seats, TickPick, StubHub, GoTickets and AXS ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /ping`, `GET /docs` | your scopes, the address we see you call from, the limits your buys are held to, and this guide with its version |
 | `GET /health` | whether S4K's side is working: one overall status and one for each thing you depend on, with when it last ran ([§2](#2-access-keys-limits-errors)) |
 
@@ -744,6 +748,78 @@ Everything the poller detects, oldest first, one row per change: `link_live` / `
 
 Concerts and other live events at MLB and minor league ballparks, from the same MLB schedule: for example Monster Jam, Supercross, concerts, the All-Star Home Run Derby. Ballpark tours, parking, rentals and similar extras are left out. MLB lists no ticket link for these, so each carries the EVO event at the same ballpark on the same day when there is exactly one (`tevo_event_id`, `tevo_event_name`, `terminal_path`). Query: `team` (the home club), `level` (default all), `date_from`, `date_to`, `since`, `mapped=true`, `format`, `limit`, `offset`.
 
+## 6h. Ticketmaster's events and the sites they pair to
+
+Two read-only feeds from Ticketmaster's own event catalogue (its Discovery API). Any key that may find subs may read them, with that key's rate and quota. They carry names, dates, venues, status and on-sale dates: **no prices and no inventory**.
+
+We collect the catalogue slowly on purpose: at most 100 calls a day to Ticketmaster, about 13 weeks ahead, US only, Sports first, then Music and Arts & Theatre. A first fill takes a few days, and each week is re-read once a week after that. An event Ticketmaster changes (a new time, a cancellation) shows the change after its next re-read.
+
+### Events: `GET /api/v1/subs/tm/events`
+
+One row per upcoming Ticketmaster event.
+
+| Query | Meaning |
+|---|---|
+| `date_from`, `date_to` | the event's local date, `YYYY-MM-DD` |
+| `segment` | `Sports`, `Music`, `Arts & Theatre` (as Ticketmaster names it) |
+| `state` | the venue's two-letter state |
+| `status` | `onsale`, `offsale`, `cancelled`, `postponed`, `rescheduled` |
+| `mapped` | `true`: only events matched to an EVO event. `false`: only those not matched |
+| `products` | `true` to include parking, add-ons and packages. They are left out by default |
+| `since` | only rows first seen, or matched, at or after this instant |
+| `format`, `limit`, `offset` | `json` or `csv`; up to 5000 (default 1000); `next_offset` is null on the last page |
+
+```json
+{"count": 1, "offset": 0, "next_offset": null, "events": [
+ {"tm_event_id": "vvG1zZ_8p3fAa6", "name": "Atlanta Hawks vs. Charlotte Hornets",
+  "ticket_url": "https://www.ticketmaster.com/atlanta-hawks-vs-charlotte-hornets-atlanta-georgia-11-20-2026/event/0E00650592505247",
+  "event_date": "2026-11-20", "start_local_time": "19:00", "start_utc": "2026-11-21T00:00:00+00:00", "date_tbd": false, "time_tba": false, "status": "onsale",
+  "segment": "Sports", "genre": "Basketball", "sub_genre": "NBA",
+  "tm_venue_id": "KovZpa2Xke", "venue_name": "State Farm Arena", "venue_city": "Atlanta", "venue_state": "GA",
+  "venue_country": "US", "venue_timezone": "America/New_York",
+  "attraction_names": ["Atlanta Hawks", "Charlotte Hornets"],
+  "public_onsale": "2026-08-14T14:00:00+00:00", "presales": null, "ticket_limit": null, "is_product": false,
+  "tevo_event_id": 3464939, "tevo_match_method": "venue_date_name",
+  "tevo_event_name": "Emirates NBA Cup - Charlotte Hornets at Atlanta Hawks", "tevo_start_local": "2026-11-20T19:00:00",
+  "terminal_path": "/terminal/event.html?event=3464939",
+  "first_seen_at": "2026-11-18T21:30:33+00:00", "last_seen_at": "2026-11-18T21:30:33+00:00",
+  "changed_at": "2026-11-18T21:31:02+00:00"}]}
+```
+
+- `tm_event_id` is Ticketmaster's Discovery id: text, not a number.
+- `tevo_event_id` is set only when exactly one EVO event fits: the same venue, the same local date and a fitting name. Null means we have not matched it, not that EVO lacks it.
+- `presales` is Ticketmaster's own list of presale windows for the event (null when it lists none); `public_onsale` is the general on-sale.
+- `tevo_start_local` is EVO's start time, which can differ from Ticketmaster's by a few minutes.
+
+### The sites an event pairs to: `GET /api/v1/subs/tm/markets`
+
+One row per Ticketmaster event that matched an EVO event, with the id of the same event on each other site where we can pair it. An id we do not have is null.
+
+| Query | Meaning |
+|---|---|
+| `site` | only events paired to that site: `seatgeek`, `vivid`, `tickpick`, `stubhub`, `gotickets`, `axs` |
+| `date_from`, `date_to`, `segment`, `state`, `status` | as for `/tm/events` |
+| `since` | only rows matched, or whose pairings changed, at or after this instant |
+| `format`, `limit`, `offset` | as for `/tm/events` |
+
+```json
+{"count": 1, "offset": 0, "next_offset": null, "events": [
+ {"tm_event_id": "vvG1zZ_8p3fAa6", "name": "Atlanta Hawks vs. Charlotte Hornets", "event_date": "2026-11-20",
+  "start_local_time": "19:00", "status": "onsale", "segment": "Sports", "genre": "Basketball",
+  "venue_name": "State Farm Arena", "venue_city": "Atlanta", "venue_state": "GA",
+  "ticketmaster_url": "https://www.ticketmaster.com/atlanta-hawks-vs-charlotte-hornets-atlanta-georgia-11-20-2026/event/0E00650592505247",
+  "tevo_event_id": 3464939, "tevo_event_name": "Emirates NBA Cup - Charlotte Hornets at Atlanta Hawks",
+  "tevo_match_method": "venue_date_name",
+  "seatgeek_event_id": 18485907, "seatgeek_url": null, "vivid_event_id": 7419725,
+  "tickpick_event_id": 8200067, "stubhub_event_id": 161673436, "gotickets_event_id": 1901596,
+  "axs_event_id": "1568260", "aq_short_event_id": "SYS-c69814edba", "sites_paired": 6,
+  "terminal_path": "/terminal/event.html?event=3464939", "changed_at": "2026-11-18T21:31:02+00:00"}]}
+```
+
+- `sites_paired` counts the six site ids that are set (EVO itself is not counted). `seatgeek_url` is set only where we hold SeatGeek's page for that id.
+- Each id comes from our own event map, built by matching each site's catalogue to the EVO event. A pairing can be added later, so sync with `since`.
+- An event that is in `/tm/events` but not here has not matched an EVO event yet.
+
 ## 7. Buy a cover
 
 > **Single tickets (mig `20261113130000`).** A one-ticket order is bought automatically only into the exact row that was sold. A same-section cover in a better row is an offer: `action` reads `offer`, the cover has `needs_buyer_ok` and `offer_bypass: true`. Ask the buyer (on GoTickets, through [§7a](#7a-offer-a-sub-to-a-gotickets-customer): the order carries a `sub_offer` with `bypass_allowed: true`), or skip the offer and buy it here with `"confirm": true`.
@@ -979,6 +1055,7 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 23 | The MLB schedule feed (`GET /mlb/schedule`, migs `20261116190000` collector + `20261116200000` feed, operator 2026-11-16: "send it inside the subfinder api to crm") | Nothing to switch: any key that may find subs may read it, with that key's rate and quota. It reads `v_mlb_schedule_feed`, so **the route answers 502 until `20261116200000` is applied**. The collector is cron `mlb_ticket_tick_1min` (one GET at a time to MLB's public ticketing schedule; each club and season re-read every 11 hours); it writes `mlb_ticket_game` and matches games to EVO events fill-only. Check it: `SELECT team_id, season, last_ok_at, last_games, last_error FROM mlb_ticket_sync ORDER BY last_ok_at NULLS FIRST;` and `SELECT game_type, count(*), count(ticket_url), count(tevo_event_id) FROM v_mlb_schedule_feed GROUP BY 1;`. Stop it: `SELECT cron.unschedule('mlb_ticket_tick_1min');` (the feed keeps serving what it has). The CRM sees the reader's state as the `mlb_schedule` check of `GET /health` (row 22). Source, tables and matching rules: `RESOURCES_BIBLE.md` §1, *MLB ticketing schedule*. |
 | 24 | Accessible (ADA / wheelchair) seats (mig `20261117101530`, operator 2026-11-17: "it should also block because WC is ADA") | Nothing to switch, and no setting turns it off. `sub_finder_seat_is_ada(section, row)` decides what is accessible: the row test of `sub_finder_row_is_wheelchair`, or a section carrying `WC` / `ADA` as a word, `WC` straight after the section number with at most one letter between (`204LWC`, `103WC`), or the words wheelchair / accessible / handicap. `sub_finder_match` leaves out every listing whose answer differs from the sold seat's; `sub_finder_buy`, `sub_finder_gt_offer_request`, `sub_finder_autobuy` and `sub_finder_gt_offer_buy` refuse a cover or offer stored before the rule (`ada_seating`). A venue that marks accessible seats some other way is not recognised: add its marker to that one function. Check a label: `SELECT sub_finder_seat_is_ada('204LWC', '1');`. The N2S auto-buyer keeps its own row-only rule (`docs/d7_n2s_pipeline.md`). |
 | 25 | What the results feed shows (mig `20261118172530`, operator 2026-11-18: "only show n2s within the timeframe allotted, ped is now merged into need2buy, and remove duplicates when it makes sense") | Nothing to switch. `GET /results` calls `sub_finder_feed(key, since, limit, offset, scope)`; `sub_finder_results` is kept as the same feed at scope `n2s`. `sub_finder_n2s_window(order)` decides where an order stands: `need2buy` for an item labelled `need2buy` or one from the PED list (`item_source = 'gmail'`), `n2s` for any other item, inside its time while the item is open and, for an alert, `timer_expires_at` is still ahead (operator 2026-11-18, asked which cut-off: "15 mins timer"); for need2buy, the event day has not passed (New York date). The CRM's "Find sub" button can look up an alert of any age; one older than 15 minutes is answered by `GET /orders/{n}` only. A row is shown when it is the order's one row, still watched and inside its time, or holds a purchase or offer not final for more than 7 days. **Buying is not changed**: a PED item is still report-only (`sub_finder_report_only`). See what the feed would show and why not: `SELECT order_number, watching, closed_reason, sub_finder_n2s_window(order_number) FROM sub_finder_order WHERE key_id = <account> ORDER BY updated_at DESC;`. The whole record: `GET /results?scope=all`. Nothing starts a lookup on an alert by itself, so an alert is in the feed only when someone looked it up inside its 15 minutes. |
+| 26 | The Ticketmaster feeds (`GET /tm/events`, `GET /tm/markets`, mig `20261118220530`, operator 2026-11-18: "add the tmr discovery feed into the mlb api ... then add the sites it pairs to ... as a seperate get call") | Nothing to switch: any key that may find subs may read them. They read the views `v_tm_discovery_feed` and `v_tm_discovery_markets` over `tm_discovery_event`, which the mapping program's `tm_discovery_tick` fills (cron `tm_discovery_tick_hourly`, four calls an hour, hard budget 100 a day in `tm_discovery_quota`; mig `20261117180000`). The site ids in `/tm/markets` are the hub's (`aq_event_map`) first, then `event_xmap`, then the Vivid and TickPick catalogues matched to the same EVO event. Check the collector: `SELECT * FROM tm_discovery_quota ORDER BY day DESC LIMIT 3;` and `SELECT count(*), count(tevo_event_id) FROM tm_discovery_event;`. Stopping the collector is the mapping program's switch, not this API's: the feeds keep serving what is there. Nothing is written to the hub: Discovery ids are text and the hub's Ticketmaster column is numeric, still an operator decision. |
 
 Buying additionally needs the manual sub buy path live, exactly as for operator buys: `manual_sub_buy_config.enabled = true`, `kill_switch = false`, and `MANUAL_SUB_BUY_LIVE=1` on the web service. Its `per_order_cap_usd` and `daily_cap_usd` apply to CRM buys, automatic buys and operator buys together; EVO spend and GoTickets spend are each counted against the day ceiling on their own. An `unknown` outcome flips its kill switch and stops **all** buys on both markets until someone has checked the market named in `kill_reason`.
 
