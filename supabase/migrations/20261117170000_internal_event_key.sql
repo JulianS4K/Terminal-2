@@ -83,7 +83,7 @@ BEGIN
 END $function$;
 
 -- the internal key of a listing: by any source's id
-CREATE OR REPLACE FUNCTION public.event_key_lookup(p_source text, p_source_id bigint)
+CREATE OR REPLACE FUNCTION public.event_key_lookup(p_source text, p_source_event_id bigint)
  RETURNS bigint
  LANGUAGE sql
  STABLE
@@ -98,7 +98,7 @@ AS $function$
            WHEN 'axs' THEN x.axs_event_id
            WHEN 'seatgeek' THEN x.sg_event_id WHEN 'sg' THEN x.sg_event_id
            WHEN 'mlb' THEN x.mlb_schedule_id
-           WHEN 'espn' THEN x.espn_event_id END = p_source_id
+           WHEN 'espn' THEN x.espn_event_id END = p_source_event_id
    LIMIT 1
 $function$;
 COMMENT ON FUNCTION public.event_key_lookup(text, bigint) IS 'The internal event key for a source''s listing id (tevo | tickpick | vivid | gotickets | axs | seatgeek | mlb | espn). Mig 20261117170000.';
