@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-18** The buy key is now registered to the address `crm.s4kcs.com` resolves to, so from that server it can buy, offer and set limits; nothing more is needed from you if that is where your calls come from. From any other address it answers 403 `forbidden` on every call, `/ping` included. If your first call with it is refused, call `GET /ping` with the read key from the same server and send us the `your_ip` it returns (section 2).
 - **2026-11-17** Accessible seats are never swapped with ordinary seats. A sold seat in an accessible (ADA / wheelchair) section or row, such as `204LWC`, `103WC` or row `WC`, is covered only by accessible seats, and an ordinary seat is never covered by accessible ones. This is a block, not a review: such a listing is not returned as a cover, and a buy or offer for one is refused. The `wheelchair_row` flag is gone (section 8).
 - **2026-11-17** MLB schedule upgrades. Clubs are now re-read every 2 hours (minor league every 4), so new ticket links and time changes show up the same day. Each game row now also carries its `promotions` (giveaways, theme nights, ticket offers) and `removed` (true once the club drops the game from its schedule). Two new endpoints: `GET /mlb/changes` lists every change we detect (a link going live, a moved date or time, an on-sale date, a removed game, a new giveaway or stadium event), and `GET /mlb/events` lists the concerts and other live events at the ballparks, each mapped to its EVO event where we can (section 6g).
 - **2026-11-16** `GET /mlb/schedule` can now list minor league games too: add `level=milb` for every Triple-A, Double-A, High-A and Single-A club, or one level (`aaa`, `aa`, `high_a`, `single_a`), or `level=all`. Without `level` you get MLB only, as before. Each row now also carries `level`, `league_name` and `parent_org` (the MLB club the team is affiliated with). Only some minor league clubs have released their 2027 ticket links so far; the rest fill in as they do (section 6g).
@@ -292,7 +293,7 @@ The read key cannot spend: a buy, an offer or a settings change sent with it ans
 | `subs:buy` | may also ask for a `buyable` cover to be bought (EVO; GoTickets while S4K has it on) |
 | `subs:offer` | may also offer a GoTickets customer replacement seats |
 
-An empty `scopes` list means the key is valid but not yet allow-listed (or the API is switched off). `your_ip` is the address we saw this call come from: call ping from the server that will buy, and send S4K that value to register. `allowed_ips` is what the key is accepted from (empty: any address).
+An empty `scopes` list means the key is valid but not yet allow-listed (or the API is switched off). `your_ip` is the address we saw this call come from, and `allowed_ips` is what the key is accepted from (empty: any address). Once a key has registered addresses, every call with it from another address answers 403, ping included: to learn the address a server calls from, ping from that server with the read key and send S4K the `your_ip` it returns.
 
 **`GET /api/v1/subs/health`** tells you whether S4K's side is working. Either key may read it. It answers 200 whenever the key is good, so read `status` in the body, not the HTTP code:
 
@@ -986,7 +987,7 @@ RULE 2 note: the one upstream write this API can cause besides the EVO buy is th
 | job sits in `pulling` | a listing pull is slow; it is matched with whatever arrived after 3 minutes. Keep reading until it is `done` |
 | a read answers 500 | rare: a dropped connection on our side; read again after 10 seconds |
 | 403 on a buy for one order only | it is a PED order: report-only ([§5](#5-the-order-object)); or the buy is over a spending limit (`limit` in the answer); or it would swap an accessible seat and an ordinary one (`limit: "ada_seating"`) |
-| 403 on every buy and offer | the call was sent with the read key, or with the buy key from an address that is not registered. `GET /ping` with the same key from the same server shows `scopes`, `your_ip` and `allowed_ips` |
+| 403 on every buy and offer | the call was sent with the read key, or with the buy key from an address that is not registered. `GET /ping` with the read key from the same server shows `your_ip`, the address to compare with what S4K registered |
 | `no_cover` but you can see tickets on the site | different section spelling, a row more than 5 back, a quantity the seller will not split, or the listing appeared after the pull. Submit again |
 | `price_above_ceiling` on a buy | the listing's price rose since the quote; submit the order again and buy from the new job |
 | 409 on a buy | read the order: a live buy already exists for it (requested, being bought, bought, or unclear). A buy that stopped does not block a new one. If the sale was covered by hand at S4K there is nothing more to buy |
