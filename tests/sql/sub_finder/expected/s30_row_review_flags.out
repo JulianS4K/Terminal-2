@@ -16,7 +16,7 @@ the lookups: sold row, the cover row, how it is labelled, and whether we bought 
 done
 R201|AA|H|Index row letters differ|unknown|["row_letter_mismatch"]|true|buy_manually|needs_crm_confirm
 R202|H|AA|Index row letters differ|unknown|["row_letter_mismatch"]|true|buy_manually|needs_crm_confirm
-R203|WC|C|Index wheelchair row|unknown|["wheelchair_row"]|true|buy_manually|needs_crm_confirm
+R203|WC|-|no cover|-|-|-|none|-
 R204|C|-|no cover|-|-|-|none|-
 R205|WC|WC|Index|same|[]|false|auto_bought|-
 R206|BB|AA|Index|better|[]|false|auto_bought|-
@@ -28,10 +28,9 @@ R205, R206, R207, R209
 the CRM buys a flagged cover only with a confirmation
 {"error": "confirm_needed", "flags": ["row_letter_mismatch"]}
 requested
-{"error": "confirm_needed", "flags": ["wheelchair_row"]}
-requested
+a wheelchair mismatch was never quoted, so there is nothing to confirm
+invalid
 R201|20101|crm api key crm / dana
-R203|20301|crm api key crm / dana
 a cover stored before the flags existed is read from its label
 ["wheelchair_row"]|["row_letter_mismatch"]|[]
 the N2S auto-buyer skips the same pairs (mig 20261113460000): sold row / sub row -> skip reasons

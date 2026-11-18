@@ -327,22 +327,25 @@ def test_needs_sub_alert_is_a_one_order_submit(monkeypatch):
 
 
 def test_results_cursor_and_bounds():
-    db = FakeDB(rpc_data={"sub_finder_results": {"count": 0, "total": 0, "items": [],
+    db = FakeDB(rpc_data={"sub_finder_feed": {"count": 0, "total": 0, "items": [],
                                                  "generated_at": "2026-11-12T20:00:00.000000Z"}})
     c = _client(db)
     assert c.get("/api/v1/subs/results").status_code == 401
     r = c.get("/api/v1/subs/results", headers=H,
               params={"updated_since": "2026-11-12T19:54:00Z", "limit": 50, "offset": 100})
     assert r.status_code == 200 and r.json()["generated_at"].endswith("Z")
-    assert db.last("sub_finder_results") == {"p_key_id": 7, "p_updated_since": "2026-11-12T19:54:00+00:00",
-                                             "p_limit": 50, "p_offset": 100}
+    assert db.last("sub_finder_feed") == {"p_key_id": 7, "p_updated_since": "2026-11-12T19:54:00+00:00",
+                                          "p_limit": 50, "p_offset": 100, "p_scope": "n2s"}
     c.get("/api/v1/subs/results", headers=H)
-    assert db.last("sub_finder_results") == {"p_key_id": 7, "p_updated_since": None, "p_limit": 200,
-                                             "p_offset": 0}
-    for params in ({"updated_since": "soon"}, {"limit": 0}, {"limit": 1001}, {"offset": -1}):
+    # the default scope: only what is still in play, one row per order (mig 20261118172530)
+    assert db.last("sub_finder_feed") == {"p_key_id": 7, "p_updated_since": None, "p_limit": 200,
+                                          "p_offset": 0, "p_scope": "n2s"}
+    c.get("/api/v1/subs/results", headers=H, params={"scope": "all"})   # every answered lookup, as before
+    assert db.last("sub_finder_feed")["p_scope"] == "all"
+    for params in ({"updated_since": "soon"}, {"limit": 0}, {"limit": 1001}, {"offset": -1}, {"scope": "mine"}):
         assert c.get("/api/v1/subs/results", headers=H, params=params).status_code == 422
     # an error code SQL may add later still answers as a client error, not a 200
-    db.rpc_data["sub_finder_results"] = {"error": "something_new"}
+    db.rpc_data["sub_finder_feed"] = {"error": "something_new"}
     assert c.get("/api/v1/subs/results", headers=H).status_code == 400
 
 
@@ -551,7 +554,8 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
     assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
     for n in news:
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
-    assert "mlb/changes" in news[0]["text"] and "minor league" in news[1]["text"] and "SeatGeek" in news[2]["text"]
+    assert "orders still in play" in news[0]["text"] and "buy key is now registered" in news[1]["text"]
+    assert "Accessible seats" in news[2]["text"] and "mlb/changes" in news[3]["text"] and "minor league" in news[4]["text"]
 
 
 def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
@@ -835,11 +839,11 @@ def test_the_caller_address_can_come_from_a_named_header_and_ping_can_show_what_
 def test_a_read_key_acts_for_its_account_and_cannot_spend():
     db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True},
-                          "sub_finder_results": {"count": 0, "items": []},
+                          "sub_finder_feed": {"count": 0, "items": []},
                           "sub_finder_buy_confirmed": {"buy_id": 20, "state": "requested"}})
     c = _client(db)
     assert c.get("/api/v1/subs/results", headers=H).status_code == 200
-    assert db.last("sub_finder_results")["p_key_id"] == 4            # the account, not the key
+    assert db.last("sub_finder_feed")["p_key_id"] == 4            # the account, not the key
     assert db.last("mcp_count_call")["p_key_id"] == 7                # the key's own quota
     assert c.get("/api/v1/subs/ping", headers=H).json()["scopes"] == ["subs:find"]
     for method, url, body, action, why in (
@@ -862,7 +866,7 @@ def test_a_buy_key_is_accepted_only_from_its_addresses():
                                                        write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True,
                                                 "limits": {"buy_per_order_usd": 750}},
-                          "sub_finder_results": {"count": 0, "items": []},
+                          "sub_finder_feed": {"count": 0, "items": []},
                           "sub_finder_buy_confirmed": {"buy_id": 20, "state": "requested"},
                           "sub_finder_loss_limits_set": {"default": 105}})
     c = _client(db)
@@ -906,7 +910,7 @@ def test_a_buy_key_is_accepted_only_from_its_addresses():
 def test_writes_wait_for_a_registered_address_when_one_is_required():
     db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(buy=True, offer=True, write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True},
-                          "sub_finder_results": {"count": 0, "items": []}})
+                          "sub_finder_feed": {"count": 0, "items": []}})
     c = _client(db)
     assert c.get("/api/v1/subs/results", headers=H).status_code == 200            # reading needs no address
     r = c.post(OFFER_URL, headers=H, json={"listing_id": "1"})

@@ -2,14 +2,15 @@
 \pset format unaligned
 \pset tuples_only on
 -- Rows a person reviews before anything is bought (mig 20261113450000): a single-letter row
--- against a double-letter row, either way round, and a wheelchair row. Sales are 100 x2; every
+-- against a double-letter row, either way round. A wheelchair row against an ordinary one is not
+-- reviewed but blocked (mig 20261117101530; more in s35). Sales are 100 x2; every
 -- listing is 80 x2 on EVO in the same section, so each would be a profitable gate 1 buy.
 INSERT INTO events (id,name,occurs_at_local,venue_id,primary_performer_id) SELECT g,'G'||g,now()+interval '5 days',999,5 FROM generate_series(201,209) g;
 INSERT INTO n2s_evo_current (event_id,tevo_ticket_group_id,section,row,quantity,retail_price,splits,is_owned,is_ancillary) VALUES
  (201,20101,'101','H',2,80,'{2}',false,false),    -- sold AA, listing H
  (202,20201,'101','AA',2,80,'{2}',false,false),   -- sold H, listing AA (was not shown at all)
- (203,20301,'101','C',2,80,'{2}',false,false),    -- sold WC, listing C
- (204,20401,'101','WC',2,80,'{2}',false,false),   -- sold C, listing WC
+ (203,20301,'101','C',2,80,'{2}',false,false),    -- sold WC, listing C: blocked
+ (204,20401,'101','WC',2,80,'{2}',false,false),   -- sold C, listing WC: blocked
  (205,20501,'101','WC',2,80,'{2}',false,false),   -- sold WC, listing WC: like for like
  (206,20601,'101','AA',2,80,'{2}',false,false),   -- sold BB, listing AA: both double letters
  (207,20701,'101','C',2,80,'{2}',false,false),    -- sold H, listing C: both single letters
@@ -39,8 +40,8 @@ SELECT string_agg(sale_order_number, ', ' ORDER BY sale_order_number) FROM manua
 \echo the CRM buys a flagged cover only with a confirmation
 SELECT sub_finder_buy_confirmed(7,'crm',(SELECT id FROM j),'R201','20101',NULL,false) - 'detail';
 SELECT sub_finder_buy_confirmed(7,'crm',(SELECT id FROM j),'R201','20101','dana',true)->>'state';
-SELECT sub_finder_buy_confirmed(7,'crm',(SELECT id FROM j),'R203','20301',NULL,false) - 'detail';
-SELECT sub_finder_buy_confirmed(7,'crm',(SELECT id FROM j),'R203','20301','dana',true)->>'state';
+\echo a wheelchair mismatch was never quoted, so there is nothing to confirm
+SELECT sub_finder_buy_confirmed(7,'crm',(SELECT id FROM j),'R203','20301','dana',true)->>'error';
 SELECT sale_order_number, ticket_group_id, requested_by FROM manual_sub_buy WHERE sale_order_number IN ('R201','R203') ORDER BY 1;
 
 \echo a cover stored before the flags existed is read from its label
