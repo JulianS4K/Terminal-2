@@ -1,4 +1,4 @@
--- Migration 20261117030000 · level:data-collection · lane:A1 (operator-routed, "fix the reddit pull") · writes:reddit_title_is_news()(new),reddit_title_matches_terms()(new),reddit_news_queue(),reddit_news_process(),broadway_social_poll() · reads:reddit_news_flairs,broadway_show_ref,net._http_response,news_keywords · pre:20261006200000
+-- Migration 20261117030040 · level:data-collection · lane:A1 (operator-routed, "fix the reddit pull") · writes:reddit_title_is_news()(new),reddit_title_matches_terms()(new),reddit_news_queue(),reddit_news_process(),broadway_social_poll() · reads:reddit_news_flairs,broadway_show_ref,net._http_response,news_keywords · pre:20261006200000
 --
 -- Reddit news wire: read each subreddit's /new.rss and filter titles here, because reddit now
 -- refuses search (operator 2026-11-17: "fix the reddit pull").

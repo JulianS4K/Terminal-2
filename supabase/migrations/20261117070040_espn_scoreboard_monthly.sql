@@ -1,4 +1,4 @@
--- Migration 20261117070000 · level:data-collection · lane:A1 (data plane — ESPN) · writes:espn_scoreboard_queue() · reads:none · pre:20261117061000
+-- Migration 20261117070040 · level:data-collection · lane:A1 (data plane — ESPN) · writes:espn_scoreboard_queue() · reads:none · pre:20261117061000
 --
 -- WHY: espn_scoreboard_queue asks ESPN's scoreboard for a date range (?dates=YYYYMMDD-YYYYMMDD&limit=1000). ESPN
 -- stopped serving that form: every request since at least 2026-10-19 came back 403 from the database (400 from
