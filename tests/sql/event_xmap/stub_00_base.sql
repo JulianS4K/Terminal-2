@@ -49,3 +49,7 @@ CREATE FUNCTION cron.unschedule(name text) RETURNS boolean LANGUAGE sql AS $$ DE
 -- ESPN's games with their Vivid links (mig 20261117160000), the spine's seventh source (mig 20261117170000)
 CREATE TABLE public.espn_ticket_game (espn_event_id text PRIMARY KEY, espn_league text, name text, game_at_utc timestamptz, time_valid boolean, status text, home_team_id text, home_name text,
                                       away_team_id text, away_name text, venue_name text, venue_city text, venue_state text, vivid_production_id bigint, vivid_venue_id bigint, tevo_event_id bigint);
+-- Ticketmaster's catalogue (mig 20261117180000), the spine's eighth source (mig 20261117190000)
+CREATE TABLE public.tm_discovery_event (tm_event_id text PRIMARY KEY, name text, local_date date, local_time time, date_tbd boolean, time_tba boolean, status_code text, tm_venue_id text,
+                                        venue_name text, venue_city text, venue_state text, venue_country text, attraction_names text[], is_product boolean NOT NULL DEFAULT false, tevo_event_id bigint);
+CREATE TABLE public.tm_venue_xref (tm_venue_id text PRIMARY KEY, tevo_venue_id bigint);

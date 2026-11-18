@@ -46,6 +46,7 @@ evo|3|3|0|3
 gotickets|4|3|1|3
 mlb|3|2|1|2
 seatgeek|0|0|0|0
+ticketmaster|0|0|0|0
 tickpick|4|3|1|3
 vivid|4|3|1|3
 Boston Red Sox at New York Yankees|Boston Red Sox at New York Yankees|New York Yankees vs. Boston Red Sox|Boston Red Sox at New York Yankees|Boston Red Sox at New York Yankees|Boston Red Sox at New York Yankees
@@ -85,3 +86,8 @@ I3 a merge retires a key into the survivor: the Vivid mapper maps 2201 to a new 
 t|t|t|t
 t
 402|401909901|2201|3201|4
+J Ticketmaster is the eighth source (mig 20261117190000): a TM event at Barclays Center (TM venue paired to TEvo 600) with a Vivid sibling and no EVO listing seeds the bucket; the Vivid row attaches by name; the key answers by the TM string id; the coverage view counts it
+{"tm": 1}
+tm|G5diZ_o6tFFbV|Brooklyn Nets vs. Orlando Magic|Orlando Magic at Brooklyn Nets|2
+t|t
+ticketmaster|1|1

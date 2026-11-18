@@ -155,3 +155,16 @@ SELECT (SELECT k FROM _old_key) <> event_key_lookup('espn', 401909901) AS key_ch
        event_key_resolve(123456789) IS NULL AS unknown_key_is_null;
 SELECT xmap_id = event_key_lookup('espn', 401909901) AS alias_points_at_survivor FROM event_xmap_alias WHERE old_xmap_id = (SELECT k FROM _old_key);
 SELECT tevo_event_id, espn_event_id, vivid_event_id, gt_event_id, sources FROM event_xmap WHERE espn_event_id = 401909901;
+
+\echo J Ticketmaster is the eighth source (mig 20261117190000): a TM event at Barclays Center (TM venue paired to TEvo 600) with a Vivid sibling and no EVO listing seeds the bucket; the Vivid row attaches by name; the key answers by the TM string id; the coverage view counts it
+INSERT INTO vivid_catalog_venue (vivid_venue_id, name, city, state, country, tevo_venue_id, method) VALUES (78, 'Barclays Center', 'Brooklyn', 'NY', 'US', 600, 'name_state');
+INSERT INTO tm_venue_xref VALUES ('KovZpZAEkn6A', 600);
+INSERT INTO tm_discovery_event (tm_event_id, name, local_date, local_time, date_tbd, time_tba, status_code, tm_venue_id, venue_name, venue_city, venue_state, venue_country, attraction_names, is_product, tevo_event_id) VALUES
+  ('G5diZ_o6tFFbV', 'Brooklyn Nets vs. Orlando Magic', d(20), '19:30', false, false, 'onsale', 'KovZpZAEkn6A', 'Barclays Center', 'Brooklyn', 'NY', 'US', ARRAY['Brooklyn Nets', 'Orlando Magic'], false, NULL),
+  ('G5diZ_o6tFFbP', 'Nets Parking: Orlando Magic', d(20), '19:30', false, false, 'onsale', 'KovZpZAEkn6A', 'Barclays Center', 'Brooklyn', 'NY', 'US', NULL, true, NULL);
+INSERT INTO vivid_catalog_event (vivid_event_id, name, event_local, event_date, vivid_venue_id, venue_country, performers) VALUES
+  (2301, 'Orlando Magic at Brooklyn Nets', ts_(20, '19:30'), d(20), 78, 'US', '["Brooklyn Nets","Orlando Magic"]');
+SELECT (event_xmap_tick(45, true))->'seeded_by_source';
+SELECT seed_source, tm_event_id, ticketmaster_name, vivid_name, sources FROM v_event_xmap WHERE tm_event_id IS NOT NULL;
+SELECT event_key_lookup_tm('G5diZ_o6tFFbV') = event_key_lookup('vivid', 2301) AS same_key, event_key_lookup_tm('G5diZ_o6tFFbP') IS NULL AS parking_never_enters;
+SELECT source, in_spine, without_evo_but_cross_mapped FROM v_event_xmap_coverage WHERE source = 'ticketmaster';
