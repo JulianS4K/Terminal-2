@@ -19,6 +19,13 @@ Both take:
         &limit=1000&offset=0     (limit max 5000)
 /tm/events also takes  &mapped=true|false  (matched to an EVO event or not)
                        &products=true      include parking, add-ons and packages (left out by default)
+                       &safetix=true|false only events with (or without) SafeTix
+                       &detail=false       only the core columns, about a quarter of the size
+/tm/events carries everything Ticketmaster returns for the event (operator 2026-11-18: "add and push
+all of them out including buy limits", mig 20261118223540): the ticket limit as its sentence, the
+numbers in it and the single limit when there is one; SafeTix and all-in pricing; on-sale end;
+end, access and doors times; notes; teams or performers with their links; add-ons; and the venue's
+address, coordinates, market, box office, parking and accessibility notes.
 /tm/markets also takes &site=vivid         only events paired to that site: seatgeek | vivid |
                                            tickpick | stubhub | gotickets | axs
 
@@ -46,6 +53,14 @@ EVENT_COLUMNS = ("tm_event_id", "name", "ticket_url", "event_date", "start_local
                  "venue_state", "venue_country", "venue_timezone", "attraction_names", "public_onsale", "presales",
                  "ticket_limit", "is_product", "tevo_event_id", "tevo_match_method", "tevo_event_name",
                  "tevo_start_local", "terminal_path", "first_seen_at", "last_seen_at", "changed_at")
+# the rest of what Ticketmaster returns for the event (mig 20261118223540); left out with detail=false
+DETAIL_COLUMNS = ("public_onsale_end", "ticket_limit_numbers", "ticket_limit_count", "safetix", "all_in_pricing",
+                  "end_date", "end_local_time", "end_utc", "spans_multiple_days", "access_start_utc",
+                  "access_end_utc", "doors_local_time", "doors_utc", "please_note", "info", "description",
+                  "more_info_url", "ticket_text", "classification_type", "classification_sub_type", "family",
+                  "attractions", "products", "venue_address", "venue_postal_code", "venue_latitude",
+                  "venue_longitude", "venue_url", "venue_markets", "venue_upcoming_events", "venue_box_office",
+                  "venue_parking", "venue_general_info", "venue_accessible_seating", "venue_ada")
 MARKET_COLUMNS = ("tm_event_id", "name", "event_date", "start_local_time", "status", "segment", "genre", "venue_name",
                   "venue_city", "venue_state", "ticketmaster_url", "tevo_event_id", "tevo_event_name",
                   "tevo_match_method", "seatgeek_event_id", "seatgeek_url", "vivid_event_id", "tickpick_event_id",
@@ -105,16 +120,20 @@ def events_response(db: Any, params: Any) -> Any:
     try:
         f = _common(params)
         mapped, products = _bool(params.get("mapped")), _bool(params.get("products"))
+        safetix, detail = _bool(params.get("safetix")), _bool(params.get("detail"))
     except (ValueError, KeyError) as exc:
         return _err(422, "invalid", f"invalid parameter: {exc}")
-    sel = _filtered(db.table(EVENT_VIEW).select(",".join(EVENT_COLUMNS)), f)
+    columns = EVENT_COLUMNS if detail is False else EVENT_COLUMNS + DETAIL_COLUMNS
+    sel = _filtered(db.table(EVENT_VIEW).select(",".join(columns)), f)
     if mapped is True:
         sel = sel.not_.is_("tevo_event_id", "null")
     elif mapped is False:
         sel = sel.is_("tevo_event_id", "null")
     if not products:                       # parking, add-ons and packages are not events
         sel = sel.eq("is_product", False)
-    return _answer(sel, f, EVENT_COLUMNS, "events", "tm_events.csv")
+    if safetix is not None:
+        sel = sel.eq("safetix", safetix)
+    return _answer(sel, f, columns, "events", "tm_events.csv")
 
 
 def markets_response(db: Any, params: Any) -> Any:

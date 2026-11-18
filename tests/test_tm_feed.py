@@ -101,7 +101,10 @@ def test_events_default_is_real_events_only_and_pages():
     assert r.status_code == 200
     assert r.json() == {"count": 1, "offset": 0, "next_offset": None, "events": [EVENT]}
     calls = db.queries[0].calls
-    assert db.tables == [tm_feed.EVENT_VIEW] and calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS))
+    # every column by default: the core ones, then everything else Ticketmaster returns
+    assert db.tables == [tm_feed.EVENT_VIEW]
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS))
+    assert not any(c[:2] == ("eq", "safetix") for c in calls)      # SafeTix was not asked about
     assert ("eq", "is_product", False) in calls                    # parking and add-ons are left out
     assert ("range", 0, 999) in calls and ("order", "event_date") in calls and ("order", "tm_event_id") in calls
     assert not any(c[0] in ("gte", "lte", "ilike", "is_") for c in calls)   # no filter was asked for
@@ -126,6 +129,28 @@ def test_events_filters_reach_the_view():
     _client(db).get(EVENTS, headers=H, params={"mapped": "false"})
     calls = db.queries[0].calls
     assert ("is_", "tevo_event_id", "null") in calls and ("not",) not in calls
+
+
+def test_events_detail_and_buy_limit_columns():
+    """Operator 2026-11-18: "add and push all of them out including buy limits"."""
+    for col in ("ticket_limit_numbers", "ticket_limit_count", "safetix", "all_in_pricing", "public_onsale_end",
+                "doors_utc", "attractions", "products", "venue_latitude", "venue_box_office"):
+        assert col in tm_feed.DETAIL_COLUMNS
+    assert "ticket_limit" in tm_feed.EVENT_COLUMNS                 # Ticketmaster's own sentence stays core
+    assert not set(tm_feed.EVENT_COLUMNS) & set(tm_feed.DETAIL_COLUMNS)
+    db = FakeDB(rows=[EVENT])
+    assert _client(db).get(EVENTS, headers=H, params={"detail": "false", "safetix": "true"}).status_code == 200
+    calls = db.queries[0].calls
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS)) and ("eq", "safetix", True) in calls
+    db = FakeDB(rows=[EVENT])
+    _client(db).get(EVENTS, headers=H, params={"detail": "true", "safetix": "false"})
+    calls = db.queries[0].calls
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS))
+    assert ("eq", "safetix", False) in calls
+    # the CSV header follows the columns asked for
+    full = _client(FakeDB(rows=[EVENT])).get(EVENTS, headers=H, params={"format": "csv"}).text.split("\r\n")[0]
+    slim = _client(FakeDB(rows=[EVENT])).get(EVENTS, headers=H, params={"format": "csv", "detail": "false"}).text.split("\r\n")[0]
+    assert full.endswith("venue_ada") and slim.endswith("changed_at") and "ticket_limit_count" in full
 
 
 def test_markets_lists_the_paired_sites_and_filters_by_site():
@@ -157,7 +182,8 @@ def test_bad_parameters_answer_422_and_read_nothing():
                         (EVENTS, {"status": "sold"}), (EVENTS, {"format": "xml"}), (EVENTS, {"limit": 0}),
                         (EVENTS, {"limit": 5001}), (EVENTS, {"offset": -1}), (EVENTS, {"date_from": "soon"}),
                         (EVENTS, {"since": "yesterday"}), (EVENTS, {"mapped": "maybe"}),
-                        (EVENTS, {"products": "some"}), (MARKETS, {"site": "ticketmaster"}),
+                        (EVENTS, {"products": "some"}), (EVENTS, {"safetix": "rotating"}),
+                        (EVENTS, {"detail": "lots"}), (MARKETS, {"site": "ticketmaster"}),
                         (MARKETS, {"status": "sold"})):
         db = FakeDB(rows=[EVENT])
         r = _client(db).get(url, headers=H, params=params)
