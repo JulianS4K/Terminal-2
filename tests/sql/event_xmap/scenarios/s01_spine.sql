@@ -97,3 +97,28 @@ SELECT name, evo_name, tickpick_name, vivid_name, gotickets_name, mlb_name FROM 
 \echo G who may run what; the crons
 SELECT has_function_privilege('anon', 'event_xmap_tick(integer,boolean)', 'EXECUTE'), has_function_privilege('service_role', 'event_xmap_tick(integer,boolean)', 'EXECUTE'), has_table_privilege('anon', 'event_xmap', 'SELECT');
 SELECT jobname, schedule FROM cron.job WHERE jobname LIKE 'event_xmap%' ORDER BY 1;
+
+\echo H steady state (mig 20261117150000)
+\echo H1 a GoTickets row the mapper tied to EVO 401 keys its venue by name ("Capital One Arena - DC" is not a TEvo venue name): it sits in the EVO cluster and two passes later it is still there, nothing detached
+INSERT INTO events (id, name, occurs_at_local, state, venue_id, venue_name, venue_location, primary_performer_name) VALUES
+  (401, 'Washington Capitals vs Pittsburgh Penguins', at_(12, '19:00'), 'shown', 500, 'Capital One Arena', 'Washington, DC', 'Washington Capitals');
+INSERT INTO gotickets_event (gt_event_id, name, performer, venue_name, venue_city, venue_state, event_time_utc, status, tevo_event_id) VALUES
+  (3105, 'Pittsburgh Penguins at Washington Capitals', 'Washington Capitals', 'Capital One Arena - DC', 'Washington', 'DC', (ts_(12, '19:00') AT TIME ZONE 'America/New_York'), 'AS_SCHEDULED', 401);
+SELECT (event_xmap_tick(45, true))->'detached';
+SELECT (event_xmap_tick(45, true))->'detached';
+SELECT local_day - current_date AS day, venue_key, tevo_event_id, gt_event_id, methods FROM event_xmap WHERE tevo_event_id = 401;
+SELECT count(*) AS detach_rows_for_3105 FROM event_xmap_audit WHERE action = 'detach' AND source = 'gotickets' AND source_id = 3105;
+
+\echo H2 two sources on one day at Yankee Stadium whose names do not fit: a seed candidate, no cluster written, no delete — and no audit rows for it
+INSERT INTO tickpick_catalog_event (tp_event_id, name, status, event_local, event_date, tp_venue_id, venue_country, performers) VALUES
+  (1009, 'Monster Jam', 'active', ts_(14, '19:00'), d(14), 11, 'US', '[{"name":"Monster Jam"}]');
+INSERT INTO vivid_catalog_event (vivid_event_id, name, event_local, event_date, vivid_venue_id, venue_country, performers) VALUES
+  (2009, 'Garth Brooks', ts_(14, '19:30'), d(14), 21, 'US', '["Garth Brooks"]');
+SELECT (event_xmap_tick(45, true)) - 'run_id' - 'window' - 'ms' - 'rows' - 'rows_by_source' - 'rows_with_evo' - 'loose' - 'buckets' - 'clusters_in_window' - 'with_evo_and_others' - 'cross_mapped_without_evo' - 'attached_existing' - 'merged' - 'evo_clusters_new' - 'evo_clusters_refreshed' - 'detached' - 'seed_candidates_by_source' - 'seeded_by_source';
+SELECT count(*) AS clusters_on_day_14 FROM event_xmap WHERE local_day = d(14);
+SELECT count(*) AS audit_rows_for_them FROM event_xmap_audit WHERE (source = 'tickpick' AND source_id = 1009) OR (source = 'vivid' AND source_id = 2009);
+
+\echo H3 EVO 401 is rescheduled to day 13: the cluster follows its EVO event; the GoTickets member (own day still 12) stays, by its id
+UPDATE events SET occurs_at_local = at_(13, '19:00') WHERE id = 401;
+SELECT (event_xmap_tick(45, true))->'evo_clusters_refreshed', (event_xmap_tick(45, true))->'detached';
+SELECT local_day - current_date AS day, tevo_event_id, gt_event_id FROM event_xmap WHERE tevo_event_id = 401;

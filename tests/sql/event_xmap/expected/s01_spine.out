@@ -1,8 +1,8 @@
 A dry run: the working set, nothing written
-{"rows": 19, "loose": 15, "seeded": 4, "applied": false, "buckets": 3, "detached": 0, "rows_with_evo": 4, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "seeded_by_source": {"mlb": 2, "vivid": 1, "tickpick": 1}, "attached_existing": 0, "clusters_in_window": 0, "with_evo_and_others": 0, "cross_mapped_without_evo": 0}
+{"rows": 19, "loose": 15, "applied": false, "buckets": 3, "detached": 0, "rows_with_evo": 4, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "seed_candidates": 4, "attached_existing": 0, "clusters_in_window": 0, "with_evo_and_others": 0, "cross_mapped_without_evo": 0, "seed_candidates_by_source": {"mlb": 2, "vivid": 1, "tickpick": 1}}
 0
 B the pass
-{"rows": 19, "loose": 15, "merged": 0, "seeded": 3, "applied": true, "buckets": 4, "detached": 0, "rows_with_evo": 4, "attached_seeds": 4, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "evo_clusters_new": 2, "seeded_by_source": {"mlb": 2, "tickpick": 1}, "attached_existing": 4, "clusters_in_window": 5, "with_evo_and_others": 2, "cross_mapped_without_evo": 3}
+{"rows": 19, "loose": 15, "merged": 0, "seeded": 3, "applied": true, "buckets": 4, "detached": 0, "rows_with_evo": 4, "attached_seeds": 4, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "seeds_unjoined": 0, "seed_candidates": 3, "evo_clusters_new": 2, "seeded_by_source": {"mlb": 2, "tickpick": 1}, "attached_existing": 4, "clusters_in_window": 5, "with_evo_and_others": 2, "evo_clusters_refreshed": 0, "cross_mapped_without_evo": 3, "seed_candidates_by_source": {"mlb": 2, "tickpick": 1}}
 B1 day 5: one EVO-keyed cluster with the game from five sources (EVO, MLB, TickPick, Vivid, GoTickets by name); the GoTickets parking row is nowhere
 5|Boston Red Sox at New York Yankees|201|9001|1001|2001|3001||5|{"evo": "evo", "mlb": "evo", "vivid": "evo", "tickpick": "evo", "gotickets": "name"}
 6|Hamilton|301||1004|2004|3004|4001|5|{"axs": "name", "evo": "evo", "vivid": "name", "tickpick": "evo", "gotickets": "name"}
@@ -25,14 +25,14 @@ B4 day 8: Comedy Jam alone — no cluster; the AXS NSO concert stays apart from 
 0
 4001|Hamilton
 C a second pass changes nothing
-{"rows": 19, "loose": 4, "merged": 0, "seeded": 0, "applied": true, "buckets": 2, "detached": 0, "rows_with_evo": 4, "attached_seeds": 0, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "evo_clusters_new": 0, "seeded_by_source": {}, "attached_existing": 1, "clusters_in_window": 5, "with_evo_and_others": 2, "cross_mapped_without_evo": 3}
+{"rows": 19, "loose": 4, "merged": 0, "seeded": 0, "applied": true, "buckets": 2, "detached": 0, "rows_with_evo": 4, "attached_seeds": 0, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "seeds_unjoined": 0, "seed_candidates": 0, "evo_clusters_new": 0, "seeded_by_source": {}, "attached_existing": 1, "clusters_in_window": 5, "with_evo_and_others": 2, "evo_clusters_refreshed": 0, "cross_mapped_without_evo": 3, "seed_candidates_by_source": {}}
 18
 D the Vivid mapper later maps 2002 to a new EVO listing of the 13:05 game, and the MLB mapper the game: the EVO cluster forms, and the seed cluster (TickPick + GoTickets) merges into it
-{"rows": 19, "loose": 2, "merged": 1, "seeded": 0, "applied": true, "buckets": 1, "detached": 0, "rows_with_evo": 6, "attached_seeds": 0, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "evo_clusters_new": 1, "seeded_by_source": {}, "attached_existing": 0, "clusters_in_window": 5, "with_evo_and_others": 3, "cross_mapped_without_evo": 2}
+{"rows": 19, "loose": 2, "merged": 1, "seeded": 0, "applied": true, "buckets": 1, "detached": 0, "rows_with_evo": 6, "attached_seeds": 0, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "seeds_unjoined": 0, "seed_candidates": 0, "evo_clusters_new": 1, "seeded_by_source": {}, "attached_existing": 0, "clusters_in_window": 5, "with_evo_and_others": 3, "evo_clusters_refreshed": 0, "cross_mapped_without_evo": 2, "seed_candidates_by_source": {}}
 7|Toronto Blue Jays at New York Yankees|202|9002|1002|2002|3002|5|{"evo": "evo", "mlb": "evo", "vivid": "evo", "tickpick": "merge", "gotickets": "merge"}
 7|Toronto Blue Jays at New York Yankees||9003|1003||3003|3|{"mlb": "seed", "tickpick": "name", "gotickets": "name"}
 E the day moves for TickPick 1003: it is detached, re-seeds nothing (alone on day 10), and the 19:05 cluster keeps MLB + GoTickets
-{"rows": 19, "loose": 3, "merged": 0, "seeded": 0, "applied": true, "buckets": 1, "detached": 1, "rows_with_evo": 6, "attached_seeds": 0, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "evo_clusters_new": 0, "seeded_by_source": {}, "attached_existing": 0, "clusters_in_window": 5, "with_evo_and_others": 3, "cross_mapped_without_evo": 2}
+{"rows": 19, "loose": 3, "merged": 0, "seeded": 0, "applied": true, "buckets": 1, "detached": 1, "rows_with_evo": 6, "attached_seeds": 0, "deleted_single": 0, "rows_by_source": {"axs": 2, "mlb": 3, "vivid": 4, "tickpick": 6, "gotickets": 4}, "seeds_unjoined": 0, "seed_candidates": 0, "evo_clusters_new": 0, "seeded_by_source": {}, "attached_existing": 0, "clusters_in_window": 5, "with_evo_and_others": 3, "evo_clusters_refreshed": 0, "cross_mapped_without_evo": 2, "seed_candidates_by_source": {}}
 7|Toronto Blue Jays at New York Yankees|9003||3003|2
 move|mlb|9002|to the EVO cluster
 move|tickpick|1002|merged into the EVO cluster
@@ -56,3 +56,16 @@ G who may run what; the crons
 f|t|f
 event_xmap_daily|20 2 * * *
 event_xmap_hourly|47 * * * *
+H steady state (mig 20261117150000)
+H1 a GoTickets row the mapper tied to EVO 401 keys its venue by name ("Capital One Arena - DC" is not a TEvo venue name): it sits in the EVO cluster and two passes later it is still there, nothing detached
+0
+0
+12|tv:500|401|3105|{"evo": "evo", "gotickets": "evo"}
+0
+H2 two sources on one day at Yankee Stadium whose names do not fit: a seed candidate, no cluster written, no delete — and no audit rows for it
+{"seeded": 0, "applied": true, "attached_seeds": 0, "deleted_single": 0, "seeds_unjoined": 1, "seed_candidates": 1}
+0
+0
+H3 EVO 401 is rescheduled to day 13: the cluster follows its EVO event; the GoTickets member (own day still 12) stays, by its id
+1|0
+13|401|3105

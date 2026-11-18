@@ -19,4 +19,5 @@ while read -r step; do
 done <<'STEPS'
 stub_00_base.sql
 20261117130000_event_xmap.sql
+20261117150000_event_xmap_steady.sql
 STEPS
