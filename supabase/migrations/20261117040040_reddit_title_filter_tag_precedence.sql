@@ -1,6 +1,6 @@
--- Migration 20261117040000 · level:data-collection · lane:A1 (operator-routed, "fix the reddit pull") · writes:reddit_title_is_news()(new signature),reddit_news_process() · reads:reddit_news_flairs,broadway_show_ref,net._http_response,news_keywords · pre:20261117030000
+-- Migration 20261117040040 · level:data-collection · lane:A1 (operator-routed, "fix the reddit pull") · writes:reddit_title_is_news()(new signature),reddit_news_process() · reads:reddit_news_flairs,broadway_show_ref,net._http_response,news_keywords · pre:20261117030040
 --
--- Reddit news title filter: a non-news tag always wins. First cycles of 20261117030000 on prod kept
+-- Reddit news title filter: a non-news tag always wins. First cycles of 20261117030040 on prod kept
 -- "[Highlight] Compilation of 7 … penalties" (the news_keywords hit on "penalties" was OR-ed in
 -- after the tag test) and "[Mic'd Up] …" video posts. Now:
 --   * reddit_title_is_news(title, keyword_hit) — the keyword hit is decided inside the function,

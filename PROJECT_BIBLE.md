@@ -352,7 +352,7 @@ Every entry here cost real session time when discovered. CHECK column names agai
 | `cron_resume_with_gate(jobname)` | text | Re-enable paused crons through the gate |
 | `sg_classify_events()` | — | Refresh tier classifications in `sg_event_priority_state` |
 | `sg_priority_poll_tick(max_polls)` | int | HOT/WARM polling driver |
-| `espn_scoreboard_queue(lookahead_days)` | int (default **270**) | ESPN scoreboard ingest. Bumped 2026-05-16 to capture full NFL season. |
+| `espn_scoreboard_queue(lookahead_days)` | int (default **180**) | ESPN scoreboard ingest, one request per league per **month** (`dates=YYYYMM&limit=1000`); ESPN refuses the `YYYYMMDD-YYYYMMDD` range form (403/400), which left `espn_event_date_lookup` unrefreshed 2026-08-04 → 2026-11-18 (mig 20261117070040). ESPN's ticket block (Vivid ids, price, count) is kept by `espn_ticket_game`. |
 | `espn_scoreboard_process()` | — | Process ESPN responses → date_lookup |
 | `refresh_sg_broker_sales_event_metrics(max_events)` | int (default 200) | Populate `seatgeek_event_metrics.sold_*` from deduped (DISTINCT ON sg_sale_id) sales snapshots. Hourly cron @ :17. |
 | `sg_canonical_refresh_v2_pull(window_minutes)` | int (default 15; NULL = full) | Reconciles `sg_events_canonical.last_v2_pull_at` + `last_v2_listings_count` + `last_v2_status` + `has_v2_listings_pulled` from `seatgeek_listings_snapshots`. Cron @ :12,:42. Backfill ran 2026-05-16: 574 rows brought to 100% coverage. |
