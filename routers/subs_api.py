@@ -13,7 +13,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/jobs                                    submit orders -> job id (202)
   GET  /api/v1/subs/jobs/{job_id}                           one job: status + every order
   GET  /api/v1/subs/jobs/{job_id}/orders/{order_number}     one order (e.g. to follow its buy)
-  GET  /api/v1/subs/results?updated_since=&limit=&offset=   sync feed of answered orders
+  GET  /api/v1/subs/results?updated_since=&limit=&offset=&scope=   sync feed: orders still in play (scope=all: every lookup)
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
   GET  /api/v1/subs/orders/{order_number}                   the same order, newest job, no job id
   POST /api/v1/subs/orders/{order_number}/buy               the same buy, newest job, no job id
@@ -104,7 +104,7 @@ NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 # connection to the database API dropped under the first (about 1 call in 30 did, 2026-11-13).
 # A buy, an offer, a submit or a note is never repeated: the first may have gone through.
 RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
-                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
+                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_feed",
                              "sub_finder_autobuys", "sub_finder_loss_limits", "sub_finder_buys",
                              "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read",
                              "sub_finder_limits", "sub_finder_health"})
@@ -187,6 +187,7 @@ _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL |
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
 _DOC_NEWS = re.compile(r"^## What changed for you\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)     # the dated list
 _DOC_NEWS_ITEM = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*[ .:·—-]*(.+)$", re.MULTILINE)          # one entry of it
+FEED_SCOPES = ("n2s", "all")                # GET /results: what is still in play, or every answered lookup
 NEWS_ON_PING = 10                           # entries /ping carries; the guide has them all
 
 
@@ -814,7 +815,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                                                       "p_limit": limit, "p_offset": offset}))
 
     @router.get("/results")
-    def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
+    def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0,
+                scope: str = "n2s"):
         key = _auth(request, "results")
         if isinstance(key, JSONResponse):
             return key
@@ -825,8 +827,11 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             return _err(422, "invalid", f"limit must be between 1 and {MAX_LIMIT}")
         if offset < 0:
             return _err(422, "invalid", "offset must not be negative")
-        return _answer(_rpc("sub_finder_results", {"p_key_id": key["id"], "p_updated_since": since,
-                                                   "p_limit": limit, "p_offset": offset}))
+        if scope not in FEED_SCOPES:
+            return _err(422, "invalid", "scope must be n2s or all")
+        # n2s (the default): one row per order, only what is still in play (mig 20261118172530)
+        return _answer(_rpc("sub_finder_feed", {"p_key_id": key["id"], "p_updated_since": since,
+                                                "p_limit": limit, "p_offset": offset, "p_scope": scope}))
 
     @router.post("/jobs/{job_id}/orders/{order_number}/buy")
     async def buy(job_id: str, order_number: str, request: Request):
