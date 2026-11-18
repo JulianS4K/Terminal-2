@@ -430,3 +430,16 @@ def test_poll_without_a_gotickets_client_fails_the_tick_not_the_row():
     job, _ = _poll("PENDING_CONFIRMATION")
     with pytest.raises(RuntimeError):
         lv.tick(Rpc(job), Evo(), now=NOW)
+
+
+# ------------------------------------------------------------------ the one queue (20261113470000)
+
+def test_pre_buy_builds_the_gotickets_request_without_buying():
+    gt = Gt()
+    plan = lv.pre_buy(_job(), evo=Evo(), gt=gt, now=NOW)
+    assert plan["stop"] == [] and plan["market"] == "gotickets" and plan["qty"] == 2
+    assert plan["expected_total"] == 186.0 and plan["body"]["expectedTotal"] == 186.0
+    assert not _buys(gt.calls)
+    out = lv.n2s_result(plan, {"id": 8400001, "orderStatus": "PENDING_CONFIRMATION"})
+    assert out["state"] == "bought" and out["n2s"]["buy_total_usd"] == 186.0   # no orderTotal: what we priced
+    assert lv.n2s_result(plan, {"orderTotal": 186.0})["state"] == "unknown"    # no purchase id

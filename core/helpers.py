@@ -238,6 +238,14 @@ def client_ip_from_xff(xff: str | None, fallback: str | None = None,
     returned. In every other case the rightmost hop is, as before: a request
     that did not come through the edge gains nothing by sending the header.
 
+    Some of our services sit one hop further in: a free-plan Render service
+    receives ``<caller>, <Cloudflare edge>, <10.x internal proxy>`` (seen live
+    2026-11-16). A private address at the very end can only have been written by
+    the host itself, so ONE trailing private hop is stepped over before looking
+    for the edge: one, because that is what the host adds, and no more, so a
+    longer run of private addresses is never read past. Keyed on that last hop,
+    every caller shared one bucket.
+
     Falls back to ``fallback`` when ``X-Forwarded-For`` is empty/absent. Never
     raises on arbitrary header text.
 
@@ -245,11 +253,16 @@ def client_ip_from_xff(xff: str | None, fallback: str | None = None,
     middleware in server.py and the retail chat proxy.
     """
     if xff:
-        last = xff.split(",")[-1].strip()
-        edge, caller = _one_address(last), _one_address(cf_connecting_ip)
-        if edge is not None and caller is not None and any(
-                edge.version == net.version and edge in net for net in CLOUDFLARE_CIDRS):
-            return str(caller)
+        hops = [h.strip() for h in xff.split(",")]
+        last = hops[-1]
+        caller = _one_address(cf_connecting_ip)
+        if caller is not None:
+            edge = _one_address(last)
+            if edge is not None and edge.is_private and len(hops) > 1:
+                edge = _one_address(hops[-2])     # step over the host's own internal proxy, once
+            if edge is not None and any(
+                    edge.version == net.version and edge in net for net in CLOUDFLARE_CIDRS):
+                return str(caller)
         return last
     return fallback
 

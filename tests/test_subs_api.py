@@ -327,22 +327,25 @@ def test_needs_sub_alert_is_a_one_order_submit(monkeypatch):
 
 
 def test_results_cursor_and_bounds():
-    db = FakeDB(rpc_data={"sub_finder_results": {"count": 0, "total": 0, "items": [],
+    db = FakeDB(rpc_data={"sub_finder_feed": {"count": 0, "total": 0, "items": [],
                                                  "generated_at": "2026-11-12T20:00:00.000000Z"}})
     c = _client(db)
     assert c.get("/api/v1/subs/results").status_code == 401
     r = c.get("/api/v1/subs/results", headers=H,
               params={"updated_since": "2026-11-12T19:54:00Z", "limit": 50, "offset": 100})
     assert r.status_code == 200 and r.json()["generated_at"].endswith("Z")
-    assert db.last("sub_finder_results") == {"p_key_id": 7, "p_updated_since": "2026-11-12T19:54:00+00:00",
-                                             "p_limit": 50, "p_offset": 100}
+    assert db.last("sub_finder_feed") == {"p_key_id": 7, "p_updated_since": "2026-11-12T19:54:00+00:00",
+                                          "p_limit": 50, "p_offset": 100, "p_scope": "n2s"}
     c.get("/api/v1/subs/results", headers=H)
-    assert db.last("sub_finder_results") == {"p_key_id": 7, "p_updated_since": None, "p_limit": 200,
-                                             "p_offset": 0}
-    for params in ({"updated_since": "soon"}, {"limit": 0}, {"limit": 1001}, {"offset": -1}):
+    # the default scope: only what is still in play, one row per order (mig 20261118172530)
+    assert db.last("sub_finder_feed") == {"p_key_id": 7, "p_updated_since": None, "p_limit": 200,
+                                          "p_offset": 0, "p_scope": "n2s"}
+    c.get("/api/v1/subs/results", headers=H, params={"scope": "all"})   # every answered lookup, as before
+    assert db.last("sub_finder_feed")["p_scope"] == "all"
+    for params in ({"updated_since": "soon"}, {"limit": 0}, {"limit": 1001}, {"offset": -1}, {"scope": "mine"}):
         assert c.get("/api/v1/subs/results", headers=H, params=params).status_code == 422
     # an error code SQL may add later still answers as a client error, not a 200
-    db.rpc_data["sub_finder_results"] = {"error": "something_new"}
+    db.rpc_data["sub_finder_feed"] = {"error": "something_new"}
     assert c.get("/api/v1/subs/results", headers=H).status_code == 400
 
 
@@ -509,12 +512,58 @@ def test_ping_names_the_guide_version_and_docs_serves_it(tmp_path, monkeypatch):
     s.crm_doc.cache_clear()
 
 
+NEWS_TEXT = DOC_TEXT.replace("## 8. Rules", """## What changed for you
+
+Newest first.
+
+- **2026-11-16** You set your own limits: `PUT /settings/limits`.
+- **2026-11-15** · second
+- **2026-11-14** third
+- **2026-11-13** fourth
+- **2026-11-12** fifth
+- **2026-11-11** sixth
+- not dated, so not news
+- **soon** not a date either
+
+## 8. Rules""")
+
+
+def test_ping_carries_the_newest_entries_of_the_guides_own_list_of_changes(tmp_path, monkeypatch):
+    # operator 2026-11-16: "Just update crm upon ping". The list lives in the guide and nowhere else.
+    news = s.render_crm_doc(NEWS_TEXT)["news"]
+    assert [n["date"] for n in news] == [f"2026-11-{d}" for d in (16, 15, 14, 13, 12, 11)]
+    assert news[0]["text"] == "You set your own limits: `PUT /settings/limits`." and news[1]["text"] == "second"
+    assert s.render_crm_doc(DOC_TEXT)["news"] == []                      # a guide with no such list
+    # the list is the last section of a guide: still read
+    assert s.render_crm_doc("# G\n\n## What changed for you\n- **2026-01-02** only\n")["news"] == [
+        {"date": "2026-01-02", "text": "only"}]
+    path = tmp_path / "guide.md"
+    path.write_text(NEWS_TEXT, encoding="utf-8")
+    monkeypatch.setattr(s, "DOC_PATH", path)
+    s.crm_doc.cache_clear()
+    monkeypatch.setattr(s, "NEWS_ON_PING", 5)
+    body = _client(FakeDB(rpc_data={"sub_finder_access": {"find": True}})).get("/api/v1/subs/ping", headers=H).json()
+    assert body["news"] == news[:5]                                              # the guide has the rest
+    assert body["docs"]["version"] == s.render_crm_doc(NEWS_TEXT)["version"]
+    s.crm_doc.cache_clear()
+
+
+def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
+    doc = s.render_crm_doc(s.DOC_PATH.read_text(encoding="utf-8"))
+    news = doc["news"]
+    assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
+    for n in news:
+        assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
+    assert "orders still in play" in news[0]["text"] and "buy key is now registered" in news[1]["text"]
+    assert "Accessible seats" in news[2]["text"] and "mlb/changes" in news[3]["text"] and "minor league" in news[4]["text"]
+
+
 def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "DOC_PATH", tmp_path / "missing.md")
     s.crm_doc.cache_clear()
     c = _client(FakeDB())
-    assert c.get("/api/v1/subs/ping", headers=H).json()["docs"] == {
-        "version": None, "updated": None, "url": "/api/v1/subs/docs"}
+    p = c.get("/api/v1/subs/ping", headers=H).json()
+    assert p["docs"] == {"version": None, "updated": None, "url": "/api/v1/subs/docs"} and p["news"] == []
     r = c.get("/api/v1/subs/docs", headers=H)
     assert r.status_code == 404 and r.json()["error"] == "not_found"
     s.crm_doc.cache_clear()
@@ -790,11 +839,11 @@ def test_the_caller_address_can_come_from_a_named_header_and_ping_can_show_what_
 def test_a_read_key_acts_for_its_account_and_cannot_spend():
     db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True},
-                          "sub_finder_results": {"count": 0, "items": []},
+                          "sub_finder_feed": {"count": 0, "items": []},
                           "sub_finder_buy_confirmed": {"buy_id": 20, "state": "requested"}})
     c = _client(db)
     assert c.get("/api/v1/subs/results", headers=H).status_code == 200
-    assert db.last("sub_finder_results")["p_key_id"] == 4            # the account, not the key
+    assert db.last("sub_finder_feed")["p_key_id"] == 4            # the account, not the key
     assert db.last("mcp_count_call")["p_key_id"] == 7                # the key's own quota
     assert c.get("/api/v1/subs/ping", headers=H).json()["scopes"] == ["subs:find"]
     for method, url, body, action, why in (
@@ -817,7 +866,7 @@ def test_a_buy_key_is_accepted_only_from_its_addresses():
                                                        write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True,
                                                 "limits": {"buy_per_order_usd": 750}},
-                          "sub_finder_results": {"count": 0, "items": []},
+                          "sub_finder_feed": {"count": 0, "items": []},
                           "sub_finder_buy_confirmed": {"buy_id": 20, "state": "requested"},
                           "sub_finder_loss_limits_set": {"default": 105}})
     c = _client(db)
@@ -861,7 +910,7 @@ def test_a_buy_key_is_accepted_only_from_its_addresses():
 def test_writes_wait_for_a_registered_address_when_one_is_required():
     db = FakeDB(rpc_data={"sub_finder_key_gate": _gate(buy=True, offer=True, write_requires_ip=True),
                           "sub_finder_access": {"find": True, "buy": True, "offer": True},
-                          "sub_finder_results": {"count": 0, "items": []}})
+                          "sub_finder_feed": {"count": 0, "items": []}})
     c = _client(db)
     assert c.get("/api/v1/subs/results", headers=H).status_code == 200            # reading needs no address
     r = c.post(OFFER_URL, headers=H, json={"listing_id": "1"})
@@ -944,3 +993,65 @@ def test_audit_passes_the_record_through_with_bounds_and_refusals():
     db.rpc_data["sub_finder_audit_read"] = {"error": "forbidden"}
     assert c.get("/api/v1/subs/audit", headers=H).status_code == 403
     assert "sub_finder_audit_read" in s.RETRY_ONCE_RPCS and "sub_finder_audit_log" not in s.RETRY_ONCE_RPCS
+
+
+# ---------------------------------------------------------------- the CRM's own limits (mig 20261116030000)
+
+def test_health_is_read_through_the_sql_and_answers_200_whatever_the_status():
+    # operator 2026-11-16: "also add health check that feeds crm"
+    shown = {"status": "down", "checks": [{"name": "crm_feed", "status": "down"}], "checked_at": "2026-11-16T20:00:00Z"}
+    db = FakeDB(rpc_data={"sub_finder_health": shown})
+    c = _client(db)
+    assert c.get("/api/v1/subs/health").status_code == 401                      # the key, like every route
+    r = c.get("/api/v1/subs/health", headers=H)
+    assert r.status_code == 200 and r.json() == shown                           # the status is in the body
+    assert db.last("sub_finder_health") == {"p_key_id": 7}
+    assert db.last("mcp_count_call") == {"p_key_id": 7, "p_tool": "subs.health"}
+    assert "sub_finder_health" in s.RETRY_ONCE_RPCS                             # a read: safe to send again
+    db.rpc_data["sub_finder_health"] = {"error": "forbidden", "detail": "the sub finder is not enabled for this key"}
+    assert c.get("/api/v1/subs/health", headers=H).status_code == 403
+
+
+LIMITS_URL = "/api/v1/subs/settings/limits"
+
+
+def test_limits_are_read_and_set_through_the_sql_and_the_change_is_recorded():
+    shown = {"rebate_max_pct": {"default": 40}, "buy_max_cost_pct": {"default": 110}, "can_set": True}
+    db = FakeDB(rpc_data={"sub_finder_limits": shown, "sub_finder_limits_set": shown})
+    c = _client(db)
+    assert c.get(LIMITS_URL).status_code == 401 and c.put(LIMITS_URL, json={}).status_code == 401
+    assert c.get(LIMITS_URL, headers=H).json() == shown and db.last("sub_finder_limits") == {"p_key_id": 7}
+    body = {"rebate_max_pct": {"default": 40, "by_marketplace": {"gotickets": 25}},
+            "buy_max_cost_pct": {"default": 110}, "set_by": " dana ", "something_else": 1}
+    r = c.put(LIMITS_URL, headers=H, json=body)
+    assert r.status_code == 200 and r.json() == shown
+    assert db.last("sub_finder_limits_set") == {
+        "p_key_id": 7, "p_key_label": "crm",
+        "p_body": {"rebate_max_pct": {"default": 40, "by_marketplace": {"gotickets": 25}},
+                   "buy_max_cost_pct": {"default": 110}},
+        "p_by": " dana "}
+    a = _audits(db)[-1]
+    assert (a["p_action"], a["p_http_status"], a["p_requested_by"], a["p_order_number"]) == ("settings", 200, "dana", None)
+    c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": None}, "set_by": 5})
+    assert db.last("sub_finder_limits_set")["p_by"] is None and _audits(db)[-1]["p_requested_by"] is None
+    assert "sub_finder_limits" in s.RETRY_ONCE_RPCS and "sub_finder_limits_set" not in s.RETRY_ONCE_RPCS
+
+
+def test_limits_refusals_and_who_may_set_them():
+    db = FakeDB(rpc_data={"sub_finder_limits_set": {"error": "invalid", "detail": "x"},
+                          "sub_finder_limits": {"error": "forbidden"}})
+    c = _client(db)
+    assert c.get(LIMITS_URL, headers=H).status_code == 403
+    assert c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": 500}}).status_code == 422
+    assert (_audits(db)[-1]["p_action"], _audits(db)[-1]["p_http_status"]) == ("settings", 422)
+    n = len([x for x, _ in db.rpcs if x == "sub_finder_limits_set"])
+    for raw in (b"not json", b"[1]"):
+        assert c.put(LIMITS_URL, headers=dict(H, **{"content-type": "application/json"}), content=raw).status_code == 422
+    assert len([x for x, _ in db.rpcs if x == "sub_finder_limits_set"]) == n          # never reached the SQL
+    # the read key may look but not set; neither may a buy key away from its registered address
+    db.rpc_data["sub_finder_key_gate"] = _gate()
+    r = c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": 40}})
+    assert r.status_code == 403 and r.json()["detail"] == "this key may not change settings"
+    db.rpc_data["sub_finder_key_gate"] = _gate(buy=True, offer=True, allowed_ips=["203.0.113.7"])
+    assert c.put(LIMITS_URL, headers=H, json={"rebate_max_pct": {"default": 40}}).status_code == 403
+    assert len([x for x, _ in db.rpcs if x == "sub_finder_limits_set"]) == n

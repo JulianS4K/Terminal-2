@@ -1,0 +1,51 @@
+A identity before any pass: 601 answers through the schedule (game 101 as it stands), 602 through the SeatGeek link of its own, 999 nothing
+22|identity_mlb_schedule
+23|identity_sg_canonical
+0
+B dry run: the twin dropped, one time flag, the removed game let go of the hub, no stadium event yet (no park known)
+{"applied": false, "dropped": 1, "matched": 1, "seatgeek": {}, "ambiguous": 0, "unmatched": 1, "matched_by": {"teams_date_time": 1}, "time_differs": 1, "events_matched": 0, "events_unmatched": 3, "removed_unlinked": 1}
+0
+1
+C the pass
+{"applied": true, "dropped": 1, "matched": 1, "seatgeek": {}, "ambiguous": 0, "unmatched": 1, "hub_linked": 5, "matched_by": {"teams_date_time": 1}, "time_differs": 1, "hub_sg_filled": 0, "events_matched": 1, "events_unmatched": 2, "hub_rows_created": 5, "removed_unlinked": 1, "time_differs_new": 1}
+C1 games: 101 dropped (twin), 102 took 22 by the minute, 103/104/105 stand, 106 keeps its EVO id
+101|||f
+102|22|teams_date_time|f
+103|23|name_date|f
+104|24|name_date|f
+105|29|name_date|f
+106|30|name_date|t
+C2 the audit: the twin, the flag (25 min), the removed link, the concert
+drop|mlb_ticket_game|101|doubleheader_twin
+event_match|mlb_ticket_event|901|venue_xref_title
+hub_unlink|mlb_hub_link|106|game removed
+time_differs|mlb_ticket_game|103|evo DT19:30 vs mlb DT19:05 (25 min)
+C3 stadium events: 901 matched through the park (learned from the games), 902 no word in common, 903 a game day
+901|25|venue_xref_title
+902||
+903||
+3313|5725|5
+C4 the hub: games and the concert each tied to a row; K900 free
+event|901|25|system_seed|FALL OUT BOY: TWILIGHT OF THE PUNKS
+game|102|22|system_seed|Toronto Blue Jays at New York Yankees
+game|103|23|system_seed|Boston Red Sox at New York Yankees
+game|104|24|system_seed|Boston Red Sox at New York Yankees
+game|105|29|system_seed|Toronto Blue Jays at New York Yankees
+K900|30
+D the next pass: 101 takes the 13:05 listing by the minute; SeatGeek 601 follows; identity now answers 21; the flag is not written twice
+{"applied": true, "dropped": 0, "matched": 1, "seatgeek": {"sg_fill": 1}, "ambiguous": 0, "unmatched": 0, "hub_linked": 1, "matched_by": {"teams_date": 1}, "time_differs": 1, "hub_sg_filled": 1, "events_matched": 0, "events_unmatched": 2, "hub_rows_created": 1, "removed_unlinked": 0, "time_differs_new": 0}
+101|21|teams_date
+102|22|teams_date_time
+601|21|mlb_schedule
+602|23|matcher_v3_pm24h
+21|identity_mlb_schedule
+event_match|1
+hub_unlink|1
+time_differs|1
+E the removed game comes back: tied to the hub again on the next pass
+{"applied": true, "dropped": 0, "matched": 0, "seatgeek": {}, "ambiguous": 0, "unmatched": 0, "hub_linked": 1, "matched_by": {}, "time_differs": 1, "hub_sg_filled": 0, "events_matched": 0, "events_unmatched": 2, "hub_rows_created": 0, "removed_unlinked": 0, "time_differs_new": 0}
+game|106|K900
+F the title rule
+t|f|f|t
+G who may run what; the key of the link table
+f|t|BEGIN; SET LOCAL statement_timeout = '180s'; SELECT public.mlb_ticket_map(true); COMMIT;|PRIMARY KEY (entity, schedule_id)

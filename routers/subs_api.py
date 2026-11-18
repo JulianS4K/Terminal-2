@@ -9,11 +9,11 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
 `updated_since` as the sync cursor — feed each answer's `generated_at` back as the next call's
 `updated_since`, paging oldest-change-first so a row touched mid-walk is not skipped.
 
-  GET  /api/v1/subs/ping                                    key check + what it may do
+  GET  /api/v1/subs/ping                                    key check + what it may do + what changed lately
   POST /api/v1/subs/jobs                                    submit orders -> job id (202)
   GET  /api/v1/subs/jobs/{job_id}                           one job: status + every order
   GET  /api/v1/subs/jobs/{job_id}/orders/{order_number}     one order (e.g. to follow its buy)
-  GET  /api/v1/subs/results?updated_since=&limit=&offset=   sync feed of answered orders
+  GET  /api/v1/subs/results?updated_since=&limit=&offset=&scope=   sync feed: orders still in play (scope=all: every lookup)
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
   GET  /api/v1/subs/orders/{order_number}                   the same order, newest job, no job id
   POST /api/v1/subs/orders/{order_number}/buy               the same buy, newest job, no job id
@@ -25,10 +25,17 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/buys?updated_since=&limit=&offset=      every purchase either buyer placed (N2S auto-buyer + this API), one feed
   GET  /api/v1/subs/settings/auto-buy-loss                  the automatic buy's loss limits (need2buy orders), by marketplace
   PUT  /api/v1/subs/settings/auto-buy-loss                  set them: percent of the sale total, 100 to 200
+  GET  /api/v1/subs/settings/limits                         the CRM's own limits on a rebate and on a buy's cost, percent of the sale
+  PUT  /api/v1/subs/settings/limits                         set them (a key that may buy or offer, from its registered address)
   GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
+  GET  /api/v1/subs/health                                  one overall status + one per thing the CRM depends on (its feed read, lookups, buying, ...)
+  GET  /api/v1/subs/mlb/schedule?team=&season=&since=       every MLB game with the club's direct ticket link + EVO / terminal event (routers/mlb_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
-changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us").
+changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
+carries `news`: the newest entries of the guide's "What changed for you" list, so the CRM is told
+what changed in the answer it already reads (operator 2026-11-16: "Just update crm upon ping").
+The list has one home, the guide; nothing about it is stored anywhere else.
 
 The alert is the integration we ask the CRM for: one "Needs sub" checkbox on an order, which
 fires that last call with nothing but the order number in the URL. It is a one-order submit;
@@ -79,6 +86,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
+from routers.mlb_feed import changes_response as mlb_changes_response
+from routers.mlb_feed import events_response as mlb_events_response
+from routers.mlb_feed import schedule_response as mlb_schedule_response
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
 MAX_LIMIT = 1000           # the CRM's own page ceiling
@@ -94,9 +104,10 @@ NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 # connection to the database API dropped under the first (about 1 call in 30 did, 2026-11-13).
 # A buy, an offer, a submit or a note is never repeated: the first may have gone through.
 RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
-                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
+                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_feed",
                              "sub_finder_autobuys", "sub_finder_loss_limits", "sub_finder_buys",
-                             "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read"})
+                             "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read",
+                             "sub_finder_limits", "sub_finder_health"})
 
 # what a call needs from its key beyond reading: _auth refuses it before any SQL runs
 _NEED_REFUSAL = {"buy": "this key may not buy", "offer": "this key may not offer subs",
@@ -174,6 +185,10 @@ DOCS_ROUTE = "/api/v1/subs/docs"
 _DOC_VERSION_MARK = "\x00doc-version\x00"   # stands in for the fingerprint while it is being worked out
 _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL | re.MULTILINE)   # internal switches
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
+_DOC_NEWS = re.compile(r"^## What changed for you\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)     # the dated list
+_DOC_NEWS_ITEM = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*[ .:·—-]*(.+)$", re.MULTILINE)          # one entry of it
+FEED_SCOPES = ("n2s", "all")                # GET /results: what is still in play, or every answered lookup
+NEWS_ON_PING = 10                           # entries /ping carries; the guide has them all
 
 
 def render_crm_doc(text: str) -> dict:
@@ -181,7 +196,8 @@ def render_crm_doc(text: str) -> dict:
     SQL) left out. Its version is a fingerprint of exactly what is served, so it changes when,
     and only when, the guide the CRM reads changes. Nobody numbers it by hand (the doc's version
     line is not edited, README *Doc-writing rules* §5). `updated` is kept as a key for older
-    clients and is always None: compare `version` for equality."""
+    clients and is always None: compare `version` for equality. `news` is the guide's own
+    "What changed for you" list, in the order written (newest first), as {date, text}."""
     lines = []
     for line in text.splitlines():
         if line.startswith("> **Doc version:**"):
@@ -191,7 +207,10 @@ def render_crm_doc(text: str) -> dict:
         lines.append(line)
     markdown = _DOC_OPERATORS_LINK.sub("", _DOC_OPERATORS.sub("", "\n".join(lines) + "\n"))
     version = hashlib.sha256(markdown.encode("utf-8")).hexdigest()[:12]
-    return {"version": version, "updated": None, "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
+    section = _DOC_NEWS.search(markdown)
+    news = [{"date": d, "text": t.strip()} for d, t in _DOC_NEWS_ITEM.findall(section.group(1))] if section else []
+    return {"version": version, "updated": None, "news": news,
+            "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
 
 
 @functools.lru_cache(maxsize=4)
@@ -437,6 +456,9 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                 "limits": access.get("limits") or {},
                 # the guide's version: when it differs from the one you hold, fetch `docs.url` again
                 "docs": {"version": doc.get("version"), "updated": doc.get("updated"), "url": DOCS_ROUTE},
+                # what changed for the caller lately, newest first: the guide's own list, so a CRM
+                # that only pings is still told. Each is {date, text}; the guide has the whole list.
+                "news": (doc.get("news") or [])[:NEWS_ON_PING],
                 "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
     @router.get("/docs")
@@ -488,6 +510,54 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         _audit(key, "settings", None, None, resp.status_code, out, by if isinstance(by, str) else None)
         return resp
 
+    @router.get("/health")
+    def health(request: Request):
+        """A health check the CRM reads (operator 2026-11-16: "also add health check that feeds
+        crm", mig 20261116210000): one overall `status` and one entry per thing the CRM depends on
+        (our read of its feed, our copy of its order book, its lookups, buying, offers, balances,
+        the MLB schedule), each ok / degraded / down by the age of its last good run, or off when
+        S4K has it switched off. Always 200 when the key is good: the answer is in `status`, so a
+        monitor reads the body, not the HTTP code. Reads our own tables only."""
+        key = _auth(request, "health")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_health", {"p_key_id": key["id"]}))
+
+    @router.get("/settings/limits")
+    def limits(request: Request):
+        """The limits the CRM has put on its own inputs, each a percent of the sale total, with a
+        default and its own value per marketplace sold on (mig 20261116030000): `rebate_max_pct`
+        on an offer's rebate and `buy_max_cost_pct` on the cost of a cover it asks us to buy."""
+        key = _auth(request, "limits")
+        if isinstance(key, JSONResponse):
+            return key
+        return _answer(_rpc("sub_finder_limits", {"p_key_id": key["id"]}))
+
+    @router.put("/settings/limits")
+    async def set_limits(request: Request):
+        """Set them: {"rebate_max_pct": {"default": 0-100 | null, "by_marketplace": {name: 0-100 | null}},
+        "buy_max_cost_pct": {"default": 1-1000 | null, "by_marketplace": {...}}}; either may be left out.
+        Only a key that may buy or offer, from its registered address. The SQL validates every value
+        and changes nothing unless all are valid. The change is recorded with who made it."""
+        key = _auth(request, "limits_set", "write")
+        if isinstance(key, JSONResponse):
+            return key
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - any unreadable body is the caller's error
+            body = None
+        if not isinstance(body, dict):
+            return _err(422, "invalid", "send a JSON object: {\"rebate_max_pct\": {\"default\": 40}, "
+                                        "\"buy_max_cost_pct\": {\"default\": 110}}")
+        by = body.get("set_by")
+        out = _rpc("sub_finder_limits_set", {
+            "p_key_id": key["id"], "p_key_label": key.get("label"),
+            "p_body": {k: v for k, v in body.items() if k in ("rebate_max_pct", "buy_max_cost_pct")},
+            "p_by": by if isinstance(by, str) else None})
+        resp = _answer(out)
+        _audit(key, "settings", None, None, resp.status_code, out, by if isinstance(by, str) else None)
+        return resp
+
     @router.get("/balances")
     def balances(request: Request):
         """Our EVO office balances and GoTickets gift cards as last read (hourly, mig
@@ -496,6 +566,44 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         if isinstance(key, JSONResponse):
             return key
         return _answer(_rpc("sub_finder_balances", {"p_key_id": key["id"]}))
+
+    @router.get("/mlb/schedule")
+    def mlb_schedule(request: Request):
+        """Every MLB club's games with the club's direct ticket link, mapped to the EVO event and the
+        terminal's hub event (operator 2026-11-16: "send it inside the subfinder api to crm"). Fills
+        itself in as clubs release times and links; `since` syncs only what changed. Any key that may
+        find subs may read it. Query and columns: routers/mlb_feed.py. Reads our own tables only."""
+        key = _auth(request, "mlb_schedule")
+        if isinstance(key, JSONResponse):
+            return key
+        access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
+        if not access.get("find"):
+            return _err(403, "forbidden", "this key may not read the sub finder API")
+        return mlb_schedule_response(get_db(), request.query_params)
+
+    def _mlb_reader(request: Request, tool: str):
+        key = _auth(request, tool)
+        if isinstance(key, JSONResponse):
+            return key
+        access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
+        if not access.get("find"):
+            return _err(403, "forbidden", "this key may not read the sub finder API")
+        return None
+
+    @router.get("/mlb/events")
+    def mlb_events(request: Request):
+        """Concerts and other live events at MLB and minor league ballparks, with the EVO event each
+        maps to (mig 20261117060000). Same keys as /mlb/schedule. Query and columns: routers/mlb_feed.py."""
+        denied = _mlb_reader(request, "mlb_events")
+        return denied or mlb_events_response(get_db(), request.query_params)
+
+    @router.get("/mlb/changes")
+    def mlb_changes(request: Request):
+        """Every change the MLB ticketing poller detected — links going live, date / time / venue /
+        status moves, on-sale dates, removed games, new promotions and stadium events (mig
+        20261117060000). Page with after_id. Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "mlb_changes")
+        return denied or mlb_changes_response(get_db(), request.query_params)
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
@@ -707,7 +815,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                                                       "p_limit": limit, "p_offset": offset}))
 
     @router.get("/results")
-    def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
+    def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0,
+                scope: str = "n2s"):
         key = _auth(request, "results")
         if isinstance(key, JSONResponse):
             return key
@@ -718,8 +827,11 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             return _err(422, "invalid", f"limit must be between 1 and {MAX_LIMIT}")
         if offset < 0:
             return _err(422, "invalid", "offset must not be negative")
-        return _answer(_rpc("sub_finder_results", {"p_key_id": key["id"], "p_updated_since": since,
-                                                   "p_limit": limit, "p_offset": offset}))
+        if scope not in FEED_SCOPES:
+            return _err(422, "invalid", "scope must be n2s or all")
+        # n2s (the default): one row per order, only what is still in play (mig 20261118172530)
+        return _answer(_rpc("sub_finder_feed", {"p_key_id": key["id"], "p_updated_since": since,
+                                                "p_limit": limit, "p_offset": offset, "p_scope": scope}))
 
     @router.post("/jobs/{job_id}/orders/{order_number}/buy")
     async def buy(job_id: str, order_number: str, request: Request):

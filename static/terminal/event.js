@@ -4559,8 +4559,9 @@
   // and the */10 refresh cron cannot clobber them (mig 20260620130000).
   let _seatmapManual = {};
   let _seatmapZones = [];   // curated zones for this event: [{zone_id, name, keys:[lc polygon keys]}]
-  // Frontend source key → venue_section_map.platform. GT is absent (the crosswalk's CHECK
-  // allows only evo/sg/tp/vd/sh), so GameTime sections can be TRACKED but not manually mapped.
+  // Frontend source key → venue_section_map.platform. GT and GOT are absent (the
+  // crosswalk's CHECK allows only evo/sg/tp/vd/sh), so GameTime and GoTickets sections
+  // can be TRACKED (colored by the heuristic matcher) but not manually mapped.
   const _SM_PLATFORM = { EVO: 'evo', SG: 'sg', SH: 'sh', VD: 'vd', TP: 'tp' };
   const SEATMAP_MAPS_DOMAIN = 'https://maps.ticketevolution.com';  // lib default; we read the same manifest
   // Source registry — TM excluded (primary/box-office, no section-level resale
@@ -4575,6 +4576,7 @@
     { key: 'GT',  label: 'GameTime' },
     { key: 'VD',  label: 'VividSeats' },
     { key: 'TP',  label: 'TickPick' },
+    { key: 'GOT', label: 'GoTickets' },
   ];
   // Sources whose `section` is a ZONE label, not a seat section — colored by
   // expanding each zone to the manifest sections it covers (TickPick only today).
@@ -4596,6 +4598,20 @@
         section: x.section, row: x.row, quantity: x.quantity,
         retail_price: (x.retail_price_all_in != null ? x.retail_price_all_in : x.broadcast_price),
         is_owned: !!x.is_broker_owned,
+      }));
+    }
+    // GoTickets (GOT — NOT GameTime/GT) via its own Pro-API firehose. Separate
+    // read RPC (get_gotickets_event_listings) over gotickets_listings_snapshots,
+    // keyed on tevo_event_id; latest capture batch only. all_in_price is the
+    // fee-inclusive price (mirrors the SG/TD all-in preference); fall back to the
+    // pre-fee display_price. GoTickets is external inventory → never broker-owned.
+    if (key === 'GOT') {
+      const r = await rpcOrNull('get_gotickets_event_listings', { p_tevo_event_id: eventId, p_hours: 26 });
+      const rows = Array.isArray(r && r.data) ? r.data : [];
+      return rows.map(x => ({
+        section: x.section, row: x.row, quantity: x.quantity,
+        retail_price: (x.all_in_price != null && Number(x.all_in_price) > 0 ? x.all_in_price : x.display_price),
+        is_owned: false,
       }));
     }
     // SH / GT / VD via TicketsData
@@ -6196,20 +6212,39 @@
       body.appendChild(h2);
       const host2 = document.createElement('div'); host2.className = 'full-list-host';
       const t2 = document.createElement('table'); t2.className = 'full-list-tbl';
-      t2.innerHTML = `<thead><tr><th>Section</th><th>Row</th><th class="num">Qty</th>
-        <th class="num">Price</th><th>Type</th><th>Seats</th><th>Src</th></tr></thead><tbody></tbody>`;
+      // Offer-level AXS buy deep-link (closest AXS primary allows — no per-seat link).
+      const buyUrl = lst && lst.buy_url;
+      const buyHead = buyUrl ? '<th>Buy</th>' : '';
+      t2.innerHTML = `<thead><tr><th>Listing</th><th>Section</th><th>Row</th><th>Seats (lo–hi)</th>
+        <th class="num">Qty</th><th class="num">Price</th><th>Type</th><th>Src</th>${buyHead}</tr></thead><tbody></tbody>`;
       const b2 = t2.querySelector('tbody');
       listings.forEach(r => {
         const tr = document.createElement('tr');
         if (r.src === 'resale') tr.classList.add('row-muted');
+        let buyCell = '';
+        if (buyUrl) {
+          const tip = `Buy on AXS — pick Sec ${r.section || ''} · Row ${r.row || ''} · seats ${r.seat_numbers || ''}`;
+          buyCell = `<td><a class="axs-buy" href="${escapeHtml(buyUrl)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(tip)}">Buy ▸</a></td>`;
+        }
+        // Stable marketplace-style listing id (persists across polls; reprice keeps it).
+        const lid = r.listing_id != null ? String(r.listing_id) : '';
+        const lidCell = lid
+          ? `<td class="axs-lid" title="AXS listing ${escapeHtml(lid)}">${escapeHtml(lid.slice(-8))}</td>`
+          : '<td>—</td>';
+        // Seat numbers as a low–high range (full list on hover).
+        let seatRange;
+        if (r.seat_from == null && r.seat_to == null) seatRange = r.seat_numbers || '—';
+        else if (r.seat_to === r.seat_from) seatRange = String(r.seat_from);
+        else seatRange = `${r.seat_from}–${r.seat_to}`;
         tr.innerHTML = `
+          ${lidCell}
           <td>${escapeHtml(r.section || '—')}</td>
           <td>${escapeHtml(r.row || '—')}</td>
+          <td class="axs-seats" title="${escapeHtml(r.seat_numbers || '')}">${escapeHtml(seatRange)}</td>
           <td class="num">${r.quantity != null ? T.fmtNum(r.quantity) : '—'}</td>
           <td class="num">${r.retail_price != null ? cur + T.fmtNum(Math.round(r.retail_price)) : '—'}</td>
           <td>${escapeHtml(r.type || '—')}${r.wheelchair ? ' ♿' : ''}</td>
-          <td>${escapeHtml(r.seat_numbers || '—')}</td>
-          <td>${r.src === 'resale' ? 'resale' : 'primary'}</td>`;
+          <td>${r.src === 'resale' ? 'resale' : 'primary'}</td>${buyCell}`;
         b2.appendChild(tr);
       });
       host2.appendChild(t2); body.appendChild(host2);
