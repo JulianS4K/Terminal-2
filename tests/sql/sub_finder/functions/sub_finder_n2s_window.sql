@@ -9,9 +9,11 @@ AS $function$
            'alert_at', to_char(x.alert_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
            'timer_expires_at', CASE WHEN x.kind = 'n2s'
                                     THEN to_char(x.timer_expires_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') END,
-           -- inside its time: the item is open and the event day has not passed
-           'in_window', x.open AND (x.event_dt IS NULL
-                                    OR x.event_dt::date >= (now() AT TIME ZONE 'America/New_York')::date))
+           -- inside its time. An alert: until its 15-minute timer runs out. need2buy: until the
+           -- event day has passed. Either way the item must still be open.
+           'in_window', x.open AND CASE WHEN x.kind = 'n2s' THEN coalesce(x.timer_expires_at > now(), false)
+                                        ELSE x.event_dt IS NULL
+                                             OR x.event_dt::date >= (now() AT TIME ZONE 'America/New_York')::date END)
     FROM (SELECT CASE WHEN n.item_source = 'gmail' OR public.sub_finder_need2buy(n.status, n.status_label, n.raw)
                       THEN 'need2buy' ELSE 'n2s' END AS kind,
                  NOT coalesce(n.is_terminal, false) AS open, n.alert_at, n.timer_expires_at, n.event_dt

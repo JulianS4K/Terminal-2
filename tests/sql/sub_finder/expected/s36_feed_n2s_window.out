@@ -1,6 +1,6 @@
 A where an order stands in the N2S book: kind, alert, timer, inside its time
 N401|n2s|t|t|true
-N402|n2s|t|t|true
+N402|n2s|t|t|false
 N403|need2buy|f|f|true
 N404|need2buy|f|f|true
 N405|need2buy|f|f|false
@@ -16,13 +16,12 @@ N403|1|1|cover
 N404|2|1|cover
 N405|1|1|cover
 C the feed: one row per order, inside its time (order, kind, watched, has a timer)
-n2s|4|4
+n2s|3|3
 N401|n2s|true|t|f
-N402|n2s|true|t|f
 N403|need2buy|true|f|f
 N404|need2buy|true|f|f
 the old name answers the same feed
-4|n2s
+3|n2s
 scope all: every answered lookup, nothing merged
 all|9
 M406|1|-
@@ -33,14 +32,16 @@ N403|1|need2buy
 N404|2|need2buy
 N405|1|need2buy
 invalid|forbidden
-D the event day passes: the alert leaves; the item closes: need2buy leaves; a timer running out changes nothing
-N401, N402, N403, N404
-N401, N404
+D the timer runs out: the alert leaves. The item closes or the event day passes: need2buy leaves
+N403, N404
+N404
+nothing
+N404
 E an order with a purchase stays, in or out of the N2S book, until a week after it is final
 requested
-M407, N401, N404
-M407, N401, N404
-N401, N404
+M407, N404
+M407, N404
+N404
 F updated_since and paging work on the merged set
 0|0
-1|2|1|0
+1|1|1|0
