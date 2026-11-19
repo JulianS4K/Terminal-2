@@ -4,12 +4,12 @@ NBA|3|3|6
 https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard|202611|1000
 B the responses arrive: the page of this month carries six games (one bracket game with TBD sides, one without a ticket link), the others are empty
 {"fired": 0, "games": 6, "errors": 0, "landed": 3, "matched": 4}
-401909305|Charlotte Hornets at Atlanta Hawks|20 19:00|t|7419725|1327|501|espn_time_name
-401909306|Orlando Magic at Brooklyn Nets|22 00:00|f|7418387|9671|503|espn_day_name
-401909307|Indiana Pacers at Cleveland Cavaliers|24 00:00|f|7419581|684||
-401909400|Boston Celtics at Atlanta Hawks|23 18:30|t|7419800|1327|502|espn_time_name
-401909500|Miami Heat at Atlanta Hawks|25 19:00|t|7419900|1327|506|espn_time_name
-401909600|TBD at TBD|27 19:00|t||||
+401909305|Charlotte Hornets at Atlanta Hawks|2 19:00|t|7419725|1327|501|espn_time_name
+401909306|Orlando Magic at Brooklyn Nets|4 00:00|f|7418387|9671|503|espn_day_name
+401909307|Indiana Pacers at Cleveland Cavaliers|6 00:00|f|7419581|684||
+401909400|Boston Celtics at Atlanta Hawks|5 18:30|t|7419800|1327|502|espn_time_name
+401909500|Miami Heat at Atlanta Hawks|7 19:00|t|7419900|1327|506|espn_time_name
+401909600|TBD at TBD|9 19:00|t||||
 B1 (305, 400, 500 by time; 306 by day, the time unknown; 307 has two EVO listings that day and no time: none; 600 has no sides)
 C the map, dry run then live: 7419725 and 7419800 take the EVO ids of their games; 7419900 does not (the Vivid day is wrong); game 307 takes 505 from the Vivid match; venue 1327 pairs through its two matched games
 {"games": 6, "applied": false, "vivid_sample": ["NBA Cup - Orlando Magic at Brooklyn Nets  =>  Orlando Magic at Brooklyn Nets", "NBA Cup - Charlotte Hornets at Atlanta Hawks  =>  Charlotte Hornets at Atlanta Hawks", "Boston Celtics at Atlanta Hawks  =>  Boston Celtics at Atlanta Hawks"], "games_with_tevo": 4, "games_with_vivid": 5, "games_fill_candidates": 1, "venue_pair_candidates": 1, "vivid_fill_candidates": 3}
@@ -32,8 +32,8 @@ C1 a second map writes nothing
 D a refresh that moves a game by more than an hour drops its match; one that keeps the time keeps it; a page that fails is recorded and retried later
 {"fired": 3, "games": 0, "errors": 0, "landed": 0, "matched": 0}
 {"fired": 0, "games": 2, "errors": 2, "landed": 1, "matched": 0}
-401909305|20 21:30||
-401909400|23 18:30|502|espn_time_name
+401909305|2 21:30||
+401909400|5 18:30|502|espn_time_name
 t|0|f|t
 f|1|t|t
 f|1|t|t

@@ -59,7 +59,7 @@ SELECT s.pending_request_id, 200,
             ELSE '{"events": []}' END
   FROM espn_ticket_sync s WHERE s.pending_request_id IS NOT NULL;
 SELECT espn_ticket_tick();
-SELECT espn_event_id, name, to_char(game_at_utc AT TIME ZONE 'America/New_York', 'DD HH24:MI') AS ny, time_valid, vivid_production_id, vivid_venue_id, tevo_event_id, tevo_match_method FROM espn_ticket_game ORDER BY 1;
+SELECT espn_event_id, name, ((game_at_utc AT TIME ZONE 'America/New_York')::date - current_date) || ' ' || to_char(game_at_utc AT TIME ZONE 'America/New_York', 'HH24:MI') AS ny_day_time, time_valid, vivid_production_id, vivid_venue_id, tevo_event_id, tevo_match_method FROM espn_ticket_game ORDER BY 1;
 \echo B1 (305, 400, 500 by time; 306 by day, the time unknown; 307 has two EVO listings that day and no time: none; 600 has no sides)
 
 \echo C the map, dry run then live: 7419725 and 7419800 take the EVO ids of their games; 7419900 does not (the Vivid day is wrong); game 307 takes 505 from the Vivid match; venue 1327 pairs through its two matched games
@@ -83,7 +83,7 @@ SELECT s.pending_request_id, CASE WHEN s.period = to_char(current_date, 'YYYYMM'
             ELSE 'upstream error' END
   FROM espn_ticket_sync s WHERE s.pending_request_id IS NOT NULL;
 SELECT espn_ticket_tick();
-SELECT espn_event_id, to_char(game_at_utc AT TIME ZONE 'America/New_York', 'DD HH24:MI') AS ny, tevo_event_id, tevo_match_method FROM espn_ticket_game WHERE espn_event_id IN ('401909305', '401909400') ORDER BY 1;
+SELECT espn_event_id, ((game_at_utc AT TIME ZONE 'America/New_York')::date - current_date) || ' ' || to_char(game_at_utc AT TIME ZONE 'America/New_York', 'HH24:MI') AS ny_day_time, tevo_event_id, tevo_match_method FROM espn_ticket_game WHERE espn_event_id IN ('401909305', '401909400') ORDER BY 1;
 SELECT period = to_char(current_date, 'YYYYMM') AS this_month, tries, last_error IS NOT NULL AS errored, pending_request_id IS NULL AS settled FROM espn_ticket_sync ORDER BY period;
 
 \echo E the review view; who may run what; the crons
