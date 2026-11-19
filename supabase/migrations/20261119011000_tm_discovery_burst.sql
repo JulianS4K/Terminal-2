@@ -12,7 +12,7 @@
 --    Ticketmaster's own quota is 5,000 per rolling day resetting 06:25 UTC; 24 were already used in that
 --    window when this was written, so 4,900 keeps a margin under Ticketmaster's limit.
 --
--- 3. DAY-BY-DAY SWEEP. The weekly plan queries hit Discovery's 1,000-result paging ceiling on busy weeks (a busy
+-- 3. DAY-BY-DAY SWEEP (US, then Canada too — operator "Us and Canada only"). The weekly plan queries hit Discovery's 1,000-result paging ceiling on busy weeks (a busy
 --    Saturday alone is ~370 Sports, ~690 Music, ~810 Arts & Theatre US events). One query per segment per UTC day
 --    for the next 400 days, soonest first, ahead of the weekly plan (priority -1000 + day). They run once
 --    (refresh_hours = 876000): after the sweep they are never due again, so they cannot eat the 100/day budget.
@@ -190,6 +190,19 @@ REVOKE ALL ON FUNCTION public.tm_discovery_call_allowed(), public.tm_discovery_t
 INSERT INTO public.tm_discovery_query (label, params, priority, refresh_hours)
 SELECT 'day:' || s.seg || ':' || d::date,
        jsonb_build_object('classificationName', s.seg, 'countryCode', 'US', 'size', '200', 'sort', 'date,asc',
+                          'startDateTime', to_char(d, 'YYYY-MM-DD') || 'T00:00:00Z',
+                          'endDateTime', to_char(d, 'YYYY-MM-DD') || 'T23:59:59Z'),
+       -1000 + (d::date - date '2026-11-19'),
+       876000
+  FROM generate_series(date '2026-11-19', date '2026-11-19' + 399, interval '1 day') d
+ CROSS JOIN unnest(ARRAY['Sports', 'Music', 'Arts & Theatre']) s(seg)
+ON CONFLICT (label) DO NOTHING;
+
+-- operator 2026-11-19 ~01:15 UTC: "Us and Canada only" — the same sweep for Canada (Discovery takes one country per
+-- query), same date priority so both countries advance day by day; nothing outside US/CA is queried
+INSERT INTO public.tm_discovery_query (label, params, priority, refresh_hours)
+SELECT 'day:CA:' || s.seg || ':' || d::date,
+       jsonb_build_object('classificationName', s.seg, 'countryCode', 'CA', 'size', '200', 'sort', 'date,asc',
                           'startDateTime', to_char(d, 'YYYY-MM-DD') || 'T00:00:00Z',
                           'endDateTime', to_char(d, 'YYYY-MM-DD') || 'T23:59:59Z'),
        -1000 + (d::date - date '2026-11-19'),
