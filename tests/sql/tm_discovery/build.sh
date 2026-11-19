@@ -20,4 +20,5 @@ done <<'STEPS'
 stub_00_base.sql
 20261117180000_tm_discovery.sql
 20261118001000_tm_discovery_burst_once.sql
+20261118003000_tm_discovery_link_channel.sql
 STEPS

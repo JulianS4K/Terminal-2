@@ -112,3 +112,28 @@ SELECT done, done_reason FROM tm_discovery_burst;
 SELECT action, count(*) FROM tm_discovery_audit WHERE action IN ('burst', 'refused') GROUP BY 1 ORDER BY 1;
 \echo F4 the key is still nowhere stored
 SELECT count(*) AS rows_with_the_key FROM (SELECT params::text AS t FROM tm_discovery_query UNION ALL SELECT note FROM tm_discovery_audit UNION ALL SELECT coalesce(last_error, '') FROM tm_discovery_query UNION ALL SELECT raw::text FROM tm_discovery_event UNION ALL SELECT coalesce(last_result::text, '') FROM tm_discovery_burst) s WHERE s.t LIKE '%STUBKEY%';
+
+\echo G seller and channel from the link (mig 20261118003000): the box office and its partners are primary; a resale host or a resale link is secondary; travel and VIP packages are packages; a doubleclick wrapper is unwrapped; no link is unknown
+SELECT u, tm_link_seller(u), tm_link_channel(u) FROM unnest(ARRAY[
+  'https://www.ticketmaster.com/10-years-tour-minneapolis-12-11-2026/event/060064B5363DCB87',
+  'https://www.ticketmaster.ca/curling-saint-john-03-30-2027/event/31006556D8A3D650',
+  'https://am.ticketmaster.com/asmgkingston/buy/ism/MjZMRlJJ',
+  'https://www.universe.com/events/reserved-luxury-seating-tickets-7NV451?ref=ticketmaster',
+  'https://www.ticketweb.ca/event/anna-von-hausswolff-tickets/14564433',
+  'https://on.fgtix.com/trk/3riK',
+  'https://www.etix.com/ticket/p/32619116/brandy-clark-asheville',
+  'https://www.axs.com/events/1123852/sabaton-tickets',
+  'https://hyveetix.evenue.net/events/AXW?RSRC=WEB_PR',
+  'https://www.drphillipscenter.org/show/lewis-black-rc67',
+  'https://seatgeek.com/harry-styles-tickets/glendale-2027-04-03/concert/18577793',
+  'https://www.ticketmaster.com/some-event/resale/event/0A0055',
+  'https://travel.ticketmaster.com/en-US/event/127560094/pf?_uid=abc',
+  'https://www.vipnation.com/tour_date/syd-dallas-tx-11-20-2026',
+  'https://ad.doubleclick.net/ddm/clk/638366664;445198581;c;dc_transparent=1;?https://travel.ticketmaster.com/en-US/package-forward/86358015?_uid=53',
+  'https://ad.doubleclick.net/ddm/clk/1;2;c;?https://www.ticketmaster.com/x/event/0B00',
+  NULL]) u;
+\echo G1 the event rows carry both, kept by the database; the views show them
+SELECT tm_event_id, seller, channel FROM tm_discovery_event ORDER BY tm_event_id COLLATE "C" LIMIT 3;
+SELECT channel, seller, sum(events) AS events FROM v_tm_discovery_channel GROUP BY 1, 2 ORDER BY 1, 2;
+SELECT count(*) FILTER (WHERE seller = 'ticketmaster' AND channel = 'primary') AS tm_primary FROM v_tm_discovery_link;
+SELECT has_function_privilege('anon', 'tm_link_channel(text)', 'EXECUTE'), has_function_privilege('service_role', 'tm_link_channel(text)', 'EXECUTE');
