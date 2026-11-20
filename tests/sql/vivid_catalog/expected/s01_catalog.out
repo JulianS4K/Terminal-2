@@ -213,8 +213,11 @@
  vivid_catalog_pull | f    | t
  vivid_catalog_tick | f    | t
 
-         jobname          |  schedule  
---------------------------+------------
- tickpick_catalog_hourly  | 41 * * * *
- vivid_catalog_map_hourly | 43 * * * *
- vivid_catalog_tick_1min  | * * * * *
+          jobname          |  schedule  
+---------------------------+------------
+ catalog_venue_pair_hourly | 33 * * * *
+ llm_judge_hourly          | 50 * * * *
+ llm_venue_judge_daily     | 5 6 * * *
+ tickpick_catalog_hourly   | 41 * * * *
+ vivid_catalog_map_hourly  | 43 * * * *
+ vivid_catalog_tick_1min   | * * * * *

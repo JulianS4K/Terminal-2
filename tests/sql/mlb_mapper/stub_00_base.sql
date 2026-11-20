@@ -49,3 +49,14 @@ CREATE FUNCTION cron.schedule(name text, schedule text, command text) RETURNS bi
   INSERT INTO cron.job (jobname, schedule, command) VALUES (name, schedule, command)
   ON CONFLICT (jobname) DO UPDATE SET schedule = excluded.schedule, command = excluded.command RETURNING jobid $$;
 CREATE FUNCTION cron.unschedule(name text) RETURNS boolean LANGUAGE sql AS $$ DELETE FROM cron.job WHERE jobname = name RETURNING true $$;
+-- the internal event key (mig 20261117170000) and ESPN's games (mig 20261117160000), as the resolver reads them
+CREATE TABLE public.event_xmap (xmap_id bigserial PRIMARY KEY, tevo_event_id bigint UNIQUE, tp_event_id bigint UNIQUE, vivid_event_id bigint UNIQUE, gt_event_id bigint UNIQUE, axs_event_id bigint UNIQUE,
+                                sg_event_id bigint UNIQUE, mlb_schedule_id bigint UNIQUE, espn_event_id bigint UNIQUE);
+CREATE TABLE public.event_xmap_alias (old_xmap_id bigint PRIMARY KEY, xmap_id bigint NOT NULL);
+CREATE TABLE public.espn_ticket_game (espn_event_id text PRIMARY KEY, tevo_event_id bigint);
+CREATE FUNCTION public.event_key_lookup(p_source text, p_source_event_id bigint) RETURNS bigint LANGUAGE sql STABLE AS $$
+  SELECT x.xmap_id FROM public.event_xmap x
+   WHERE CASE lower(trim(coalesce(p_source, ''))) WHEN 'tevo' THEN x.tevo_event_id WHEN 'evo' THEN x.tevo_event_id WHEN 'tickpick' THEN x.tp_event_id WHEN 'tp' THEN x.tp_event_id
+           WHEN 'vivid' THEN x.vivid_event_id WHEN 'gotickets' THEN x.gt_event_id WHEN 'gt' THEN x.gt_event_id WHEN 'axs' THEN x.axs_event_id
+           WHEN 'seatgeek' THEN x.sg_event_id WHEN 'sg' THEN x.sg_event_id WHEN 'mlb' THEN x.mlb_schedule_id WHEN 'espn' THEN x.espn_event_id END = p_source_event_id LIMIT 1 $$;
+CREATE TABLE public.vivid_catalog_event (vivid_event_id bigint PRIMARY KEY, tevo_event_id bigint);

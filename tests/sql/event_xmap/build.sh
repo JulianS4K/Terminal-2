@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Build the cross-source spine test database: stand-ins for what the migration reads (TEvo mirror, the six catalogues,
+# venue maps, pg_cron), then the real migration.
+# Usage: build.sh <database>   (psql connection comes from the PG* variables)
+set -euo pipefail
+export PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning"
+DB="$1"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+MIG="$HERE/../../../supabase/migrations"
+run() { psql -q -X -v ON_ERROR_STOP=1 -d "$DB" -f "$1" >/dev/null; }
+
+psql -q -X -d postgres -c "DROP DATABASE IF EXISTS \"$DB\"" -c "CREATE DATABASE \"$DB\"" 2>/dev/null
+while read -r step; do
+  [ -z "$step" ] && continue
+  case "$step" in
+    stub_*) run "$HERE/$step" ;;
+    *)      run "$MIG/$step" ;;
+  esac
+done <<'STEPS'
+stub_00_base.sql
+20261117130000_event_xmap.sql
+20261117150000_event_xmap_steady.sql
+20261117165000_event_key_lookup_hotfix.sql
+20261117170000_internal_event_key.sql
+20261117171000_resolver_reads_the_key.sql
+20261117190000_tm_in_spine.sql
+STEPS

@@ -73,3 +73,5 @@ CREATE TABLE IF NOT EXISTS public.mlb_ticket_game (schedule_id bigint PRIMARY KE
 CREATE TABLE IF NOT EXISTS public.vivid_catalog_event (vivid_event_id bigint PRIMARY KEY, tevo_event_id bigint, event_date date, venue_country text, last_seen_at timestamptz);
 -- vivid_catalog_tick() (redefined by mig 20261117090000) declares a row of this type; never called here
 CREATE TABLE IF NOT EXISTS public.vivid_catalog_sync (id int PRIMARY KEY, next_page int, pass_started_at timestamptz, pass_finished_at timestamptz);
+-- the review view of mig 20261117140000 joins the other catalogue's venue table
+CREATE TABLE IF NOT EXISTS public.vivid_catalog_venue (vivid_venue_id bigint PRIMARY KEY, name text, city text, state text, country text, tevo_venue_id bigint, method text, events integer, derived_at timestamptz);

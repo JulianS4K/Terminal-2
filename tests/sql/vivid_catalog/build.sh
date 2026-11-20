@@ -21,4 +21,7 @@ stub_00_base.sql
 20261117070000_vivid_catalog.sql
 20261117080000_catalogues_in_resolver.sql
 20261117090000_catalog_mappers_fast.sql
+20261117110000_catalog_hub_fill_skip_locked.sql
+20261117120000_llm_match_judge.sql
+20261117140000_catalog_venue_pairing.sql
 STEPS
