@@ -436,6 +436,14 @@ deployed. `'own'` undoes it at once.
   placed (`n2s_autobuy_exec` with `buy_order_id`) is a sync feed in the sub finder API,
   `GET /api/v1/subs/autobuys` (`sub_finder_autobuys`, keys in `sub_finder_config.autobuys_key_ids`).
   Fields and statuses: `docs/sub_finder_api_onboarding.md` §6c.
+- **Confirmed buys pushed to the CRM webhook** (mig `20261120171030`, operator 2026-11-20: "push it
+  upon confirmation"). When a live row reaches phase `accepted`, `n2s_autobuy_crm_push()` POSTs the
+  same JSON as one `/autobuys` item (with `bought_order_number` and `buy_ref`), plus
+  `event: "n2s.autobuy_confirmed"`, `exec_id` and `attempt`, to the cover webhook
+  (`N2S_COVER_WEBHOOK_URL`, Bearer `N2S_COVER_WEBHOOK_TOKEN`; unset URL = nothing sent). It runs
+  first thing in `n2s_autobuy_outcome_tick()` (cron `n2s_autobuy_outcome_1min`). Outbox
+  `n2s_autobuy_crm_push`: one row per exec, at most 3 sends 5 minutes apart while no 2xx answer
+  comes back; the receiver dedupes on `exec_id`. Listing-source hosts are refused at run time (RULE 2).
 - **`v_n2s_orders`** joins items + queue and computes `has_cover` / `no_cover_reason`;
   `/api/broker/n2s-covers` serves it to `static/terminal/subs.html`.
 - **`n2s_gt_order_dryrun`** (stage 5) is served by `/api/broker/n2s-gt-dryrun` to the

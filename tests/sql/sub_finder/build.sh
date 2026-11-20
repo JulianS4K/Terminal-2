@@ -71,4 +71,6 @@ stub_90_health.sql
 stub_95_feed.sql
 20261118172530_sub_finder_feed_n2s_window.sql
 20261120165800_manual_sub_buy_own_sender.sql
+stub_96_n2s_outcome.sql
+20261120171030_n2s_autobuy_crm_push.sql
 STEPS

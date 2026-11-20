@@ -1,0 +1,101 @@
+a confirmed N2S buy goes to the CRM webhook once, with the order number we bought (20261120171030)
+     ?column?      
+-------------------
+ outcome emails: 2
+(1 row)
+
+             url              |         event         | exec_id |   buy_ref    |  bought  | for_order |  sold_on  |    status    | attempt |                 auth                  
+------------------------------+-----------------------+---------+--------------+----------+-----------+-----------+--------------+---------+---------------------------------------
+ secret-N2S_COVER_WEBHOOK_URL | n2s.autobuy_confirmed | 901     | evo-19464447 | 19464447 | 8500756   | gotickets | went_through | 1       | Bearer secret-N2S_COVER_WEBHOOK_TOKEN
+(1 row)
+
+the next minute sends nothing new
+     ?column?      
+-------------------
+ outcome emails: 0
+(1 row)
+
+ ?column?  
+-----------
+ posted: 1
+(1 row)
+
+no 2xx answer: sent again 5 minutes on, 3 sends at most
+                answer                
+--------------------------------------
+ push: {"sent": 0, "answers_read": 1}
+(1 row)
+
+                         ?column?                         
+----------------------------------------------------------
+ push: {"sent": 1, "configured": true, "answers_read": 0}
+(1 row)
+
+                answer                
+--------------------------------------
+ push: {"sent": 0, "answers_read": 1}
+(1 row)
+
+                         ?column?                         
+----------------------------------------------------------
+ push: {"sent": 1, "configured": true, "answers_read": 0}
+(1 row)
+
+                answer                
+--------------------------------------
+ push: {"sent": 0, "answers_read": 1}
+(1 row)
+
+                         ?column?                         
+----------------------------------------------------------
+ push: {"sent": 0, "configured": true, "answers_read": 0}
+(1 row)
+
+ exec_id | attempts | status_code |  error_msg  
+---------+----------+-------------+-------------
+     901 |        3 |         502 | bad gateway
+(1 row)
+
+        ?column?        
+------------------------
+ attempts posted: 1,2,3
+(1 row)
+
+a 2xx answer ends it
+                         ?column?                         
+----------------------------------------------------------
+ push: {"sent": 1, "configured": true, "answers_read": 0}
+(1 row)
+
+                         ?column?                         
+----------------------------------------------------------
+ push: {"sent": 0, "configured": true, "answers_read": 1}
+(1 row)
+
+ exec_id | attempts | status_code |      buy_ref      
+---------+----------+-------------+-------------------
+     905 |        1 |         200 | gotickets-8348959
+(1 row)
+
+no webhook URL in the vault: nothing is sent
+                    ?column?                    
+------------------------------------------------
+ push: {"configured": false, "answers_read": 0}
+(1 row)
+
+a listing-source URL is refused, and the outcome email still goes out
+psql:s37_crm_push.sql:61: WARNING:  CRM push failed: n2s_autobuy_crm_push: refusing to POST to upstream host crm.s4kcs.com (RULE 2)
+     ?column?      
+-------------------
+ outcome emails: 2
+(1 row)
+
+ ?column?  
+-----------
+ posted: 4
+(1 row)
+
+     ?column?      
+-------------------
+ emailed 906: true
+(1 row)
