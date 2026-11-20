@@ -26,4 +26,6 @@ stub_00_base.sql
 20261117060000_mlb_ticket_poll_v2.sql
 20261117061000_mlb_ticket_alert_grouped.sql
 20261117100000_mlb_in_resolver.sql
+stub_10_alert_mail.sql
+20261120165830_mlb_ticket_alert_own_sender.sql
 STEPS

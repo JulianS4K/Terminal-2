@@ -70,4 +70,5 @@ stub_90_health.sql
 20261117101530_sub_finder_ada_block.sql
 stub_95_feed.sql
 20261118172530_sub_finder_feed_n2s_window.sql
+20261120165800_manual_sub_buy_own_sender.sql
 STEPS
