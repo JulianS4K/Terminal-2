@@ -37,6 +37,13 @@ BEGIN
     RETURN jsonb_build_object('error', 'invalid',
                               'detail', 'that listing is not a cover we can buy that this job quoted for this order');
   END IF;
+  -- 20261117101530: an accessible (ADA / wheelchair) seat and an ordinary seat never replace each
+  -- other. The lookup no longer quotes such a cover; this refuses one quoted before that.
+  IF public.sub_finder_seat_is_ada(o.section, o.seat_row)
+     <> public.sub_finder_seat_is_ada(cv->>'section', cv->>'row') THEN
+    RETURN jsonb_build_object('error', 'forbidden', 'limit', 'ada_seating',
+      'detail', 'an accessible (ADA / wheelchair) seat and an ordinary seat cannot replace each other');
+  END IF;
   -- 20261116000000: the caps on buys a CRM key asks for (NULL = none; the buyer's own ceilings
   -- still apply afterwards). Per order: this buy's quoted total. Per New York day: with every
   -- other buy a CRM key asked for today that was not stopped or failed.

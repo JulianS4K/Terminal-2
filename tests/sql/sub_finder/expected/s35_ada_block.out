@@ -1,0 +1,57 @@
+A what counts as accessible seating: section, row -> is it
+204LWC / 1 -> true
+103WC / 20 -> true
+103 WC / 20 -> true
+200 LWC / 1 -> true
+WC / 5 -> true
+ADA 12 / 3 -> true
+Wheelchair Platform / 1 -> true
+Accessible 5 / 1 -> true
+104 / WC -> true
+104 / ADA -> true
+204 / 1 -> false
+Section 204 / 1 -> false
+TWC Club / 5 -> false
+3 WCLUB / 1 -> false
+ADAMS 4 / B -> false
+SWC / 1 -> false
+LAWN / GA -> false
+f|f|t
+B the lookups: sold seat, the cover, its label and flags, and what we did by ourselves
+done
+7307|101/2|101/4|Index Down offer subs|[]|cover|offer|no_evo_one_to_one
+A301|204LWC/1|204LWC/1|Index|[]|cover|auto_bought|-
+A302|103/C|-/-|no cover|-|no_cover|none|-
+A303|103WC/20|103WC/20|Index|[]|cover|auto_bought|-
+A304|101/3|-/-|no cover|-|no_cover|none|-
+A305|101/3|102/3|Index offer subs|[]|cover|offer|no_evo_one_to_one
+A306|101/2|101/2|Index|[]|cover|auto_bought|-
+no cover anywhere carries the old review flag
+0
+bought by ourselves: like for like and ordinary for ordinary, never across
+A301, A303, A306
+C a blocked listing is not a cover, so the CRM cannot buy it, confirmed or not
+invalid
+invalid
+D a cover quoted before this rule is refused at the buy and at the offer, and nothing is filed
+forbidden|ada_seating|an accessible (ADA / wheelchair) seat and an ordinary seat cannot replace each other
+forbidden|ada_seating
+Index Down offer subs|5
+forbidden|ada_seating
+0
+0
+E the two buyers with no person in the loop refuse a cover or offer from before this rule
+done
+0
+A308|buy_manually|ada_seating|f
+the same cover, ordinary again, is bought: the rule was the only thing in the way
+1
+A308|auto_bought|-|t
+an offer the customer accepted, made for accessible seats against an ordinary sale: not bought
+requested|5
+ada_seating
+7307|101 WC|ada_seating|f
+the same offer for ordinary seats is bought
+t
+7307|101|-|t
+7307, A301, A303, A306, A308

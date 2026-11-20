@@ -1,0 +1,52 @@
+name: MLB mapper SQL scenarios
+
+# Runs the MLB schedule mapper's SQL scenario tests (tests/sql/mlb_mapper) against a throwaway
+# Postgres: small stand-ins + the real MLB schedule migrations, then each scenario's output is
+# compared with its expected file. Blocking — a migration that changes the mapper's behaviour
+# updates the expected output in the same PR (tests/sql/mlb_mapper/run.sh --update).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**mlb**"
+      - "supabase/migrations/**milb**"
+      - "tests/sql/mlb_mapper/**"
+      - ".github/workflows/mlb-mapper-sql.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**mlb**"
+      - "supabase/migrations/**milb**"
+      - "tests/sql/mlb_mapper/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mlb-mapper-sql:
+    name: MLB mapper SQL scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run scenarios
+        run: bash tests/sql/mlb_mapper/run.sh

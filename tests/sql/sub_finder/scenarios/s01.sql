@@ -52,7 +52,7 @@ SELECT c->>'market', c->>'listing_id', c->>'row', c->>'row_relation', c->>'price
 \echo 5b covers for 659240801:
 SELECT c->>'market', c->>'listing_id', c->>'row', c->>'row_relation', c->>'buy_qty', c->>'profit' FROM o, jsonb_array_elements(r->'items') i, jsonb_array_elements(i->'covers') c WHERE i->>'order_number'='659240801';
 \echo 6 results feed:
-SELECT x->>'count', x->>'total', x->>'limit', x->>'offset', (x->>'generated_at') ~ 'Z$' FROM (SELECT sub_finder_results(7,NULL,2,0) x) q;
+SELECT x->>'count', x->>'total', x->>'limit', x->>'offset', (x->>'generated_at') ~ 'Z$' FROM (SELECT sub_finder_feed(7,NULL,2,0,'all') x) q;   -- every lookup (scope all); the default scope is s36
 SELECT x->>'count', x->>'total' FROM (SELECT sub_finder_results(7, now() + interval '1 hour') x) q;
 SELECT sub_finder_results(8)->>'error';
 \echo 7 buy:
@@ -74,7 +74,7 @@ SELECT i->'buy'->>'request_state', i->'buy'->>'outcome', i->'markets_searched' F
 \echo 9 timeout settles with what we have:
 UPDATE sub_finder_config SET settle_timeout_s=0;
 CREATE TEMP TABLE j2 AS SELECT sub_finder_submit(7,'crm','[{"order_number":"T1","tevo_event_id":3241050,"section":"217","row":"G","qty":2,"sold_ea":100}]') r;
-SELECT sub_finder_results(7,NULL,1000,0)->>'total';
+SELECT sub_finder_feed(7,NULL,1000,0,'all')->>'total';
 SELECT sub_finder_job_json(7,(SELECT (r->>'job_id')::uuid FROM j2))->>'status';
 \echo 10 dup order numbers in one job cannot be bought:
 CREATE TEMP TABLE j3 AS SELECT sub_finder_submit(7,'crm','[{"order_number":"D","tevo_event_id":3241050,"section":"217","row":"G","qty":2},{"order_number":"D","tevo_event_id":3241050,"section":"217","row":"G","qty":2}]') r;

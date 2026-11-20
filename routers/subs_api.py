@@ -13,7 +13,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   POST /api/v1/subs/jobs                                    submit orders -> job id (202)
   GET  /api/v1/subs/jobs/{job_id}                           one job: status + every order
   GET  /api/v1/subs/jobs/{job_id}/orders/{order_number}     one order (e.g. to follow its buy)
-  GET  /api/v1/subs/results?updated_since=&limit=&offset=   sync feed of answered orders
+  GET  /api/v1/subs/results?updated_since=&limit=&offset=&scope=   sync feed: orders still in play (scope=all: every lookup)
   POST /api/v1/subs/jobs/{job_id}/orders/{order_number}/buy ask for a quoted EVO cover
   GET  /api/v1/subs/orders/{order_number}                   the same order, newest job, no job id
   POST /api/v1/subs/orders/{order_number}/buy               the same buy, newest job, no job id
@@ -30,6 +30,8 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/audit?since=&limit=&offset=             every buy, offer and limit change asked here, with its source address
   GET  /api/v1/subs/health                                  one overall status + one per thing the CRM depends on (its feed read, lookups, buying, ...)
   GET  /api/v1/subs/mlb/schedule?team=&season=&since=       every MLB game with the club's direct ticket link + EVO / terminal event (routers/mlb_feed.py)
+  GET  /api/v1/subs/tm/events?date_from=&segment=&since=    Ticketmaster's catalogue of upcoming events + the EVO event each matched (routers/tm_feed.py)
+  GET  /api/v1/subs/tm/markets?site=&since=                 the other sites each mapped Ticketmaster event pairs to (routers/tm_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
@@ -86,7 +88,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
+from routers.mlb_feed import changes_response as mlb_changes_response
+from routers.mlb_feed import events_response as mlb_events_response
 from routers.mlb_feed import schedule_response as mlb_schedule_response
+from routers.tm_feed import events_response as tm_events_response
+from routers.tm_feed import markets_response as tm_markets_response
 
 MAX_ORDERS = 200           # hard ceiling here; sub_finder_config.max_orders_per_job can only be lower
 MAX_LIMIT = 1000           # the CRM's own page ceiling
@@ -102,7 +108,7 @@ NOTES_MAX = 500  # characters of a CRM note kept (sub_finder_order.crm_notes)
 # connection to the database API dropped under the first (about 1 call in 30 did, 2026-11-13).
 # A buy, an offer, a submit or a note is never repeated: the first may have gone through.
 RETRY_ONCE_RPCS = frozenset({"mcp_verify_key", "sub_finder_access", "sub_finder_latest_job",
-                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_results",
+                             "sub_finder_order_read", "sub_finder_job_json", "sub_finder_feed",
                              "sub_finder_autobuys", "sub_finder_loss_limits", "sub_finder_buys",
                              "sub_finder_key_gate", "sub_finder_idem", "sub_finder_audit_read",
                              "sub_finder_limits", "sub_finder_health"})
@@ -185,6 +191,7 @@ _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL |
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
 _DOC_NEWS = re.compile(r"^## What changed for you\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)     # the dated list
 _DOC_NEWS_ITEM = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*[ .:·—-]*(.+)$", re.MULTILINE)          # one entry of it
+FEED_SCOPES = ("n2s", "all")                # GET /results: what is still in play, or every answered lookup
 NEWS_ON_PING = 10                           # entries /ping carries; the guide has them all
 
 
@@ -578,6 +585,46 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             return _err(403, "forbidden", "this key may not read the sub finder API")
         return mlb_schedule_response(get_db(), request.query_params)
 
+    def _mlb_reader(request: Request, tool: str):
+        key = _auth(request, tool)
+        if isinstance(key, JSONResponse):
+            return key
+        access = _rpc("sub_finder_access", {"p_key_id": key["id"]}) or {}
+        if not access.get("find"):
+            return _err(403, "forbidden", "this key may not read the sub finder API")
+        return None
+
+    @router.get("/mlb/events")
+    def mlb_events(request: Request):
+        """Concerts and other live events at MLB and minor league ballparks, with the EVO event each
+        maps to (mig 20261117060000). Same keys as /mlb/schedule. Query and columns: routers/mlb_feed.py."""
+        denied = _mlb_reader(request, "mlb_events")
+        return denied or mlb_events_response(get_db(), request.query_params)
+
+    @router.get("/mlb/changes")
+    def mlb_changes(request: Request):
+        """Every change the MLB ticketing poller detected — links going live, date / time / venue /
+        status moves, on-sale dates, removed games, new promotions and stadium events (mig
+        20261117060000). Page with after_id. Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "mlb_changes")
+        return denied or mlb_changes_response(get_db(), request.query_params)
+
+    @router.get("/tm/events")
+    def tm_events(request: Request):
+        """Ticketmaster's own catalogue of upcoming events, with the EVO event each matched (operator
+        2026-11-18: "add the tmr discovery feed into the mlb api"). Same keys as /mlb/schedule. Query
+        and columns: routers/tm_feed.py. Reads our own tables only."""
+        denied = _mlb_reader(request, "tm_events")
+        return denied or tm_events_response(get_db(), request.query_params)
+
+    @router.get("/tm/markets")
+    def tm_markets(request: Request):
+        """For each Ticketmaster event that matched an EVO event: the same event's id on SeatGeek,
+        Vivid Seats, TickPick, StubHub, GoTickets and AXS where we can pair it (operator 2026-11-18:
+        "the sites it pairs to ... as a seperate get call"). Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "tm_markets")
+        return denied or tm_markets_response(get_db(), request.query_params)
+
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
         """Every N2S auto-buy that placed a purchase (operator 2026-11-13): `buy_ref` =
@@ -788,7 +835,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
                                                       "p_limit": limit, "p_offset": offset}))
 
     @router.get("/results")
-    def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):
+    def results(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0,
+                scope: str = "n2s"):
         key = _auth(request, "results")
         if isinstance(key, JSONResponse):
             return key
@@ -799,8 +847,11 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
             return _err(422, "invalid", f"limit must be between 1 and {MAX_LIMIT}")
         if offset < 0:
             return _err(422, "invalid", "offset must not be negative")
-        return _answer(_rpc("sub_finder_results", {"p_key_id": key["id"], "p_updated_since": since,
-                                                   "p_limit": limit, "p_offset": offset}))
+        if scope not in FEED_SCOPES:
+            return _err(422, "invalid", "scope must be n2s or all")
+        # n2s (the default): one row per order, only what is still in play (mig 20261118172530)
+        return _answer(_rpc("sub_finder_feed", {"p_key_id": key["id"], "p_updated_since": since,
+                                                "p_limit": limit, "p_offset": offset, "p_scope": scope}))
 
     @router.post("/jobs/{job_id}/orders/{order_number}/buy")
     async def buy(job_id: str, order_number: str, request: Request):
