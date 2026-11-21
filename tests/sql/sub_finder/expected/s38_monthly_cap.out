@@ -1,0 +1,92 @@
+one cap per calendar month (ET) for EVO and GoTickets together; per-order and daily caps stay per market (20261121060000)
+                             would_buy                              
+--------------------------------------------------------------------
+ tevo sub $300: live_buy (no reasons), project spent before $346.52
+(1 row)
+
+                                would_buy                                
+-------------------------------------------------------------------------
+ gotickets sub $100: live_buy (no reasons), project spent before $646.52
+(1 row)
+
+                   ?column?                   
+----------------------------------------------
+ evo stopped: false, gotickets stopped: false
+(1 row)
+
+GoTickets keeps its own per-order cap ($666), EVO its own ($1,000)
+                                  would_buy                                   
+------------------------------------------------------------------------------
+ gotickets sub $700: blocked over_per_order_cap, project spent before $746.52
+(1 row)
+
+                             would_buy                              
+--------------------------------------------------------------------
+ tevo sub $700: live_buy (no reasons), project spent before $746.52
+(1 row)
+
+the worker gets the shared monthly cap for a GoTickets row too
+                          ?column?                           
+-------------------------------------------------------------
+ gotickets job project_cap_usd: 5000, per_order_cap_usd: 666
+(1 row)
+
+the combined spend blocks both markets once it would pass the cap
+                                  would_buy                                  
+-----------------------------------------------------------------------------
+ gotickets sub $300: blocked over_project_cap, project spent before $1446.52
+(1 row)
+
+                               would_buy                                
+------------------------------------------------------------------------
+ tevo sub $300: blocked over_project_cap, project spent before $1446.52
+(1 row)
+
+                  ?column?                  
+--------------------------------------------
+ evo stopped: true, gotickets stopped: true
+(1 row)
+
+stops the cap made last month are lifted by the first would-buy of this month
+                             would_buy                              
+--------------------------------------------------------------------
+ tevo sub $50: live_buy (no reasons), project spent before $1446.52
+(1 row)
+
+                                           ?column?                                           
+----------------------------------------------------------------------------------------------
+ evo stopped: false, reason: -, stop email cleared: true, gotickets stopped: false, reason: -
+(1 row)
+
+the other wording of each cap stop is lifted too
+                                would_buy                                
+-------------------------------------------------------------------------
+ gotickets sub $50: live_buy (no reasons), project spent before $1496.52
+(1 row)
+
+                   ?column?                   
+----------------------------------------------
+ evo stopped: false, gotickets stopped: false
+(1 row)
+
+a cap stop made this month stays
+                                  would_buy                                  
+-----------------------------------------------------------------------------
+ tevo sub $50: blocked stopped_pending_review, project spent before $1546.52
+(1 row)
+
+     ?column?      
+-------------------
+ evo stopped: true
+(1 row)
+
+a stop for any other reason stays, even from last month
+                                  would_buy                                  
+-----------------------------------------------------------------------------
+ tevo sub $50: blocked stopped_pending_review, project spent before $1546.52
+(1 row)
+
+                     ?column?                     
+--------------------------------------------------
+ evo stopped: true, reason: operator: hold buying
+(1 row)
