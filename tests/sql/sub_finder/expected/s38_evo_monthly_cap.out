@@ -1,0 +1,59 @@
+the EVO project cap counts this calendar month (ET) only; GoTickets keeps its lifetime cap (20261121060000)
+                           would_buy                           
+---------------------------------------------------------------
+ tevo sub: live_buy (no reasons), project spent before $146.52
+(1 row)
+
+                             would_buy                              
+--------------------------------------------------------------------
+ gotickets sub: blocked over_project_cap, project spent before $600
+(1 row)
+
+                  ?column?                   
+---------------------------------------------
+ evo stopped: false, gotickets stopped: true
+(1 row)
+
+a stop the EVO cap made last month is lifted by the first would-buy of this month
+                           would_buy                           
+---------------------------------------------------------------
+ tevo sub: live_buy (no reasons), project spent before $446.52
+(1 row)
+
+                        ?column?                         
+---------------------------------------------------------
+ evo stopped: false, reason: -, stop email cleared: true
+(1 row)
+
+the over-cap wording is lifted too
+                           would_buy                           
+---------------------------------------------------------------
+ tevo sub: live_buy (no reasons), project spent before $646.52
+(1 row)
+
+      ?column?      
+--------------------
+ evo stopped: false
+(1 row)
+
+a cap stop made this month stays
+                               would_buy                                
+------------------------------------------------------------------------
+ tevo sub: blocked stopped_pending_review, project spent before $796.52
+(1 row)
+
+     ?column?      
+-------------------
+ evo stopped: true
+(1 row)
+
+a stop for any other reason stays, even from last month
+                               would_buy                                
+------------------------------------------------------------------------
+ tevo sub: blocked stopped_pending_review, project spent before $796.52
+(1 row)
+
+                     ?column?                     
+--------------------------------------------------
+ evo stopped: true, reason: operator: hold buying
+(1 row)
