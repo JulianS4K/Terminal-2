@@ -83,7 +83,8 @@ REVOKE ALL ON FUNCTION public.tm_discovery_event_log_change() FROM PUBLIC, anon,
 
 DO $do$
 DECLARE
-  -- unaccent lives in `extensions` on prod; where it is not installed the search keeps accents
+  -- unaccent, in whichever schema it is installed (`public` on prod); where it is not installed
+  -- the search keeps accents
   v_unaccent text := coalesce((SELECT quote_ident(n.nspname) || '.unaccent'
                                  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                                 WHERE p.proname = 'unaccent' AND p.pronargs = 1
