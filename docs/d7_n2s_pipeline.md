@@ -506,8 +506,8 @@ deployed. `'own'` undoes it at once.
   market the new cover is on; `gt_project_cap_usd` is no
   longer read. A stop the cap made in an earlier month (`project_stopped` or `gt_project_stopped`,
   by its reason text) is lifted by the first would-buy of the new month; any other stop stays.
-  Per-order and daily caps stay per market: $1,000 each for EVO and for GoTickets (set
-  2026-11-21). Neither market has a run or buys-per-day limit (`live_runs_allowed`,
+  Per-order and daily caps stay per market: for EVO and for GoTickets each, $2,000 per order and
+  $2,500 per day (set 2026-11-21; covers over `approval_over_usd`, $1,000, still wait for approval). Neither market has a run or buys-per-day limit (`live_runs_allowed`,
   `gt_live_runs_allowed` and `max_buys_per_day` 1000000; GoTickets' one test run lifted the same day). Shadow and a future live mode count separately. A live row
   that stopped before anything was bought (phase `stopped`, no purchase id) counts toward none of
   the caps, buy counts or "already bought" checks (mig `20261116180000`; before it, exec 8's
