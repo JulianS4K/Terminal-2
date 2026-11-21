@@ -501,7 +501,8 @@ deployed. `'own'` undoes it at once.
   GoTickets together** (operator 2026-11-21: "5000 a month", "auto resets monthly", "add go tickets
   to the $5000 month limiter but separate daily and per order limiters"; mig `20261121060000`):
   every EVO and GoTickets buy created this month (America/New_York) counts against
-  `project_cap_usd` ($5,000), whichever market the new cover is on; `gt_project_cap_usd` is no
+  `project_cap_usd` ($5,000, raised to **$10,000** the same day: "Remove lifetime cap for both and
+  change to 10k"), whichever market the new cover is on; `gt_project_cap_usd` is no
   longer read. A stop the cap made in an earlier month (`project_stopped` or `gt_project_stopped`,
   by its reason text) is lifted by the first would-buy of the new month; any other stop stays.
   Per-order and daily caps stay per market: $1,000 each for EVO and for GoTickets (set
