@@ -22,6 +22,9 @@ from routers.mcp_api import hash_key  # noqa: E402
 KEY = "crm-key"
 H = {"x-api-key": KEY}
 EVENTS, MARKETS = "/api/v1/subs/tm/events", "/api/v1/subs/tm/markets"
+CHANGES = "/api/v1/subs/tm/changes"
+CHANGE = {"change_id": 41, "detected_at": "2026-11-21T18:00:00+00:00", "kind": "status_changed", "old_value": "onsale",
+          "new_value": "cancelled", "tm_event_id": "G5diZ_o6tFFbU", "name": "Atlanta Hawks vs. Charlotte Hornets"}
 EVENT = {"tm_event_id": "G5diZ_o6tFFbU", "name": "Atlanta Hawks vs. Charlotte Hornets", "event_date": "2026-11-20",
          "status": "onsale", "segment": "Sports", "attraction_names": ["Atlanta Hawks", "Charlotte Hornets"],
          "presales": [{"name": "Fan presale"}], "tevo_event_id": 3464939, "is_product": False}
@@ -74,7 +77,7 @@ class FakeDB:
         return _Data(None)
 
     def table(self, name):
-        assert name in (tm_feed.EVENT_VIEW, tm_feed.MARKET_VIEW)
+        assert name in (tm_feed.EVENT_VIEW, tm_feed.MARKET_VIEW, tm_feed.CHANGES_VIEW)
         self.tables.append(name)
         q = _Query(self)
         self.queries.append(q)
@@ -88,7 +91,7 @@ def _client(db):
 
 
 def test_both_feeds_need_a_key_that_may_find_subs():
-    for url in (EVENTS, MARKETS):
+    for url in (EVENTS, MARKETS, CHANGES):
         db = FakeDB(rows=[EVENT])
         assert _client(db).get(url).status_code == 401
         assert _client(FakeDB(rows=[EVENT], find=False)).get(url, headers=H).status_code == 403
@@ -200,3 +203,57 @@ def test_a_failed_read_answers_502_with_the_class_only():
 def test_no_rows_is_an_empty_list():
     r = _client(FakeDB(rows=None)).get(MARKETS, headers=H)
     assert r.json() == {"count": 0, "offset": 0, "next_offset": None, "events": []}
+
+
+def test_events_name_search_matches_every_word():
+    """Asked 2026-11-21: "A name search on /tm/events, so we don't have to keep a full copy"."""
+    db = FakeDB(rows=[EVENT])
+    r = _client(db).get(EVENTS, headers=H, params={"q": "  Beyoncé  AC/DC o'Hare x "})
+    assert r.status_code == 200
+    calls = db.queries[0].calls
+    # lower case, accents removed, split on anything that is not a letter or digit; one letter is dropped
+    assert [c[2] for c in calls if c[:2] == ("ilike", tm_feed.SEARCH_COLUMN)] == ["%beyonce%", "%ac%", "%dc%", "%hare%"]
+    assert tm_feed.SEARCH_COLUMN not in tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS   # filtered on, not returned
+    db = FakeDB(rows=[EVENT])
+    _client(db).get(EVENTS, headers=H, params={"q": "a1 b2 c3 d4 e5 f6 g7 h8"})
+    assert len([c for c in db.queries[0].calls if c[:2] == ("ilike", tm_feed.SEARCH_COLUMN)]) == tm_feed.MAX_WORDS
+    db = FakeDB(rows=[EVENT])
+    assert _client(db).get(EVENTS, headers=H, params={"q": "  "}).status_code == 200     # blank: no search
+    assert not any(c[:2] == ("ilike", tm_feed.SEARCH_COLUMN) for c in db.queries[0].calls)
+    for bad in ("%_*", "x", "k" * 81):
+        db = FakeDB(rows=[EVENT])
+        r = _client(db).get(EVENTS, headers=H, params={"q": bad})
+        assert r.status_code == 422 and "q" in r.json()["detail"] and db.tables == []
+
+
+def test_changes_page_by_change_id_and_filter_by_kind():
+    """Asked 2026-11-21: "A way to get events whose status or time changed"."""
+    db = FakeDB(rows=[CHANGE])
+    r = _client(db).get(CHANGES, headers=H)
+    assert r.status_code == 200 and r.json() == {"count": 1, "next_after_id": None, "changes": [CHANGE]}
+    calls = db.queries[0].calls
+    assert db.tables == [tm_feed.CHANGES_VIEW] and calls[0] == ("select", ",".join(tm_feed.CHANGE_COLUMNS))
+    assert ("order", "change_id") in calls and ("limit", 1000) in calls
+    assert not any(c[0] in ("gt", "gte", "in_") for c in calls)    # no filter was asked for
+    db = FakeDB(rows=[CHANGE])
+    r = _client(db).get(CHANGES, headers=H, params={"after_id": "40", "since": "2026-11-21T00:00:00Z",
+                                                    "kind": "Status_Changed, time_changed", "limit": 1})
+    assert r.status_code == 200 and r.json()["next_after_id"] == 41   # a full page: resume after the last id
+    calls = db.queries[0].calls
+    for want in (("gt", "change_id", 40), ("gte", "detected_at", "2026-11-21T00:00:00+00:00"),
+                 ("in_", "kind", ["status_changed", "time_changed"]), ("limit", 1)):
+        assert want in calls
+    r = _client(FakeDB(rows=[CHANGE])).get(CHANGES, headers=H, params={"format": "csv"})
+    assert r.headers["content-type"].startswith("text/csv") and "tm_changes.csv" in r.headers["content-disposition"]
+    assert r.text.split("\r\n")[0].startswith("change_id,detected_at,kind,old_value,new_value,tm_event_id")
+    assert _client(FakeDB(rows=None)).get(CHANGES, headers=H).json()["changes"] == []
+
+
+def test_changes_refuse_a_bad_parameter_and_report_a_failed_read():
+    for bad in ({"after_id": "-1"}, {"after_id": "x"}, {"kind": "price_changed"}, {"format": "xml"}, {"limit": "0"},
+                {"since": "yesterday"}):
+        db = FakeDB(rows=[CHANGE])
+        r = _client(db).get(CHANGES, headers=H, params=bad)
+        assert r.status_code == 422 and r.json()["error"] == "invalid" and db.tables == []
+    r = _client(FakeDB(table_exc=RuntimeError("boom"))).get(CHANGES, headers=H)
+    assert r.status_code == 502 and r.json() == {"error": "upstream_error", "detail": "RuntimeError"}

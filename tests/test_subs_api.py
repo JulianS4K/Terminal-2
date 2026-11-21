@@ -554,9 +554,11 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
     assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
     for n in news:
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
-    assert "ticket_limit_count" in news[0]["text"] and "/tm/markets" in news[1]["text"] and "/tm/events" in news[2]["text"]
-    assert "orders still in play" in news[3]["text"] and "buy key is now registered" in news[4]["text"]
-    assert "Accessible seats" in news[5]["text"] and "mlb/changes" in news[6]["text"] and "minor league" in news[7]["text"]
+    assert "/tm/changes" in news[0]["text"] and "/tm/events?q=" in news[1]["text"]
+    assert "no longer answers 502" in news[2]["text"]
+    assert "ticket_limit_count" in news[3]["text"] and "/tm/markets" in news[4]["text"] and "/tm/events" in news[5]["text"]
+    assert "orders still in play" in news[6]["text"] and "buy key is now registered" in news[7]["text"]
+    assert "Accessible seats" in news[8]["text"] and "mlb/changes" in news[9]["text"] and "minor league" in news[10]["text"]
 
 
 def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
