@@ -40,9 +40,9 @@ address, coordinates, market, box office, parking and accessibility notes.
 2026-11-21: "A way to get events whose status or time changed"; mig 20261121171530). A change is
 seen when the collector next re-reads the event.
 
-The events come from Ticketmaster's Discovery catalogue, collected by `tm_discovery_tick` under a
-hard budget of 100 calls a day (mig 20261117180000): names, dates, venues, status and on-sale
-dates. No prices and no inventory. The views are mig 20261118220530. This module only answers the
+The events come from Ticketmaster's Discovery catalogue, collected by `tm_discovery_tick` under two
+hard budgets a day, 1,000 calls for discovery and 250 for re-reading the near days (migs
+20261117180000, 20261121223530): names, dates, venues, status and on-sale dates. No prices and no inventory. The views are mig 20261118220530. This module only answers the
 query: it reads our own tables and makes no upstream call (RULE 2).
 """
 from __future__ import annotations
