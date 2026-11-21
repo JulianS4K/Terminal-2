@@ -74,5 +74,5 @@ stub_95_feed.sql
 stub_96_n2s_outcome.sql
 20261120171030_n2s_autobuy_crm_push.sql
 stub_97_n2s_enqueue.sql
-20261121060000_n2s_autobuy_evo_monthly_cap.sql
+20261121060000_n2s_autobuy_monthly_cap.sql
 STEPS

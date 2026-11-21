@@ -497,13 +497,16 @@ deployed. `'own'` undoes it at once.
   that would otherwise go through but would cross it is blocked and **all buying auto-stops**
   (`project_stopped`, with `project_stopped_reason`), as does reaching the cap exactly; while
   stopped every buy is blocked `stopped_pending_review` until the operator runs
-  `n2s_autobuy_resume([new_cap])`. **EVO's project cap is per calendar month** (operator
-  2026-11-21: "5000 a month", "auto resets monthly"; mig `20261121060000`): for an EVO sub only
-  buys created this month (America/New_York) count against `project_cap_usd` ($5,000), and a stop
-  that cap made in an earlier month is lifted by the first would-buy of the new month (any other
-  stop stays). GoTickets keeps its lifetime `gt_project_cap_usd`. The same day EVO's other limits
-  were set to $1,000 per order and per day, with no run or buys-per-day limit (`live_runs_allowed`
-  and `max_buys_per_day` 1000000; GoTickets still has its one live run). Shadow and a future live mode count separately. A live row
+  `n2s_autobuy_resume([new_cap])`. **The project cap is one cap per calendar month for EVO and
+  GoTickets together** (operator 2026-11-21: "5000 a month", "auto resets monthly", "add go tickets
+  to the $5000 month limiter but separate daily and per order limiters"; mig `20261121060000`):
+  every EVO and GoTickets buy created this month (America/New_York) counts against
+  `project_cap_usd` ($5,000), whichever market the new cover is on; `gt_project_cap_usd` is no
+  longer read. A stop the cap made in an earlier month (`project_stopped` or `gt_project_stopped`,
+  by its reason text) is lifted by the first would-buy of the new month; any other stop stays.
+  Per-order and daily caps stay per market: $1,000 each for EVO and for GoTickets (set
+  2026-11-21). EVO has no run or buys-per-day limit (`live_runs_allowed` and `max_buys_per_day`
+  1000000); GoTickets still has its one live run. Shadow and a future live mode count separately. A live row
   that stopped before anything was bought (phase `stopped`, no purchase id) counts toward none of
   the caps, buy counts or "already bought" checks (mig `20261116180000`; before it, exec 8's
   unsent $449.68 blocked the next cover over the daily and project caps). EVO buys come

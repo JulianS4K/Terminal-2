@@ -1,8 +1,9 @@
--- Stand-ins for the N2S auto-buy enqueue (lane D7) as it is in production, for the EVO monthly
--- project cap (mig 20261121060000): the columns and helpers n2s_autobuy_enqueue_trg() reads, and
--- the function itself, as 20261113400000 + 20261116180000 + 20261117013000 left it. The
--- migration's md5 guard (83d1d69b24bd3c5e6188383f79751c45) passes only if this copy equals
--- production's. Seller window, venue tax, market cutoff and event lead are fixed stand-ins.
+-- Stand-ins for the N2S auto-buy enqueue (lane D7) as it is in production, for the monthly
+-- project cap (mig 20261121060000): the columns and helpers n2s_autobuy_enqueue_trg() and
+-- n2s_autobuy_job_json() read, and both functions, as 20261113400000 + 20261116180000 +
+-- 20261113470000 + 20261117013000 left them. The migration's md5 guards
+-- (83d1d69b24bd3c5e6188383f79751c45, 5376a0f8ca2751037518061a884a7425) pass only if these copies
+-- equal production's. Seller window, venue tax, market cutoff and event lead are fixed stand-ins.
 ALTER TABLE public.n2s_autobuy_exec
   ADD COLUMN IF NOT EXISTS cutoff_s integer, ADD COLUMN IF NOT EXISTS cutoff_source text,
   ADD COLUMN IF NOT EXISTS sale_deadline timestamptz, ADD COLUMN IF NOT EXISTS spend_today_before numeric,
@@ -269,3 +270,42 @@ CREATE TRIGGER n2s_autobuy_enqueue_trg
   AFTER INSERT ON public.n2s_gt_order_dryrun
   FOR EACH ROW WHEN (NEW.decision = 'would_buy' AND NEW.n2s_id > 0)
   EXECUTE FUNCTION public.n2s_autobuy_enqueue_trg();
+CREATE OR REPLACE FUNCTION public.n2s_autobuy_job_json(p_exec_id bigint, p_action text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  c      public.n2s_autobuy_config%ROWTYPE;
+  e      public.n2s_autobuy_exec%ROWTYPE;
+  v_sale text;
+  v_gt   boolean;
+  v_gt_event bigint;
+BEGIN
+  SELECT * INTO e FROM public.n2s_autobuy_exec WHERE exec_id = p_exec_id;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  SELECT * INTO c FROM public.n2s_autobuy_config WHERE id;
+  SELECT n2s_order_key INTO v_sale FROM public.n2s_items WHERE n2s_id = e.n2s_id;
+  v_gt := (e.sub_source = 'gotickets');
+  SELECT d.gt_event_id INTO v_gt_event FROM public.n2s_gt_order_dryrun d WHERE d.dryrun_id = e.dryrun_id;
+
+  RETURN jsonb_build_object(
+    'action', p_action,
+    'row', to_jsonb(e) || jsonb_build_object('sale_order_key', v_sale, 'gt_event_id', v_gt_event),
+    'cfg', jsonb_build_object(
+      -- this sub source's caps (20261113400000: GoTickets has its own)
+      'per_order_cap_usd', CASE WHEN v_gt THEN c.gt_per_order_cap_usd ELSE c.per_order_cap_usd END,
+      'daily_cap_usd', CASE WHEN v_gt THEN c.gt_daily_cap_usd ELSE c.daily_cap_usd END,
+      'max_buys_per_day', c.max_buys_per_day, 'max_failures_per_day', c.max_failures_per_day,
+      'approval_over_usd', c.approval_over_usd,
+      'project_cap_usd', CASE WHEN v_gt THEN c.gt_project_cap_usd ELSE c.project_cap_usd END,
+      'min_event_lead_s', extract(epoch FROM public.n2s_autobuy_event_lead(c, e.event_start_utc))::int,
+      'min_confirm_window_s', c.min_confirm_window_s, 'buy_sources', to_jsonb(c.buy_sources),
+      'evo_buyer_office_id', c.evo_buyer_office_id, 'evo_reviewer_id', c.evo_reviewer_id,
+      'evo_email_address_id', c.evo_email_address_id,
+      'tax_quote', c.tax_quote,
+      'gt_buyer_email', c.gt_buyer_email, 'gt_buyer_phone', c.gt_buyer_phone,
+      'gt_billing_address', c.gt_billing_address, 'gt_recipient', c.gt_recipient,
+      'gt_gift_card_ids', to_jsonb(c.gt_gift_card_ids)));
+END $function$;
