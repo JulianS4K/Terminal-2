@@ -32,6 +32,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/mlb/schedule?team=&season=&since=       every MLB game with the club's direct ticket link + EVO / terminal event (routers/mlb_feed.py)
   GET  /api/v1/subs/tm/events?date_from=&segment=&since=    Ticketmaster's catalogue of upcoming events + the EVO event each matched (routers/tm_feed.py)
   GET  /api/v1/subs/tm/markets?site=&since=                 the other sites each mapped Ticketmaster event pairs to (routers/tm_feed.py)
+  GET  /api/v1/subs/tm/changes?after_id=&kind=              changes to a Ticketmaster event's status, date, time or venue (routers/tm_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
@@ -91,6 +92,7 @@ from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
 from routers.mlb_feed import changes_response as mlb_changes_response
 from routers.mlb_feed import events_response as mlb_events_response
 from routers.mlb_feed import schedule_response as mlb_schedule_response
+from routers.tm_feed import changes_response as tm_changes_response
 from routers.tm_feed import events_response as tm_events_response
 from routers.tm_feed import markets_response as tm_markets_response
 
@@ -624,6 +626,14 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         "the sites it pairs to ... as a seperate get call"). Same keys as /mlb/schedule."""
         denied = _mlb_reader(request, "tm_markets")
         return denied or tm_markets_response(get_db(), request.query_params)
+
+    @router.get("/tm/changes")
+    def tm_changes(request: Request):
+        """Every change we detected to a Ticketmaster event's status, date, start time or venue, with
+        the old and the new value (asked 2026-11-21: "A way to get events whose status or time
+        changed"; mig 20261121171530). Page with after_id. Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "tm_changes")
+        return denied or tm_changes_response(get_db(), request.query_params)
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):

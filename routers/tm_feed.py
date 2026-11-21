@@ -8,6 +8,8 @@ the sites it pairs to vivid, seatgeek, tickpick etc when it maps as a seperate g
     GET /api/v1/subs/tm/markets     one row per event that matched an EVO event, with the id of the
                                     same event on SeatGeek, Vivid Seats, TickPick, StubHub, GoTickets
                                     and AXS where we can pair it (view v_tm_discovery_markets)
+    GET /api/v1/subs/tm/changes     every change we detected to an event's status, date, start time
+                                    or venue, oldest first (view v_tm_discovery_changes)
 
 Both take:
         ?date_from=2026-11-20&date_to=2026-11-30
@@ -18,6 +20,8 @@ Both take:
         &format=json|csv         (default json)
         &limit=1000&offset=0     (limit max 5000)
 /tm/events also takes  &mapped=true|false  (matched to an EVO event or not)
+                       &q=knicks garden    a search: every word must be in the event's name, its
+                                           teams or performers, its venue or its city (mig 20261121171530)
                        &products=true      include parking, add-ons and packages (left out by default)
                        &safetix=true|false only events with (or without) SafeTix
                        &detail=false       only the core columns, about a quarter of the size
@@ -28,6 +32,13 @@ end, access and doors times; notes; teams or performers with their links; add-on
 address, coordinates, market, box office, parking and accessibility notes.
 /tm/markets also takes &site=vivid         only events paired to that site: seatgeek | vivid |
                                            tickpick | stubhub | gotickets | axs
+/tm/changes takes      &after_id=120       resume after the last change_id you read (or &since=)
+                       &kind=status_changed,time_changed   status_changed | date_changed | time_changed |
+                                           venue_changed
+                       &format=json|csv&limit=1000
+`since` on /tm/events also returns an event whose status, date, time or venue changed (asked
+2026-11-21: "A way to get events whose status or time changed"; mig 20261121171530). A change is
+seen when the collector next re-reads the event.
 
 The events come from Ticketmaster's Discovery catalogue, collected by `tm_discovery_tick` under a
 hard budget of 100 calls a day (mig 20261117180000): names, dates, venues, status and on-sale
@@ -37,12 +48,20 @@ query: it reads our own tables and makes no upstream call (RULE 2).
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from routers.mlb_feed import _bool, _csv, _date, _err, _paging, _since
 
 EVENT_VIEW = "v_tm_discovery_feed"
 MARKET_VIEW = "v_tm_discovery_markets"
+CHANGES_VIEW = "v_tm_discovery_changes"
+CHANGE_KINDS = ("status_changed", "date_changed", "time_changed", "venue_changed")
+CHANGE_COLUMNS = ("change_id", "detected_at", "kind", "old_value", "new_value", "tm_event_id", "name", "event_date",
+                  "start_local_time", "status", "segment", "venue_name", "venue_city", "venue_state", "ticket_url",
+                  "tevo_event_id")
+SEARCH_COLUMN = "search_text"          # lower case, accents removed; filtered on, never returned
+MAX_QUERY, MAX_WORDS = 80, 6
 STATUSES = ("onsale", "offsale", "cancelled", "postponed", "rescheduled")
 SITES = {"seatgeek": "seatgeek_event_id", "vivid": "vivid_event_id", "tickpick": "tickpick_event_id",
          "stubhub": "stubhub_event_id", "gotickets": "gotickets_event_id", "axs": "axs_event_id"}
@@ -87,6 +106,22 @@ def _common(q: Any) -> dict:
             "date_from": _date(q.get("date_from")), "date_to": _date(q.get("date_to")), "since": _since(q.get("since"))}
 
 
+def _words(q: str | None) -> list[str]:
+    """The words of a search, as `search_text` holds them: lower case, accents removed, letters and
+    digits only ("AC/DC" is `ac` and `dc`). One-letter words are dropped. Raises ValueError("q")
+    when the text is too long or holds nothing to search for."""
+    text = (q or "").strip()
+    if not text:
+        return []
+    if len(text) > MAX_QUERY:
+        raise ValueError("q")
+    folded = "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+    words = [w for w in re.findall(r"[a-z0-9]+", folded) if len(w) > 1][:MAX_WORDS]
+    if not words:
+        raise ValueError("q")
+    return words
+
+
 def _filtered(sel: Any, f: dict) -> Any:
     if f["date_from"]:
         sel = sel.gte("event_date", f["date_from"])
@@ -121,6 +156,7 @@ def events_response(db: Any, params: Any) -> Any:
         f = _common(params)
         mapped, products = _bool(params.get("mapped")), _bool(params.get("products"))
         safetix, detail = _bool(params.get("safetix")), _bool(params.get("detail"))
+        words = _words(params.get("q"))
     except (ValueError, KeyError) as exc:
         return _err(422, "invalid", f"invalid parameter: {exc}")
     columns = EVENT_COLUMNS if detail is False else EVENT_COLUMNS + DETAIL_COLUMNS
@@ -133,6 +169,8 @@ def events_response(db: Any, params: Any) -> Any:
         sel = sel.eq("is_product", False)
     if safetix is not None:
         sel = sel.eq("safetix", safetix)
+    for word in words:                     # every word, anywhere in name, performers, venue or city
+        sel = sel.ilike(SEARCH_COLUMN, f"%{word}%")
     return _answer(sel, f, columns, "events", "tm_events.csv")
 
 
@@ -149,3 +187,38 @@ def markets_response(db: Any, params: Any) -> Any:
     if site:
         sel = sel.not_.is_(SITES[site], "null")
     return _answer(sel, f, MARKET_COLUMNS, "events", "tm_markets.csv")
+
+
+def changes_response(db: Any, params: Any) -> Any:
+    """GET /tm/changes: each change to an event's status, date, start time or venue, oldest first.
+    `next_after_id` is the cursor for the next page."""
+    q = params
+    try:
+        after_id = int(q["after_id"]) if q.get("after_id") else None
+        if after_id is not None and after_id < 0:
+            raise ValueError("after_id")
+        since = _since(q.get("since"))
+        kinds = [k.strip().lower() for k in (q.get("kind") or "").split(",") if k.strip()]
+        if any(k not in CHANGE_KINDS for k in kinds):
+            raise ValueError("kind")
+        fmt = (q.get("format") or "json").strip().lower()
+        if fmt not in ("json", "csv"):
+            raise ValueError("format")
+        limit, _ = _paging(q)
+    except (ValueError, KeyError) as exc:
+        return _err(422, "invalid", f"invalid parameter: {exc}")
+    sel = db.table(CHANGES_VIEW).select(",".join(CHANGE_COLUMNS))
+    if after_id is not None:
+        sel = sel.gt("change_id", after_id)
+    if since:
+        sel = sel.gte("detected_at", since)
+    if kinds:
+        sel = sel.in_("kind", kinds)
+    try:
+        rows = sel.order("change_id").limit(limit).execute().data or []
+    except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
+        return _err(502, "upstream_error", type(exc).__name__)
+    if fmt == "csv":
+        return _csv(rows, CHANGE_COLUMNS, "tm_changes.csv")
+    nxt = rows[-1]["change_id"] if len(rows) == limit else None
+    return {"count": len(rows), "next_after_id": nxt, "changes": rows}

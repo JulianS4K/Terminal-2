@@ -23,6 +23,8 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-21** New: `GET /tm/changes` lists each change to a Ticketmaster event's status, date, start time or venue, with the old and the new value, so you can catch a cancellation without reading the catalogue again. Page with `after_id`. The same changes now move `changed_at`, so `since` on `GET /tm/events` returns a changed event too. Logging starts today (section 6h).
+- **2026-11-21** New: `GET /tm/events?q=` searches the catalogue by name: every word must be in the event's name, its teams or performers, its venue or its city. Case and accents do not matter. It combines with the date, segment, state and status filters, so you need not keep a full copy to look an event up.
 - **2026-11-21** `GET /tm/markets` no longer answers 502 on a wide request. Asking for every pairing at once, or for a month, used to run past our time limit; the whole feed now answers in a few seconds, so you can read it page by page with no date filter. If you split your reads into small date windows to get round this, you no longer need to. Same columns, same values.
 - **2026-11-18** `GET /tm/events` now carries everything Ticketmaster returns for an event. Buying: the ticket limit as a number (`ticket_limit_count`, with `ticket_limit_numbers` when presale and public limits differ), `safetix` (tickets move by Ticketmaster transfer only), `all_in_pricing` and when the public sale ends. Also end, access and doors times, notes, teams or performers with their links, add-ons such as parking, and the venue's address, coordinates, market, box office, parking and accessibility notes. `safetix=true` filters; `detail=false` returns the smaller core row (section 6h).
 - **2026-11-18** New: `GET /tm/markets` lists, for each Ticketmaster event we have matched to an EVO event, the id of the same event on SeatGeek, Vivid Seats, TickPick, StubHub, GoTickets and AXS where we can pair it. One row per event, `site=` to ask for one site, `since` for what changed (section 6h).
@@ -79,6 +81,7 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 | `GET /mlb/schedule?since=` | every MLB club's games (and, with `level`, every minor league club's), this season and next: teams, venue, start time, the club's direct ticket link, and the EVO event and terminal event each game maps to. Not tied to an order; it fills itself in as clubs release times and links ([§6g](#6g-the-mlb-schedule-with-ticket-links)) |
 | `GET /tm/events?since=` | Ticketmaster's catalogue of upcoming US events with the EVO event each matched ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /tm/markets?since=` | for each matched Ticketmaster event, its id on SeatGeek, Vivid Seats, TickPick, StubHub, GoTickets and AXS ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
+| `GET /tm/changes?after_id=` | each change to a Ticketmaster event's status, date, start time or venue, with the old and the new value ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /ping`, `GET /docs` | your scopes, the address we see you call from, the limits your buys are held to, and this guide with its version |
 | `GET /health` | whether S4K's side is working: one overall status and one for each thing you depend on, with when it last ran ([§2](#2-access-keys-limits-errors)) |
 
@@ -770,7 +773,8 @@ One row per upcoming Ticketmaster event.
 | `products` | `true` to include parking, add-ons and packages. They are left out by default |
 | `safetix` | `true`: only events with SafeTix. `false`: only those without |
 | `detail` | `false` for the core columns only (the example below), about a quarter of the size. By default every column comes back |
-| `since` | only rows first seen, or matched, at or after this instant |
+| `q` | a search, up to 80 characters: every word must be in the event's name, its teams or performers, its venue or its city. Case and accents do not matter (`beyonce` finds Beyoncé). Combine it with any other filter |
+| `since` | only rows first seen, matched, or whose status, date, start time or venue changed, at or after this instant |
 | `format`, `limit`, `offset` | `json` or `csv`; up to 5000 (default 1000); `next_offset` is null on the last page |
 
 ```json
@@ -850,6 +854,31 @@ One row per Ticketmaster event that matched an EVO event, with the id of the sam
 - `sites_paired` counts the six site ids that are set (EVO itself is not counted). `seatgeek_url` is set only where we hold SeatGeek's page for that id.
 - Each id comes from our own event map, built by matching each site's catalogue to the EVO event. A pairing can be added later, so sync with `since`.
 - An event that is in `/tm/events` but not here has not matched an EVO event yet.
+
+### What changed: `GET /api/v1/subs/tm/changes`
+
+One row per change to an event's status, date, start time or venue, oldest first, so you can catch a cancellation or a moved time without reading the catalogue again. Logging began on 2026-11-21; there is nothing from before.
+
+| Query | Meaning |
+|---|---|
+| `after_id` | only changes after this `change_id`; pass `next_after_id` from the previous page |
+| `since` | only changes detected at or after this instant |
+| `kind` | one or more of `status_changed`, `date_changed`, `time_changed`, `venue_changed`, comma separated |
+| `format`, `limit` | `json` or `csv`; up to 5000 (default 1000); `next_after_id` is null on the last page |
+
+```json
+{"count": 1, "next_after_id": null, "changes": [
+ {"change_id": 41, "detected_at": "2026-11-21T18:00:00+00:00", "kind": "status_changed",
+  "old_value": "onsale", "new_value": "cancelled", "tm_event_id": "vvG1zZ_8p3fAa6",
+  "name": "Atlanta Hawks vs. Charlotte Hornets", "event_date": "2026-11-20", "start_local_time": "19:00",
+  "status": "cancelled", "segment": "Sports", "venue_name": "State Farm Arena", "venue_city": "Atlanta",
+  "venue_state": "GA", "ticket_url": "https://www.ticketmaster.com/event/0E00650592505247", "tevo_event_id": 3464939}]}
+```
+
+- `old_value` and `new_value` are the status, the date (`YYYY-MM-DD` or `TBD`), the start time (`HH:MM` or `TBA`) or the venue with its city and state. The other fields are the event as it is now.
+- `detected_at` is when we next read the event from Ticketmaster and saw the difference, not when Ticketmaster made the change.
+- The same changes move `changed_at` on `/tm/events`, so `since` there returns a changed event too. Use whichever fits: `/tm/changes` tells you what changed.
+- An event Ticketmaster stops listing is not a change here: its `last_seen_at` on `/tm/events` simply stops moving.
 
 ## 7. Buy a cover
 
