@@ -79,7 +79,7 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 | `GET /settings/limits` | your own limits on rebates and buys as they stand ([§6f](#6f-your-own-limits-on-rebates-and-buys)) |
 | `GET /audit?since=` | every buy, offer and limit change asked with your keys, with the address each call came from ([§6e](#6e-the-audit-log)) |
 | `GET /mlb/schedule?since=` | every MLB club's games (and, with `level`, every minor league club's), this season and next: teams, venue, start time, the club's direct ticket link, and the EVO event and terminal event each game maps to. Not tied to an order; it fills itself in as clubs release times and links ([§6g](#6g-the-mlb-schedule-with-ticket-links)) |
-| `GET /tm/events?since=` | Ticketmaster's catalogue of upcoming US events with the EVO event each matched ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
+| `GET /tm/events?since=` | Ticketmaster's catalogue of upcoming US and Canadian events with the EVO event each matched ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /tm/markets?since=` | for each matched Ticketmaster event, its id on SeatGeek, Vivid Seats, TickPick, StubHub, GoTickets and AXS ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /tm/changes?after_id=` | each change to a Ticketmaster event's status, date, start time or venue, with the old and the new value ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /ping`, `GET /docs` | your scopes, the address we see you call from, the limits your buys are held to, and this guide with its version |
@@ -755,9 +755,13 @@ Concerts and other live events at MLB and minor league ballparks, from the same 
 
 ## 6h. Ticketmaster's events and the sites they pair to
 
-Two read-only feeds from Ticketmaster's own event catalogue (its Discovery API). Any key that may find subs may read them, with that key's rate and quota. They carry names, dates, venues, status and on-sale dates: **no prices and no inventory**.
+Three read-only feeds from Ticketmaster's own event catalogue (its Discovery API): the events, the sites each matched event pairs to, and what changed. Any key that may find subs may read them, with that key's rate and quota. They carry names, dates, venues, status and on-sale dates: **no prices and no inventory**.
 
-We collect the catalogue slowly on purpose: at most 100 calls a day to Ticketmaster, about 13 weeks ahead, US only, Sports first, then Music and Arts & Theatre. A first fill takes a few days, and each week is re-read once a week after that. An event Ticketmaster changes (a new time, a cancellation) shows the change after its next re-read.
+How the catalogue is collected decides how fresh a row is, so read `last_seen_at` on each event: it is when we last read that event from Ticketmaster.
+
+- **The first fill.** On 2026-11-19 we read every day of the next 400 days once, for the US and Canada: Sports, Music, and Arts & Theatre. Those day-by-day reads are not repeated.
+- **The weekly re-read.** After that we re-read the next 13 weeks, US only, one week and one segment at a time, each once a week, within a budget of 100 calls a day to Ticketmaster. Ticketmaster returns at most 1,000 events for one such read, so a busy week is re-read only in part.
+- **What that means for you.** A new US event in the next 13 weeks, or a change to one (a new time, a cancellation), shows within about a week. An event further out, a Canadian event, or one outside the part of a busy week that was re-read, stays as it was when we last read it until a later re-read reaches it. `GET /tm/changes` and `since` can only report a change once the event has been read again.
 
 ### Events: `GET /api/v1/subs/tm/events`
 
