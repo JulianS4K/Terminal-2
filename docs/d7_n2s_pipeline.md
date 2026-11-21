@@ -501,13 +501,14 @@ deployed. `'own'` undoes it at once.
   GoTickets together** (operator 2026-11-21: "5000 a month", "auto resets monthly", "add go tickets
   to the $5000 month limiter but separate daily and per order limiters"; mig `20261121060000`):
   every EVO and GoTickets buy created this month (America/New_York) counts against
-  `project_cap_usd` ($5,000, raised to **$10,000** the same day: "Remove lifetime cap for both and
-  change to 10k"), whichever market the new cover is on; `gt_project_cap_usd` is no
+  `project_cap_usd` ($5,000, then $10,000 the same day: "Remove lifetime cap for both and change
+  to 10k", then **$4,000**: "Actually set per month to $4000, remove buy count limit"), whichever
+  market the new cover is on; `gt_project_cap_usd` is no
   longer read. A stop the cap made in an earlier month (`project_stopped` or `gt_project_stopped`,
   by its reason text) is lifted by the first would-buy of the new month; any other stop stays.
   Per-order and daily caps stay per market: $1,000 each for EVO and for GoTickets (set
-  2026-11-21). EVO has no run or buys-per-day limit (`live_runs_allowed` and `max_buys_per_day`
-  1000000); GoTickets still has its one live run. Shadow and a future live mode count separately. A live row
+  2026-11-21). Neither market has a run or buys-per-day limit (`live_runs_allowed`,
+  `gt_live_runs_allowed` and `max_buys_per_day` 1000000; GoTickets' one test run lifted the same day). Shadow and a future live mode count separately. A live row
   that stopped before anything was bought (phase `stopped`, no purchase id) counts toward none of
   the caps, buy counts or "already bought" checks (mig `20261116180000`; before it, exec 8's
   unsent $449.68 blocked the next cover over the daily and project caps). EVO buys come
