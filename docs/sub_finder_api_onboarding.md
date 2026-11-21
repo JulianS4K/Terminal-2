@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-21** Ticketmaster events are now read again on a schedule, so `GET /tm/changes` fills and `since` on `GET /tm/events` picks up changes: today's and tomorrow's events every 6 hours, about the next two weeks once a day, and everything out to 400 days about every three days. Until today an event was read once and a later cancellation was not seen (section 6h).
 - **2026-11-21** New: `GET /tm/changes` lists each change to a Ticketmaster event's status, date, start time or venue, with the old and the new value, so you can catch a cancellation without reading the catalogue again. Page with `after_id`. The same changes now move `changed_at`, so `since` on `GET /tm/events` returns a changed event too. Logging starts today (section 6h).
 - **2026-11-21** New: `GET /tm/events?q=` searches the catalogue by name: every word must be in the event's name, its teams or performers, its venue or its city. Case and accents do not matter. It combines with the date, segment, state and status filters, so you need not keep a full copy to look an event up.
 - **2026-11-21** `GET /tm/markets` no longer answers 502 on a wide request. Asking for every pairing at once, or for a month, used to run past our time limit; the whole feed now answers in a few seconds, so you can read it page by page with no date filter. If you split your reads into small date windows to get round this, you no longer need to. Same columns, same values.
@@ -759,9 +760,10 @@ Three read-only feeds from Ticketmaster's own event catalogue (its Discovery API
 
 How the catalogue is collected decides how fresh a row is, so read `last_seen_at` on each event: it is when we last read that event from Ticketmaster.
 
-- **The first fill.** On 2026-11-19 we read every day of the next 400 days once, for the US and Canada: Sports, Music, and Arts & Theatre. Those day-by-day reads are not repeated.
-- **The weekly re-read.** After that we re-read the next 13 weeks, US only, one week and one segment at a time, each once a week, within a budget of 100 calls a day to Ticketmaster. Ticketmaster returns at most 1,000 events for one such read, so a busy week is re-read only in part.
-- **What that means for you.** A new US event in the next 13 weeks, or a change to one (a new time, a cancellation), shows within about a week. An event further out, a Canadian event, or one outside the part of a busy week that was re-read, stays as it was when we last read it until a later re-read reaches it. `GET /tm/changes` and `since` can only report a change once the event has been read again.
+- **What we read.** One read per day, per segment (Sports, Music, Arts & Theatre) and per country (US and Canada), for each of the next 400 days. The horizon moves forward a day at a time.
+- **How often.** Today's and tomorrow's events every 6 hours. About the next two weeks once a day. Every day out to 400 days about once every three days. That is at most 1,250 calls a day to Ticketmaster: 250 for the near days, 1,000 for the rest.
+- **What that means for you.** A cancellation or a moved time for an event today or tomorrow shows within about 6 hours, for the next two weeks within a day, and for anything further out within about three days. A new event shows within about three days of Ticketmaster listing it. `GET /tm/changes` and `since` report a change once the event has been read again; `detected_at` is that moment.
+- **One limit.** Ticketmaster returns at most 1,000 events for one read. A few of the busiest days have more in one segment; the events past the first 1,000 of such a day are not read.
 
 ### Events: `GET /api/v1/subs/tm/events`
 
