@@ -507,7 +507,10 @@ deployed. `'own'` undoes it at once.
   longer read. A stop the cap made in an earlier month (`project_stopped` or `gt_project_stopped`,
   by its reason text) is lifted by the first would-buy of the new month; any other stop stays.
   Per-order and daily caps stay per market: for EVO and for GoTickets each, $2,000 per order and
-  $2,500 per day (set 2026-11-21; covers over `approval_over_usd`, $1,000, still wait for approval). Neither market has a run or buys-per-day limit (`live_runs_allowed`,
+  $2,500 per day (set 2026-11-21). A cover over `approval_over_usd` ($1,000) waits for approval only
+  when its event starts within `approval_free_lead` (24 hours) of queueing (operator 2026-11-21:
+  "Remove approval for anything over 24 hours away"; mig `20261121063000`); `n2s_autobuy_job_json`
+  hands the worker an `approval_over_usd` of 1000000000 for the rows that need none. Neither market has a run or buys-per-day limit (`live_runs_allowed`,
   `gt_live_runs_allowed` and `max_buys_per_day` 1000000; GoTickets' one test run lifted the same day). Shadow and a future live mode count separately. A live row
   that stopped before anything was bought (phase `stopped`, no purchase id) counts toward none of
   the caps, buy counts or "already bought" checks (mig `20261116180000`; before it, exec 8's
