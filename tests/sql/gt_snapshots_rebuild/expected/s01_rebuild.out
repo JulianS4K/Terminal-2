@@ -1,0 +1,29 @@
+before: rows=7 policy_parked=true cron=1
+init -> evidence rows=0
+evidence -> copy rows=2
+copy -> index_pk rows=2
+index_pk -> index_captured rows=0
+index_captured -> index_event_time rows=0
+index_event_time -> finish rows=0
+cutoff is 15 days ago; window_from is 30 min ago; evidence_rows=2 copied_rows=2
+finish -> analyze rows=2
+analyze -> done rows=0
+again: done
+live: 201,201,301,302,401,501
+old:  101,201,201,202,301,302,401,501,601
+new table gone: true
+state: phase=done evidence_rows=2 copied_rows=4 ticks=8 swapped=true done=true error=-
+live indexes: gotickets_listings_snapshots_pkey,idx_gt_ls_captured,idx_gt_ls_event_time
+old indexes:  gotickets_listings_snapshots_old_pkey,idx_gt_ls_captured_old,idx_gt_ls_event_time_old
+pk: gotickets_listings_snapshots_pkey PRIMARY KEY (gt_event_id, captured_at, gt_listing_id)
+options: autovacuum_vacuum_scale_factor=0.02,autovacuum_vacuum_insert_scale_factor=0.05,autovacuum_analyze_scale_factor=0.02
+grants: service_role insert=true coworker_readonly select=true analyst_ro select=true anon select=false authenticated select=false
+comment mentions rebuild: true; old comment: true
+policy: parked=false error=- clean_runs=0 notes_rebuilt=true notes_parked=true
+cron left: 0
+view: phase=done cron_scheduled=false old_size_known=true new_size_known=false
+after a drain: live=7 old=9
+psql:s01_rebuild.sql:98: NOTICE:  drop while not done: guard refused
+old still there before the drop migration: true
+psql:../../../../supabase/migrations/20261122030100_gt_snapshots_drop_old.sql:27: NOTICE:  gt_snapshots_drop_old: dropped public.gotickets_listings_snapshots_old
+old after the drop migration: false; live rows=7
