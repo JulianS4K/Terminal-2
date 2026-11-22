@@ -25,6 +25,10 @@ Both take:
                        &products=true      include parking, add-ons and packages (left out by default)
                        &safetix=true|false only events with (or without) SafeTix
                        &detail=false       only the core columns, about a quarter of the size
+                       &primary=true|false Ticketmaster itself is the seller (true), or it is a resale page or
+                                           another ticketer's event (false); events not in the bulk feed match neither
+                       &source=tmr         one seller type as the bulk feed names it: ticketmaster | tmr (resale) |
+                                           universe | ticketweb | third-party primary | frontgate | other
 /tm/events carries everything Ticketmaster returns for the event (operator 2026-11-18: "add and push
 all of them out including buy limits", mig 20261118223540): the ticket limit as its sentence, the
 numbers in it and the single limit when there is one; SafeTix and all-in pricing; on-sale end;
@@ -40,9 +44,11 @@ address, coordinates, market, box office, parking and accessibility notes.
 2026-11-21: "A way to get events whose status or time changed"; mig 20261121171530). A change is
 seen when the collector next re-reads the event, which is once a week.
 
-The events come from Ticketmaster's Discovery catalogue, collected by `tm_discovery_tick` under two
-hard budgets a day, 1,000 calls for discovery and 250 for re-reading known days, each event once a
-week (migs 20261117180000, 20261121223530, 20261122015530): names, dates, venues, status and on-sale dates. No prices and no inventory. The views are mig 20261118220530. This module only answers the
+The events come from Ticketmaster's bulk Discovery Feed, loaded once a day (core/tm_feed_sync.py,
+mig 20261122030530), which also says who really sells each event (`source`, `tm_primary`). The
+search API is called only for Ticketmaster-primary events that are new or changed, for the detail
+the feed lacks (ticket limit, SafeTix, presales), under two hard budgets a day, 1,000 calls and 250
+(migs 20261117180000, 20261121223530): names, dates, venues, status and on-sale dates. No prices and no inventory. The views are mig 20261118220530. This module only answers the
 query: it reads our own tables and makes no upstream call (RULE 2).
 """
 from __future__ import annotations
@@ -80,6 +86,13 @@ DETAIL_COLUMNS = ("public_onsale_end", "ticket_limit_numbers", "ticket_limit_cou
                   "attractions", "products", "venue_address", "venue_postal_code", "venue_latitude",
                   "venue_longitude", "venue_url", "venue_markets", "venue_upcoming_events", "venue_box_office",
                   "venue_parking", "venue_general_info", "venue_accessible_seating", "venue_ada")
+# what Ticketmaster's bulk feed adds (mig 20261122030530): who really sells the event, the ids
+# Ticketmaster's own pages use, and the seat map link and outlets the collector now keeps
+FEED_COLUMNS = ("source", "tm_primary", "official_seller", "brand_name", "transactable", "hot_event",
+                "legacy_event_id", "legacy_venue_id", "promoter_names", "in_feed", "seatmap_url", "outlets",
+                "detail_read_at")
+SLIM_FEED_COLUMNS = ("source", "tm_primary")       # the two that come with detail=false as well
+_SOURCE = re.compile(r"^[a-z][a-z -]{1,29}$")
 MARKET_COLUMNS = ("tm_event_id", "name", "event_date", "start_local_time", "status", "segment", "genre", "venue_name",
                   "venue_city", "venue_state", "ticketmaster_url", "tevo_event_id", "tevo_event_name",
                   "tevo_match_method", "seatgeek_event_id", "seatgeek_url", "vivid_event_id", "tickpick_event_id",
@@ -138,9 +151,9 @@ def _filtered(sel: Any, f: dict) -> Any:
     return sel
 
 
-def _answer(sel: Any, f: dict, columns: tuple, key: str, filename: str) -> Any:
+def _answer(sel: Any, f: dict, columns: tuple, key: str, filename: str, id_column: str = "tm_event_id") -> Any:
     try:
-        rows = (sel.order("event_date").order("start_local_time").order("tm_event_id")
+        rows = (sel.order("event_date").order("start_local_time").order(id_column)
                 .range(f["offset"], f["offset"] + f["limit"] - 1).execute().data) or []
     except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
         return _err(502, "upstream_error", type(exc).__name__)
@@ -157,9 +170,14 @@ def events_response(db: Any, params: Any) -> Any:
         mapped, products = _bool(params.get("mapped")), _bool(params.get("products"))
         safetix, detail = _bool(params.get("safetix")), _bool(params.get("detail"))
         words = _words(params.get("q"))
+        primary = _bool(params.get("primary"))
+        source = (params.get("source") or "").strip().lower()
+        if source and not _SOURCE.match(source):
+            raise ValueError("source")
     except (ValueError, KeyError) as exc:
         return _err(422, "invalid", f"invalid parameter: {exc}")
-    columns = EVENT_COLUMNS if detail is False else EVENT_COLUMNS + DETAIL_COLUMNS
+    columns = (EVENT_COLUMNS + SLIM_FEED_COLUMNS if detail is False
+               else EVENT_COLUMNS + DETAIL_COLUMNS + FEED_COLUMNS)
     sel = _filtered(db.table(EVENT_VIEW).select(",".join(columns)), f)
     if mapped is True:
         sel = sel.not_.is_("tevo_event_id", "null")
@@ -169,6 +187,10 @@ def events_response(db: Any, params: Any) -> Any:
         sel = sel.eq("is_product", False)
     if safetix is not None:
         sel = sel.eq("safetix", safetix)
+    if primary is not None:                # Ticketmaster itself sells it (the feed's SOURCE), or does not
+        sel = sel.eq("tm_primary", primary)
+    if source:
+        sel = sel.eq("source", source)
     for word in words:                     # every word, anywhere in name, performers, venue or city
         sel = sel.ilike(SEARCH_COLUMN, f"%{word}%")
     return _answer(sel, f, columns, "events", "tm_events.csv")

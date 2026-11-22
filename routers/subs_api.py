@@ -33,6 +33,8 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/tm/events?date_from=&segment=&since=    Ticketmaster's catalogue of upcoming events + the EVO event each matched (routers/tm_feed.py)
   GET  /api/v1/subs/tm/markets?site=&since=                 the other sites each mapped Ticketmaster event pairs to (routers/tm_feed.py)
   GET  /api/v1/subs/tm/changes?after_id=&kind=              changes to a Ticketmaster event's status, date, time or venue (routers/tm_feed.py)
+  GET  /api/v1/subs/axs/events?primary=&q=&since=           AXS's events, by default the ones AXS itself sells (routers/primary_feed.py)
+  GET  /api/v1/subs/seatgeek/events?q=&since=               the events SeatGeek tickets as the primary seller (routers/primary_feed.py)
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
@@ -92,6 +94,8 @@ from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
 from routers.mlb_feed import changes_response as mlb_changes_response
 from routers.mlb_feed import events_response as mlb_events_response
 from routers.mlb_feed import schedule_response as mlb_schedule_response
+from routers.primary_feed import axs_response as axs_events_response
+from routers.primary_feed import seatgeek_response as seatgeek_events_response
 from routers.tm_feed import changes_response as tm_changes_response
 from routers.tm_feed import events_response as tm_events_response
 from routers.tm_feed import markets_response as tm_markets_response
@@ -634,6 +638,22 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         changed"; mig 20261121171530). Page with after_id. Same keys as /mlb/schedule."""
         denied = _mlb_reader(request, "tm_changes")
         return denied or tm_changes_response(get_db(), request.query_params)
+
+    @router.get("/axs/events")
+    def axs_events(request: Request):
+        """Every live upcoming AXS event we hold, by default only the ones AXS itself sells, with the EVO
+        event each matched (operator 2026-11-22: "push out axs and SeatGeek primary in API"; mig
+        20261122031530). Same keys as /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "axs_events")
+        return denied or axs_events_response(get_db(), request.query_params)
+
+    @router.get("/seatgeek/events")
+    def seatgeek_events(request: Request):
+        """The upcoming events where SeatGeek is the primary ticketer, from the SeatGeek events we hold,
+        with the EVO event each matched (operator 2026-11-22; mig 20261122031530). Same keys as
+        /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "seatgeek_events")
+        return denied or seatgeek_events_response(get_db(), request.query_params)
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):

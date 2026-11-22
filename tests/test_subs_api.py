@@ -554,12 +554,14 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
     assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
     for n in news:
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
-    assert "once a week each" in news[0]["text"] and "read again on a schedule" in news[1]["text"]
-    assert "/tm/changes" in news[2]["text"] and "/tm/events?q=" in news[3]["text"]
-    assert "no longer answers 502" in news[4]["text"]
-    assert "ticket_limit_count" in news[5]["text"] and "/tm/markets" in news[6]["text"] and "/tm/events" in news[7]["text"]
-    assert "orders still in play" in news[8]["text"] and "buy key is now registered" in news[9]["text"]
-    assert "Accessible seats" in news[10]["text"] and "mlb/changes" in news[11]["text"] and "minor league" in news[12]["text"]
+    assert "/axs/events" in news[0]["text"] and "/seatgeek/events" in news[0]["text"]
+    assert "tm_primary" in news[1]["text"] and "daily bulk file" in news[2]["text"]
+    assert "read again on a schedule" in news[3]["text"]
+    assert "/tm/changes" in news[4]["text"] and "/tm/events?q=" in news[5]["text"]
+    assert "no longer answers 502" in news[6]["text"]
+    assert "ticket_limit_count" in news[7]["text"] and "/tm/markets" in news[8]["text"] and "/tm/events" in news[9]["text"]
+    assert "orders still in play" in news[10]["text"] and "buy key is now registered" in news[11]["text"]
+    assert "Accessible seats" in news[12]["text"] and "mlb/changes" in news[13]["text"] and "minor league" in news[14]["text"]
 
 
 def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):

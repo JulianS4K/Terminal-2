@@ -106,7 +106,7 @@ def test_events_default_is_real_events_only_and_pages():
     calls = db.queries[0].calls
     # every column by default: the core ones, then everything else Ticketmaster returns
     assert db.tables == [tm_feed.EVENT_VIEW]
-    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS))
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS + tm_feed.FEED_COLUMNS))
     assert not any(c[:2] == ("eq", "safetix") for c in calls)      # SafeTix was not asked about
     assert ("eq", "is_product", False) in calls                    # parking and add-ons are left out
     assert ("range", 0, 999) in calls and ("order", "event_date") in calls and ("order", "tm_event_id") in calls
@@ -144,16 +144,16 @@ def test_events_detail_and_buy_limit_columns():
     db = FakeDB(rows=[EVENT])
     assert _client(db).get(EVENTS, headers=H, params={"detail": "false", "safetix": "true"}).status_code == 200
     calls = db.queries[0].calls
-    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS)) and ("eq", "safetix", True) in calls
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.SLIM_FEED_COLUMNS)) and ("eq", "safetix", True) in calls
     db = FakeDB(rows=[EVENT])
     _client(db).get(EVENTS, headers=H, params={"detail": "true", "safetix": "false"})
     calls = db.queries[0].calls
-    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS))
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS + tm_feed.FEED_COLUMNS))
     assert ("eq", "safetix", False) in calls
     # the CSV header follows the columns asked for
     full = _client(FakeDB(rows=[EVENT])).get(EVENTS, headers=H, params={"format": "csv"}).text.split("\r\n")[0]
     slim = _client(FakeDB(rows=[EVENT])).get(EVENTS, headers=H, params={"format": "csv", "detail": "false"}).text.split("\r\n")[0]
-    assert full.endswith("venue_ada") and slim.endswith("changed_at") and "ticket_limit_count" in full
+    assert full.endswith("detail_read_at") and slim.endswith("changed_at,source,tm_primary") and "ticket_limit_count" in full
 
 
 def test_markets_lists_the_paired_sites_and_filters_by_site():
@@ -257,3 +257,25 @@ def test_changes_refuse_a_bad_parameter_and_report_a_failed_read():
         assert r.status_code == 422 and r.json()["error"] == "invalid" and db.tables == []
     r = _client(FakeDB(table_exc=RuntimeError("boom"))).get(CHANGES, headers=H)
     assert r.status_code == 502 and r.json() == {"error": "upstream_error", "detail": "RuntimeError"}
+
+
+def test_events_carry_who_sells_them_and_filter_by_it():
+    """Operator 2026-11-22: "Add the new info to the tm API except images" and "only poll tm primary events"."""
+    for col in ("source", "tm_primary", "official_seller", "transactable", "hot_event", "legacy_event_id",
+                "legacy_venue_id", "promoter_names", "in_feed", "seatmap_url", "outlets", "detail_read_at"):
+        assert col in tm_feed.FEED_COLUMNS
+    assert not any("image" in c for c in tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS + tm_feed.FEED_COLUMNS)
+    assert not set(tm_feed.FEED_COLUMNS) & set(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS)
+    db = FakeDB(rows=[EVENT])
+    assert _client(db).get(EVENTS, headers=H).status_code == 200
+    assert not any(c[:2] in (("eq", "tm_primary"), ("eq", "source")) for c in db.queries[0].calls)   # not asked
+    db = FakeDB(rows=[EVENT])
+    assert _client(db).get(EVENTS, headers=H, params={"primary": "true", "source": "Ticketmaster"}).status_code == 200
+    assert ("eq", "tm_primary", True) in db.queries[0].calls and ("eq", "source", "ticketmaster") in db.queries[0].calls
+    db = FakeDB(rows=[EVENT])
+    _client(db).get(EVENTS, headers=H, params={"primary": "false", "source": "third-party primary"})
+    assert ("eq", "tm_primary", False) in db.queries[0].calls and ("eq", "source", "third-party primary") in db.queries[0].calls
+    for bad in ({"source": "tm;drop"}, {"source": "x"}, {"primary": "maybe"}):
+        db = FakeDB(rows=[EVENT])
+        r = _client(db).get(EVENTS, headers=H, params=bad)
+        assert r.status_code == 422 and db.tables == []

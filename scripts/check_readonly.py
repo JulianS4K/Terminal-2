@@ -138,6 +138,10 @@ CLIENT_FILES = {
     # StubHub API — our own seller account's sales/listings, GET-only; the OAuth logins run in
     # SQL (mig 20261113250040), never in Python. Operator 2026-11-13: "keep … read only".
     "stubhub_client.py": frozenset({"GET"}),
+    # Ticketmaster Discovery Feed — one public .csv.gz per country, downloaded from the address the
+    # feed list named (the list itself is a GET made in SQL, where the key lives). Operator
+    # 2026-11-22. GET-only; nothing is ever written to Ticketmaster or its feed bucket.
+    "tm_feed_client.py": frozenset({"GET"}),
 }
 
 # Exact path-allowlist literals a write-capable client must declare. Widening either
