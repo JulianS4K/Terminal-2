@@ -1,4 +1,4 @@
--- Migration 20261122031530 · level:data-collection · lane:D0 (outbound feed; reads the A1 data plane's tables) · writes:v_axs_events_feed(new),v_seatgeek_primary_feed(new) · reads:axs_export_event,sg_events_canonical,events · pre:20261103090000 (axs_export_event)
+-- Migration 20261122031530 · level:data-collection · lane:D0 (outbound feed; reads the A1 data plane's tables) · writes:v_axs_events_feed(new),v_seatgeek_primary_feed(new),sg_events_canonical(+index sg_events_canonical_open_idx) · reads:axs_export_event,sg_events_canonical,events · pre:20261103090000 (axs_export_event)
 --
 -- AXS EVENTS AND SEATGEEK-PRIMARY EVENTS AS TWO OUTBOUND FEEDS.
 -- Operator 2026-11-22: "Also push out axs and SeatGeek primary in API and announce in news".
@@ -18,6 +18,7 @@
 -- Each view is created only where its table exists, so a build from zero does not fail here.
 --
 -- rollback: DROP VIEW public.v_axs_events_feed; DROP VIEW public.v_seatgeek_primary_feed;
+--           DROP INDEX public.sg_events_canonical_open_idx;
 
 DO $do$
 DECLARE
@@ -113,6 +114,19 @@ BEGIN
     EXECUTE 'GRANT SELECT ON public.v_seatgeek_primary_feed TO service_role';
   ELSE
     RAISE NOTICE 'sg_events_canonical is not here: v_seatgeek_primary_feed is not created';
+  END IF;
+END
+$do$;
+
+-- SeatGeek's record of an event is a large JSON document. Finding the few SeatGeek-primary events by reading
+-- every document took 9 to 13 seconds on a cold cache, past the API's 8-second limit; this small partial index
+-- holds only those events, by date.
+DO $do$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'sg_events_canonical' AND column_name = 'raw_event_jsonb') THEN
+    CREATE INDEX IF NOT EXISTS sg_events_canonical_open_idx ON public.sg_events_canonical (sg_event_date)
+      WHERE ((raw_event_jsonb ->> 'is_open') = 'true');
   END IF;
 END
 $do$;
