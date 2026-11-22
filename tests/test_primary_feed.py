@@ -96,7 +96,8 @@ def test_both_feeds_need_a_key_that_may_find_subs():
 def test_axs_serves_the_events_axs_sells_unless_asked_otherwise():
     db = FakeDB(rows=[AXS_ROW])
     r = _client(db).get(AXS, headers=H)
-    assert r.status_code == 200 and r.json() == {"count": 1, "offset": 0, "next_offset": None, "events": [AXS_ROW]}
+    assert r.status_code == 200 and r.json() == {"count": 1, "offset": 0, "next_offset": None,
+                                                 "events": [{**AXS_ROW, **dict.fromkeys(pf.AXS_MARKET_IDS)}]}
     calls = db.queries[0].calls
     assert db.tables == [pf.AXS_VIEW] and calls[0] == ("select", ",".join(pf.AXS_COLUMNS))
     assert ("eq", "axs_primary", True) in calls and ("order", "axs_event_id") in calls and ("range", 0, 999) in calls
@@ -127,7 +128,7 @@ def test_filters_reach_the_view():
 def test_seatgeek_serves_its_primary_events_and_csv():
     db = FakeDB(rows=[SG_ROW])
     r = _client(db).get(SG, headers=H)
-    assert r.status_code == 200 and r.json()["events"] == [SG_ROW]
+    assert r.status_code == 200 and r.json()["events"] == [{**SG_ROW, **dict.fromkeys(pf.SEATGEEK_MARKET_IDS)}]
     calls = db.queries[0].calls
     assert db.tables == [pf.SEATGEEK_VIEW] and calls[0] == ("select", ",".join(pf.SEATGEEK_COLUMNS))
     assert ("order", "sg_event_id") in calls and not any(c[:2] == ("eq", "axs_primary") for c in calls)

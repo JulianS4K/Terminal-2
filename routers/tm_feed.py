@@ -57,6 +57,7 @@ import re
 import unicodedata
 from typing import Any
 
+from routers import feed_xmap
 from routers.mlb_feed import _bool, _csv, _date, _err, _paging, _since
 
 EVENT_VIEW = "v_tm_discovery_feed"
@@ -93,6 +94,8 @@ FEED_COLUMNS = ("source", "tm_primary", "official_seller", "brand_name", "transa
                 "detail_read_at")
 SLIM_FEED_COLUMNS = ("source", "tm_primary")       # the two that come with detail=false as well
 _SOURCE = re.compile(r"^[a-z][a-z -]{1,29}$")
+# the same event's id on the other marketplaces, on every /tm/events row (routers/feed_xmap.py)
+MARKET_ID_COLUMNS = feed_xmap.columns("ticketmaster_event_id")
 MARKET_COLUMNS = ("tm_event_id", "name", "event_date", "start_local_time", "status", "segment", "genre", "venue_name",
                   "venue_city", "venue_state", "ticketmaster_url", "tevo_event_id", "tevo_event_name",
                   "tevo_match_method", "seatgeek_event_id", "seatgeek_url", "vivid_event_id", "tickpick_event_id",
@@ -151,10 +154,16 @@ def _filtered(sel: Any, f: dict) -> Any:
     return sel
 
 
-def _answer(sel: Any, f: dict, columns: tuple, key: str, filename: str, id_column: str = "tm_event_id") -> Any:
+def _answer(sel: Any, f: dict, columns: tuple, key: str, filename: str, id_column: str = "tm_event_id",
+            xmap: tuple | None = None) -> Any:
+    """One page of a feed. `xmap` = (db, source, columns): the same event's id on the other
+    marketplaces, added to every row (routers/feed_xmap.py)."""
     try:
         rows = (sel.order("event_date").order("start_local_time").order(id_column)
                 .range(f["offset"], f["offset"] + f["limit"] - 1).execute().data) or []
+        if xmap:
+            rows = feed_xmap.add(xmap[0], rows, xmap[1], id_column, xmap[2])
+            columns = columns + xmap[2]
     except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
         return _err(502, "upstream_error", type(exc).__name__)
     if f["fmt"] == "csv":
@@ -193,7 +202,7 @@ def events_response(db: Any, params: Any) -> Any:
         sel = sel.eq("source", source)
     for word in words:                     # every word, anywhere in name, performers, venue or city
         sel = sel.ilike(SEARCH_COLUMN, f"%{word}%")
-    return _answer(sel, f, columns, "events", "tm_events.csv")
+    return _answer(sel, f, columns, "events", "tm_events.csv", xmap=(db, "ticketmaster", MARKET_ID_COLUMNS))
 
 
 def markets_response(db: Any, params: Any) -> Any:

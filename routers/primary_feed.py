@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from routers import feed_xmap
 from routers.mlb_feed import _bool, _date, _err, _paging, _since
 from routers.tm_feed import _STATE, _answer, _words
 
@@ -41,6 +42,9 @@ SEATGEEK_COLUMNS = ("sg_event_id", "name", "category", "status", "event_date", "
                     "venue_country", "ticket_url", "seatgeek_open_id", "seatgeek_primary", "tevo_event_id",
                     "tevo_event_name", "tevo_match_method", "terminal_path", "first_seen_at", "last_seen_at",
                     "changed_at")
+# the same event's id on the other marketplaces, on every row (routers/feed_xmap.py)
+AXS_MARKET_IDS = feed_xmap.columns("axs_event_id")
+SEATGEEK_MARKET_IDS = feed_xmap.columns("seatgeek_event_id")
 
 
 def _params(q: Any) -> dict:
@@ -84,7 +88,8 @@ def axs_response(db: Any, params: Any) -> Any:
         return _err(422, "invalid", f"invalid parameter: {exc}")
     sel = _filtered(db.table(AXS_VIEW).select(",".join(AXS_COLUMNS)), f)
     sel = sel.eq("axs_primary", primary is not False)      # AXS itself sells it, unless primary=false
-    return _answer(sel, f, AXS_COLUMNS, "events", "axs_events.csv", id_column="axs_event_id")
+    return _answer(sel, f, AXS_COLUMNS, "events", "axs_events.csv", id_column="axs_event_id",
+                   xmap=(db, "axs", AXS_MARKET_IDS))
 
 
 def seatgeek_response(db: Any, params: Any) -> Any:
@@ -94,4 +99,5 @@ def seatgeek_response(db: Any, params: Any) -> Any:
     except (ValueError, KeyError) as exc:
         return _err(422, "invalid", f"invalid parameter: {exc}")
     sel = _filtered(db.table(SEATGEEK_VIEW).select(",".join(SEATGEEK_COLUMNS)), f)
-    return _answer(sel, f, SEATGEEK_COLUMNS, "events", "seatgeek_events.csv", id_column="sg_event_id")
+    return _answer(sel, f, SEATGEEK_COLUMNS, "events", "seatgeek_events.csv", id_column="sg_event_id",
+                   xmap=(db, "seatgeek", SEATGEEK_MARKET_IDS))
