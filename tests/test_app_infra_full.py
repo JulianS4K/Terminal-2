@@ -1308,6 +1308,79 @@ def test_gt_sub_offer_loop_off_by_default_then_ticks_and_survives_errors(monkeyp
     assert ticks["n"] == 2 and app_module._gt_sub_offer_last["error"] == "db blip"
 
 
+def test_tm_feed_sync_tick_runs_one_load_and_only_retries_the_batches(monkeypatch):
+    import anyio
+    from core import tm_feed_sync
+    seen = {}
+
+    class _Res:
+        def __init__(self, data):
+            self.data = data
+
+        def execute(self):
+            return self
+
+    class _Sb:
+        def rpc(self, name, params):
+            seen.setdefault("rpc", []).append(name)
+            return _Res({"name": name})
+
+    def _run(rpc, client, workdir):
+        import os as _os
+        seen["client"], seen["dir_exists"] = client.__name__, _os.path.isdir(workdir)
+        seen["check"], seen["load"] = rpc("tm_feed_check", {}), rpc("tm_feed_load", {})
+        return {"action": "loaded", "files": []}
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb())
+    monkeypatch.setattr(tm_feed_sync, "run", _run)
+    retried = []
+    monkeypatch.setattr(app_module, "asyncio", app_module.asyncio)
+    from core import n2s_autobuy_live
+
+    def _retrying(rpc):
+        def call(name, params):
+            retried.append(name)
+            return rpc(name, params)
+        return call
+    monkeypatch.setattr(n2s_autobuy_live, "retrying", _retrying)
+    out = anyio.run(app_module._tm_feed_sync_tick)
+    assert out == {"action": "loaded", "files": []} and app_module._tm_feed_sync_last["result"] == out
+    assert seen["client"] == "tm_feed_client" and seen["dir_exists"] is True
+    assert seen["rpc"] == ["tm_feed_check", "tm_feed_load"] and retried == ["tm_feed_load"]   # the check is never retried
+    monkeypatch.setattr(tm_feed_sync, "run", lambda *_a: {"action": "idle", "skipped": None})
+    assert anyio.run(app_module._tm_feed_sync_tick)["action"] == "idle"
+
+
+def test_tm_feed_sync_loop_off_by_default_then_runs_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.delenv("TM_FEED_SYNC_LIVE", raising=False)
+    monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")                 # another worker's flag does not turn this on
+    anyio.run(app_module._tm_feed_sync_loop)  # returns at once
+    monkeypatch.setenv("TM_FEED_SYNC_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("s3 blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_tm_feed_sync_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._tm_feed_sync_loop)
+    assert ticks["n"] == 2 and app_module._tm_feed_sync_last["error"] == "s3 blip"
+
+
 def test_gt_sub_offer_status_route(client, monkeypatch):
     monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")
     r = client.get("/api/admin/gt-sub-offer/status")

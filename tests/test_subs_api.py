@@ -554,12 +554,62 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
     assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
     for n in news:
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
-    assert "once a week each" in news[0]["text"] and "read again on a schedule" in news[1]["text"]
-    assert "/tm/changes" in news[2]["text"] and "/tm/events?q=" in news[3]["text"]
-    assert "no longer answers 502" in news[4]["text"]
-    assert "ticket_limit_count" in news[5]["text"] and "/tm/markets" in news[6]["text"] and "/tm/events" in news[7]["text"]
-    assert "orders still in play" in news[8]["text"] and "buy key is now registered" in news[9]["text"]
-    assert "Accessible seats" in news[10]["text"] and "mlb/changes" in news[11]["text"] and "minor league" in news[12]["text"]
+    assert "id on each marketplace" in news[0]["text"] and "xmap_tevo_event_id" in news[0]["text"]
+    assert "matching gates" in news[1]["text"] and "GET /gates" in news[1]["text"]
+    assert "/axs/events" in news[2]["text"] and "/seatgeek/events" in news[2]["text"]
+    assert "tm_primary" in news[3]["text"] and "daily bulk file" in news[4]["text"]
+    assert "read again on a schedule" in news[5]["text"]
+    assert "/tm/changes" in news[6]["text"] and "/tm/events?q=" in news[7]["text"]
+    assert "no longer answers 502" in news[8]["text"]
+    assert "ticket_limit_count" in news[9]["text"] and "/tm/markets" in news[10]["text"] and "/tm/events" in news[11]["text"]
+    assert "orders still in play" in news[12]["text"] and "buy key is now registered" in news[13]["text"]
+    assert "Accessible seats" in news[14]["text"] and "mlb/changes" in news[15]["text"] and "minor league" in news[16]["text"]
+
+
+def test_gates_are_served_from_the_guide_and_match_the_matcher():
+    """Operator 2026-11-22: "announce our gates in news and push out in API". GET /gates reads the
+    guide's section 8; the labels must be the ones the matcher writes."""
+    s.crm_doc.cache_clear()
+    c = _client(FakeDB(rpc_data={"sub_finder_access": {"find": True}}))
+    assert c.get("/api/v1/subs/gates").status_code == 401
+    r = c.get("/api/v1/subs/gates", headers=H)
+    assert r.status_code == 200
+    body = r.json()
+    gates = body["gates"]
+    assert [g["gate"] for g in gates] == [1, 2, 3, 4, 5, 6]
+    assert [g["needs_buyer_ok"] for g in gates] == [False, False, True, True, True, True]
+    for g in gates:
+        assert set(g) == {"gate", "label", "seats", "cost", "needs_buyer_ok", "what_we_do"}
+        assert g["seats"] and g["cost"] and g["what_we_do"]
+    assert "never bought by us" in gates[2]["what_we_do"] and "shown to you only" in gates[5]["what_we_do"]
+    assert body["docs"] == {"version": s.crm_doc(s.DOC_PATH)["version"], "url": "/api/v1/subs/docs"}
+    # the matcher's own text (sub_finder_match): every gate label and every added word is in it
+    sql = (s.DOC_PATH.parent.parent / "tests" / "sql" / "sub_finder" / "functions" / "sub_finder_match.sql").read_text(encoding="utf-8")
+    for g in gates:
+        assert f"WHEN {g['gate']} THEN '{g['label']}'" in sql
+    words = [w["word"] for w in body["label_words"]]
+    assert words == ["zone unverified", "obstructed view", "single ticket", "repost single", "no sale price",
+                     "row letters differ"]
+    for w in words:
+        assert f"' {w}'" in sql
+    assert all(w["meaning"] for w in body["label_words"])
+    # the guide's own news names every gate, and the ping carries it
+    news = c.get("/api/v1/subs/ping", headers=H).json()["news"]
+    announced = next(n["text"] for n in news if "matching gates" in n["text"])
+    assert all(f"`{g['label']}`" in announced for g in gates)
+    # a key that may not find subs is refused; with no guide on the deploy the lists are empty
+    assert _client(FakeDB(rpc_data={"sub_finder_access": {"find": False}})).get(
+        "/api/v1/subs/gates", headers=H).status_code == 403
+    s.crm_doc.cache_clear()
+
+
+def test_gates_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
+    monkeypatch.setattr(s, "DOC_PATH", tmp_path / "missing.md")
+    s.crm_doc.cache_clear()
+    r = _client(FakeDB(rpc_data={"sub_finder_access": {"find": True}})).get("/api/v1/subs/gates", headers=H)
+    assert r.status_code == 200
+    assert r.json() == {"gates": [], "label_words": [], "docs": {"version": None, "url": "/api/v1/subs/docs"}}
+    s.crm_doc.cache_clear()
 
 
 def test_ping_and_docs_without_a_guide_on_the_deploy(tmp_path, monkeypatch):
