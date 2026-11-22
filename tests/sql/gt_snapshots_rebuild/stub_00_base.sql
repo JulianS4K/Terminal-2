@@ -57,6 +57,8 @@ VALUES ('gotickets_listings_snapshots', 15, 10,
         $k$EXISTS (SELECT 1 FROM public.deal_listing_spell s WHERE s.source = 'gotickets' AND s.listing_id = t.gt_listing_id)$k$,
         'GoTickets Pro-API listings firehose — 15d.', 'query_canceled (statement_timeout)', NULL);
 
+CREATE TABLE public.retention_run_log (id bigserial PRIMARY KEY, run_at timestamptz NOT NULL DEFAULT now(), table_name text NOT NULL, cutoff timestamptz, deleted bigint, duration_ms int, note text);
+
 -- pg_cron
 CREATE SCHEMA cron;
 CREATE TABLE cron.job (jobid bigserial PRIMARY KEY, jobname text UNIQUE, schedule text, command text, active boolean NOT NULL DEFAULT true);
