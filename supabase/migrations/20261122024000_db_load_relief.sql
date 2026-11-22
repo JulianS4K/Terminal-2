@@ -1,4 +1,5 @@
 -- Migration 20261122024000 · level:platform · lane:A1 (operator-routed: "Investigate stalls and fix") · writes:build_venue_section_map_run,cron.job(394,638,167,415,636,690) · reads:venue_section_map_build_state,seatmap_manifest,events · pre:none
+-- Already applied to prod · via MCP 2026-11-22 02:51 UTC (prod version 20261122025124; operator: "Apply all")
 --
 -- Stop the database from doing ~89 hours a day of work it then throws away.
 --
