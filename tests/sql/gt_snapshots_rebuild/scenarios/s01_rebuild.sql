@@ -93,6 +93,18 @@ SELECT 'grants: service_role insert=' || has_table_privilege('service_role', 'pu
        || ' analyst_ro select=' || has_table_privilege('analyst_ro', 'public.gotickets_listings_snapshots', 'SELECT')
        || ' anon select=' || has_table_privilege('anon', 'public.gotickets_listings_snapshots', 'SELECT')
        || ' authenticated select=' || has_table_privilege('authenticated', 'public.gotickets_listings_snapshots', 'SELECT');
+-- the partitions are closed to anon / authenticated (Supabase's default grants would have opened them by name) and carry
+-- RLS; the parent path still reads for the roles the parent grants
+SELECT 'partitions closed: anon_can_select_any=' || bool_or(has_table_privilege('anon', i.inhrelid, 'SELECT')) || ' authenticated_can_select_any=' || bool_or(has_table_privilege('authenticated', i.inhrelid, 'SELECT'))
+       || ' rls_on_all=' || bool_and(c.relrowsecurity) || ' n=' || count(*)
+  FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE i.inhparent = 'public.gotickets_listings_snapshots'::regclass;
+SET ROLE coworker_readonly;
+SELECT 'coworker_readonly via parent: rows=' || count(*) FROM public.gotickets_listings_snapshots;
+DO $$ BEGIN
+  BEGIN PERFORM count(*) FROM public.gotickets_listings_snapshots_default; RAISE NOTICE 'coworker_readonly read a partition directly';
+  EXCEPTION WHEN insufficient_privilege THEN RAISE NOTICE 'coworker_readonly direct partition read: denied'; END;
+END $$;
+RESET ROLE;
 SELECT 'comment mentions rebuild: ' || (obj_description('public.gotickets_listings_snapshots'::regclass) LIKE '%Rebuilt online%')
        || '; old comment: ' || (obj_description('public.gotickets_listings_snapshots_old'::regclass) LIKE '%Dropped by mig 20261122030100%');
 

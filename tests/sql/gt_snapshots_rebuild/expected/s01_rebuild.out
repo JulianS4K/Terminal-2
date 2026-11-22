@@ -22,6 +22,9 @@ pk: gotickets_listings_snapshots_pkey PRIMARY KEY (gt_event_id, captured_at, gt_
 every partition has 3 indexes: true
 partition options: autovacuum_vacuum_scale_factor=0.02,autovacuum_vacuum_insert_scale_factor=0.05,autovacuum_analyze_scale_factor=0.02
 grants: service_role insert=true coworker_readonly select=true analyst_ro select=true anon select=false authenticated select=false
+partitions closed: anon_can_select_any=false authenticated_can_select_any=false rls_on_all=true n=24
+coworker_readonly via parent: rows=7
+psql:s01_rebuild.sql:106: NOTICE:  coworker_readonly direct partition read: denied
 comment mentions rebuild: true; old comment: true
 policy: enabled=false parked=false error=- clean_runs=0 notes_rebuilt=true notes_parked=true
 crons: gt_snapshots_partition_hourly [7 * * * *]
@@ -36,7 +39,7 @@ after the drop: live=201,201,302,303,401,501,701,801 DEFAULT=201,201,303 day_par
 run log: rows=14 deleted=1 kept_noted=1
 policy after: last_deleted=1 total_deleted=1 swept=true
 partition tick: created=0 dropped=0 deleted=0
-psql:s01_rebuild.sql:135: NOTICE:  drop while not done: guard refused
+psql:s01_rebuild.sql:147: NOTICE:  drop while not done: guard refused
 old still there before the drop migration: true
 psql:../../../../supabase/migrations/20261122030100_gt_snapshots_drop_old.sql:27: NOTICE:  gt_snapshots_drop_old: dropped public.gotickets_listings_snapshots_old
 old after the drop migration: false; live rows=8

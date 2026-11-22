@@ -9,6 +9,9 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='analyst_ro') THEN CREATE ROLE analyst_ro; END IF;
 END $$;
 
+-- Supabase's default privileges: a new table in public is granted to anon / authenticated / service_role unless revoked
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+
 -- the firehose (mig 20260804230000 + the autovacuum options of 20260911235000)
 CREATE TABLE public.gotickets_listings_snapshots (
   tevo_event_id     bigint,

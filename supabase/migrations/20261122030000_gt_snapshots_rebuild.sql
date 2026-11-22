@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS public.gotickets_listings_snapshots_default
   WITH (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_insert_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02);
 COMMENT ON TABLE public.gotickets_listings_snapshots_default IS
   'gotickets_listings_snapshots DEFAULT partition (mig 20261122030000): the deal evidence (keep_where rows whose day partition was dropped) and rows for days without a partition yet.';
+-- a partition is its own relation in `public`, reachable by name through PostgREST, and the project's default privileges
+-- would grant anon / authenticated on it (the parent revokes them): every partition is closed on creation and carries
+-- RLS with no policy, so only the parent path (its grants) and the service roles reach the rows
+REVOKE ALL ON public.gotickets_listings_snapshots_default FROM PUBLIC, anon, authenticated;
+ALTER TABLE public.gotickets_listings_snapshots_default ENABLE ROW LEVEL SECURITY;
 
 -- ───────────────────────── 2. partitions: one UTC day each ─────────────────────────
 -- Creates the day partition if missing: a standalone table of the parent''s shape, any rows for that day the DEFAULT
@@ -109,6 +114,7 @@ DECLARE
   v_name text := 'gotickets_listings_snapshots_p' || to_char(p_day, 'YYYYMMDD');
   v_lo   timestamptz := (p_day::timestamp AT TIME ZONE 'UTC');
   v_hi   timestamptz := ((p_day + 1)::timestamp AT TIME ZONE 'UTC');
+  v_role text;
 BEGIN
   IF current_user NOT IN ('service_role', 'postgres', 'supabase_admin') THEN
     RAISE EXCEPTION 'forbidden: gt_snapshots_partition_ensure is service-only' USING ERRCODE = '42501';
@@ -116,6 +122,13 @@ BEGIN
   IF to_regclass('public.' || v_name) IS NOT NULL THEN RETURN v_name; END IF;
   EXECUTE format('CREATE TABLE public.%I (LIKE %s INCLUDING DEFAULTS INCLUDING STORAGE) WITH (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_insert_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02)',
                  v_name, p_parent::text);
+  -- closed on creation (see the DEFAULT partition): the project's default privileges must not open a partition to
+  -- anon / authenticated through PostgREST; RLS with no policy as the second layer. The parent's grants are the read path.
+  EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC', v_name);
+  FOR v_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated') LOOP
+    EXECUTE format('REVOKE ALL ON public.%I FROM %I', v_name, v_role);
+  END LOOP;
+  EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', v_name);
   IF to_regclass('public.gotickets_listings_snapshots_default') IS NOT NULL
      AND EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = 'public.gotickets_listings_snapshots_default'::regclass AND inhparent = p_parent) THEN
     EXECUTE format('WITH moved AS (DELETE FROM public.gotickets_listings_snapshots_default d WHERE d.captured_at >= %L AND d.captured_at < %L RETURNING d.*) INSERT INTO public.%I SELECT * FROM moved',
