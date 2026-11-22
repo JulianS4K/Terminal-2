@@ -1,0 +1,377 @@
+== tickpick by its own id: listed, the marketplace agrees with our row
+                         out_                         
+------------------------------------------------------
+ {                                                   +
+     "hub": {                                        +
+         "tevo_event_id": 1,                         +
+         "aq_short_event_id": "AAAAAA1"              +
+     },                                              +
+     "live": {                                       +
+         "http": 200,                                +
+         "asked": true,                              +
+         "event": {                                  +
+             "city": "New York",                     +
+             "name": "Billy Joel",                   +
+             "state": "NY",                          +
+             "venue": "Madison Square Garden",       +
+             "status": "scheduled",                  +
+             "start_utc": "2027-03-02T01:00",        +
+             "start_local": "2027-03-01T20:00"       +
+         },                                          +
+         "found": true,                              +
+         "supported": true                           +
+     },                                              +
+     "stored": {                                     +
+         "city": "New York",                         +
+         "name": "Billy Joel",                       +
+         "state": "NY",                              +
+         "venue": "Madison Square Garden",           +
+         "status": "scheduled",                      +
+         "start_utc": "2027-03-02T01:00",            +
+         "start_local": "2027-03-01T20:00",          +
+         "last_seen_at": "2026-11-22T09:41:00+00:00",+
+         "tevo_event_id": 1,                         +
+         "tevo_match_method": "hub_identity"         +
+     },                                              +
+     "id_from": "given",                             +
+     "verdict": "listed",                            +
+     "catalogue": "tickpick_catalog_event",          +
+     "marketplace": "tickpick",                      +
+     "in_catalogue": true,                           +
+     "tevo_event_id": 1,                             +
+     "source_event_id": "9001"                       +
+ }
+
+== tickpick: listed, but changed — a new name, a day later, rescheduled, folded into another event (extra spaces in the venue are not a change)
+                           out_                            
+-----------------------------------------------------------
+ {                                                        +
+     "live": {                                            +
+         "http": 200,                                     +
+         "asked": true,                                   +
+         "event": {                                       +
+             "city": "New York",                          +
+             "name": "New York Knicks vs. Boston Celtics",+
+             "state": "NY",                               +
+             "venue": "Madison  Square Garden",           +
+             "status": "rescheduled",                     +
+             "start_utc": "2027-03-07T00:30",             +
+             "merged_into": "9555",                       +
+             "start_local": "2027-03-06T19:30"            +
+         },                                               +
+         "found": true,                                   +
+         "supported": true                                +
+     },                                                   +
+     "stored": {                                          +
+         "city": "New York",                              +
+         "name": "Knicks vs Celtics",                     +
+         "state": "NY",                                   +
+         "venue": "Madison Square Garden",                +
+         "status": "scheduled",                           +
+         "start_utc": "2027-03-06T00:30",                 +
+         "start_local": "2027-03-05T19:30",               +
+         "last_seen_at": "2026-11-22T09:41:00+00:00",     +
+         "tevo_event_id": 2,                              +
+         "tevo_match_method": "venue_day_name"            +
+     },                                                   +
+     "differs": [                                         +
+         "name",                                          +
+         "status",                                        +
+         "start",                                         +
+         "merged_into"                                    +
+     ],                                                   +
+     "id_from": "given",                                  +
+     "verdict": "listed_changed",                         +
+     "catalogue": "tickpick_catalog_event",               +
+     "marketplace": "tickpick",                           +
+     "in_catalogue": true,                                +
+     "tevo_event_id": 2,                                  +
+     "source_event_id": "9002"                            +
+ }
+
+== the verdicts, one line each
+                                    we hold it, TickPick answers 404                                     
+---------------------------------------------------------------------------------------------------------
+ tickpick | gone_upstream | id=9003 | from=given | tevo=- | asked=true | http=404 | reason=- | differs=-
+
+                              TickPick lists it, we do not hold it yet                               
+-----------------------------------------------------------------------------------------------------
+ tickpick | live_only | id=9500 | from=given | tevo=- | asked=true | http=200 | reason=- | differs=-
+
+                                               neither                                                
+------------------------------------------------------------------------------------------------------
+ tickpick | not_listed | id=9999 | from=given | tevo=- | asked=true | http=404 | reason=- | differs=-
+
+                                        a 429 is not an answer: stored only                                         
+--------------------------------------------------------------------------------------------------------------------
+ gotickets | in_catalogue | id=8001 | from=given | tevo=1 | asked=true | http=429 | reason=rate_limited | differs=-
+
+                             GoTickets lists it; we hold only the hub id                              
+------------------------------------------------------------------------------------------------------
+ gotickets | live_only | id=8002 | from=given | tevo=2 | asked=true | http=200 | reason=- | differs=-
+
+                                    EVO by its own id                                    
+-----------------------------------------------------------------------------------------
+ evo | listed | id=1 | from=tevo | tevo=1 | asked=true | http=200 | reason=- | differs=-
+
+                                     EVO answers 500: stored only                                      
+-------------------------------------------------------------------------------------------------------
+ evo | in_catalogue | id=3 | from=given | tevo=3 | asked=true | http=500 | reason=http_500 | differs=-
+
+                                       EVO has no such event                                       
+---------------------------------------------------------------------------------------------------
+ evo | not_listed | id=424242 | from=given | tevo=- | asked=true | http=404 | reason=- | differs=-
+
+== asked by EVO id alone: where the marketplace id comes from
+                                                     its catalogue                                                     
+-----------------------------------------------------------------------------------------------------------------------
+ tickpick | in_catalogue | id=9001 | from=catalogue | tevo=1 | asked=false | http=- | reason=not_requested | differs=-
+
+                                             the hub (curated row first)                                              
+----------------------------------------------------------------------------------------------------------------------
+ gotickets | not_in_catalogue | id=8002 | from=hub | tevo=2 | asked=false | http=- | reason=not_requested | differs=-
+
+                                                       seatgeek                                                        
+-----------------------------------------------------------------------------------------------------------------------
+ seatgeek | in_catalogue | id=5001 | from=catalogue | tevo=1 | asked=false | http=- | reason=not_requested | differs=-
+
+                                             axs (text id in the hub)                                             
+------------------------------------------------------------------------------------------------------------------
+ axs | in_catalogue | id=4001 | from=catalogue | tevo=1 | asked=false | http=- | reason=not_requested | differs=-
+
+                                                        mlb                                                         
+--------------------------------------------------------------------------------------------------------------------
+ mlb | in_catalogue | id=777001 | from=catalogue | tevo=3 | asked=false | http=- | reason=not_requested | differs=-
+
+                                    no Vivid id for that event                                    
+--------------------------------------------------------------------------------------------------
+ vivid | no_id | id=- | from=- | tevo=- | asked=false | http=- | reason=not_requested | differs=-
+
+ other_ids |                                 two TickPick rows map to EVO 2: the freshest is taken                                 
+-----------+-----------------------------------------------------------------------------------------------------------------------
+ 1         | tickpick | in_catalogue | id=9002 | from=catalogue | tevo=2 | asked=false | http=- | reason=not_requested | differs=-
+
+== marketplaces that cannot be asked for one event: the stored answer, and why
+                            out_                             
+-------------------------------------------------------------
+ {                                                          +
+     "hub": {                                               +
+         "tevo_event_id": 1,                                +
+         "aq_short_event_id": "AAAAAA1"                     +
+     },                                                     +
+     "live": {                                              +
+         "asked": false,                                    +
+         "reason": "whole_catalogue_only",                  +
+         "supported": false,                                +
+         "catalogue_pass": {                                +
+             "pass_started_at": "2026-11-22T17:39:00+00:00",+
+             "pass_finished_at": "2026-11-22T18:28:00+00:00"+
+         }                                                  +
+     },                                                     +
+     "stored": {                                            +
+         "city": "New York",                                +
+         "name": "Billy Joel",                              +
+         "state": "NY",                                     +
+         "venue": "Madison Square Garden",                  +
+         "start_local": "2027-03-01T20:00",                 +
+         "last_seen_at": "2026-11-22T18:00:00+00:00",       +
+         "tevo_event_id": 1,                                +
+         "tevo_match_method": "hub_identity"                +
+     },                                                     +
+     "id_from": "given",                                    +
+     "verdict": "in_catalogue",                             +
+     "catalogue": "vivid_catalog_event",                    +
+     "marketplace": "vivid",                                +
+     "in_catalogue": true,                                  +
+     "tevo_event_id": 1,                                    +
+     "source_event_id": "7001"                              +
+ }
+
+                                                         seatgeek                                                         
+--------------------------------------------------------------------------------------------------------------------------
+ seatgeek | in_catalogue | id=5001 | from=given | tevo=1 | asked=false | http=- | reason=no_single_event_read | differs=-
+
+                                                         axs                                                         
+---------------------------------------------------------------------------------------------------------------------
+ axs | in_catalogue | id=4001 | from=given | tevo=1 | asked=false | http=- | reason=no_single_event_read | differs=-
+
+                                                         mlb                                                         
+---------------------------------------------------------------------------------------------------------------------
+ mlb | in_catalogue | id=777001 | from=given | tevo=3 | asked=false | http=- | reason=schedule_feed_only | differs=-
+
+                                        stubhub: the hub carries the id                                         
+----------------------------------------------------------------------------------------------------------------
+ stubhub | id_only | id=6001 | from=given | tevo=1 | asked=false | http=- | reason=api_switched_off | differs=-
+
+                                                stubhub: unknown id                                                
+-------------------------------------------------------------------------------------------------------------------
+ stubhub | unknown_id | id=6999 | from=given | tevo=- | asked=false | http=- | reason=api_switched_off | differs=-
+
+                                    seatdata: no id for the event                                    
+-----------------------------------------------------------------------------------------------------
+ seatdata | no_id | id=- | from=- | tevo=- | asked=false | http=- | reason=paid_per_call | differs=-
+
+== both ids given: does our mapping agree
+ agrees |                                                       line_                                                       
+--------+-------------------------------------------------------------------------------------------------------------------
+ true   | tickpick | in_catalogue | id=9001 | from=given | tevo=1 | asked=false | http=- | reason=not_requested | differs=-
+
+ agrees |                                                       line_                                                       
+--------+-------------------------------------------------------------------------------------------------------------------
+ false  | tickpick | in_catalogue | id=9001 | from=given | tevo=1 | asked=false | http=- | reason=not_requested | differs=-
+
+== asked twice inside the interval: the second is not sent, the first answer rides along
+                                                     second_call                                                      | last_http | last_found 
+----------------------------------------------------------------------------------------------------------------------+-----------+------------
+ tickpick | in_catalogue | id=9001 | from=given | tevo=1 | asked=false | http=- | reason=checked_recently | differs=- | 200       | true
+
+                                      interval 0: sent again                                      
+--------------------------------------------------------------------------------------------------
+ tickpick | listed | id=9001 | from=given | tevo=1 | asked=true | http=200 | reason=- | differs=-
+
+== Ticketmaster and ESPN before their tables exist (main without PR #1156)
+                                                                    tm                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------
+ ticketmaster | catalogue_not_installed | id=vvG1abcDEF123 | from=given | tevo=- | asked=false | http=- | reason=not_requested | differs=-
+
+                                                         tm_by_evo                                                         
+---------------------------------------------------------------------------------------------------------------------------
+ ticketmaster | catalogue_not_installed | id=- | from=- | tevo=- | asked=false | http=- | reason=not_requested | differs=-
+
+                                                   espn: event_xref still answers                                                   
+------------------------------------------------------------------------------------------------------------------------------------
+ espn | catalogue_not_installed | id=401700001 | from=event_xref | tevo=2 | asked=false | http=- | reason=not_requested | differs=-
+
+== ...and once they exist
+                         out_                         
+------------------------------------------------------
+ {                                                   +
+     "live": {                                       +
+         "http": 200,                                +
+         "asked": true,                              +
+         "event": {                                  +
+             "city": "New York",                     +
+             "name": "Billy Joel",                   +
+             "state": "NY",                          +
+             "venue": "Madison Square Garden",       +
+             "status": "onsale",                     +
+             "start_utc": "2027-03-02T01:00",        +
+             "start_local": "2027-03-01T20:00"       +
+         },                                          +
+         "found": true,                              +
+         "supported": true                           +
+     },                                              +
+     "stored": {                                     +
+         "city": "New York",                         +
+         "name": "Billy Joel",                       +
+         "state": "NY",                              +
+         "venue": "Madison Square Garden",           +
+         "status": "onsale",                         +
+         "start_utc": "2027-03-02T01:00",            +
+         "start_local": "2027-03-01T20:00",          +
+         "last_seen_at": "2026-11-22T12:00:00+00:00",+
+         "tevo_event_id": 1,                         +
+         "tevo_match_method": "venue_day_name"       +
+     },                                              +
+     "id_from": "catalogue",                         +
+     "verdict": "listed",                            +
+     "catalogue": "tm_discovery_event",              +
+     "marketplace": "ticketmaster",                  +
+     "in_catalogue": true,                           +
+     "tevo_event_id": 1,                             +
+     "source_event_id": "vvG1abcDEF123"              +
+ }
+
+                                      second read: the budget's last call                                      
+---------------------------------------------------------------------------------------------------------------
+ ticketmaster | listed | id=vvG1abcDEF123 | from=given | tevo=1 | asked=true | http=200 | reason=- | differs=-
+
+                                                 third read: the day's budget is spent                                                 
+---------------------------------------------------------------------------------------------------------------------------------------
+ ticketmaster | in_catalogue | id=vvG1abcDEF123 | from=given | tevo=1 | asked=false | http=- | reason=daily_budget_reached | differs=-
+
+ calls | cap 
+-------+-----
+     2 |   2
+
+                                                            espn                                                             
+-----------------------------------------------------------------------------------------------------------------------------
+ espn | in_catalogue | id=401700001 | from=catalogue | tevo=2 | asked=false | http=- | reason=schedule_feed_only | differs=-
+
+== one EVO event across every marketplace (stored answers)
+ marketplace  |   verdict    | source_event_id 
+--------------+--------------+-----------------
+ evo          | in_catalogue | 1
+ seatgeek     | in_catalogue | 5001
+ gotickets    | in_catalogue | 8001
+ vivid        | in_catalogue | 7001
+ tickpick     | in_catalogue | 9001
+ axs          | in_catalogue | 4001
+ ticketmaster | in_catalogue | vvG1abcDEF123
+ stubhub      | id_only      | 6001
+ seatdata     | no_id        | 
+ mlb          | no_id        | 
+ espn         | no_id        | 
+
+== guards
+                                               an id that is not an id is never sent                                                
+------------------------------------------------------------------------------------------------------------------------------------
+ tickpick | not_in_catalogue | id=9001; DROP TABLE x | from=given | tevo=- | asked=false | http=- | reason=id_not_valid | differs=-
+
+                                                       nor a Ticketmaster one                                                        
+-------------------------------------------------------------------------------------------------------------------------------------
+ ticketmaster | not_in_catalogue | id=abc/../../x?y=1 | from=given | tevo=- | asked=false | http=- | reason=id_not_valid | differs=-
+
+                                                                 an unknown marketplace                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ catalogue_check: unknown marketplace craigslist (evo | tickpick | gotickets | ticketmaster | vivid | seatgeek | axs | stubhub | seatdata | mlb | espn)
+
+                                  no id at all                                  
+--------------------------------------------------------------------------------
+ catalogue_check: pass the marketplace's own event id, an EVO event id, or both
+
+       catalogue_check_all without an event       
+--------------------------------------------------
+ catalogue_check_all: an EVO event id is required
+
+     role      | may_call | may_call_live | may_read_log 
+---------------+----------+---------------+--------------
+ anon          | f        | f             | f
+ authenticated | f        | f             | f
+ service_role  | t        | t             | t
+
+== every request that left: GET only, one per live check, never for a refused id
+ method |                                     uri                                      |                  headers                   
+--------+------------------------------------------------------------------------------+--------------------------------------------
+ GET    | https://api.tickpick.com/1.0/catalog/events/9001                             | Accept,Authorization
+ GET    | https://api.tickpick.com/1.0/catalog/events/9002                             | Accept,Authorization
+ GET    | https://api.tickpick.com/1.0/catalog/events/9003                             | Accept,Authorization
+ GET    | https://api.tickpick.com/1.0/catalog/events/9500                             | Accept,Authorization
+ GET    | https://api.tickpick.com/1.0/catalog/events/9999                             | Accept,Authorization
+ GET    | https://sc.gotickets.com/rest/events/8001                                    | Accept,X-Api-Access-Id,X-Api-Access-Secret
+ GET    | https://sc.gotickets.com/rest/events/8002                                    | Accept,X-Api-Access-Id,X-Api-Access-Secret
+ GET    | https://api.ticketevolution.com/v9/events/1                                  | Accept,X-Signature,X-Token
+ GET    | https://api.ticketevolution.com/v9/events/3                                  | Accept,X-Signature,X-Token
+ GET    | https://api.ticketevolution.com/v9/events/424242                             | Accept,X-Signature,X-Token
+ GET    | https://api.tickpick.com/1.0/catalog/events/9001                             | Accept,Authorization
+ GET    | https://app.ticketmaster.com/discovery/v2/events/vvG1abcDEF123.json?apikey=… | 
+ GET    | https://app.ticketmaster.com/discovery/v2/events/vvG1abcDEF123.json?apikey=… | 
+
+== the log: one row per call
+ marketplace  | calls | asked_live |                                           verdicts                                           
+--------------+-------+------------+----------------------------------------------------------------------------------------------
+ axs          |     3 |          0 | in_catalogue
+ espn         |     3 |          0 | catalogue_not_installed, in_catalogue, no_id
+ evo          |     4 |          3 | in_catalogue, listed, not_listed
+ gotickets    |     4 |          2 | in_catalogue, live_only, not_in_catalogue
+ mlb          |     3 |          0 | in_catalogue, no_id
+ seatdata     |     2 |          0 | no_id
+ seatgeek     |     3 |          0 | in_catalogue
+ stubhub      |     3 |          0 | id_only, unknown_id
+ ticketmaster |     7 |          2 | catalogue_not_installed, in_catalogue, listed, not_in_catalogue
+ tickpick     |    13 |          6 | gone_upstream, in_catalogue, listed, listed_changed, live_only, not_in_catalogue, not_listed
+ vivid        |     3 |          0 | in_catalogue, no_id
+
+ catalogue_rows_unchanged 
+--------------------------
+                        4
