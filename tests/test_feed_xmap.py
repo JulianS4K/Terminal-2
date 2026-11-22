@@ -19,12 +19,22 @@ class _Data:
         return self
 
 
+class _Fails:
+    def execute(self):
+        raise RuntimeError("canceling statement due to statement timeout")
+
+
 class FakeDB:
-    def __init__(self, data=None):
-        self.data, self.calls = data, []
+    def __init__(self, data=None, fail=0):
+        self.data, self.calls, self.fail = data, [], fail      # fail: how many calls fail first
 
     def rpc(self, name, args):
         self.calls.append((name, args))
+        if self.fail > 0:
+            self.fail -= 1
+            return _Fails()
+        if callable(self.data):
+            return _Data(self.data(args["p_ids"]))
         return _Data(self.data)
 
 
@@ -58,3 +68,24 @@ def test_add_asks_nothing_for_an_empty_page_or_a_page_without_ids():
     # an answer with no rows is not an error
     assert feed_xmap.add(FakeDB(None), [{"tevo_event_id": 5}], "tevo", "tevo_event_id", ("axs_event_id",)) == [
         {"tevo_event_id": 5, "axs_event_id": None}]
+
+
+def test_a_big_page_is_asked_in_chunks_and_a_failed_chunk_once_more():
+    """Measured on prod 2026-11-22: one call for 5,000 ids ran past the 8-second limit on a first read."""
+    import pytest
+
+    rows = [{"axs_event_id": n} for n in range(1, 1202)]                 # 1,201 ids: three calls
+    db = FakeDB(lambda ids: [{"source_id": i, "vivid_event_id": int(i) + 7000000} for i in ids])
+    out = feed_xmap.add(db, rows, "axs", "axs_event_id", ("vivid_event_id",))
+    assert [len(a["p_ids"]) for _, a in db.calls] == [500, 500, 201] and feed_xmap.CHUNK == 500
+    assert all(r["vivid_event_id"] == r["axs_event_id"] + 7000000 for r in out) and len(out) == 1201
+    # the first read of a chunk fails: it is sent once more, and the page is whole
+    db = FakeDB([{"source_id": "5", "vivid_event_id": 9}], fail=1)
+    assert feed_xmap.add(db, [{"axs_event_id": 5}], "axs", "axs_event_id", ("vivid_event_id",)) == [
+        {"axs_event_id": 5, "vivid_event_id": 9}]
+    assert len(db.calls) == 2 and db.calls[0] == db.calls[1]
+    # it fails twice: the error reaches the caller, which answers 502; no third try
+    db = FakeDB(fail=2)
+    with pytest.raises(RuntimeError):
+        feed_xmap.add(db, [{"axs_event_id": 5}], "axs", "axs_event_id", ("vivid_event_id",))
+    assert len(db.calls) == 2
