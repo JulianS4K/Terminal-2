@@ -68,7 +68,7 @@ burst|3
 refused|3
 F4 the key is still nowhere stored
 0
-G seller and channel from the link (mig 20261118003000): the box office and its partners are primary; a resale host or a resale link is secondary; travel and VIP packages are packages; a doubleclick wrapper is unwrapped; no link is unknown
+G seller and channel from the link (migs 20261118003000, 20261122040000): the box office and its partners are primary; a Ticketmaster resale page (/event/Z7r9j...), a resale host or a resale link is secondary; travel and VIP packages are packages; a doubleclick wrapper is unwrapped; no link is unknown
 https://www.ticketmaster.com/10-years-tour-minneapolis-12-11-2026/event/060064B5363DCB87|ticketmaster|primary
 https://www.ticketmaster.ca/curling-saint-john-03-30-2027/event/31006556D8A3D650|ticketmaster|primary
 https://am.ticketmaster.com/asmgkingston/buy/ism/MjZMRlJJ|ticketmaster|primary
@@ -81,6 +81,8 @@ https://hyveetix.evenue.net/events/AXW?RSRC=WEB_PR|evenue|primary
 https://www.drphillipscenter.org/show/lewis-black-rc67|drphillipscenter.org|primary
 https://seatgeek.com/harry-styles-tickets/glendale-2027-04-03/concert/18577793|seatgeek|secondary
 https://www.ticketmaster.com/some-event/resale/event/0A0055|ticketmaster|secondary
+https://www.ticketmaster.ca/event/Z7r9jZ1A7-VG7|ticketmaster_resale|secondary
+https://www.ticketmaster.com/event/Z7r9jZ1Advv4g|ticketmaster_resale|secondary
 https://travel.ticketmaster.com/en-US/event/127560094/pf?_uid=abc|ticketmaster_travel|package
 https://www.vipnation.com/tour_date/syd-dallas-tx-11-20-2026|vipnation|package
 https://ad.doubleclick.net/ddm/clk/638366664;445198581;c;dc_transparent=1;?https://travel.ticketmaster.com/en-US/package-forward/86358015?_uid=53|ticketmaster_travel|package
@@ -93,3 +95,7 @@ G5diZ_o6tFFbV|ticketmaster|primary
 primary|ticketmaster|5
 5
 f|t
+G2 a Ticketmaster resale page lands as secondary; the channel view counts it apart
+Z7r9jZ1A7-VG7|ticketmaster_resale|secondary
+primary|ticketmaster|5
+secondary|ticketmaster_resale|1
