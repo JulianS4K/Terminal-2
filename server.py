@@ -2276,7 +2276,9 @@ async def _primary_poll_tick():
         db = require_sb()
         # an event sent twice is stored once (its listings are replaced), so a dropped connection is retried
         rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
-        return primary_poll_sync.run(rpc, sitickets_client, jump_client)
+        # PRIMARY_POLL_SOURCES=sitickets where the browser worker reads the Timberwolves (one poller a source)
+        sources = primary_poll_sync.sources_from(os.environ.get("PRIMARY_POLL_SOURCES"))
+        return primary_poll_sync.run(rpc, sitickets_client, jump_client, sources)
 
     out = await asyncio.to_thread(_call)
     _primary_poll_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)

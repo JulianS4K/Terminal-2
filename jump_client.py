@@ -7,12 +7,14 @@ single-game offer inside the HTML, so this module reads that one page:
   events(org)       every upcoming game: id, name, start, venue, the public offer's id, how many
                     seats the team says are available and the price range
 
-  listings(org, e)  NOT READ YET. The seat-level inventory (section, row, seats, primary or
+  listings(org, e)  NOT READ HERE. The seat-level inventory (section, row, seats, primary or
                     resale, price) is not in any page: the site's own script asks for it with a
-                    POST to fan.jump.com/graphql. This module is GET only, and a new non-GET path
-                    to an upstream needs the operator's written authorization (CLAUDE.md §2), so
-                    it raises JumpInventoryNotEnabled. The poller records that as a failed poll
-                    and the feed sends no listings for the game.
+                    POST to fan.jump.com/graphql. This module is GET only and stays so: it raises
+                    JumpInventoryNotEnabled. The listings are read by the browser worker instead
+                    (core/primary_poll_browser.py, operator 2026-11-23), which opens the game's
+                    public page and keeps what the page itself receives. A worker that polls the
+                    Timberwolves through this module alone records a failed poll, and the feed
+                    sends no listings for the game.
 
 The site answers 403 to a client that does not name a browser, so the request carries a desktop
 browser's User-Agent (operator 2026-11-23, told of the filter: "poll all the games for si and
@@ -193,4 +195,4 @@ def events(org: str = "timberwolves") -> list[dict]:
 
 def listings(org: str, event: dict) -> list[dict]:
     """Not read yet: see the module's note. Always raises JumpInventoryNotEnabled."""
-    raise JumpInventoryNotEnabled("seat inventory is not read: the POST it needs is not authorized")
+    raise JumpInventoryNotEnabled("seat inventory is read by the browser worker, not by this client")

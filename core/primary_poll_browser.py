@@ -1,0 +1,190 @@
+"""Read the Timberwolves' seat listings with a real browser and store them (operator 2026-11-23:
+"start the timberwolves poller and test and then merge", choosing the browser worker).
+
+The Timberwolves' ticket site (jump_client.py) shows a game's seats only after the page has loaded:
+the page's own script asks the site for them. This worker opens each game's public page in a headless
+browser, as a visitor does, and keeps the two answers the page receives for itself: the seat blocks
+(`getInventoryDetails`) and the offer's order limits (`OfferById`). It builds no request of its own to
+the site's data service and sends nothing: no cart, no hold, no order (RULE 2).
+
+One run, every PRIMARY_POLL_INTERVAL_SECONDS (600):
+  1. the games, from the home page (jump_client.events, a GET);
+  2. for each game, its page in the browser, the listings normalised, and the event sent to
+     `primary_poll_ingest()`: with its listings, or failed with the reason, which deletes them;
+  3. `primary_poll_run_done()`, so the feeds serve this pull.
+It is core/primary_poll_sync.poll_source with a browser as the reader, so the rules are the same: a
+game whose page does not answer in time is a failed poll and sends no listings.
+
+It runs as its own service (render-primary-poll-browser.yaml, Dockerfile.primary-poll-browser), off
+unless PRIMARY_POLL_BROWSER_LIVE=1. The web service's worker must then be given
+PRIMARY_POLL_SOURCES=sitickets: one poller a source.
+
+    python -m core.primary_poll_browser
+"""
+from __future__ import annotations
+
+import logging
+import os
+import time
+from typing import Any, Callable
+from urllib.parse import urlsplit
+
+from core import primary_poll_sync
+
+log = logging.getLogger("primary_poll_browser")
+
+SOURCE = "timberwolves"
+ORG = "timberwolves"
+DATA_URL = "https://fan.jump.com/graphql"
+# the hosts a game's page needs to show its seats; analytics, ads and everything else are not loaded
+PAGE_HOSTS = frozenset({"tickets.timberwolves.com", "fan.jump.com", "cdn.orgs.jump.com"})
+SKIPPED_RESOURCES = frozenset({"image", "font", "media"})
+PAGE_TIMEOUT_MS = 45_000
+MARKETS = {"PRIMARY": "primary", "SECONDARY": "resale"}
+
+
+class BrowserPollError(RuntimeError):
+    pass
+
+
+def _is(response: Any, operation: str) -> bool:
+    """Is this the page's own answer for `operation` from the site's data service?"""
+    return (response.url.startswith(DATA_URL)
+            and f'"operationName":"{operation}"' in (response.request.post_data or ""))
+
+
+def order_limits(offer: Any) -> tuple[int | None, int | None]:
+    """(fewest, most) tickets one order may hold, from the page's offer answer; (None, None) when the
+    page did not carry them."""
+    try:
+        group = offer["data"]["offerById"]["eventGroup"][0]
+    except (KeyError, IndexError, TypeError):
+        return None, None
+    return group.get("qtyMin"), group.get("qtyMax")
+
+
+def prices_include_tax(offer: Any) -> bool | None:
+    """The site says so on the offer ("Price includes tax"); None when it says nothing."""
+    try:
+        note = offer["data"]["offerById"]["content"]["inventoryListDescription"]
+    except (KeyError, TypeError):
+        return None
+    return "includes tax" in note.lower() if isinstance(note, str) else None
+
+
+def parse_listings(inventory: Any, order_max: int | None = None, includes_tax: bool | None = None) -> list[dict]:
+    """The page's seat blocks as the database takes them. Raises when the answer is not an inventory."""
+    try:
+        blocks = inventory["data"]["getBlocks"]["blocks"]
+    except (KeyError, TypeError) as exc:
+        raise BrowserPollError("the page's answer carries no seat blocks") from exc
+    if not isinstance(blocks, list):
+        raise BrowserPollError("the page's answer carries no seat blocks")
+    out = []
+    for block in blocks:
+        where = block.get("location") or {}
+        seats = [str(seat) for seat in where.get("seats") or []]
+        allowed = block.get("quantities") or []
+        most = max(allowed) if allowed else None
+        if most is not None and order_max:
+            most = min(most, order_max)
+        price = block.get("price") or {}
+        out.append({
+            "id": block["id"], "market": MARKETS.get(block.get("market")),
+            "area": where.get("neighborhood"), "section": where.get("section"), "row": where.get("row"),
+            "seat_low": seats[0] if seats else None, "seat_high": seats[-1] if seats else None,
+            "seats": seats or None, "qty": len(seats) or None,
+            "allowed_quantities": allowed, "max_per_order": most,
+            "price": price["amount"] / 100 if isinstance(price.get("amount"), (int, float)) else None,
+            "fee": None, "all_in": None, "price_includes_tax": includes_tax,
+            "ticket_type": price.get("priceTypeName"), "delivery": None,
+            "ada": block.get("hasAda"), "obstructed": bool(block.get("hasObstructedView")),
+            "aisle": block.get("hasAisle"), "ga": block.get("isGA"),
+        })
+    return out
+
+
+def allow(route: Any) -> None:
+    """Load only what a game's page needs: its own hosts, and no images, fonts or video."""
+    request = route.request
+    if urlsplit(request.url).hostname in PAGE_HOSTS and request.resource_type not in SKIPPED_RESOURCES:
+        route.continue_()
+    else:
+        route.abort()
+
+
+def page_reader(context: Any, timeout_ms: int = PAGE_TIMEOUT_MS) -> Callable[[dict], dict]:
+    """`read(event)`: open the game's public page and return what the page itself received:
+    {"inventory": ..., "offer": ... or None}. A page that does not get its inventory in time raises."""
+    def read(event: dict) -> dict:
+        page = context.new_page()
+        offers: list = []
+
+        def keep(response: Any) -> None:
+            if _is(response, "OfferById"):
+                offers.append(response)
+
+        page.on("response", keep)
+        try:
+            with page.expect_response(lambda r: _is(r, "getInventoryDetails"), timeout=timeout_ms) as got:
+                page.goto(event["url"], wait_until="domcontentloaded", timeout=timeout_ms)
+            return {"inventory": got.value.json(), "offer": offers[0].json() if offers else None}
+        finally:
+            page.close()
+    return read
+
+
+def run(rpc: primary_poll_sync.Rpc, jump: Any, read_page: Callable[[dict], dict]) -> dict:
+    """One run over the Timberwolves' games; returns what it did."""
+    def listings(event: dict) -> list[dict]:
+        got = read_page(event)
+        fewest, most = order_limits(got.get("offer"))
+        event["order_min"], event["order_max"] = fewest, most
+        return parse_listings(got["inventory"], most, prices_include_tax(got.get("offer")))
+
+    return primary_poll_sync.poll_source(rpc, SOURCE, lambda: jump.events(ORG), listings)
+
+
+def cycle(rpc: primary_poll_sync.Rpc, jump: Any, playwright: Any) -> dict:
+    """One run with a browser of its own, closed at the end whatever happens."""
+    browser = playwright.chromium.launch()
+    try:
+        context = browser.new_context(user_agent=jump.USER_AGENT, viewport={"width": 1400, "height": 900})
+        context.route("**/*", allow)
+        return run(rpc, jump, page_reader(context))
+    finally:
+        browser.close()
+
+
+def main(env: Any = None, sleep: Callable[[float], None] = time.sleep) -> None:
+    """The service's loop. Returns at once unless PRIMARY_POLL_BROWSER_LIVE=1 and the database is
+    configured; a run that fails is logged and the next one starts on time."""
+    env = os.environ if env is None else env
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    url, key = env.get("SUPABASE_URL"), env.get("SUPABASE_SERVICE_ROLE_KEY")
+    if env.get("PRIMARY_POLL_BROWSER_LIVE") != "1" or not (url and key):
+        log.warning("disabled (PRIMARY_POLL_BROWSER_LIVE != 1, or the database is not configured)")
+        return
+    from playwright.sync_api import sync_playwright
+
+    import jump_client
+    from core import n2s_autobuy_live
+    from core.db import make_supabase_client
+
+    db = make_supabase_client(url, key)
+    # an event sent twice is stored once (its listings are replaced), so a dropped connection is retried
+    rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
+    interval = float(env.get("PRIMARY_POLL_INTERVAL_SECONDS", "600"))
+    log.warning("started (every %ss)", interval)
+    while True:
+        started = time.monotonic()
+        try:
+            with sync_playwright() as playwright:
+                log.warning("run: %s", cycle(rpc, jump_client, playwright))
+        except Exception as exc:  # noqa: BLE001 - never let the loop die; a missed run withholds the listings by their age
+            log.warning("run failed: %s: %s", type(exc).__name__, exc)
+        sleep(max(0.0, interval - (time.monotonic() - started)))
+
+
+if __name__ == "__main__":
+    main()

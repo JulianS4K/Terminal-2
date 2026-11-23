@@ -1398,8 +1398,8 @@ def test_primary_poll_tick_runs_both_clients_through_a_retrying_rpc(monkeypatch)
             seen.setdefault("rpc", []).append(name)
             return _Res({"events": 1})
 
-    def _run(rpc, sitickets, jump):
-        seen["clients"] = (sitickets.__name__, jump.__name__)
+    def _run(rpc, sitickets, jump, sources):
+        seen["clients"], seen["sources"] = (sitickets.__name__, jump.__name__), sources
         seen["stored"] = rpc("primary_poll_ingest", {"p_source": "sitickets", "p_events": []})
         return {"sitickets": {"events": 1}, "timberwolves": {"events": 0}}
 
@@ -1419,6 +1419,10 @@ def test_primary_poll_tick_runs_both_clients_through_a_retrying_rpc(monkeypatch)
     assert app_module._primary_poll_last["result"] == out and app_module._primary_poll_last["error"] is None
     assert seen["clients"] == ("sitickets_client", "jump_client") and seen["stored"] == {"events": 1}
     assert seen["rpc"] == ["primary_poll_ingest"] and retried == ["primary_poll_ingest"]
+    assert seen["sources"] == ("sitickets", "timberwolves")
+    monkeypatch.setenv("PRIMARY_POLL_SOURCES", "sitickets")      # the browser worker reads the Timberwolves
+    anyio.run(app_module._primary_poll_tick)
+    assert seen["sources"] == ("sitickets",)
 
 
 def test_primary_poll_loop_off_by_default_then_runs_and_survives_errors(monkeypatch):
