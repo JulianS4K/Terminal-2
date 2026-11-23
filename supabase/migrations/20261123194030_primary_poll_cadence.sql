@@ -5,14 +5,14 @@
 -- based on a qty listed"; "Let's set longest interval to 1 hour"; "Add the poll randomizer into the interval, by
 -- allocating a set interval by ranking then assign slots within that interval, say 10 mins, ranking being our
 -- cadance"; "Redraw every cycle, just poll the data. For events day of draw every 10 mins if ... game is on
--- weekend and up to 5 days away it hits the 2 day cadance".
+-- weekend and up to 5 days away it hits the 2 day cadance"; "Include Friday".
 --
 -- Until now every event was read at every run (every 30 minutes): a game five months away as often as
 -- tonight's. Now each event has its own interval, worked out each time it is polled:
 --
 --   1. BY DATE (primary_poll_cadence, a ladder, fastest first):
 --        the day of the event                                  every 10 minutes
---        up to 2 days away, or a Saturday or Sunday event
+--        up to 2 days away, or a Friday, Saturday or Sunday event
 --        up to 5 days away                                     every 30 minutes
 --        further                                               every hour (the longest interval)
 --      The 10-minute step is for the day of the event only (date_only): price and quantity neither put an
@@ -56,7 +56,7 @@
 -- does not run is still noticed.
 --
 -- /primary/events gains, at the end: median_price, poll_every_minutes, next_poll_at, listed_quantity.
--- writes also: primary_poll_cadence(+weekend_days_out_max,+date_only), primary_poll_config(+slot), primary_poll_event(+next_poll_at), primary_poll_next()(new).
+-- writes also: primary_poll_cadence(+weekend_days_out_max,+date_only), primary_poll_config(+slot,+weekend_days), primary_poll_event(+next_poll_at), primary_poll_next()(new).
 --
 -- Read-only towards the sources (RULE 2).
 --
@@ -68,13 +68,13 @@
 --           ALTER TABLE public.primary_poll_event DROP COLUMN median_price, DROP COLUMN listed_quantity, DROP COLUMN poll_interval,
 --           DROP COLUMN next_poll_at;
 --           ALTER TABLE public.primary_poll_config DROP COLUMN listing_grace, DROP COLUMN due_slack, DROP COLUMN retry_after,
---           DROP COLUMN max_slowdown_steps, DROP COLUMN slot.
+--           DROP COLUMN max_slowdown_steps, DROP COLUMN slot, DROP COLUMN weekend_days.
 
 CREATE TABLE IF NOT EXISTS public.primary_poll_cadence (
   step          smallint PRIMARY KEY CHECK (step > 0),               -- 1 is the fastest
   poll_every    interval NOT NULL CHECK (poll_every >= interval '5 minutes' AND poll_every <= interval '7 days'),
   days_out_max  integer UNIQUE CHECK (days_out_max >= 0),             -- events up to this many days away start here; NULL: any further
-  weekend_days_out_max integer CHECK (weekend_days_out_max >= 0),     -- ... and a Saturday or Sunday event from this many days away; NULL: as days_out_max
+  weekend_days_out_max integer CHECK (weekend_days_out_max >= 0),     -- ... and a weekend event (primary_poll_config.weekend_days) from this many days away; NULL: as days_out_max
   date_only     boolean NOT NULL DEFAULT false                        -- only the date puts an event here; price and quantity never move it on or off
 );
 INSERT INTO public.primary_poll_cadence (step, poll_every, days_out_max, weekend_days_out_max, date_only) VALUES
@@ -106,13 +106,15 @@ ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS due_slack     in
 ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS retry_after   interval NOT NULL DEFAULT interval '30 minutes';
 ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS max_slowdown_steps smallint NOT NULL DEFAULT 1 CHECK (max_slowdown_steps >= 0);
 ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS slot          interval NOT NULL DEFAULT interval '10 minutes' CHECK (slot >= interval '1 minute');
+-- the days of the week that count as the weekend: 1 Monday ... 5 Friday, 6 Saturday, 7 Sunday (operator: "Include Friday")
+ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS weekend_days  smallint[] NOT NULL DEFAULT '{5,6,7}';
 
 ALTER TABLE public.primary_poll_event ADD COLUMN IF NOT EXISTS median_price  numeric;
 ALTER TABLE public.primary_poll_event ADD COLUMN IF NOT EXISTS listed_quantity integer;
 ALTER TABLE public.primary_poll_event ADD COLUMN IF NOT EXISTS poll_interval interval;
 ALTER TABLE public.primary_poll_event ADD COLUMN IF NOT EXISTS next_poll_at  timestamptz;
 
--- An event's interval: its step on the ladder by its date (a Saturday or Sunday event may start a step
+-- An event's interval: its step on the ladder by its date (a Friday, Saturday or Sunday event may start a step
 -- sooner), then moved by its median price and by the tickets listed, between the steps that are not date_only.
 -- An event on a date_only step (the day of the event) stays on it.
 CREATE OR REPLACE FUNCTION public.primary_poll_interval(p_event_date date, p_median numeric, p_listed integer)
@@ -124,7 +126,8 @@ AS $function$
   WITH ends AS (SELECT coalesce(min(step) FILTER (WHERE NOT date_only), min(step)) AS first, max(step) AS last
                   FROM public.primary_poll_cadence),
   day AS (SELECT greatest(p_event_date - CURRENT_DATE, 0) AS days_out,
-                 coalesce(extract(isodow FROM p_event_date) IN (6, 7), false) AS weekend),
+                 coalesce(extract(isodow FROM p_event_date)::smallint
+                          = ANY (coalesce((SELECT g.weekend_days FROM public.primary_poll_config g), '{5,6,7}')), false) AS weekend),
   by_date AS (
     SELECT CASE WHEN p_event_date IS NULL THEN ends.last
                 ELSE coalesce((SELECT min(c.step) FROM public.primary_poll_cadence c
