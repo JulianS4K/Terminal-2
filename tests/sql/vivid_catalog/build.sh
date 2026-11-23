@@ -24,4 +24,5 @@ stub_00_base.sql
 20261117110000_catalog_hub_fill_skip_locked.sql
 20261117120000_llm_match_judge.sql
 20261117140000_catalog_venue_pairing.sql
+20261123171000_catalog_order_fill_skip_locked.sql
 STEPS
