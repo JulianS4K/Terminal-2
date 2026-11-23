@@ -23,7 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
-- **2026-11-23** Changed: box-office events are now read on their own cadence, not all every 30 minutes. `GET /primary/events` gains `poll_every_minutes` (30 for a dear event a day or two away, up to 720 for a cheap one months away), `next_poll_at` and `median_price`. Listings stay available between reads; `as_of` on a listing and `listings_as_of` on an event say how old they are (section 6k).
+- **2026-11-23** Changed: box-office events are now read on their own cadence, not all every 30 minutes. `GET /primary/events` gains `poll_every_minutes` (30 for a dear event a day or two away, up to 720 for a cheap one months away with little on sale), `next_poll_at`, `median_price` and `listed_quantity`. Listings stay available between reads; `as_of` on a listing and `listings_as_of` on an event say how old they are (section 6k).
 - **2026-11-23** Changed on `GET /primary/listings`: `price` now means the same for every source, the price before fees and tax, and each listing carries `fee`, `tax` and `all_in_price` with `price` + `fee` + `tax` = `all_in_price`. Until now a Timberwolves `price` was the all-in total rounded to the dollar (55 where the ticket is 42.00 + 8.40 fees + 5.05 tax = 55.45); it is now 42.00 with `all_in_price` 55.45 and `price_estimated: true`, because that site shows only the total and we split it. SI Tickets gains `tax` and the per-order `order_fee`, and its `fee` is now the one inside the total. New fields are at the end of each row (section 6k).
 - **2026-11-23** New: `GET /primary/events` and `GET /primary/listings` carry the box offices we poll ourselves every 30 minutes: SI Tickets at Sports Illustrated Stadium (Red Bull New York, HSBC SVNS) with every seat block, its seats, the quantities a buyer may take, the order limit and the price; and the Timberwolves' home games with the team's own and resale seat blocks. Only the newest pull is served, and listings only for an event polled successfully in the last 35 minutes: otherwise the event says `listings_available: false` and why. Obstructed-view listings are never sent (section 6k).
 - **2026-11-22** Every event feed now carries the same event's id on each marketplace: `/tm/events`, `/axs/events`, `/seatgeek/events` and `/mlb/events` rows gain `xmap_tevo_event_id`, `ticketmaster_event_id`, `seatgeek_event_id`, `stubhub_event_id`, `vivid_event_id`, `tickpick_event_id`, `gotickets_event_id`, `axs_event_id` and `aq_short_event_id` (null where we hold no pairing), and `/mlb/schedule` gains `tickpick_event_id` and `axs_event_id`. Nothing was renamed or removed (section 6j).
@@ -985,7 +985,7 @@ Every event row of `/tm/events`, `/axs/events`, `/seatgeek/events` and `/mlb/eve
 
 ## 6k. Box offices we poll ourselves: events and listings
 
-Two box offices are read by us directly and served as two feeds. Each event is read on its own cadence, by its date and its price: from every 30 minutes to every 12 hours (see `poll_every_minutes` below). Same keys as `/mlb/schedule`.
+Two box offices are read by us directly and served as two feeds. Each event is read on its own cadence, by its date, its price and the tickets listed: from every 30 minutes to every 12 hours (see `poll_every_minutes` below). Same keys as `/mlb/schedule`.
 
 | Source | What it is | Events | Listings |
 |---|---|---|---|
@@ -1015,7 +1015,8 @@ GET /primary/listings?source=sitickets&event_id=2297105
 | `tevo_event_id`, `tevo_match_method`, `terminal_path` | The EVO event our mapper matched, how, and its page in our terminal. Null until matched; a series or package that is not an EVO event stays null |
 | `last_poll_at`, `first_seen_at`, `last_seen_at` | When we last tried the event, first saw it and last saw it listed |
 | `median_price` | The median of what a buyer pays for a ticket (`all_in_price`) over the event's listings we send |
-| `poll_every_minutes`, `next_poll_at` | How often this event's listings are read, and when the next read is due. By date: up to 2 days away 30, up to 7 days 60, up to 30 days 180, up to 90 days 360, further 720. Then by `median_price`: 150 or more is one step faster, under 50 one step slower, never below 30 or above 720 |
+| `listed_quantity` | The tickets listed, added up over the same listings. 0 when nothing is listed; null when the listings carry no quantity |
+| `poll_every_minutes`, `next_poll_at` | How often this event's listings are read, and when the next read is due. By date: up to 2 days away 30, up to 7 days 60, up to 30 days 180, up to 90 days 360, further 720. Then by `median_price`: 150 or more is one step faster, under 50 one step slower. Then by `listed_quantity`: 2,000 or more is one step faster, under 250 one step slower. The two add up, never below 30 or above 720, and together never slow an event by more than one step |
 
 **`GET /primary/listings`** takes `source`, `event_id`, `tevo_event_id`, `market=primary|resale`, `section`, `date_from`, `date_to`, `format`, `limit` and `offset`. Rows come cheapest first within an event.
 

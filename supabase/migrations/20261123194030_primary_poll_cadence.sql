@@ -1,7 +1,8 @@
--- Migration 20261123194030 · level:data-collection · lane:A1 (data plane; routed to this session by the operator) + D0 (the feed's views) · writes:primary_poll_cadence(new),primary_poll_price_band(new),primary_poll_config(+listing_grace,+due_slack,+retry_after),primary_poll_event(+median_price,+poll_interval),primary_poll_interval()(new),primary_poll_due()(new),primary_poll_ingest()(replaced),v_primary_poll_events_feed(replaced, three columns added at the end),v_primary_poll_listings_feed(replaced, same columns) · reads:primary_poll_listing,primary_poll_source · pre:20261123192030
+-- Migration 20261123194030 · level:data-collection · lane:A1 (data plane; routed to this session by the operator) + D0 (the feed's views) · writes:primary_poll_cadence(new),primary_poll_price_band(new),primary_poll_qty_band(new),primary_poll_config(+listing_grace,+due_slack,+retry_after,+max_slowdown_steps),primary_poll_event(+median_price,+listed_quantity,+poll_interval),primary_poll_interval()(new),primary_poll_due()(new),primary_poll_ingest()(replaced),v_primary_poll_events_feed(replaced, four columns added at the end),v_primary_poll_listings_feed(replaced, same columns) · reads:primary_poll_listing,primary_poll_source · pre:20261123192030
 --
--- THE BOX-OFFICE POLL: EACH EVENT ON ITS OWN CADENCE, SET BY ITS DATE AND ITS MEDIAN PRICE.
--- Operator 2026-11-23: "create update cadances based on event date and median price".
+-- THE BOX-OFFICE POLL: EACH EVENT ON ITS OWN CADENCE, SET BY ITS DATE, ITS MEDIAN PRICE AND THE TICKETS LISTED.
+-- Operator 2026-11-23: "create update cadances based on event date and median price", then "Also adjust
+-- cadance based on a qty listed".
 --
 -- Until now every event was read at every run (every 30 minutes): a game five months away as often as
 -- tonight's. Now each event has its own interval, worked out each time it is polled:
@@ -17,9 +18,17 @@
 --        median 150 or more  one step faster
 --        50 to 150           no change
 --        under 50            one step slower
---      never past either end of the ladder. An event with no listings or no date keeps its date step (no date:
---      the slowest step).
---   Both tables are plain rows: to change a cadence, change a row. No code and no deploy.
+--   3. THEN BY QUANTITY (primary_poll_qty_band): the tickets listed, added up over the same listings, move it
+--      again:
+--        2,000 or more       one step faster   (more on sale: more that changes between reads)
+--        250 to 2,000        no change
+--        under 250           one step slower   (little or nothing to send)
+--      The operator named the input, not the direction: more listed = faster follows the price rule (more at
+--      stake, read more often). To turn it round, swap the two step_shift values.
+--   The two moves add up, never go past either end of the ladder, and together never slow an event by more
+--   than max_slowdown_steps (1): a cheap game tomorrow with few seats left is read every hour, not every three.
+--   An event with no date starts on the slowest step; one never read successfully has no price and no quantity and keeps its date step.
+--   All three tables are plain rows: to change a cadence, change a row. No code and no deploy.
 --
 -- HOW IT RUNS. The workers still wake every 30 minutes (PRIMARY_POLL_INTERVAL_SECONDS, the fastest step) and
 -- read each source's list of events, which is one page and finds new events at once. They ask
@@ -34,16 +43,17 @@
 -- reads, and a poll that does not run is still noticed: one grace after it was due. An event not yet given an
 -- interval falls back to listing_max_age (35 minutes), as before.
 --
--- /primary/events gains, at the end: median_price, poll_every_minutes, next_poll_at.
+-- /primary/events gains, at the end: median_price, poll_every_minutes, next_poll_at, listed_quantity.
 --
 -- Read-only towards the sources (RULE 2).
 --
 -- rollback: re-apply primary_poll_ingest() from 20261123192030 and the two views from 20261123190030 /
 --           20261123192030 (after DROP VIEW public.v_primary_poll_events_feed);
---           DROP FUNCTION public.primary_poll_due(text, jsonb); DROP FUNCTION public.primary_poll_interval(date, numeric);
---           DROP TABLE public.primary_poll_cadence, public.primary_poll_price_band;
---           ALTER TABLE public.primary_poll_event DROP COLUMN median_price, DROP COLUMN poll_interval;
---           ALTER TABLE public.primary_poll_config DROP COLUMN listing_grace, DROP COLUMN due_slack, DROP COLUMN retry_after.
+--           DROP FUNCTION public.primary_poll_due(text, jsonb); DROP FUNCTION public.primary_poll_interval(date, numeric, integer);
+--           DROP TABLE public.primary_poll_cadence, public.primary_poll_price_band, public.primary_poll_qty_band;
+--           ALTER TABLE public.primary_poll_event DROP COLUMN median_price, DROP COLUMN listed_quantity, DROP COLUMN poll_interval;
+--           ALTER TABLE public.primary_poll_config DROP COLUMN listing_grace, DROP COLUMN due_slack, DROP COLUMN retry_after,
+--           DROP COLUMN max_slowdown_steps.
 
 CREATE TABLE IF NOT EXISTS public.primary_poll_cadence (
   step          smallint PRIMARY KEY CHECK (step > 0),               -- 1 is the fastest
@@ -62,20 +72,31 @@ CREATE TABLE IF NOT EXISTS public.primary_poll_price_band (
 INSERT INTO public.primary_poll_price_band (median_min, step_shift) VALUES (0, 1), (50, 0), (150, -1)
 ON CONFLICT (median_min) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS public.primary_poll_qty_band (
+  qty_min     integer PRIMARY KEY CHECK (qty_min >= 0),               -- the band holds quantities from here up to the next band
+  step_shift  smallint NOT NULL CHECK (step_shift BETWEEN -3 AND 3)   -- negative: faster
+);
+INSERT INTO public.primary_poll_qty_band (qty_min, step_shift) VALUES (0, 1), (250, 0), (2000, -1)
+ON CONFLICT (qty_min) DO NOTHING;
+
 ALTER TABLE public.primary_poll_cadence    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.primary_poll_price_band ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.primary_poll_cadence, public.primary_poll_price_band FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON public.primary_poll_cadence, public.primary_poll_price_band TO service_role;
+ALTER TABLE public.primary_poll_qty_band   ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.primary_poll_cadence, public.primary_poll_price_band, public.primary_poll_qty_band FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.primary_poll_cadence, public.primary_poll_price_band, public.primary_poll_qty_band TO service_role;
 
 ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS listing_grace interval NOT NULL DEFAULT interval '10 minutes';
 ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS due_slack     interval NOT NULL DEFAULT interval '10 minutes';
 ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS retry_after   interval NOT NULL DEFAULT interval '30 minutes';
+ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS max_slowdown_steps smallint NOT NULL DEFAULT 1 CHECK (max_slowdown_steps >= 0);
 
 ALTER TABLE public.primary_poll_event ADD COLUMN IF NOT EXISTS median_price  numeric;
+ALTER TABLE public.primary_poll_event ADD COLUMN IF NOT EXISTS listed_quantity integer;
 ALTER TABLE public.primary_poll_event ADD COLUMN IF NOT EXISTS poll_interval interval;
 
--- An event's interval: its step on the ladder by its date, moved by its median price, kept on the ladder.
-CREATE OR REPLACE FUNCTION public.primary_poll_interval(p_event_date date, p_median numeric)
+-- An event's interval: its step on the ladder by its date, moved by its median price and by the tickets
+-- listed, kept on the ladder.
+CREATE OR REPLACE FUNCTION public.primary_poll_interval(p_event_date date, p_median numeric, p_listed integer)
  RETURNS interval
  LANGUAGE sql
  STABLE
@@ -89,10 +110,14 @@ AS $function$
       FROM ends),
   by_price AS (
     SELECT coalesce((SELECT b.step_shift FROM public.primary_poll_price_band b
-                      WHERE b.median_min <= p_median ORDER BY b.median_min DESC LIMIT 1), 0) AS shift)
+                      WHERE b.median_min <= p_median ORDER BY b.median_min DESC LIMIT 1), 0) AS shift),
+  by_qty AS (
+    SELECT coalesce((SELECT b.step_shift FROM public.primary_poll_qty_band b
+                      WHERE b.qty_min <= p_listed ORDER BY b.qty_min DESC LIMIT 1), 0) AS shift)
   SELECT c.poll_every
-    FROM ends, by_date, by_price, public.primary_poll_cadence c
-   WHERE c.step = greatest(ends.first, least(ends.last, by_date.step + by_price.shift))
+    FROM ends, by_date, by_price, by_qty, public.primary_poll_cadence c
+   WHERE c.step = greatest(ends.first, least(ends.last, by_date.step
+           + least(by_price.shift + by_qty.shift, coalesce((SELECT g.max_slowdown_steps FROM public.primary_poll_config g), 1))))
 $function$;
 
 -- Of the events a source lists (p_event_ids, a JSON array of ids), the ones to read now.
@@ -107,7 +132,7 @@ AS $function$
     FROM jsonb_array_elements_text(p_event_ids) x(id)
     LEFT JOIN public.primary_poll_event t ON t.source = p_source AND t.source_event_id = x.id
    WHERE t.source_event_id IS NULL OR t.poll_attempt_at IS NULL OR t.poll_interval IS NULL
-      OR t.poll_attempt_at <= now() - least(t.poll_interval, public.primary_poll_interval(t.event_date, t.median_price))
+      OR t.poll_attempt_at <= now() - least(t.poll_interval, public.primary_poll_interval(t.event_date, t.median_price, t.listed_quantity))
                                     + (SELECT c.due_slack FROM public.primary_poll_config c)
 $function$;
 
@@ -118,7 +143,7 @@ CREATE OR REPLACE FUNCTION public.primary_poll_ingest(p_source text, p_events js
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE
-  e jsonb; v_id text; v_ok boolean; v_n integer; v_median numeric;
+  e jsonb; v_id text; v_ok boolean; v_n integer; v_median numeric; v_qty integer;
   v_events integer := 0; v_ok_n integer := 0; v_failed integer := 0; v_listings integer := 0;
 BEGIN
   IF coalesce(p_source, '') = '' OR jsonb_typeof(p_events) IS DISTINCT FROM 'array' THEN
@@ -160,21 +185,24 @@ BEGIN
         FROM jsonb_array_elements(coalesce(e->'listings', '[]'::jsonb)) l
        WHERE coalesce(l->>'id', '') <> ''
        ORDER BY l->>'id';
-      -- the median of what a buyer pays for a ticket, over the listings that are sent: it sets the cadence
-      SELECT count(*), round((percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(l.all_in_price, l.price)))::numeric, 2)
-        INTO v_n, v_median
+      -- over the listings that are sent: the median of what a buyer pays for a ticket, and the tickets listed.
+      -- With the date they set the cadence. No listings is a quantity of 0; listings that carry no quantity
+      -- leave it unknown (null), which moves nothing.
+      SELECT count(*), round((percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(l.all_in_price, l.price)))::numeric, 2),
+             CASE WHEN count(*) = 0 THEN 0 ELSE sum(l.quantity)::integer END
+        INTO v_n, v_median, v_qty
         FROM public.primary_poll_listing l
        WHERE l.source = p_source AND l.source_event_id = v_id AND NOT l.obstructed;
       UPDATE public.primary_poll_event t
          SET poll_status = 'ok', poll_ok_at = now(), poll_error = NULL, listing_count = v_n, median_price = v_median,
-             poll_interval = public.primary_poll_interval(t.event_date, v_median)
+             listed_quantity = v_qty, poll_interval = public.primary_poll_interval(t.event_date, v_median, v_qty)
        WHERE t.source = p_source AND t.source_event_id = v_id;
       v_ok_n := v_ok_n + 1; v_listings := v_listings + v_n;
     ELSE
       -- a failed poll is tried again at the event's own cadence, and no later than retry_after
       UPDATE public.primary_poll_event t
          SET poll_status = 'failed', poll_error = left(coalesce(e->>'error', 'poll failed'), 300), listing_count = 0,
-             poll_interval = least(public.primary_poll_interval(t.event_date, t.median_price),
+             poll_interval = least(public.primary_poll_interval(t.event_date, t.median_price, t.listed_quantity),
                                    (SELECT c.retry_after FROM public.primary_poll_config c))
        WHERE t.source = p_source AND t.source_event_id = v_id;
       v_failed := v_failed + 1;
@@ -184,9 +212,9 @@ BEGIN
 END $function$;
 
 REVOKE ALL ON FUNCTION public.primary_poll_ingest(text, jsonb), public.primary_poll_due(text, jsonb),
-  public.primary_poll_interval(date, numeric) FROM PUBLIC, anon, authenticated;
+  public.primary_poll_interval(date, numeric, integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.primary_poll_ingest(text, jsonb), public.primary_poll_due(text, jsonb),
-  public.primary_poll_interval(date, numeric) TO service_role;
+  public.primary_poll_interval(date, numeric, integer) TO service_role;
 
 -- GET /primary/events: every upcoming event of each source's last completed pull, with whether its listings
 -- may be sent and, if not, why.
@@ -226,7 +254,8 @@ SELECT t.source,
        lower(concat_ws(' ', t.name, t.venue_name, t.venue_city)) AS search_text,
        t.median_price,
        (extract(epoch FROM t.poll_interval) / 60)::integer AS poll_every_minutes,
-       t.poll_attempt_at + t.poll_interval AS next_poll_at
+       t.poll_attempt_at + t.poll_interval AS next_poll_at,
+       t.listed_quantity
   FROM public.primary_poll_event t
   JOIN public.primary_poll_source s ON s.source = t.source AND s.current_run = t.last_run
  CROSS JOIN LATERAL (SELECT (t.poll_status = 'ok' AND t.poll_ok_at > now() - coalesce(t.poll_interval + (SELECT c.listing_grace FROM public.primary_poll_config c), (SELECT c.listing_max_age FROM public.primary_poll_config c))) AS fresh) c

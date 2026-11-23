@@ -266,7 +266,7 @@ def test_only_the_events_that_are_due_are_read_and_the_pull_still_lists_them_all
     def rpc(name, params):
         calls.append((name, params))
         if name == "primary_poll_due":
-            return ["2"]                         # the database says which are due, by date and median price
+            return ["2"]                         # the database says which are due: by date, median price and tickets listed
         return None
 
     events = [{"id": 1, "name": "Far off"}, {"id": 2, "name": "Tonight"}, {"id": 3, "name": "Next month"}]
@@ -400,7 +400,7 @@ def test_events_are_every_polled_event_with_whether_listings_can_be_sent():
     assert [c[1] for c in calls if c[0] == "order"] == ["event_date", "start_local_time", "source", "event_id"]
     assert ("range", 0, 999) in calls and not any(c[0] in ("eq", "gte", "lte", "ilike", "is_") for c in calls)
     assert "tevo_event_id" in pp.EVENT_COLUMNS and "tevo_event_id" in pp.LISTING_COLUMNS    # the EVO event, on every row
-    assert pp.EVENT_COLUMNS[-3:] == ("median_price", "poll_every_minutes", "next_poll_at")  # the event's own cadence
+    assert pp.EVENT_COLUMNS[-4:] == ("median_price", "poll_every_minutes", "next_poll_at", "listed_quantity")  # its own cadence
     assert pp.SEARCH_COLUMN not in pp.EVENT_COLUMNS and "poll_error" not in pp.EVENT_COLUMNS
     db = FakeDB(rows=[EVENT_ROW, EVENT_ROW])
     r = _client(db).get(EVENTS, headers=H, params={
