@@ -1,4 +1,5 @@
 -- Migration 20261123171030 · level:data-collection · lane:D0 (outbound feed in the sub finder API) + A1 (data plane; routed to this session by the operator) · writes:primary_poll_event(new),primary_poll_listing(new),primary_poll_source(new),primary_poll_ingest()(new),primary_poll_source_failed()(new),primary_poll_run_done()(new),v_primary_poll_events_feed(new),v_primary_poll_listings_feed(new) · reads:none · pre:none
+-- Already applied to prod · via MCP 2026-11-23 (operator: "apply and switch on"); re-apply is a no-op.
 --
 -- PRIMARY BOX OFFICES WE POLL OURSELVES: EVENTS AND THEIR LISTINGS, AS AN OUTBOUND FEED.
 -- Operator 2026-11-23: "look at the n2s api out, we're gonna push the list of events and their respective
