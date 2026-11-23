@@ -7,8 +7,8 @@ One run, per source (sitickets, timberwolves):
      upcoming event of the source failed and deletes its listings.
   2. ask `primary_poll_due()` which of the listed events are due: each event has its own cadence,
      by its date, its median price and the tickets listed (operator 2026-11-23: "create update cadances
-     based on event date and median price", "also adjust cadance based on a qty listed"), from every 30
-     minutes to every 12 hours. For each one that is due,
+     based on event date and median price", "also adjust cadance based on a qty listed", "Let's set longest interval to 1 hour"): every 30
+     minutes or every hour. For each one that is due,
      read its listings and send the event to `primary_poll_ingest()`, one event a
      call: with its listings when the read worked, or with ok = false and the reason when it did
      not, which deletes that event's stored listings.

@@ -9,10 +9,10 @@
 --
 --   1. BY DATE (primary_poll_cadence, a ladder, fastest first):
 --        up to 2 days away   every 30 minutes
---        up to 7 days        every hour
---        up to 30 days       every 3 hours
---        up to 90 days       every 6 hours
---        further             every 12 hours
+--        further             every hour
+--      Two steps: the operator set the slowest ("Let's set longest interval to 1 hour", 2026-11-23) and the
+--      fastest ("reduce polling to 30 mins"). The first design ran out to every 12 hours; a longer ladder is
+--      more rows, nothing else.
 --   2. THEN BY PRICE (primary_poll_price_band): the median of what a buyer pays for a ticket, over the event's
 --      listings that are sent, moves it along the ladder:
 --        median 150 or more  one step faster
@@ -39,7 +39,7 @@
 -- A failed poll is tried again at the event's cadence and no later than retry_after (30 minutes).
 --
 -- THE FEED'S AGE LIMIT FOLLOWS THE EVENT. Listings leave while the event's last good poll is no older than its
--- own interval plus listing_grace (10 minutes). So a far-off game read every 12 hours is not withheld between
+-- own interval plus listing_grace (10 minutes). So a far-off game read every hour is not withheld between
 -- reads, and a poll that does not run is still noticed: one grace after it was due. An event not yet given an
 -- interval falls back to listing_max_age (35 minutes), as before.
 --
@@ -61,8 +61,7 @@ CREATE TABLE IF NOT EXISTS public.primary_poll_cadence (
   days_out_max  integer UNIQUE CHECK (days_out_max >= 0)              -- events up to this many days away start here; NULL: any further
 );
 INSERT INTO public.primary_poll_cadence (step, poll_every, days_out_max) VALUES
-  (1, interval '30 minutes', 2), (2, interval '1 hour', 7), (3, interval '3 hours', 30),
-  (4, interval '6 hours', 90), (5, interval '12 hours', NULL)
+  (1, interval '30 minutes', 2), (2, interval '1 hour', NULL)
 ON CONFLICT (step) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.primary_poll_price_band (

@@ -24,8 +24,8 @@ Every row carries `tevo_event_id`, the EVO event our mapper matched (null until 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
 completed pull. Each event is read on its own cadence, by its date, its median price and the tickets listed:
-every 30 minutes for a dear event a day or two away, down to every 12 hours for a cheap one months away with
-little on sale (`poll_every_minutes`; mig 20261123194030). Its age limit
+every 30 minutes for an event a day or two away, or a dear or heavily listed one further off, and every hour
+for the rest (`poll_every_minutes`; mig 20261123194030). Its age limit
 is that interval plus 10 minutes. An event whose poll failed, has not run, or is older than its limit is still in /primary/events,
 with listings_available = false and listings_withheld = poll_failed | not_polled | poll_stale; it has
 no row in /primary/listings. Listings flagged as an obstructed view are never sent. The views are mig
