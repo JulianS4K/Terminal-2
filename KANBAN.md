@@ -183,6 +183,7 @@ Baseline: backend pytest 2,219 passed / 17 skipped / 100.00% coverage; frontend 
 
 | Item | Action |
 |---|---|
+| **Box-office poll feed** (`/primary/events`, `/primary/listings`; operator 2026-11-23) `[AUTHORED, apply pending]` | (1) Apply mig `20261123171030` (three new tables, three functions, two views; changes no existing data). (2) Set `PRIMARY_POLL_LIVE=1` on the web service to start the 10-minute poll. (3) **Decide the Timberwolves seat listings:** they are only readable with a POST to `fan.jump.com/graphql` (a read query, but a new non-GET upstream path: RULE 2 needs the operator's written authorization) or with a headless browser on a new service. Until then the feed sends Timberwolves games with no listings. (4) The Timberwolves site answers 403 to a client that does not name a browser; `jump_client.py` sends a browser User-Agent. Guide section 6k. |
 | Run the A1-DB-8 `DROP INDEX CONCURRENTLY` from psql in a quiet window, and `DROP FUNCTION public.mcp_verify_key_v1(text)` from the SQL editor | Commands in the row; the index drops outside a transaction. |
 | Decide the default-privileges change (A1-DB-15, SQL in the row) | Operator call — affects EXP's future migrations. |
 | Decide A1-DB-6 (resume listing pollers?) and A1-DB-7 (reclaim ~150 GB) | Operator call. |

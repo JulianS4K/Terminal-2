@@ -1381,6 +1381,76 @@ def test_tm_feed_sync_loop_off_by_default_then_runs_and_survives_errors(monkeypa
     assert ticks["n"] == 2 and app_module._tm_feed_sync_last["error"] == "s3 blip"
 
 
+def test_primary_poll_tick_runs_both_clients_through_a_retrying_rpc(monkeypatch):
+    import anyio
+    from core import n2s_autobuy_live, primary_poll_sync
+    seen = {}
+
+    class _Res:
+        def __init__(self, data):
+            self.data = data
+
+        def execute(self):
+            return self
+
+    class _Sb:
+        def rpc(self, name, params):
+            seen.setdefault("rpc", []).append(name)
+            return _Res({"events": 1})
+
+    def _run(rpc, sitickets, jump):
+        seen["clients"] = (sitickets.__name__, jump.__name__)
+        seen["stored"] = rpc("primary_poll_ingest", {"p_source": "sitickets", "p_events": []})
+        return {"sitickets": {"events": 1}, "timberwolves": {"events": 0}}
+
+    retried = []
+
+    def _retrying(rpc):
+        def call(name, params):
+            retried.append(name)
+            return rpc(name, params)
+        return call
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb())
+    monkeypatch.setattr(primary_poll_sync, "run", _run)
+    monkeypatch.setattr(n2s_autobuy_live, "retrying", _retrying)
+    out = anyio.run(app_module._primary_poll_tick)
+    assert out == {"sitickets": {"events": 1}, "timberwolves": {"events": 0}}
+    assert app_module._primary_poll_last["result"] == out and app_module._primary_poll_last["error"] is None
+    assert seen["clients"] == ("sitickets_client", "jump_client") and seen["stored"] == {"events": 1}
+    assert seen["rpc"] == ["primary_poll_ingest"] and retried == ["primary_poll_ingest"]
+
+
+def test_primary_poll_loop_off_by_default_then_runs_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.delenv("PRIMARY_POLL_LIVE", raising=False)
+    monkeypatch.setenv("TM_FEED_SYNC_LIVE", "1")                 # another worker's flag does not turn this on
+    anyio.run(app_module._primary_poll_loop)  # returns at once
+    monkeypatch.setenv("PRIMARY_POLL_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("site blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_primary_poll_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._primary_poll_loop)
+    assert ticks["n"] == 2 and app_module._primary_poll_last["error"] == "site blip"
+
+
 def test_gt_sub_offer_status_route(client, monkeypatch):
     monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")
     r = client.get("/api/admin/gt-sub-offer/status")
