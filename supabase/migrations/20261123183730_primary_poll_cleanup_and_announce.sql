@@ -1,4 +1,5 @@
 -- Migration 20261123183730 · level:data-collection · lane:A1 (data plane; routed to this session by the operator) · writes:primary_poll_event(+announced_at),primary_poll_listing(delete),primary_poll_run_done()(replaced),bot_chat(via bot_chat_log) · reads:primary_poll_source · pre:20261123171030
+-- Already applied to prod · via MCP 2026-11-23 (operator: "apply and merge"); re-apply is a no-op.
 --
 -- THE BOX-OFFICE POLL: OLD LISTINGS ARE CLEANED UP, AND NEW EVENTS ANNOUNCE THEMSELVES TO THE EVENT MAPPER.
 -- Operator 2026-11-23: "add the cleanup for old listings, also ping and map lynx when schedule releases".
