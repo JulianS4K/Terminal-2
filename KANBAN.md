@@ -183,7 +183,6 @@ Baseline: backend pytest 2,219 passed / 17 skipped / 100.00% coverage; frontend 
 
 | Item | Action |
 |---|---|
-| **Box-office poll feed** (`/primary/events`, `/primary/listings`; operator 2026-11-23: "apply and switch on") `[mig APPLIED 2026-11-23; switch-on in progress]` | (1) Mig `20261123171030` applied 2026-11-23 18:16Z and checked (three tables with RLS, three service-role-only functions, two views). (2) Set `PRIMARY_POLL_LIVE=1` and `PRIMARY_POLL_SOURCES=sitickets` on the web service to start the 10-minute SI Tickets poll. (3) **Timberwolves listings** (operator 2026-11-23 chose the browser worker): create the Render worker from `render-primary-poll-browser.yaml` (Docker, `standard` plan, not measured) and set `PRIMARY_POLL_BROWSER_LIVE=1` on it. One poller a source: do not leave `timberwolves` in the web service's `PRIMARY_POLL_SOURCES` once it runs. (4) The Timberwolves site answers 403 to a client that does not name a browser; both readers send a browser User-Agent. Guide section 6k. |
 | Run the A1-DB-8 `DROP INDEX CONCURRENTLY` from psql in a quiet window, and `DROP FUNCTION public.mcp_verify_key_v1(text)` from the SQL editor | Commands in the row; the index drops outside a transaction. |
 | Decide the default-privileges change (A1-DB-15, SQL in the row) | Operator call — affects EXP's future migrations. |
 | Decide A1-DB-6 (resume listing pollers?) and A1-DB-7 (reclaim ~150 GB) | Operator call. |
@@ -215,6 +214,7 @@ Baseline: backend pytest 2,219 passed / 17 skipped / 100.00% coverage; frontend 
 
 ## ✅ Closed-on-reset (2026-10-21 audit — verified done, obsolete or moot)
 
+- **Box-office poll feed** — `/primary/events` and `/primary/listings` live 2026-11-23: mig `20261123171030` applied, `PRIMARY_POLL_LIVE=1` + `PRIMARY_POLL_SOURCES=sitickets` on the web service, the Timberwolves browser worker created (`s4k-primary-poll-browser-ksun`) and switched on. First pulls: SI Tickets 12 events / 1,584 listings, Timberwolves 30 games / 14,727 listings sent — PR #1180.
 - **D1-UX-1/2/3** — mobile overflow / tap targets / safe-area fixes are in `static/store/style.css`.
 - **A1-OPS-33** — no TicketsData cron is active (0 active, 0 inactive by command match).
 - **A1-OPS-32** — Paciolan crons 532/533 deactivated (0 active Paciolan jobs).

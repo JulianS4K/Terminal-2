@@ -9,11 +9,15 @@
 # SI Tickets (mig 20261123171030). ONE POLLER A SOURCE: when this service is live, the web service must
 # have PRIMARY_POLL_SOURCES=sitickets, or the two would overwrite the Timberwolves' rows every cycle.
 #
-# Plan: standard (2 GB). Chromium does not fit the starter plan's 512 MB reliably. Not measured on
-# Render: watch memory after the first runs and lower the plan if it allows.
+# Plan: standard (2 GB). Measured on the first runs (2026-11-23): 440 to 480 MB while a run is under way,
+# which is at the edge of the starter plan's 512 MB, so standard stays.
 #
-# Off until PRIMARY_POLL_BROWSER_LIVE=1 is set here (a Render write: an Applier action, CLAUDE.md §4).
-# NOT created yet.
+# The on/off switch, PRIMARY_POLL_BROWSER_LIVE, is set on the service itself (`sync: false`), not here, so a
+# later sync of this file does not switch the worker off. A Render write: an Applier action (CLAUDE.md §4).
+#
+# Created 2026-11-23 as s4k-primary-poll-browser-ksun (srv-dc287po8v5cc73bs8qsg), blueprint
+# exs-dc287ng8v5cc73bs8kd0, automatic sync off. Render adds the suffix. Switched on the same day
+# (operator: "apply and switch on"); first full run 30 of 30 games.
 
 services:
   - type: worker
@@ -26,7 +30,7 @@ services:
     autoDeploy: true
     envVars:
       - key: PRIMARY_POLL_BROWSER_LIVE
-        value: "0"          # set to 1 to start
+        sync: false         # set on the service: 1 runs the worker, anything else keeps it off
       - key: PRIMARY_POLL_INTERVAL_SECONDS
         value: "600"
       - key: SUPABASE_URL
