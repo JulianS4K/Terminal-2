@@ -997,7 +997,7 @@ GET /primary/events?source=sitickets&date_from=2027-02-01&available=true
 GET /primary/listings?source=sitickets&event_id=2297105
 ```
 
-**`GET /primary/events`** takes `source`, `date_from`, `date_to`, `q` (every word must be in the name, venue or city), `available=true|false`, `format=json|csv`, `limit` (max 5000) and `offset`.
+**`GET /primary/events`** takes `source`, `date_from`, `date_to`, `q` (every word must be in the name, venue or city), `available=true|false`, `mapped=true|false`, `format=json|csv`, `limit` (max 5000) and `offset`.
 
 | Field | Meaning |
 |---|---|
@@ -1009,13 +1009,14 @@ GET /primary/listings?source=sitickets&event_id=2297105
 | `listings_available` | True when the event's listings can be sent right now |
 | `listing_count`, `listings_as_of` | How many listings and when they were read. Null unless `listings_available` |
 | `listings_withheld` | Why not: `poll_failed` (the last read of this event failed), `not_polled` (never read yet) or `poll_stale` (the last good read is older than 15 minutes) |
+| `tevo_event_id`, `tevo_match_method`, `terminal_path` | The EVO event our mapper matched, how, and its page in our terminal. Null until matched; a series or package that is not an EVO event stays null |
 | `last_poll_at`, `first_seen_at`, `last_seen_at` | When we last tried the event, first saw it and last saw it listed |
 
-**`GET /primary/listings`** takes `source`, `event_id`, `market=primary|resale`, `section`, `date_from`, `date_to`, `format`, `limit` and `offset`. Rows come cheapest first within an event.
+**`GET /primary/listings`** takes `source`, `event_id`, `tevo_event_id`, `market=primary|resale`, `section`, `date_from`, `date_to`, `format`, `limit` and `offset`. Rows come cheapest first within an event.
 
 | Field | Meaning |
 |---|---|
-| `source`, `event_id`, `event_name`, `event_date`, `start_local_time` | The event |
+| `source`, `event_id`, `event_name`, `tevo_event_id`, `event_date`, `start_local_time` | The event, and the EVO event it matched (null until matched) |
 | `listing_id` | The box office's id for this block of seats; it stays the same from one read to the next |
 | `market` | `primary`: the box office's own seats. `resale`: resold on the same site |
 | `area`, `section`, `seat_row`, `seat_low`, `seat_high`, `seats` | Where the seats are. `seats` lists every seat number |
@@ -1030,7 +1031,7 @@ GET /primary/listings?source=sitickets&event_id=2297105
 - **An empty `/primary/listings` for an event does not mean it is sold out.** Check `listings_available` on the event first.
 - **Obstructed-view listings are never sent.**
 - **Timberwolves listings are not sent yet**, so every Timberwolves event has `listings_withheld: poll_failed` for now.
-- **These events carry no EVO event id yet.** Match them by name, date and venue.
+- **`tevo_event_id` is filled by our event mapper**, not by the poll, so a newly listed event has a null until the mapper's next pass. Use `mapped=false` to see the ones still open.
 
 ## 7. Buy a cover
 

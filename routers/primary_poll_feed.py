@@ -16,7 +16,10 @@ Both take:
         &limit=1000&offset=0     (limit max 5000)
 /primary/events also takes    &q=red bull new england     every word must be in the name, venue or city
                               &available=true|false       events whose listings can / cannot be sent now
-/primary/listings also takes  &event_id=2297105  &market=primary|resale  &section=126
+                              &mapped=true|false          matched to an EVO event or not
+/primary/listings also takes  &event_id=2297105  &tevo_event_id=3584741  &market=primary|resale  &section=126
+
+Every row carries `tevo_event_id`, the EVO event our mapper matched (null until it has).
 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
@@ -42,8 +45,9 @@ SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",
                  "venue_name", "venue_city", "venue_state", "ticket_url", "offer_id", "order_min", "order_max",
                  "total_available", "price_min", "price_max", "currency", "listings_available", "listing_count",
-                 "listings_as_of", "listings_withheld", "last_poll_at", "first_seen_at", "last_seen_at")
-LISTING_COLUMNS = ("source", "event_id", "event_name", "event_date", "start_local_time", "listing_id", "market",
+                 "listings_as_of", "listings_withheld", "tevo_event_id", "tevo_match_method", "terminal_path",
+                 "last_poll_at", "first_seen_at", "last_seen_at")
+LISTING_COLUMNS = ("source", "event_id", "event_name", "tevo_event_id", "event_date", "start_local_time", "listing_id", "market",
                    "area", "section", "seat_row", "seat_low", "seat_high", "seats", "quantity", "allowed_quantities",
                    "max_per_order", "order_min", "order_max", "price", "fee", "all_in_price", "price_includes_tax",
                    "currency", "ticket_type", "delivery", "ada", "aisle", "general_admission", "as_of")
@@ -102,11 +106,16 @@ def events_response(db: Any, params: Any) -> Any:
     try:
         f = _common(params)
         available, words = _bool(params.get("available")), _words(params.get("q"))
+        mapped = _bool(params.get("mapped"))
     except (ValueError, KeyError) as exc:
         return _err(422, "invalid", f"invalid parameter: {exc}")
     sel = _filtered(db.table(EVENTS_VIEW).select(",".join(EVENT_COLUMNS)), f)
     if available is not None:
         sel = sel.eq("listings_available", available)
+    if mapped is True:
+        sel = sel.not_.is_("tevo_event_id", "null")
+    elif mapped is False:
+        sel = sel.is_("tevo_event_id", "null")
     for word in words:
         sel = sel.ilike(SEARCH_COLUMN, f"%{word}%")
     return _page(sel, f, EVENT_COLUMNS, "events", "primary_events.csv",
@@ -118,12 +127,17 @@ def listings_response(db: Any, params: Any) -> Any:
     try:
         f = _common(params)
         event_id, section = _token(params, "event_id"), _token(params, "section")
+        tevo_event_id = (params.get("tevo_event_id") or "").strip()
+        if tevo_event_id and not tevo_event_id.isdigit():
+            raise ValueError("tevo_event_id")
         market = _one_of(params, "market", MARKETS)
     except (ValueError, KeyError) as exc:
         return _err(422, "invalid", f"invalid parameter: {exc}")
     sel = _filtered(db.table(LISTINGS_VIEW).select(",".join(LISTING_COLUMNS)), f)
     if event_id:
         sel = sel.eq("event_id", event_id)
+    if tevo_event_id:
+        sel = sel.eq("tevo_event_id", int(tevo_event_id))
     if market:
         sel = sel.eq("market", market)
     if section:

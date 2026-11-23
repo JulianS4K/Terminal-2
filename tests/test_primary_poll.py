@@ -295,6 +295,11 @@ class _Query:
     def __init__(self, db):
         self.db, self.calls = db, []
 
+    @property
+    def not_(self):
+        self.calls.append(("not",))
+        return self
+
     def __getattr__(self, name):
         def call(*args):
             self.calls.append((name, *args))
@@ -349,7 +354,8 @@ def test_events_are_every_polled_event_with_whether_listings_can_be_sent():
     calls = db.queries[0].calls
     assert db.tables == [pp.EVENTS_VIEW] and calls[0] == ("select", ",".join(pp.EVENT_COLUMNS))
     assert [c[1] for c in calls if c[0] == "order"] == ["event_date", "start_local_time", "source", "event_id"]
-    assert ("range", 0, 999) in calls and not any(c[0] in ("eq", "gte", "lte", "ilike") for c in calls)
+    assert ("range", 0, 999) in calls and not any(c[0] in ("eq", "gte", "lte", "ilike", "is_") for c in calls)
+    assert "tevo_event_id" in pp.EVENT_COLUMNS and "tevo_event_id" in pp.LISTING_COLUMNS    # the EVO event, on every row
     assert pp.SEARCH_COLUMN not in pp.EVENT_COLUMNS and "poll_error" not in pp.EVENT_COLUMNS
     db = FakeDB(rows=[EVENT_ROW, EVENT_ROW])
     r = _client(db).get(EVENTS, headers=H, params={
@@ -361,6 +367,11 @@ def test_events_are_every_polled_event_with_whether_listings_can_be_sent():
                      ("lte", "event_date", "2027-05-01"), ("eq", "listings_available", False),
                      ("ilike", "search_text", "%red%"), ("ilike", "search_text", "%bull%")):
         assert expected in calls
+    for mapped, expected in (("true", [("not",), ("is_", "tevo_event_id", "null")]),
+                             ("false", [("is_", "tevo_event_id", "null")])):
+        db = FakeDB(rows=[EVENT_ROW])
+        _client(db).get(EVENTS, headers=H, params={"mapped": mapped})
+        assert [c for c in db.queries[0].calls if c[0] in ("not", "is_")] == expected
 
 
 def test_listings_can_be_narrowed_to_an_event_a_market_and_a_section():
@@ -374,10 +385,10 @@ def test_listings_can_be_narrowed_to_an_event_a_market_and_a_section():
     assert "obstructed" not in pp.LISTING_COLUMNS                 # an obstructed-view listing is never sent
     db = FakeDB(rows=None)
     r = _client(db).get(LISTINGS, headers=H, params={"source": "timberwolves", "event_id": "1729",
-                                                    "market": "Resale", "section": "218"})
+                                                    "tevo_event_id": "3466081", "market": "Resale", "section": "218"})
     assert r.json() == {"count": 0, "offset": 0, "next_offset": None, "listings": []}
     for expected in (("eq", "source", "timberwolves"), ("eq", "event_id", "1729"), ("eq", "market", "resale"),
-                     ("eq", "section", "218")):
+                     ("eq", "section", "218"), ("eq", "tevo_event_id", 3466081)):
         assert expected in db.queries[0].calls
 
 
@@ -388,6 +399,7 @@ def test_csv_bad_parameters_and_a_database_error():
         "content-disposition"]
     for url, params in ((EVENTS, {"source": "stubhub"}), (EVENTS, {"format": "xml"}), (EVENTS, {"available": "maybe"}),
                         (EVENTS, {"limit": "0"}), (EVENTS, {"date_from": "tomorrow"}), (EVENTS, {"q": "!"}),
+                        (EVENTS, {"mapped": "perhaps"}), (LISTINGS, {"tevo_event_id": "abc"}),
                         (LISTINGS, {"market": "grey"}), (LISTINGS, {"event_id": "1;drop"}),
                         (LISTINGS, {"section": "a,b"}), (LISTINGS, {"format": "xml"})):
         db = FakeDB(rows=[])

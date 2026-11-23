@@ -30,6 +30,10 @@
 -- source's current one (primary_poll_source); an event the source no longer lists drops out of both feeds.
 -- While a run is under way the feeds keep serving the previous one.
 --
+-- THE EVO EVENT. primary_poll_event carries tevo_event_id / tevo_match_method / tevo_matched_at for the event
+-- mapper to fill (the mapping program's own function, not written here); the poll never touches them, and both
+-- feeds return tevo_event_id. Null until the mapper has matched the event.
+--
 -- Read-only: nothing here calls a source (RULE 2). The two clients are GET only.
 -- No prod data is changed: two new tables, two functions, two views.
 --
@@ -66,6 +70,11 @@ CREATE TABLE IF NOT EXISTS public.primary_poll_event (
   poll_error        text,
   listing_count     integer NOT NULL DEFAULT 0,
   last_run          text,                  -- the last completed pull that listed this event
+  -- the EVO event, written by the event mapper only (asked by the mapping owner, bot_chat 7245): fill-only,
+  -- as vivid_catalog_event / tickpick_catalog_event / tm_discovery_event carry theirs. The poll never sets them.
+  tevo_event_id     bigint,
+  tevo_match_method text,
+  tevo_matched_at   timestamptz,
   PRIMARY KEY (source, source_event_id)
 );
 
@@ -257,6 +266,9 @@ SELECT t.source,
             WHEN t.poll_status = 'failed' THEN 'poll_failed'
             WHEN t.poll_status = 'pending' THEN 'not_polled'
             ELSE 'poll_stale' END AS listings_withheld,
+       t.tevo_event_id,
+       t.tevo_match_method,
+       CASE WHEN t.tevo_event_id IS NOT NULL THEN '/terminal/event.html?event=' || t.tevo_event_id END AS terminal_path,
        t.poll_attempt_at AS last_poll_at,
        t.first_seen_at,
        t.last_seen_at,
@@ -273,6 +285,7 @@ WITH (security_invoker = true) AS
 SELECT l.source,
        l.source_event_id AS event_id,
        t.name AS event_name,
+       t.tevo_event_id,
        t.event_date,
        t.start_local_time,
        l.listing_id,
