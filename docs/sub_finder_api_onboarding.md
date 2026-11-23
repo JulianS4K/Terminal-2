@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-23** Changed on `GET /primary/listings`: `price` now means the same for every source, the price before fees and tax, and each listing carries `fee`, `tax` and `all_in_price` with `price` + `fee` + `tax` = `all_in_price`. Until now a Timberwolves `price` was the all-in total rounded to the dollar (55 where the ticket is 42.00 + 8.40 fees + 5.05 tax = 55.45); it is now 42.00 with `all_in_price` 55.45 and `price_estimated: true`, because that site shows only the total and we split it. SI Tickets gains `tax` and the per-order `order_fee`, and its `fee` is now the one inside the total. New fields are at the end of each row (section 6k).
 - **2026-11-23** New: `GET /primary/events` and `GET /primary/listings` carry the box offices we poll ourselves every 30 minutes: SI Tickets at Sports Illustrated Stadium (Red Bull New York, HSBC SVNS) with every seat block, its seats, the quantities a buyer may take, the order limit and the price; and the Timberwolves' home games with the team's own and resale seat blocks. Only the newest pull is served, and listings only for an event polled successfully in the last 35 minutes: otherwise the event says `listings_available: false` and why. Obstructed-view listings are never sent (section 6k).
 - **2026-11-22** Every event feed now carries the same event's id on each marketplace: `/tm/events`, `/axs/events`, `/seatgeek/events` and `/mlb/events` rows gain `xmap_tevo_event_id`, `ticketmaster_event_id`, `seatgeek_event_id`, `stubhub_event_id`, `vivid_event_id`, `tickpick_event_id`, `gotickets_event_id`, `axs_event_id` and `aq_short_event_id` (null where we hold no pairing), and `/mlb/schedule` gains `tickpick_event_id` and `axs_event_id`. Nothing was renamed or removed (section 6j).
 - **2026-11-22** Our matching gates, in one place. Every cover carries `gate` and `label`: 1 `Index` and 2 `S4KTrading` keep the buyer in the same section and the same or a better row (1 at a profit, 2 at up to 200% of the sale); 3 `Index offer subs` and 4 `offer subs s4ktrading` move the buyer to another section in the same zone; 5 `Index Down offer subs` and 6 `Down offer subs S4KTrading` move the buyer up to 5 rows back. Gates 3 to 6 need the buyer's agreement and are never bought by us. New: `GET /gates` returns the table as JSON (section 8).
@@ -1023,7 +1024,10 @@ GET /primary/listings?source=sitickets&event_id=2297105
 | `area`, `section`, `seat_row`, `seat_low`, `seat_high`, `seats` | Where the seats are. `seats` lists every seat number |
 | `quantity`, `allowed_quantities`, `max_per_order` | Seats in the block, the quantities a buyer may take from it, and the most one order may take |
 | `order_min`, `order_max` | The event's own order limits, where the box office gives them |
-| `price`, `fee`, `all_in_price`, `price_includes_tax`, `currency` | Per ticket. `sitickets`: `price` is before the fee and tax, `all_in_price` is what the buyer pays |
+| `price`, `fee`, `tax`, `all_in_price`, `currency` | Per ticket, for every source: `price` is before fees and tax, and `price` + `fee` + `tax` = `all_in_price`, what the buyer pays |
+| `order_fee` | A fee charged once an order, not per ticket (`sitickets`: 0.30). Null where there is none |
+| `price_estimated` | `true` where `price`, `fee` and `tax` were worked out from the all-in total and not read from the box office (`timberwolves`: its site shows only the total). `all_in_price` is never estimated |
+| `price_includes_tax` | Kept for callers already reading it; `false` wherever `price` is filled |
 | `ticket_type`, `delivery`, `ada`, `aisle`, `general_admission` | The price type, how the ticket is delivered, and seat flags |
 | `as_of` | When this event's listings were read |
 
@@ -1031,7 +1035,8 @@ GET /primary/listings?source=sitickets&event_id=2297105
 - **Listings are sent only for an event read successfully within the last 35 minutes** (one 30-minute cycle plus its run time). A failed read deletes the event's listings on our side, so nothing old is sent. The event stays in `/primary/events` with `listings_available: false`.
 - **An empty `/primary/listings` for an event does not mean it is sold out.** Check `listings_available` on the event first.
 - **Obstructed-view listings are never sent.**
-- **Timberwolves prices include tax** (`price_includes_tax: true`); there is no separate fee. `max_per_order` is never above the game's `order_max`.
+- **Timberwolves prices are split from the total.** The site shows one all-in figure a ticket: to the cent for the team's own seats, to the dollar for resale. We split it into `price`, `fee` (20% of the price) and `tax` (12.025% of the price) and set `price_estimated: true`; `all_in_price` is the site's own figure. `max_per_order` is never above the game's `order_max`. On the event, `price_min` and `price_max` are all-in figures.
+- **`lynx` listings will carry `all_in_price` only** until its fee is confirmed: `price`, `fee` and `tax` are null there.
 - **Timberwolves listings come from a separate worker.** Until it is switched on, every Timberwolves event has `listings_withheld: poll_failed`.
 - **`tevo_event_id` is filled by our event mapper**, not by the poll, so a newly listed event has a null until the mapper's next pass. Use `mapped=false` to see the ones still open.
 

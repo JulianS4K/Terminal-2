@@ -183,6 +183,7 @@ Baseline: backend pytest 2,219 passed / 17 skipped / 100.00% coverage; frontend 
 
 | Item | Action |
 |---|---|
+| **Box-office feed: price, fee, tax and all-in a ticket, the same for every source** (operator 2026-11-23: "derive it, 20% fee holds, build all three") `[AUTHORED, apply pending]` | Apply mig `20261123192030` (three nullable columns on `primary_poll_listing`, `primary_poll_ingest()` re-created, three columns added at the end of the listings view) **before** merging its PR: the route selects the new columns. The Timberwolves tax rate (12.025% of the price) rests on one cart; if it changes, `all_in_price` stays right and the split drifts: `PRICING` in `core/primary_poll_browser.py`. |
 | Run the A1-DB-8 `DROP INDEX CONCURRENTLY` from psql in a quiet window, and `DROP FUNCTION public.mcp_verify_key_v1(text)` from the SQL editor | Commands in the row; the index drops outside a transaction. |
 | Decide the default-privileges change (A1-DB-15, SQL in the row) | Operator call — affects EXP's future migrations. |
 | Decide A1-DB-6 (resume listing pollers?) and A1-DB-7 (reclaim ~150 GB) | Operator call. |

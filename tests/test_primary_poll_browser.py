@@ -18,27 +18,41 @@ from core import primary_poll_sync as sync  # noqa: E402
 BLOCK = {"id": "blk1", "market": "PRIMARY", "quantities": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14],
          "location": {"neighborhood": "Admissions -- 200 Level", "section": "203", "row": "X",
                       "seats": list(range(1, 15))},
-         "price": {"amount": 3300, "priceTypeName": None}, "hasAda": False, "hasObstructedView": False,
-         "hasAisle": False, "isGA": False}
+         "price": {"amount": 5500, "priceTypeName": None}, "hasAda": False, "hasObstructedView": False,
+         "hasAisle": False, "isGA": False,
+         "pricesByType": [{"priceTypeId": "9999", "amount": 4990}, {"priceTypeId": "7336", "amount": 5545}]}
+RATES = b.PRICING["timberwolves"]
 RESALE = {"id": "blk2", "market": "SECONDARY", "quantities": [2], "hasObstructedView": True,
           "location": {"section": "230", "row": "N", "seats": [9, 10]}, "price": {"amount": 2300}}
 BARE = {"id": "blk3", "market": "OTHER"}
 INVENTORY = {"data": {"getBlocks": {"blocks": [BLOCK, RESALE, BARE]}}}
 OFFER = {"data": {"offerById": {"content": {"inventoryListDescription": "Price includes tax"},
-                                "eventGroup": [{"qtyMin": 1, "qtyMax": 6}]}}}
+                                "eventGroup": [{"qtyMin": 1, "qtyMax": 6,
+                                                "priceTypes": [{"priceTypeId": "9999", "isDefault": False},
+                                                               {"priceTypeId": "7336", "isDefault": True}]}]}}}
 EVENT = {"id": "1729", "name": "Timberwolves vs. Nets", "url": "https://tickets.timberwolves.com/offers/7575",
          "order_min": None, "order_max": None}
 
 
 def test_listings_carry_seats_the_quantities_allowed_and_the_orders_limit():
-    first, second, third = b.parse_listings(INVENTORY, order_max=6, includes_tax=True)
+    first, second, third = b.parse_listings(INVENTORY, order_max=6, rates=RATES, price_type="7336")
+    # the operator's cart of 2026-11-23: 42.00 + 8.40 fees + 5.05 tax = 55.45 a ticket; the page shows 55
     assert first == {"id": "blk1", "market": "primary", "area": "Admissions -- 200 Level", "section": "203",
                      "row": "X", "seat_low": "1", "seat_high": "14", "seats": [str(n) for n in range(1, 15)],
-                     "qty": 14, "allowed_quantities": BLOCK["quantities"], "max_per_order": 6, "price": 33.0,
-                     "fee": None, "all_in": None, "price_includes_tax": True, "ticket_type": None,
+                     "qty": 14, "allowed_quantities": BLOCK["quantities"], "max_per_order": 6, "price": 42.0,
+                     "fee": 8.4, "tax": 5.05, "all_in": 55.45, "order_fee": None, "price_includes_tax": False,
+                     "price_estimated": True, "ticket_type": None,
                      "delivery": None, "ada": False, "obstructed": False, "aisle": False, "ga": False}
     assert second["market"] == "resale" and second["obstructed"] is True and second["max_per_order"] == 2
-    assert second["seat_low"] == "9" and second["seat_high"] == "10" and second["price"] == 23.0
+    assert second["seat_low"] == "9" and second["seat_high"] == "10"
+    # resale: the total is only known to the dollar, and is split the same way
+    assert (second["price"], second["fee"], second["tax"], second["all_in"]) == (17.42, 3.48, 2.1, 23.0)
+    assert round(second["price"] + second["fee"] + second["tax"], 2) == second["all_in"] and second["price_estimated"]
+    assert third["all_in"] is None and third["fee"] is None and third["tax"] is None and not third["price_estimated"]
+    # a team whose fee is not confirmed (the Lynx): the all-in total and no split
+    bare = b.parse_listings(INVENTORY)[0]
+    assert (bare["price"], bare["fee"], bare["tax"], bare["all_in"]) == (None, None, None, 49.9)
+    assert bare["price_estimated"] is False and bare["price_includes_tax"] is None
     # a block with nothing but an id: no seats, no price, no limit, an unknown market
     assert third["market"] is None and third["seats"] is None and third["qty"] is None and third["price"] is None
     assert third["max_per_order"] is None and third["seat_low"] is None and third["obstructed"] is False
@@ -48,12 +62,25 @@ def test_listings_carry_seats_the_quantities_allowed_and_the_orders_limit():
             b.parse_listings(bad)
 
 
-def test_order_limits_and_the_tax_note_come_from_the_pages_offer():
-    assert b.order_limits(OFFER) == (1, 6) and b.prices_include_tax(OFFER) is True
+def test_order_limits_and_the_default_price_type_come_from_the_pages_offer():
+    assert b.order_limits(OFFER) == (1, 6) and b.default_price_type(OFFER) == "7336"
     for missing in (None, {}, {"data": {"offerById": {"eventGroup": []}}}):
-        assert b.order_limits(missing) == (None, None) and b.prices_include_tax(missing) is None
-    assert b.prices_include_tax({"data": {"offerById": {"content": {"inventoryListDescription": None}}}}) is None
-    assert b.prices_include_tax({"data": {"offerById": {"content": {"inventoryListDescription": "All sales final"}}}}) is False
+        assert b.order_limits(missing) == (None, None) and b.default_price_type(missing) is None
+    for no_default in ({"data": {"offerById": {"eventGroup": [{"priceTypes": None}]}}},
+                       {"data": {"offerById": {"eventGroup": [{"priceTypes": [{"priceTypeId": "1", "isDefault": False}]}]}}}):
+        assert b.default_price_type(no_default) is None
+
+
+def test_the_all_in_price_is_exact_where_the_page_gives_it_and_splits_to_the_cent():
+    assert b.all_in_price(BLOCK, "7336") == 55.45              # the default price type's own total
+    assert b.all_in_price(BLOCK) == b.all_in_price(BLOCK, "0") == 49.9      # no such type: the first one
+    assert b.all_in_price(RESALE) == 23.0                      # resale: only the figure the page shows
+    assert b.all_in_price({"pricesByType": [{"priceTypeId": "1", "amount": None}], "price": {"amount": 100}}) == 1.0
+    assert b.all_in_price({}) is None and b.all_in_price({"price": {"amount": "n/a"}}) is None
+    assert b.split_all_in(55.45, RATES) == (42.0, 8.4, 5.05)
+    for paid in (55.45, 33.27, 1019.0, 20.0, 0.01):            # the three parts always add up to the total
+        assert round(sum(b.split_all_in(paid, RATES)), 2) == paid
+    assert "lynx" not in b.PRICING                             # not confirmed for the Lynx: no split there
 
 
 class _Request:
@@ -191,7 +218,8 @@ def test_a_run_stores_each_game_with_its_listings_and_a_page_that_fails_with_non
     good, bad = calls[0][1]["p_events"][0], calls[1][1]["p_events"][0]
     assert calls[0][1]["p_source"] == "timberwolves" and good["ok"] is True and len(good["listings"]) == 3
     assert (good["order_min"], good["order_max"]) == (1, 6)                 # read from the page, sent with the event
-    assert good["listings"][0]["max_per_order"] == 6 and good["listings"][0]["price_includes_tax"] is True
+    assert good["listings"][0]["max_per_order"] == 6
+    assert (good["listings"][0]["price"], good["listings"][0]["all_in"]) == (42.0, 55.45)   # the default price type
     assert bad == {**games[1], "listings": [], "ok": False, "error": "TimeoutError: Timeout 45000ms exceeded"}
     assert calls[2][1]["p_event_ids"] == ["1729", "1720"]
 

@@ -55,7 +55,8 @@ SI_GROUP = {"ti": "a5j504_alas4e_1746207051860_82.03_std_full", "tus": "128", "t
             "tps": [{"n": "Sideline A / Upper Center Mid-Single-MP", "p": 84.71}]}
 SI_EVENT = {"ticketGroupsError": None,
             "ticketData": {"ticketingGroups": [SI_GROUP, {"ti": 9, "tq": 2, "tsp": [], "tp": 40.1}],
-                           "allInPrices": {"FOX2F9": {"allIn": 90.31}}}}
+                           "allInPrices": {"FOX2F9": {"allIn": 90.31, "tax": 5.44, "convenienceFee": 0,
+                                                      "processingFee": 2.84, "processingFeeFlat": 0.3}}}}
 
 
 def test_sitickets_events_are_the_box_office_ones_without_packages_and_memberships():
@@ -75,12 +76,19 @@ def test_sitickets_listings_carry_seats_quantities_limits_and_prices():
     first, second = si.parse_listings(SI_EVENT)
     assert first == {"id": SI_GROUP["ti"], "market": "primary", "area": None, "section": "128", "row": "4",
                      "seat_low": "9", "seat_high": "24", "seats": ["9", "21"], "qty": 5,
-                     "allowed_quantities": [1, 2, 3, 4], "max_per_order": 4, "price": 82.03, "fee": 2.68,
-                     "all_in": 90.31, "price_includes_tax": False,
+                     "allowed_quantities": [1, 2, 3, 4], "max_per_order": 4, "price": 82.03, "fee": 2.84,
+                     "tax": 5.44, "all_in": 90.31, "order_fee": 0.3, "price_includes_tax": False,
+                     "price_estimated": False,
                      "ticket_type": "Sideline A / Upper Center Mid-Single-MP", "delivery": "E-Ticket",
                      "ada": False, "obstructed": False, "aisle": None, "ga": None}
     assert second["id"] == "9" and second["seats"] is None and second["max_per_order"] is None
     assert second["section"] is None and second["all_in"] is None
+    # price + fee + tax is the all-in price; the fee is the one in the total, not the listing's own 2.68
+    assert round(first["price"] + first["fee"] + first["tax"], 2) == first["all_in"]
+    # a ticket type the page gives no all-in breakdown for: the listing's own fee, and no tax or total
+    assert (second["fee"], second["tax"], second["order_fee"], second["price"]) == (None, None, None, 40.1)
+    with_fee = si.parse_listings({"ticketData": {"ticketingGroups": [{"ti": 1, "tp": 10, "tpf": 0.5}]}})[0]
+    assert with_fee["fee"] == 0.5 and with_fee["all_in"] is None
     for props in ({"ticketGroupsError": "boom"}, {"ticketData": []}, {"ticketData": {"ticketingGroups": None}}, {}):
         with pytest.raises(si.SiTicketsError):
             si.parse_listings(props)
@@ -383,6 +391,9 @@ def test_listings_can_be_narrowed_to_an_event_a_market_and_a_section():
     assert [c[1] for c in calls if c[0] == "order"] == ["event_date", "source", "event_id", "price", "listing_id"]
     assert not any(c[0] == "eq" for c in calls)
     assert "obstructed" not in pp.LISTING_COLUMNS                 # an obstructed-view listing is never sent
+    for column in ("price", "fee", "tax", "all_in_price", "order_fee", "price_estimated"):
+        assert column in pp.LISTING_COLUMNS
+    assert pp.LISTING_COLUMNS[-3:] == ("tax", "order_fee", "price_estimated")   # the view gained them at its end
     db = FakeDB(rows=None)
     r = _client(db).get(LISTINGS, headers=H, params={"source": "timberwolves", "event_id": "1729",
                                                     "tevo_event_id": "3466081", "market": "Resale", "section": "218"})

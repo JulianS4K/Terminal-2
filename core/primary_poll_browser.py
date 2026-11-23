@@ -45,6 +45,14 @@ PAGE_HOSTS = frozenset({"tickets.timberwolves.com", "tickets.lynxbasketball.com"
 SKIPPED_RESOURCES = frozenset({"image", "font", "media"})
 PAGE_TIMEOUT_MS = 45_000
 MARKETS = {"PRIMARY": "primary", "SECONDARY": "resale"}
+# org -> (fee, tax), each as a share of the price before fees and tax. The site shows only the all-in total
+# on a listing; the split appears in the cart, which this worker never opens (a cart holds seats). So the
+# price, the fee and the tax are worked out from the total: all-in = price x (1 + fee + tax).
+#   fee 20%: operator 2026-11-23, "derive it, 20% fee holds".
+#   tax 12.025%: the operator's cart of 2026-11-23 (2 x 42.00 = 84.00, fees 16.80, estimated taxes 10.10,
+#   total 110.90). One observation: if the rate changes, the all-in total stays right and the split drifts.
+# A team not listed here (the Lynx: its fee is not confirmed) gets the all-in total and no split.
+PRICING = {"timberwolves": (0.20, 0.12025)}
 
 
 class BrowserPollError(RuntimeError):
@@ -67,17 +75,41 @@ def order_limits(offer: Any) -> tuple[int | None, int | None]:
     return group.get("qtyMin"), group.get("qtyMax")
 
 
-def prices_include_tax(offer: Any) -> bool | None:
-    """The site says so on the offer ("Price includes tax"); None when it says nothing."""
+def default_price_type(offer: Any) -> str | None:
+    """The id of the offer's default price type ("Individual"), from the page's offer answer."""
     try:
-        note = offer["data"]["offerById"]["content"]["inventoryListDescription"]
-    except (KeyError, TypeError):
+        types = offer["data"]["offerById"]["eventGroup"][0]["priceTypes"]
+    except (KeyError, IndexError, TypeError):
         return None
-    return "includes tax" in note.lower() if isinstance(note, str) else None
+    for kind in types or []:
+        if kind.get("isDefault"):
+            return kind.get("priceTypeId")
+    return None
 
 
-def parse_listings(inventory: Any, order_max: int | None = None, includes_tax: bool | None = None) -> list[dict]:
-    """The page's seat blocks as the database takes them. Raises when the answer is not an inventory."""
+def all_in_price(block: dict, price_type: str | None = None) -> float | None:
+    """What a buyer pays for one ticket of this block, fees and tax included. The team's own seats carry it
+    to the cent, per price type (55.45); every block carries the figure the page shows, to the dollar (55)."""
+    exact = [p for p in block.get("pricesByType") or [] if isinstance(p.get("amount"), (int, float))]
+    chosen = [p for p in exact if p.get("priceTypeId") == price_type] or exact
+    if chosen:
+        return chosen[0]["amount"] / 100
+    shown = (block.get("price") or {}).get("amount")
+    return shown / 100 if isinstance(shown, (int, float)) else None
+
+
+def split_all_in(paid: float, rates: tuple[float, float]) -> tuple[float, float, float]:
+    """(price, fee, tax) per ticket from the all-in total: price + fee + tax is exactly the total."""
+    fee_rate, tax_rate = rates
+    price = round(paid / (1 + fee_rate + tax_rate), 2)
+    fee = round(price * fee_rate, 2)
+    return price, fee, round(paid - price - fee, 2)
+
+
+def parse_listings(inventory: Any, order_max: int | None = None, rates: tuple[float, float] | None = None,
+                   price_type: str | None = None) -> list[dict]:
+    """The page's seat blocks as the database takes them. With `rates`, the all-in total is split into
+    price, fee and tax (marked estimated). Raises when the answer is not an inventory."""
     try:
         blocks = inventory["data"]["getBlocks"]["blocks"]
     except (KeyError, TypeError) as exc:
@@ -92,16 +124,17 @@ def parse_listings(inventory: Any, order_max: int | None = None, includes_tax: b
         most = max(allowed) if allowed else None
         if most is not None and order_max:
             most = min(most, order_max)
-        price = block.get("price") or {}
+        paid = all_in_price(block, price_type)
+        price, fee, tax = split_all_in(paid, rates) if rates and paid is not None else (None, None, None)
         out.append({
             "id": block["id"], "market": MARKETS.get(block.get("market")),
             "area": where.get("neighborhood"), "section": where.get("section"), "row": where.get("row"),
             "seat_low": seats[0] if seats else None, "seat_high": seats[-1] if seats else None,
             "seats": seats or None, "qty": len(seats) or None,
             "allowed_quantities": allowed, "max_per_order": most,
-            "price": price["amount"] / 100 if isinstance(price.get("amount"), (int, float)) else None,
-            "fee": None, "all_in": None, "price_includes_tax": includes_tax,
-            "ticket_type": price.get("priceTypeName"), "delivery": None,
+            "price": price, "fee": fee, "tax": tax, "all_in": paid, "order_fee": None,
+            "price_includes_tax": False if price is not None else None, "price_estimated": price is not None,
+            "ticket_type": (block.get("price") or {}).get("priceTypeName"), "delivery": None,
             "ada": block.get("hasAda"), "obstructed": bool(block.get("hasObstructedView")),
             "aisle": block.get("hasAisle"), "ga": block.get("isGA"),
         })
@@ -144,7 +177,7 @@ def run(rpc: primary_poll_sync.Rpc, jump: Any, read_page: Callable[[dict], dict]
         got = read_page(event)
         fewest, most = order_limits(got.get("offer"))
         event["order_min"], event["order_max"] = fewest, most
-        return parse_listings(got["inventory"], most, prices_include_tax(got.get("offer")))
+        return parse_listings(got["inventory"], most, PRICING.get(org), default_price_type(got.get("offer")))
 
     return primary_poll_sync.poll_source(rpc, org, lambda: jump.events(org), listings)
 

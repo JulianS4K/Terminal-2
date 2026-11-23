@@ -51,7 +51,8 @@ EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time",
 LISTING_COLUMNS = ("source", "event_id", "event_name", "tevo_event_id", "event_date", "start_local_time", "listing_id", "market",
                    "area", "section", "seat_row", "seat_low", "seat_high", "seats", "quantity", "allowed_quantities",
                    "max_per_order", "order_min", "order_max", "price", "fee", "all_in_price", "price_includes_tax",
-                   "currency", "ticket_type", "delivery", "ada", "aisle", "general_admission", "as_of")
+                   "currency", "ticket_type", "delivery", "ada", "aisle", "general_admission", "as_of", "tax", "order_fee",
+                   "price_estimated")
 _TOKEN = re.compile(r"^[A-Za-z0-9 ._:=/+-]{1,160}$")
 
 
