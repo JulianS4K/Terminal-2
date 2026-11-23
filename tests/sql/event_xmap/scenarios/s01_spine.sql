@@ -168,3 +168,10 @@ SELECT (event_xmap_tick(45, true))->'seeded_by_source';
 SELECT seed_source, tm_event_id, ticketmaster_name, vivid_name, sources FROM v_event_xmap WHERE tm_event_id IS NOT NULL;
 SELECT event_key_lookup_tm('G5diZ_o6tFFbV') = event_key_lookup('vivid', 2301) AS same_key, event_key_lookup_tm('G5diZ_o6tFFbP') IS NULL AS parking_never_enters;
 SELECT source, in_spine, without_evo_but_cross_mapped FROM v_event_xmap_coverage WHERE source = 'ticketmaster';
+
+\echo K the venue's primary box office (mig 20261123180000): two operator rows; the spine view names it beside the other sources' ids
+SELECT tevo_venue_id, source, label FROM venue_primary_box_office ORDER BY 1;
+INSERT INTO venue_primary_box_office (tevo_venue_id, source, label) VALUES (600, 'testbox', 'Test Box Office');
+SELECT count(*) AS clusters_at_600, count(*) FILTER (WHERE primary_box_office = 'testbox') AS named_primary FROM v_event_xmap WHERE tevo_venue_id = 600;
+SELECT count(*) FILTER (WHERE primary_box_office IS NULL) AS clusters_without_primary FROM v_event_xmap WHERE tevo_venue_id <> 600;
+SELECT has_table_privilege('anon', 'venue_primary_box_office', 'SELECT'), has_table_privilege('service_role', 'venue_primary_box_office', 'SELECT');

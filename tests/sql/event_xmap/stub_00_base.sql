@@ -51,5 +51,5 @@ CREATE TABLE public.espn_ticket_game (espn_event_id text PRIMARY KEY, espn_leagu
                                       away_team_id text, away_name text, venue_name text, venue_city text, venue_state text, vivid_production_id bigint, vivid_venue_id bigint, tevo_event_id bigint);
 -- Ticketmaster's catalogue (mig 20261117180000), the spine's eighth source (mig 20261117190000)
 CREATE TABLE public.tm_discovery_event (tm_event_id text PRIMARY KEY, name text, local_date date, local_time time, date_tbd boolean, time_tba boolean, status_code text, tm_venue_id text,
-                                        venue_name text, venue_city text, venue_state text, venue_country text, attraction_names text[], is_product boolean NOT NULL DEFAULT false, tevo_event_id bigint);
+                                        venue_name text, venue_city text, venue_state text, venue_country text, attraction_names text[], is_product boolean NOT NULL DEFAULT false, tevo_event_id bigint, seller text, channel text);
 CREATE TABLE public.tm_venue_xref (tm_venue_id text PRIMARY KEY, tevo_venue_id bigint);
