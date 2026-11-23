@@ -23,8 +23,9 @@ Every row carries `tevo_event_id`, the EVO event our mapper matched (null until 
 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
-completed pull. The poll runs every 30 minutes and the age limit is 35 (primary_poll_config.listing_max_age, mig 20261123190030).
-An event whose poll failed, has not run, or is older than the age limit is still in /primary/events,
+completed pull. Each event is read on its own cadence, by its date and its median price: every 30 minutes for a dear event a day or
+two away, down to every 12 hours for a cheap one months away (`poll_every_minutes`; mig 20261123194030). Its age limit
+is that interval plus 10 minutes. An event whose poll failed, has not run, or is older than its limit is still in /primary/events,
 with listings_available = false and listings_withheld = poll_failed | not_polled | poll_stale; it has
 no row in /primary/listings. Listings flagged as an obstructed view are never sent. The views are mig
 20261123171030. This module only answers the query: it reads our own tables and makes no upstream
@@ -47,7 +48,7 @@ EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time",
                  "venue_name", "venue_city", "venue_state", "ticket_url", "offer_id", "order_min", "order_max",
                  "total_available", "price_min", "price_max", "currency", "listings_available", "listing_count",
                  "listings_as_of", "listings_withheld", "tevo_event_id", "tevo_match_method", "terminal_path",
-                 "last_poll_at", "first_seen_at", "last_seen_at")
+                 "last_poll_at", "first_seen_at", "last_seen_at", "median_price", "poll_every_minutes", "next_poll_at")
 LISTING_COLUMNS = ("source", "event_id", "event_name", "tevo_event_id", "event_date", "start_local_time", "listing_id", "market",
                    "area", "section", "seat_row", "seat_low", "seat_high", "seats", "quantity", "allowed_quantities",
                    "max_per_order", "order_min", "order_max", "price", "fee", "all_in_price", "price_includes_tax",

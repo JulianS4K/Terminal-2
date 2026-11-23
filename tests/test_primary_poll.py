@@ -242,10 +242,11 @@ def test_a_run_sends_each_event_with_its_listings_or_with_why_its_poll_failed():
                         listings={"1": [{"id": "x"}, {"id": "y"}], "2": si.SiTicketsError("HTTP 503 for /event/b"),
                                   "3": [{"id": "z"}]})
     out = sync.run(rpc, sitickets, _Source(list_exc=jc.JumpError("HTTP 403 for /")))
-    assert out["sitickets"] == {"events": 3, "ok": 1, "failed": 1, "listings": 2, "not_stored": 1}
+    assert out["sitickets"] == {"events": 3, "ok": 1, "failed": 1, "listings": 2, "not_stored": 1, "skipped": 0}
     # the event list could not be read: every event of that source is marked failed in one call
     assert out["timberwolves"] == {"events": 0, "ok": 0, "failed": 0, "listings": 0,
                                    "list_error": "JumpError: HTTP 403 for /", "marked_failed": 4}
+    calls = [c for c in calls if c[0] != "primary_poll_due"]       # asked first; this rpc cannot say, so all are read
     assert [c[0] for c in calls] == ["primary_poll_ingest"] * 3 + ["primary_poll_run_done",
                                                                      "primary_poll_source_failed"]
     # the run is closed with every event the source listed, so the feeds serve this pull and no older one
@@ -259,15 +260,50 @@ def test_a_run_sends_each_event_with_its_listings_or_with_why_its_poll_failed():
     assert calls[4][1] == {"p_source": "timberwolves", "p_error": "JumpError: HTTP 403 for /"}   # and no run closed
 
 
+def test_only_the_events_that_are_due_are_read_and_the_pull_still_lists_them_all():
+    calls = []
+
+    def rpc(name, params):
+        calls.append((name, params))
+        if name == "primary_poll_due":
+            return ["2"]                         # the database says which are due, by date and median price
+        return None
+
+    events = [{"id": 1, "name": "Far off"}, {"id": 2, "name": "Tonight"}, {"id": 3, "name": "Next month"}]
+    read = []
+
+    def listings(event):
+        read.append(event["id"])
+        return [{"id": "x"}]
+
+    out = sync.poll_source(rpc, "timberwolves", lambda: events, listings)
+    assert out == {"events": 3, "ok": 1, "failed": 0, "listings": 1, "not_stored": 0, "skipped": 2} and read == [2]
+    assert calls[0] == ("primary_poll_due", {"p_source": "timberwolves", "p_event_ids": ["1", "2", "3"]})
+    assert [c[0] for c in calls] == ["primary_poll_due", "primary_poll_ingest", "primary_poll_run_done"]
+    assert calls[2][1]["p_event_ids"] == ["1", "2", "3"]          # the skipped events are still in the pull
+    # nothing due: nothing is read, and the pull is still closed
+    calls.clear(), read.clear()
+    out = sync.poll_source(lambda name, params: [] if name == "primary_poll_due" else calls.append(name),
+                           "timberwolves", lambda: events, listings)
+    assert out["skipped"] == 3 and read == [] and calls == ["primary_poll_run_done"]
+    # the database cannot say what is due: everything is read
+    def down(name, params):
+        if name == "primary_poll_due":
+            raise RuntimeError("db blip")
+
+    read.clear()
+    assert sync.poll_source(down, "timberwolves", lambda: events, listings)["ok"] == 3 and read == [1, 2, 3]
+
+
 def test_a_run_that_cannot_be_closed_says_so_and_goes_on_to_the_next_source():
     def rpc(name, params):
         if name == "primary_poll_run_done" and params["p_source"] == "sitickets":
             raise RuntimeError("db blip")
 
     out = sync.run(rpc, _Source(events=[{"id": "1", "name": "A"}], listings={"1": []}), _Source())
-    assert out["sitickets"] == {"events": 1, "ok": 1, "failed": 0, "listings": 0, "not_stored": 0,
+    assert out["sitickets"] == {"events": 1, "ok": 1, "failed": 0, "listings": 0, "not_stored": 0, "skipped": 0,
                                 "run_not_closed": "RuntimeError: db blip"}
-    assert out["timberwolves"] == {"events": 0, "ok": 0, "failed": 0, "listings": 0, "not_stored": 0}
+    assert out["timberwolves"] == {"events": 0, "ok": 0, "failed": 0, "listings": 0, "not_stored": 0, "skipped": 0}
 
 
 def test_a_run_over_the_real_clients_never_has_timberwolves_listings(monkeypatch):
@@ -275,7 +311,7 @@ def test_a_run_over_the_real_clients_never_has_timberwolves_listings(monkeypatch
     monkeypatch.setattr(jc, "events", lambda org: [{"id": "1729", "name": "Timberwolves vs. Nets"}])
     sent = []
     out = sync.run(lambda name, params: sent.append(params), si, jc)
-    assert out["timberwolves"] == {"events": 1, "ok": 0, "failed": 1, "listings": 0, "not_stored": 0}
+    assert out["timberwolves"] == {"events": 1, "ok": 0, "failed": 1, "listings": 0, "not_stored": 0, "skipped": 0}
     game = next(p for p in sent if p.get("p_source") == "timberwolves" and "p_events" in p)["p_events"][0]
     assert game["ok"] is False and game["listings"] == [] and game["error"].startswith("JumpInventoryNotEnabled")
 
@@ -364,6 +400,7 @@ def test_events_are_every_polled_event_with_whether_listings_can_be_sent():
     assert [c[1] for c in calls if c[0] == "order"] == ["event_date", "start_local_time", "source", "event_id"]
     assert ("range", 0, 999) in calls and not any(c[0] in ("eq", "gte", "lte", "ilike", "is_") for c in calls)
     assert "tevo_event_id" in pp.EVENT_COLUMNS and "tevo_event_id" in pp.LISTING_COLUMNS    # the EVO event, on every row
+    assert pp.EVENT_COLUMNS[-3:] == ("median_price", "poll_every_minutes", "next_poll_at")  # the event's own cadence
     assert pp.SEARCH_COLUMN not in pp.EVENT_COLUMNS and "poll_error" not in pp.EVENT_COLUMNS
     db = FakeDB(rows=[EVENT_ROW, EVENT_ROW])
     r = _client(db).get(EVENTS, headers=H, params={

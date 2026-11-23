@@ -213,7 +213,8 @@ def test_a_run_stores_each_game_with_its_listings_and_a_page_that_fails_with_non
         return {"inventory": INVENTORY, "offer": OFFER}
 
     out = b.run(lambda name, params: calls.append((name, params)), _Jump(games), read_page)
-    assert out == {"events": 2, "ok": 1, "failed": 1, "listings": 3, "not_stored": 0}
+    assert out == {"events": 2, "ok": 1, "failed": 1, "listings": 3, "not_stored": 0, "skipped": 0}
+    assert calls.pop(0)[0] == "primary_poll_due"                 # asked first; this rpc cannot say, so all are read
     assert [c[0] for c in calls] == ["primary_poll_ingest", "primary_poll_ingest", "primary_poll_run_done"]
     good, bad = calls[0][1]["p_events"][0], calls[1][1]["p_events"][0]
     assert calls[0][1]["p_source"] == "timberwolves" and good["ok"] is True and len(good["listings"]) == 3
@@ -251,7 +252,8 @@ def test_a_cycle_opens_one_browser_filters_what_it_loads_and_closes_it_even_on_a
     # the Lynx list no games yet: their run ends at the event list, stores no event and closes no pull
     assert jump.asked == ["timberwolves", "lynx"] and out["lynx"]["events"] == 0
     assert out["lynx"]["list_error"] == "RuntimeError: the home page lists no games"
-    assert [(n, p["p_source"]) for n, p in calls] == [("primary_poll_ingest", "timberwolves"),
+    assert [(n, p["p_source"]) for n, p in calls] == [("primary_poll_due", "timberwolves"),
+                                                      ("primary_poll_ingest", "timberwolves"),
                                                       ("primary_poll_run_done", "timberwolves"),
                                                       ("primary_poll_source_failed", "lynx")]
     assert browser.options["user_agent"] == "a browser" and context.routes == [("**/*", b.allow)]
@@ -327,8 +329,8 @@ def test_the_lynx_are_read_like_the_timberwolves_once_they_list_games():
     game = {**EVENT, "id": "9001", "name": "Lynx vs. Fever", "url": "https://tickets.lynxbasketball.com/offers/1"}
     out = b.run(lambda name, params: calls.append((name, params)), _Jump([game], lynx_out_of_season=False),
                 lambda event: {"inventory": INVENTORY, "offer": OFFER}, "lynx")
-    assert out == {"events": 1, "ok": 1, "failed": 0, "listings": 3, "not_stored": 0}
-    assert [p["p_source"] for _, p in calls] == ["lynx", "lynx"] and calls[1][1]["p_event_ids"] == ["9001"]
+    assert out == {"events": 1, "ok": 1, "failed": 0, "listings": 3, "not_stored": 0, "skipped": 0}
+    assert [p["p_source"] for _, p in calls] == ["lynx"] * 3 and calls[2][1]["p_event_ids"] == ["9001"]
 
 
 def test_each_worker_polls_only_the_sources_it_is_given(monkeypatch):

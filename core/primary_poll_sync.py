@@ -5,7 +5,10 @@ poller fails to run for an event, do not send listing information").
 One run, per source (sitickets, timberwolves):
   1. read the source's list of events. If that fails, `primary_poll_source_failed()` marks every
      upcoming event of the source failed and deletes its listings.
-  2. for each event, read its listings and send the event to `primary_poll_ingest()`, one event a
+  2. ask `primary_poll_due()` which of the listed events are due: each event has its own cadence,
+     by its date and its median price (operator 2026-11-23: "create update cadances based on event
+     date and median price"), from every 30 minutes to every 12 hours. For each one that is due,
+     read its listings and send the event to `primary_poll_ingest()`, one event a
      call: with its listings when the read worked, or with ok = false and the reason when it did
      not, which deletes that event's stored listings.
   3. `primary_poll_run_done()` with the ids the source listed: from then on the feeds serve the
@@ -42,8 +45,19 @@ def poll_source(rpc: Rpc, source: str, list_events: Callable[[], list], read_lis
     except Exception as exc:  # noqa: BLE001 - any failure to list means no event was polled
         marked = rpc("primary_poll_source_failed", {"p_source": source, "p_error": _why(exc)})
         return {"events": 0, "ok": 0, "failed": 0, "listings": 0, "list_error": _why(exc), "marked_failed": marked}
-    done = {"events": len(events), "ok": 0, "failed": 0, "listings": 0, "not_stored": 0}
+    done = {"events": len(events), "ok": 0, "failed": 0, "listings": 0, "not_stored": 0, "skipped": 0}
+    ids = [str(event["id"]) for event in events]
+    # each event has its own cadence, by its date and its median price (mig 20261123194030): only the ones
+    # that are due are read. Not knowing what is due, everything is read: fresher than needed is safe.
+    try:
+        asked = rpc("primary_poll_due", {"p_source": source, "p_event_ids": ids})
+    except Exception:  # noqa: BLE001
+        asked = None
+    due = set(asked) if isinstance(asked, list) else set(ids)
     for event in events:
+        if str(event["id"]) not in due:
+            done["skipped"] += 1
+            continue
         try:
             listings, error = read_listings(event), None
         except Exception as exc:  # noqa: BLE001 - this event's poll failed; the others go on
@@ -60,8 +74,7 @@ def poll_source(rpc: Rpc, source: str, list_events: Callable[[], list], read_lis
         done["ok" if row["ok"] else "failed"] += 1
         done["listings"] += len(row["listings"])
     try:
-        rpc("primary_poll_run_done", {"p_source": source, "p_run": uuid.uuid4().hex,
-                                      "p_event_ids": [str(event["id"]) for event in events]})
+        rpc("primary_poll_run_done", {"p_source": source, "p_run": uuid.uuid4().hex, "p_event_ids": ids})
     except Exception as exc:  # noqa: BLE001 - the feeds keep the previous pull; its listings age out
         done["run_not_closed"] = _why(exc)
     return done
