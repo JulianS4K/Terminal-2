@@ -183,6 +183,7 @@ Baseline: backend pytest 2,219 passed / 17 skipped / 100.00% coverage; frontend 
 
 | Item | Action |
 |---|---|
+| **Box-office poll: cleanup of old listings + new events announced to the mapper + the Lynx** (operator 2026-11-23) `[AUTHORED, apply pending]` | Apply mig `20261123183730` (one new column, `primary_poll_run_done()` replaced; deletes only listings of events the box office no longer lists) and merge its PR: the browser worker then also reads `tickets.lynxbasketball.com` (`source = 'lynx'`), which lists no games until the WNBA schedule is released. Not tested against a Lynx game page: there is none yet. |
 | Run the A1-DB-8 `DROP INDEX CONCURRENTLY` from psql in a quiet window, and `DROP FUNCTION public.mcp_verify_key_v1(text)` from the SQL editor | Commands in the row; the index drops outside a transaction. |
 | Decide the default-privileges change (A1-DB-15, SQL in the row) | Operator call — affects EXP's future migrations. |
 | Decide A1-DB-6 (resume listing pollers?) and A1-DB-7 (reclaim ~150 GB) | Operator call. |

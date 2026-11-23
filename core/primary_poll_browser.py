@@ -1,5 +1,6 @@
 """Read the Timberwolves' seat listings with a real browser and store them (operator 2026-11-23:
-"start the timberwolves poller and test and then merge", choosing the browser worker).
+"start the timberwolves poller and test and then merge", choosing the browser worker), and the Lynx's
+once their schedule is released (operator 2026-11-23: "ping and map lynx when schedule releases").
 
 The Timberwolves' ticket site (jump_client.py) shows a game's seats only after the page has loaded:
 the page's own script asks the site for them. This worker opens each game's public page in a headless
@@ -33,11 +34,14 @@ from core import primary_poll_sync
 
 log = logging.getLogger("primary_poll_browser")
 
-SOURCE = "timberwolves"
-ORG = "timberwolves"
+# the teams read, each stored under its own name as the source. The Lynx list no games until the WNBA
+# schedule is released: until then their run ends at the event list and stores nothing, and the first run
+# that finds games announces them to the event mapper (primary_poll_run_done, mig 20261123183730).
+ORGS = ("timberwolves", "lynx")
 DATA_URL = "https://fan.jump.com/graphql"
 # the hosts a game's page needs to show its seats; analytics, ads and everything else are not loaded
-PAGE_HOSTS = frozenset({"tickets.timberwolves.com", "fan.jump.com", "cdn.orgs.jump.com"})
+PAGE_HOSTS = frozenset({"tickets.timberwolves.com", "tickets.lynxbasketball.com", "fan.jump.com",
+                        "cdn.orgs.jump.com"})
 SKIPPED_RESOURCES = frozenset({"image", "font", "media"})
 PAGE_TIMEOUT_MS = 45_000
 MARKETS = {"PRIMARY": "primary", "SECONDARY": "resale"}
@@ -134,24 +138,25 @@ def page_reader(context: Any, timeout_ms: int = PAGE_TIMEOUT_MS) -> Callable[[di
     return read
 
 
-def run(rpc: primary_poll_sync.Rpc, jump: Any, read_page: Callable[[dict], dict]) -> dict:
-    """One run over the Timberwolves' games; returns what it did."""
+def run(rpc: primary_poll_sync.Rpc, jump: Any, read_page: Callable[[dict], dict], org: str = ORGS[0]) -> dict:
+    """One run over one team's games; returns what it did."""
     def listings(event: dict) -> list[dict]:
         got = read_page(event)
         fewest, most = order_limits(got.get("offer"))
         event["order_min"], event["order_max"] = fewest, most
         return parse_listings(got["inventory"], most, prices_include_tax(got.get("offer")))
 
-    return primary_poll_sync.poll_source(rpc, SOURCE, lambda: jump.events(ORG), listings)
+    return primary_poll_sync.poll_source(rpc, org, lambda: jump.events(org), listings)
 
 
-def cycle(rpc: primary_poll_sync.Rpc, jump: Any, playwright: Any) -> dict:
-    """One run with a browser of its own, closed at the end whatever happens."""
+def cycle(rpc: primary_poll_sync.Rpc, jump: Any, playwright: Any, orgs: tuple[str, ...] = ORGS) -> dict:
+    """One run over every team, with a browser of its own, closed at the end whatever happens."""
     browser = playwright.chromium.launch()
     try:
         context = browser.new_context(user_agent=jump.USER_AGENT, viewport={"width": 1400, "height": 900})
         context.route("**/*", allow)
-        return run(rpc, jump, page_reader(context))
+        read_page = page_reader(context)
+        return {org: run(rpc, jump, read_page, org) for org in orgs}
     finally:
         browser.close()
 

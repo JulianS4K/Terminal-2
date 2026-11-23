@@ -989,6 +989,7 @@ Two box offices are read by us directly, every 10 minutes, and served as two fee
 |---|---|---|---|
 | `sitickets` | SI Tickets, the box office of Sports Illustrated Stadium in Harrison, NJ: Red Bull New York home matches and other stadium events such as HSBC SVNS | Yes | Yes |
 | `timberwolves` | The Minnesota Timberwolves' own ticket site: every home game at Target Center | Yes, with seats available and the price range | Yes: the team's own seats (`primary`) and seats resold on the site (`resale`) |
+| `lynx` | The Minnesota Lynx's own ticket site, on the same platform: home games at Target Center | None until the WNBA schedule is released; they then appear by themselves | As for `timberwolves`, once there are games |
 
 Season packages, memberships and deposits are left out.
 

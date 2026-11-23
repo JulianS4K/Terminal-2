@@ -10,7 +10,7 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         15 minutes (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|timberwolves
+        ?source=sitickets|timberwolves|lynx     (lynx has no events until the WNBA schedule is released)
         &date_from=2026-11-23&date_to=2027-05-01
         &format=json|csv         (default json)
         &limit=1000&offset=0     (limit max 5000)
@@ -39,7 +39,7 @@ from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-SOURCES = ("sitickets", "timberwolves")
+SOURCES = ("sitickets", "timberwolves", "lynx")
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",

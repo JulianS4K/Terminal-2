@@ -56,8 +56,9 @@ _assert_readonly_method = build_readonly_guard(
     "Reading public pages only — never a cart, hold or order on a team's ticket site.",
 )
 
-# org -> its ticket site. One entry: the other Jump teams have no single games on sale (2026-11-23).
-SITES = {"timberwolves": "https://tickets.timberwolves.com"}
+# org -> its ticket site. The Lynx (operator 2026-11-23: "ping and map lynx when schedule releases") list
+# no games until the WNBA schedule is out: events("lynx") raises until then, and nothing is stored.
+SITES = {"timberwolves": "https://tickets.timberwolves.com", "lynx": "https://tickets.lynxbasketball.com"}
 USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/126.0 Safari/537.36")
 TIMEOUT_S = 30
