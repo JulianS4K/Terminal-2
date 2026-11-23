@@ -7,8 +7,10 @@ One run, per source (sitickets, timberwolves):
      upcoming event of the source failed and deletes its listings.
   2. ask `primary_poll_due()` which of the listed events are due: each event has its own cadence,
      by its date, its median price and the tickets listed (operator 2026-11-23: "create update cadances
-     based on event date and median price", "also adjust cadance based on a qty listed", "Let's set longest interval to 1 hour"): every 30
-     minutes or every hour. For each one that is due,
+     based on event date and median price", "also adjust cadance based on a qty listed", "Let's set
+     longest interval to 1 hour"), and a random slot inside it ("Redraw every cycle, just poll the
+     data. For events day of draw every 10 mins"): every 10 minutes on the day of the event, every 30
+     minutes or every hour before. The worker wakes every 10 minutes. For each event that is due,
      read its listings and send the event to `primary_poll_ingest()`, one event a
      call: with its listings when the read worked, or with ok = false and the reason when it did
      not, which deletes that event's stored listings.
@@ -16,8 +18,8 @@ One run, per source (sitickets, timberwolves):
      events of this pull only (operator 2026-11-23: "for the api only push out newest pull").
 
 The feed (routers/primary_poll_feed.py) sends listings only for an event whose last poll succeeded
-within the feed's age limit (primary_poll_config.listing_max_age, 35 minutes for a poll every 30: mig
-20261123190030), so a run that never happens withholds them too. Mig 20261123171030.
+within the feed's age limit (35 minutes after a good read, or until 20 minutes after the event's next slot,
+whichever is later: migs 20261123190030, 20261123194030), so a run that never happens withholds them too. Mig 20261123171030.
 
 This module makes no upstream call itself (RULE 2): the GETs are in sitickets_client.py and
 jump_client.py.

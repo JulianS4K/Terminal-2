@@ -2,7 +2,7 @@
 #
 # OWNER: A1 (collector). Operator 2026-11-23: "start the timberwolves poller and test and then merge",
 # choosing the browser worker. The Timberwolves' ticket site shows a game's seats only after the page has
-# loaded, so a headless browser opens each game's public page every 30 minutes and stores the listings
+# loaded, so a headless browser opens each game's public page on its own cadence (10 minutes to one hour) and stores the listings
 # the page shows (core/primary_poll_browser.py). It serves no HTTP: a background worker.
 #
 # It writes through primary_poll_ingest() into the same tables the web service's worker fills for
@@ -32,7 +32,7 @@ services:
       - key: PRIMARY_POLL_BROWSER_LIVE
         sync: false         # set on the service: 1 runs the worker, anything else keeps it off
       - key: PRIMARY_POLL_INTERVAL_SECONDS
-        value: "1800"      # operator 2026-11-23: "reduce polling to 30 mins"
+        value: "600"       # one slot: the worker wakes every 10 minutes and reads only the games that are due (mig 20261123194030)
       - key: SUPABASE_URL
         fromService:
           type: web
