@@ -36,7 +36,7 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/axs/events?primary=&q=&since=           AXS's events, by default the ones AXS itself sells (routers/primary_feed.py)
   GET  /api/v1/subs/seatgeek/events?q=&since=               the events SeatGeek tickets as the primary seller (routers/primary_feed.py)
   GET  /api/v1/subs/primary/events?source=&available=       the events of the box offices we poll ourselves, with whether listings can be sent (routers/primary_poll_feed.py)
-  GET  /api/v1/subs/primary/listings?source=&event_id=      their listings, only for events polled successfully within 15 minutes (routers/primary_poll_feed.py)
+  GET  /api/v1/subs/primary/listings?source=&event_id=      their listings, only for events polled successfully within the age limit, 35 minutes (routers/primary_poll_feed.py)
   GET  /api/v1/subs/gates                                   our six matching gates and the words a label can carry, from the guide's section 8
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
@@ -683,8 +683,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
     @router.get("/primary/listings")
     def primary_listings(request: Request):
         """The listings of those events: section, row, seats, quantity, the quantities a buyer may
-        take, the order limit and the price. Only for an event whose last poll succeeded within 15
-        minutes (operator 2026-11-23: "if poller fails to run for an event, do not send listing
+        take, the order limit and the price. Only for an event whose last poll succeeded within the age
+        limit (35 minutes) (operator 2026-11-23: "if poller fails to run for an event, do not send listing
         information"), and never an obstructed-view listing. Same keys as /mlb/schedule."""
         denied = _mlb_reader(request, "primary_listings")
         return denied or primary_listings_response(get_db(), request.query_params)

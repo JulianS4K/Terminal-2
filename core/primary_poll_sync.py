@@ -12,7 +12,8 @@ One run, per source (sitickets, timberwolves):
      events of this pull only (operator 2026-11-23: "for the api only push out newest pull").
 
 The feed (routers/primary_poll_feed.py) sends listings only for an event whose last poll succeeded
-within 15 minutes, so a run that never happens withholds them too. Mig 20261123171030.
+within the feed's age limit (primary_poll_config.listing_max_age, 35 minutes for a poll every 30: mig
+20261123190030), so a run that never happens withholds them too. Mig 20261123171030.
 
 This module makes no upstream call itself (RULE 2): the GETs are in sitickets_client.py and
 jump_client.py.

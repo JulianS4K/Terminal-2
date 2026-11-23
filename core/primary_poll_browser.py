@@ -8,7 +8,7 @@ browser, as a visitor does, and keeps the two answers the page receives for itse
 (`getInventoryDetails`) and the offer's order limits (`OfferById`). It builds no request of its own to
 the site's data service and sends nothing: no cart, no hold, no order (RULE 2).
 
-One run, every PRIMARY_POLL_INTERVAL_SECONDS (600):
+One run, every PRIMARY_POLL_INTERVAL_SECONDS (1800: operator 2026-11-23, "reduce polling to 30 mins"):
   1. the games, from the home page (jump_client.events, a GET);
   2. for each game, its page in the browser, the listings normalised, and the event sent to
      `primary_poll_ingest()`: with its listings, or failed with the reason, which deletes them;
@@ -179,7 +179,7 @@ def main(env: Any = None, sleep: Callable[[float], None] = time.sleep) -> None:
     db = make_supabase_client(url, key)
     # an event sent twice is stored once (its listings are replaced), so a dropped connection is retried
     rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
-    interval = float(env.get("PRIMARY_POLL_INTERVAL_SECONDS", "600"))
+    interval = float(env.get("PRIMARY_POLL_INTERVAL_SECONDS", "1800"))
     log.warning("started (every %ss)", interval)
     while True:
         started = time.monotonic()
