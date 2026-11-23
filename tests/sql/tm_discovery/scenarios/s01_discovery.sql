@@ -42,13 +42,13 @@ INSERT INTO stub_http_page (match, body) VALUES
 
 \echo A the plan: three segments x 13 weeks; nothing called yet
 SELECT tm_discovery_plan(13);
-SELECT count(*), count(*) FILTER (WHERE active), min(label), (SELECT params->>'size' FROM tm_discovery_query LIMIT 1) FROM tm_discovery_query;
+SELECT count(*), count(*) FILTER (WHERE active), replace(min(label), date_trunc('week', current_date::timestamp)::date::text, '<this week>') AS first_label, (SELECT params->>'size' FROM tm_discovery_query LIMIT 1) FROM tm_discovery_query;
 SELECT params ? 'apikey' AS key_in_plan FROM tm_discovery_query LIMIT 1;
 
 \echo B a tick of two calls: the two pages of the Sports week land five events (one a parking product); the query is complete; the budget counts 2
 SELECT tm_discovery_tick(2) - 'run_id' - 'seconds';
 SELECT tm_event_id, name, local_date - current_date AS day, local_time, status_code, tm_venue_id, segment, is_product, array_to_string(attraction_names, '|') AS attractions, jsonb_array_length(presales) AS presales, tevo_event_id, tevo_match_method FROM tm_discovery_event ORDER BY tm_event_id COLLATE "C";
-SELECT label, page, total_pages, events_seen, last_ok_at IS NOT NULL AS complete FROM tm_discovery_query WHERE events_seen > 0;
+SELECT replace(label, date_trunc('week', current_date::timestamp)::date::text, '<this week>') AS label, page, total_pages, events_seen, last_ok_at IS NOT NULL AS complete FROM tm_discovery_query WHERE events_seen > 0;
 SELECT day = current_date AS today, calls, refused, cap, burst_calls, tm_available, tm_limit, tm_reset_at AT TIME ZONE 'UTC' AS tm_reset FROM tm_discovery_quota;
 \echo B1 GET only, size 200, and the key in the request but nowhere stored
 SELECT method, count(*), bool_and(uri LIKE 'https://app.ticketmaster.com/discovery/v2/events.json?%') AS discovery_host, bool_and(uri LIKE '%size=200%') AS size_200, bool_and(uri LIKE '%apikey=STUBKEY%') AS key_in_request FROM stub_http_log GROUP BY 1;

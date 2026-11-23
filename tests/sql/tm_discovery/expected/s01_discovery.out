@@ -1,6 +1,6 @@
 A the plan: three segments x 13 weeks; nothing called yet
 39
-39|39|seg:Arts & Theatre:2026-11-16|200
+39|39|seg:Arts & Theatre:<this week>|200
 f
 B a tick of two calls: the two pages of the Sports week land five events (one a parking product); the query is complete; the budget counts 2
 {"burst": false, "calls": 2, "errors": 0, "events": 5, "landed": 2, "matched": 4, "refused": 0, "budget_today": {"cap": 100, "calls": 2, "refused": 0, "tm_limit": 5000, "burst_calls": 0, "tm_reset_at": "2026-11-19T06:25:48.383+00:00", "tm_available": 4998}}
@@ -9,7 +9,7 @@ G5diZ_o6tFFbU|New York Knicks vs. Boston Celtics|3|19:30:00|onsale|KovZpZA7AAEA|
 G5diZ_o6tFFbV|Brooklyn Nets vs. Orlando Magic|4|19:30:00|onsale|KovZpZAEkn6A|Sports|f|Brooklyn Nets|Orlando Magic|1|606|venue_date_name
 G5diZ_o6tFFbW|New York Knicks vs. Miami Heat|5|19:30:00|onsale|KovZpZA7AAEA|Sports|f|New York Knicks|Miami Heat|1|602|venue_date_name
 G5diZ_o6tFFbX|Knicks Parking: Miami Heat|5|19:30:00|onsale|KovZpZA7AAEA|Miscellaneous|t||1||
-seg:Sports:2026-11-16|0|2|5|t
+seg:Sports:<this week>|0|2|5|t
 t|2|0|100|0|4998|5000|2026-11-19 06:25:48.383
 B1 GET only, size 200, and the key in the request but nowhere stored
 GET|2|t|t|t
