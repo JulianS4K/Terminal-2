@@ -25,4 +25,5 @@ stub_00_base.sql
 20261117171000_resolver_reads_the_key.sql
 20261117190000_tm_in_spine.sql
 20261123180000_venue_primary_box_office.sql
+20261123190000_primary_poll_in_mapper.sql
 STEPS

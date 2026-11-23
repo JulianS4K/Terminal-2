@@ -53,3 +53,7 @@ CREATE TABLE public.espn_ticket_game (espn_event_id text PRIMARY KEY, espn_leagu
 CREATE TABLE public.tm_discovery_event (tm_event_id text PRIMARY KEY, name text, local_date date, local_time time, date_tbd boolean, time_tba boolean, status_code text, tm_venue_id text,
                                         venue_name text, venue_city text, venue_state text, venue_country text, attraction_names text[], is_product boolean NOT NULL DEFAULT false, tevo_event_id bigint, seller text, channel text);
 CREATE TABLE public.tm_venue_xref (tm_venue_id text PRIMARY KEY, tevo_venue_id bigint);
+-- the primary box-office feed (PR #1180, mig 20261123171030): the columns the mapper and the spine read
+CREATE TABLE public.primary_poll_event (source text NOT NULL, source_event_id text NOT NULL, name text, event_date date, start_local_time time, start_utc timestamptz, timezone text,
+                                        venue_name text, venue_city text, venue_state text, tevo_event_id bigint, tevo_match_method text, tevo_matched_at timestamptz,
+                                        PRIMARY KEY (source, source_event_id));

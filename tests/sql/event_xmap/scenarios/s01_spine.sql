@@ -175,3 +175,35 @@ INSERT INTO venue_primary_box_office (tevo_venue_id, source, label) VALUES (600,
 SELECT count(*) AS clusters_at_600, count(*) FILTER (WHERE primary_box_office = 'testbox') AS named_primary FROM v_event_xmap WHERE tevo_venue_id = 600;
 SELECT count(*) FILTER (WHERE primary_box_office IS NULL) AS clusters_without_primary FROM v_event_xmap WHERE tevo_venue_id <> 600;
 SELECT has_table_privilege('anon', 'venue_primary_box_office', 'SELECT'), has_table_privilege('service_role', 'venue_primary_box_office', 'SELECT');
+
+\echo L the primary box office we poll is a source of the mapper and the spine (mig 20261123190000): a game maps by its two sides; a show maps as the one event of its day; a pass maps only to a pass; a series row is skipped; a row EVO lacks seeds its bucket with a Vivid sibling; the key answers by the box office id
+INSERT INTO events (id, name, occurs_at_local, state, venue_id, venue_name, venue_location, primary_performer_name) VALUES
+  (901, 'Memphis Grizzlies at Test Home Team', at_(12, '19:30'), 'shown', 600, 'Test Arena', 'Testville, NY', 'Test Home Team'),
+  (902, 'Spring Series - Nashville SC at Test Home Club', at_(13, '14:00'), 'shown', 600, 'Test Arena', 'Testville, NY', 'Test Home Club'),
+  (903, 'Rugby Sevens', at_(14, '00:00'), 'shown', 600, 'Test Arena', 'Testville, NY', 'Rugby Sevens'),
+  (904, 'Rugby Sevens - 2 Day Pass', at_(14, '00:00'), 'shown', 600, 'Test Arena', 'Testville, NY', 'Rugby Sevens'),
+  (905, 'Parking: Rugby Sevens', at_(14, '00:00'), 'shown', 600, 'Test Arena', 'Testville, NY', NULL);
+INSERT INTO primary_poll_event (source, source_event_id, name, event_date, start_local_time, venue_name, venue_city, venue_state) VALUES
+  ('testbox', '1001', 'Test Home Team vs. Grizzlies', d(12), '19:30', 'Test Arena', 'Testville', 'NY'),
+  ('testbox', '1002', 'Test Home Club vs. Nashville SC', d(13), '14:00', 'Test Arena', 'Testville', 'NY'),
+  ('testbox', '1003', 'Rugby Sevens - Saturday', d(14), '11:00', 'Test Arena', 'Testville', 'NY'),
+  ('testbox', '1004', 'Rugby Sevens - 2 Day Pass', d(14), '11:00', 'Test Arena', 'Testville', 'NY'),
+  ('testbox', '1005', 'DecemberSeries 2026', d(15), '10:00', 'Test Arena', 'Testville', 'NY'),
+  ('testbox', '1006', 'Test Home Team vs. Nobody', d(16), '19:00', 'Test Arena', 'Testville', 'NY');
+INSERT INTO vivid_catalog_event (vivid_event_id, name, event_local, event_date, vivid_venue_id) VALUES (99006, 'Test Home Team vs Nobody', at_(16, '19:00')::timestamp, d(16), 78);
+SELECT primary_poll_map(true) - 'run_id' - 'sample';
+SELECT source_event_id, tevo_event_id, tevo_match_method FROM primary_poll_event ORDER BY source_event_id;
+SELECT action, source_event_id, tevo_event_id, method FROM primary_poll_map_audit ORDER BY source_event_id;
+\echo L1 a second run writes nothing; a match whose EVO event is ignored is dropped
+SELECT (primary_poll_map(true) - 'run_id' - 'sample')->'written', (primary_poll_map(true) - 'run_id' - 'sample')->'already_matched';
+UPDATE events SET state = 'ignored' WHERE id = 902;
+SELECT (primary_poll_map(true) - 'run_id' - 'sample') - 'candidates';
+SELECT source_event_id, tevo_event_id FROM primary_poll_event WHERE source_event_id = '1002';
+\echo L2 the spine: the matched rows join their EVO clusters; the row EVO lacks seeds a cluster with its Vivid sibling; the key answers by the box office id
+SELECT (event_xmap_tick(45, true) - 'run_id' - 'ms' - 'window')->'rows_by_source'->'primary' AS primary_rows, (event_xmap_tick(45, true))->'seeded_by_source';
+SELECT x.pp_event_seq IS NOT NULL AS has_primary, x.tevo_event_id, x.vivid_event_id, x.sources, v.primary_event_id, v.primary_name, v.primary_box_office
+  FROM event_xmap x JOIN v_event_xmap v ON v.xmap_id = x.xmap_id WHERE x.pp_event_seq IS NOT NULL ORDER BY x.local_day;
+SELECT event_key_lookup_primary('testbox', '1006') = (SELECT xmap_id FROM event_xmap WHERE vivid_event_id = 99006) AS key_by_box_office_id,
+       event_key_lookup('primary', (SELECT pp_seq FROM primary_poll_event WHERE source_event_id = '1001')) = (SELECT xmap_id FROM event_xmap WHERE tevo_event_id = 901) AS key_by_seq;
+SELECT source, in_spine FROM v_event_xmap_coverage WHERE source = 'primary';
+SELECT jobname, schedule FROM cron.job WHERE jobname = 'primary_poll_map_hourly';
