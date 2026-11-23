@@ -166,11 +166,13 @@ def test_the_reader_keeps_what_the_page_itself_received_and_always_closes_the_pa
 class _Jump:
     USER_AGENT = "a browser"
 
-    def __init__(self, events):
-        self._events = events
+    def __init__(self, events, lynx_out_of_season=True):
+        self._events, self.asked, self.lynx_out_of_season = events, [], lynx_out_of_season
 
     def events(self, org):
-        assert org == "timberwolves"
+        self.asked.append(org)
+        if org == "lynx" and self.lynx_out_of_season:
+            raise RuntimeError("the home page lists no games")
         return self._events
 
 
@@ -214,8 +216,16 @@ class _Playwright:
 def test_a_cycle_opens_one_browser_filters_what_it_loads_and_closes_it_even_on_an_error():
     context = _Context([_Page([_Response(b.DATA_URL, "getInventoryDetails", INVENTORY)])])
     browser = _Browser(context)
-    out = b.cycle(lambda name, params: None, _Jump([dict(EVENT)]), _Playwright(browser))
-    assert out["ok"] == 1 and out["listings"] == 3 and browser.closed
+    calls = []
+    jump = _Jump([dict(EVENT)])
+    out = b.cycle(lambda name, params: calls.append((name, params)), jump, _Playwright(browser))
+    assert out["timberwolves"]["ok"] == 1 and out["timberwolves"]["listings"] == 3 and browser.closed
+    # the Lynx list no games yet: their run ends at the event list, stores no event and closes no pull
+    assert jump.asked == ["timberwolves", "lynx"] and out["lynx"]["events"] == 0
+    assert out["lynx"]["list_error"] == "RuntimeError: the home page lists no games"
+    assert [(n, p["p_source"]) for n, p in calls] == [("primary_poll_ingest", "timberwolves"),
+                                                      ("primary_poll_run_done", "timberwolves"),
+                                                      ("primary_poll_source_failed", "lynx")]
     assert browser.options["user_agent"] == "a browser" and context.routes == [("**/*", b.allow)]
 
     class _Broken(_Browser):
@@ -278,6 +288,19 @@ def test_the_service_is_off_by_default_then_runs_and_survives_a_failed_run(monke
         b.main(env=env, sleep=_sleep)
     assert seen["runs"] == 2 and seen["rpc"] == ["primary_poll_ingest"] and seen["stored"] == {"ok": True}
     assert seen["with"] == ("jump_client", "playwright") and all(0 <= s <= 5 for s in slept)
+
+
+def test_the_lynx_are_read_like_the_timberwolves_once_they_list_games():
+    import jump_client
+    assert set(b.ORGS) == set(jump_client.SITES) == {"timberwolves", "lynx"}
+    for site in jump_client.SITES.values():                      # every team's own host may load in the page
+        assert site.removeprefix("https://") in b.PAGE_HOSTS
+    calls = []
+    game = {**EVENT, "id": "9001", "name": "Lynx vs. Fever", "url": "https://tickets.lynxbasketball.com/offers/1"}
+    out = b.run(lambda name, params: calls.append((name, params)), _Jump([game], lynx_out_of_season=False),
+                lambda event: {"inventory": INVENTORY, "offer": OFFER}, "lynx")
+    assert out == {"events": 1, "ok": 1, "failed": 0, "listings": 3, "not_stored": 0}
+    assert [p["p_source"] for _, p in calls] == ["lynx", "lynx"] and calls[1][1]["p_event_ids"] == ["9001"]
 
 
 def test_each_worker_polls_only_the_sources_it_is_given(monkeypatch):

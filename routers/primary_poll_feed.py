@@ -7,10 +7,10 @@ poller fails to run for an event, do not send listing information", "also dont s
     GET /api/v1/subs/primary/events     every upcoming event of the polled box offices, with whether its
                                         listings can be sent right now (view v_primary_poll_events_feed)
     GET /api/v1/subs/primary/listings   the listings of the events whose last poll succeeded within
-                                        15 minutes (view v_primary_poll_listings_feed)
+                                        the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|timberwolves
+        ?source=sitickets|timberwolves|lynx     (lynx has no events until the WNBA schedule is released)
         &date_from=2026-11-23&date_to=2027-05-01
         &format=json|csv         (default json)
         &limit=1000&offset=0     (limit max 5000)
@@ -23,7 +23,8 @@ Every row carries `tevo_event_id`, the EVO event our mapper matched (null until 
 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
-completed pull. An event whose poll failed, has not run, or is older than 15 minutes is still in /primary/events,
+completed pull. The poll runs every 30 minutes and the age limit is 35 (primary_poll_config.listing_max_age, mig 20261123190030).
+An event whose poll failed, has not run, or is older than the age limit is still in /primary/events,
 with listings_available = false and listings_withheld = poll_failed | not_polled | poll_stale; it has
 no row in /primary/listings. Listings flagged as an obstructed view are never sent. The views are mig
 20261123171030. This module only answers the query: it reads our own tables and makes no upstream
@@ -39,7 +40,7 @@ from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-SOURCES = ("sitickets", "timberwolves")
+SOURCES = ("sitickets", "timberwolves", "lynx")
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",
@@ -123,7 +124,7 @@ def events_response(db: Any, params: Any) -> Any:
 
 
 def listings_response(db: Any, params: Any) -> Any:
-    """GET /primary/listings: only events whose last poll succeeded within 15 minutes have rows."""
+    """GET /primary/listings: only events whose last poll succeeded within the age limit have rows."""
     try:
         f = _common(params)
         event_id, section = _token(params, "event_id"), _token(params, "section")
