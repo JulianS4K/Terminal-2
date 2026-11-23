@@ -1,0 +1,41 @@
+# Render blueprint for the Timberwolves browser worker.
+#
+# OWNER: A1 (collector). Operator 2026-11-23: "start the timberwolves poller and test and then merge",
+# choosing the browser worker. The Timberwolves' ticket site shows a game's seats only after the page has
+# loaded, so a headless browser opens each game's public page every 10 minutes and stores the listings
+# the page shows (core/primary_poll_browser.py). It serves no HTTP: a background worker.
+#
+# It writes through primary_poll_ingest() into the same tables the web service's worker fills for
+# SI Tickets (mig 20261123171030). ONE POLLER A SOURCE: when this service is live, the web service must
+# have PRIMARY_POLL_SOURCES=sitickets, or the two would overwrite the Timberwolves' rows every cycle.
+#
+# Plan: standard (2 GB). Chromium does not fit the starter plan's 512 MB reliably. Not measured on
+# Render: watch memory after the first runs and lower the plan if it allows.
+#
+# Off until PRIMARY_POLL_BROWSER_LIVE=1 is set here (a Render write: an Applier action, CLAUDE.md §4).
+# NOT created yet.
+
+services:
+  - type: worker
+    name: s4k-primary-poll-browser
+    runtime: docker
+    dockerfilePath: ./Dockerfile.primary-poll-browser
+    plan: standard
+    region: oregon          # same region as the main service
+    branch: main
+    autoDeploy: true
+    envVars:
+      - key: PRIMARY_POLL_BROWSER_LIVE
+        value: "0"          # set to 1 to start
+      - key: PRIMARY_POLL_INTERVAL_SECONDS
+        value: "600"
+      - key: SUPABASE_URL
+        fromService:
+          type: web
+          name: vibepass-storefront-test
+          envVarKey: SUPABASE_URL
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        fromService:
+          type: web
+          name: vibepass-storefront-test
+          envVarKey: SUPABASE_SERVICE_ROLE_KEY

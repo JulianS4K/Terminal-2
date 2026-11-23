@@ -308,6 +308,22 @@ def test_tm_feed_assert_readonly_raises_on_anything_but_get():
     _assert_readonly_method("get")
 
 
+# ---------- sitickets_client / jump_client ----------
+
+@pytest.mark.parametrize("module,error", [("sitickets_client", "SiTicketsReadOnlyError"),
+                                          ("jump_client", "JumpReadOnlyError")])
+def test_primary_poll_clients_assert_readonly_raises_on_anything_but_get(module, error):
+    import importlib
+    client = importlib.import_module(module)
+    assert client.ALLOWED_HTTP_METHODS == frozenset({"GET"})
+    for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"):
+        with pytest.raises(getattr(client, error)) as exc:
+            client._assert_readonly_method(method)
+        assert "READ-ONLY violation" in str(exc.value) and "RULE 2" in str(exc.value)
+    client._assert_readonly_method("GET")
+    client._assert_readonly_method("get")
+
+
 # ---------- bandsintown_client ----------
 
 def test_bandsintown_assert_readonly_raises_on_post():

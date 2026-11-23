@@ -2255,6 +2255,55 @@ async def _start_tm_feed_sync():  # pragma: no cover - startup hook; loop covere
     asyncio.create_task(_tm_feed_sync_loop())
 
 
+# ---------------------------------------------------------------------------
+# Primary box-office poll (operator 2026-11-23: "poll all the games for si and timberwolves every 10
+# mins", "push the list of events and their respective listings out, if poller fails to run for an
+# event, do not send listing information"). Off unless PRIMARY_POLL_LIVE=1 on this service. Each run
+# reads SI Tickets' events at Sports Illustrated Stadium and the Timberwolves' games (GET only:
+# sitickets_client.py, jump_client.py) and sends each event with its listings, or with the reason
+# its poll failed, to primary_poll_ingest. core/primary_poll_sync.py, mig 20261123171030.
+# ---------------------------------------------------------------------------
+_PRIMARY_POLL_INTERVAL_S = float(os.environ.get("PRIMARY_POLL_INTERVAL_SECONDS", "600"))
+_primary_poll_last: dict = {"at": None, "result": None, "error": None}
+
+
+async def _primary_poll_tick():
+    import jump_client
+    import sitickets_client
+    from core import n2s_autobuy_live, primary_poll_sync
+
+    def _call():
+        db = require_sb()
+        # an event sent twice is stored once (its listings are replaced), so a dropped connection is retried
+        rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
+        # PRIMARY_POLL_SOURCES=sitickets where the browser worker reads the Timberwolves (one poller a source)
+        sources = primary_poll_sync.sources_from(os.environ.get("PRIMARY_POLL_SOURCES"))
+        return primary_poll_sync.run(rpc, sitickets_client, jump_client, sources)
+
+    out = await asyncio.to_thread(_call)
+    _primary_poll_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    return out
+
+
+async def _primary_poll_loop():
+    if os.environ.get("PRIMARY_POLL_LIVE") != "1" or sb is None or SANDBOX:
+        _log.info("primary_poll: disabled (PRIMARY_POLL_LIVE != 1, no DB, or sandbox)")
+        return
+    _log.warning("primary_poll: started (every %ss)", _PRIMARY_POLL_INTERVAL_S)
+    while True:
+        try:
+            await _primary_poll_tick()
+        except Exception as e:  # never let the loop die; a missed run withholds the listings by their age
+            _primary_poll_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("primary_poll: run failed: %s", e)
+        await asyncio.sleep(_PRIMARY_POLL_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_primary_poll():  # pragma: no cover - startup hook; loop covered via _primary_poll_loop
+    asyncio.create_task(_primary_poll_loop())
+
+
 @app.get("/api/admin/manual-sub-buy/status")
 def manual_sub_buy_status(_=Depends(require_auth)):
     """Last manual sub buy tick (auth-gated)."""

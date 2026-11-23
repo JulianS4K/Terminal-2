@@ -142,6 +142,11 @@ CLIENT_FILES = {
     # feed list named (the list itself is a GET made in SQL, where the key lives). Operator
     # 2026-11-22. GET-only; nothing is ever written to Ticketmaster or its feed bucket.
     "tm_feed_client.py": frozenset({"GET"}),
+    # SI Tickets' box office at Sports Illustrated Stadium and the Timberwolves' own ticket site
+    # (Jump): public pages, read for their events and listings. Operator 2026-11-23. GET-only; no
+    # cart, hold or order. The Timberwolves' seat inventory needs a POST and is NOT read.
+    "sitickets_client.py": frozenset({"GET"}),
+    "jump_client.py": frozenset({"GET"}),
 }
 
 # Exact path-allowlist literals a write-capable client must declare. Widening either
