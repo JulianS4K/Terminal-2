@@ -1,6 +1,10 @@
 """Read the Timberwolves' seat listings with a real browser and store them (operator 2026-11-23:
-"start the timberwolves poller and test and then merge", choosing the browser worker), and the Lynx's
-once their schedule is released (operator 2026-11-23: "ping and map lynx when schedule releases").
+"start the timberwolves poller and test and then merge", choosing the browser worker), and those of
+every other team whose ticket site is on the same platform (jump_client.SITES), from the first run
+after it lists single games: the Lynx (operator 2026-11-23: "ping and map lynx when schedule
+releases") and NC Courage, Denver Summit, Seattle Reign, Boston Legacy, Seattle Sounders and North
+Carolina FC (operator 2026-11-24: "Add all those jump teams to the catalogue scanner and push
+through into api").
 
 The Timberwolves' ticket site (jump_client.py) shows a game's seats only after the page has loaded:
 the page's own script asks the site for them. This worker opens each game's public page in a headless
@@ -31,18 +35,21 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+import jump_client
 from core import primary_poll_sync
 
 log = logging.getLogger("primary_poll_browser")
 
-# the teams read, each stored under its own name as the source. The Lynx list no games until the WNBA
-# schedule is released: until then their run ends at the event list and stores nothing, and the first run
-# that finds games announces them to the event mapper (primary_poll_run_done, mig 20261123183730).
-ORGS = ("timberwolves", "lynx")
+# the teams read: every site of jump_client.SITES, each stored under its own name as the source. A team
+# that lists no single game (the Lynx until the WNBA schedule is released, the clubs out of season) ends its
+# run at the event list and stores nothing; the first run that finds games announces them to the event
+# mapper (primary_poll_run_done, mig 20261123183730).
+ORGS = tuple(jump_client.SITES)
 DATA_URL = "https://fan.jump.com/graphql"
-# the hosts a game's page needs to show its seats; analytics, ads and everything else are not loaded
-PAGE_HOSTS = frozenset({"tickets.timberwolves.com", "tickets.lynxbasketball.com", "fan.jump.com",
-                        "cdn.orgs.jump.com"})
+# the hosts a game's page needs to show its seats: the teams' own sites and the platform's; analytics,
+# ads and everything else are not loaded
+PAGE_HOSTS = frozenset({urlsplit(site).hostname for site in jump_client.SITES.values()}
+                       | {"fan.jump.com", "cdn.orgs.jump.com", "cdn.media.jump.com"})
 SKIPPED_RESOURCES = frozenset({"image", "font", "media"})
 PAGE_TIMEOUT_MS = 45_000
 MARKETS = {"PRIMARY": "primary", "SECONDARY": "resale"}
@@ -206,7 +213,6 @@ def main(env: Any = None, sleep: Callable[[float], None] = time.sleep) -> None:
         return
     from playwright.sync_api import sync_playwright
 
-    import jump_client
     from core import n2s_autobuy_live
     from core.db import make_supabase_client
 

@@ -165,7 +165,10 @@ def test_jump_events_come_from_the_home_page_with_each_games_public_offer():
                     {"__typename": "Offer", "id": "7575", "qtyMax": "$9"},                   # a short copy, seen after
                     {"__typename": "Offer", "name": "an offer with no id"}]},
         {"events": [later, pointed, nowhere,
-                    {"__typename": "Event", "id": "9", "name": "no offer", "eventStart": "2026-12-01T00:00:00.000Z"}]},
+                    {"__typename": "Event", "id": "9", "name": "no offer", "eventStart": "2026-12-01T00:00:00.000Z"},
+                    # a season on sale is not a game (operator: "remove membership and season listings")
+                    {**JUMP_EVENT, "id": "77", "name": "2027 NC Courage Season "},
+                    {**JUMP_EVENT, "id": "78", "name": "Half-Season Membership"}]},
         'zz:{"__typename":"Event","id":"cut off')
     events = jc.parse_events(jc.page_data(html), "timberwolves")
     assert [e["id"] for e in events] == ["1729", "1720", "1740"]                    # soonest first
@@ -456,3 +459,19 @@ def test_csv_bad_parameters_and_a_database_error():
     for url in (EVENTS, LISTINGS):
         r = _client(FakeDB(table_exc=RuntimeError("down"))).get(url, headers=H)
         assert r.status_code == 502 and r.json() == {"error": "upstream_error", "detail": "RuntimeError"}
+
+
+def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
+    # operator 2026-11-24: "Add all those jump teams to the catalogue scanner and push through into api"
+    assert pp.SOURCES == ("sitickets", *jc.SITES) and len(jc.SITES) == 8
+    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx"):
+        for url in (EVENTS, LISTINGS):
+            db = FakeDB(rows=[])
+            r = _client(db).get(url, headers=H, params={"source": source})
+            assert r.status_code == 200 and ("eq", "source", source) in db.queries[0].calls, (url, source)
+    # a season, a membership, a plan or a deposit is not a game; a game named for the season's opener is
+    for name in ("2027 NC Courage Season", "2027 Full Season - Online", "Half-Season Membership", "Season Ticket Deposit",
+                 "10-Game Plan"):
+        assert jc.NOT_AN_EVENT.search(name), name
+    for name in ("Timberwolves vs. Nets", "Season Opener: NC Courage vs. Washington Spirit", "Sounders vs. Timbers 3-14-27"):
+        assert not jc.NOT_AN_EVENT.search(name), name

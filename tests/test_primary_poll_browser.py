@@ -198,7 +198,7 @@ class _Jump:
 
     def events(self, org):
         self.asked.append(org)
-        if org == "lynx" and self.lynx_out_of_season:
+        if org != "timberwolves" and self.lynx_out_of_season:      # every other team lists no single game yet
             raise RuntimeError("the home page lists no games")
         return self._events
 
@@ -249,13 +249,15 @@ def test_a_cycle_opens_one_browser_filters_what_it_loads_and_closes_it_even_on_a
     jump = _Jump([dict(EVENT)])
     out = b.cycle(lambda name, params: calls.append((name, params)), jump, _Playwright(browser))
     assert out["timberwolves"]["ok"] == 1 and out["timberwolves"]["listings"] == 3 and browser.closed
-    # the Lynx list no games yet: their run ends at the event list, stores no event and closes no pull
-    assert jump.asked == ["timberwolves", "lynx"] and out["lynx"]["events"] == 0
+    # the other teams list no games yet: each one's run ends at the event list, stores no event and closes no pull
+    others = [org for org in b.ORGS if org != "timberwolves"]
+    assert jump.asked == list(b.ORGS) and b.ORGS[0] == "timberwolves" and len(others) == 7
+    assert all(out[org]["events"] == 0 for org in others)
     assert out["lynx"]["list_error"] == "RuntimeError: the home page lists no games"
     assert [(n, p["p_source"]) for n, p in calls] == [("primary_poll_due", "timberwolves"),
                                                       ("primary_poll_ingest", "timberwolves"),
                                                       ("primary_poll_run_done", "timberwolves"),
-                                                      ("primary_poll_source_failed", "lynx")]
+                                                      *(("primary_poll_source_failed", org) for org in others)]
     assert browser.options["user_agent"] == "a browser" and context.routes == [("**/*", b.allow)]
 
     class _Broken(_Browser):
@@ -322,9 +324,12 @@ def test_the_service_is_off_by_default_then_runs_and_survives_a_failed_run(monke
 
 def test_the_lynx_are_read_like_the_timberwolves_once_they_list_games():
     import jump_client
-    assert set(b.ORGS) == set(jump_client.SITES) == {"timberwolves", "lynx"}
+    assert set(b.ORGS) == set(jump_client.SITES) == {                # operator 2026-11-24: "Add all those jump teams"
+        "timberwolves", "lynx", "nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc"}
     for site in jump_client.SITES.values():                      # every team's own host may load in the page
-        assert site.removeprefix("https://") in b.PAGE_HOSTS
+        assert site.startswith("https://tickets.") and site.removeprefix("https://") in b.PAGE_HOSTS
+    assert {"fan.jump.com", "cdn.orgs.jump.com", "cdn.media.jump.com"} <= b.PAGE_HOSTS
+    assert not any(org in b.PRICING for org in b.ORGS[1:])      # only the Timberwolves' fee and tax are known
     calls = []
     game = {**EVENT, "id": "9001", "name": "Lynx vs. Fever", "url": "https://tickets.lynxbasketball.com/offers/1"}
     out = b.run(lambda name, params: calls.append((name, params)), _Jump([game], lynx_out_of_season=False),

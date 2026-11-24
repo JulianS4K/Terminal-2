@@ -10,7 +10,8 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|timberwolves|lynx     (lynx has no events until the WNBA schedule is released)
+        ?source=sitickets|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc
+                                 (a team's own ticket site has no events until it lists single games)
         &date_from=2026-11-23&date_to=2027-05-01
         &format=json|csv         (default json)
         &limit=1000&offset=0     (limit max 5000)
@@ -38,12 +39,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import jump_client
 from routers.mlb_feed import _bool, _csv, _date, _err, _paging
 from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-SOURCES = ("sitickets", "timberwolves", "lynx")
+SOURCES = ("sitickets", *jump_client.SITES)       # SI Tickets, then every team site on the Jump platform
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",

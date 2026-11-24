@@ -1,8 +1,9 @@
 """Team ticket sites on the Jump platform (read-only).
 
 The Minnesota Timberwolves sell their own tickets at tickets.timberwolves.com, a site built on
-Jump (jump.com). Its home page carries every upcoming home game and the game's public
-single-game offer inside the HTML, so this module reads that one page:
+Jump (jump.com), and so do the other teams in SITES (operator 2026-11-24: "Add all those jump teams
+to the catalogue scanner and push through into api"). A team's home page carries every upcoming
+home game and the game's public single-game offer inside the HTML, so this module reads that one page:
 
   events(org)       every upcoming game: id, name, start, venue, the public offer's id, how many
                     seats the team says are available and the price range
@@ -56,9 +57,28 @@ _assert_readonly_method = build_readonly_guard(
     "Reading public pages only — never a cart, hold or order on a team's ticket site.",
 )
 
-# org -> its ticket site. The Lynx (operator 2026-11-23: "ping and map lynx when schedule releases") list
-# no games until the WNBA schedule is out: events("lynx") raises until then, and nothing is stored.
-SITES = {"timberwolves": "https://tickets.timberwolves.com", "lynx": "https://tickets.lynxbasketball.com"}
+# org -> its ticket site; the org is the event's `source` in our tables and in the feed. A team that lists
+# no single game (out of season, or its move to Jump not yet in effect) makes events() raise, and nothing
+# is stored: its games appear by themselves the first run after they go on sale.
+#   lynx: operator 2026-11-23, "ping and map lynx when schedule releases".
+#   the six others: operator 2026-11-24, "Add all those jump teams to the catalogue scanner and push
+#   through into api". Each home page answered 200 to this client that day and listed no single game:
+#   NC Courage (NWSL) only its 2027 season; Denver Summit (NWSL), North Carolina FC (USL), and the three
+#   that sell on Jump from 2027, Seattle Sounders (MLS), Seattle Reign and Boston Legacy (NWSL), nothing.
+SITES = {
+    "timberwolves": "https://tickets.timberwolves.com",
+    "lynx": "https://tickets.lynxbasketball.com",
+    "nccourage": "https://tickets.nccourage.com",
+    "denversummit": "https://tickets.denversummitfc.com",
+    "reign": "https://tickets.reignfc.com",
+    "bostonlegacy": "https://tickets.bostonlegacyfc.com",
+    "sounders": "https://tickets.soundersfc.com",
+    "northcarolinafc": "https://tickets.northcarolinafc.com",
+}
+# a season, a membership, a plan or a deposit is not a single event (operator 2026-11-23: "remove
+# membership and season listings"); NC Courage's page lists "2027 NC Courage Season" beside its games
+NOT_AN_EVENT = re.compile(r"membership|deposit|season ticket|(full|half|partial)[ -]season|\bseason$|\bplan$",
+                          re.IGNORECASE)
 USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/126.0 Safari/537.36")
 TIMEOUT_S = 30
@@ -161,7 +181,7 @@ def parse_events(text: str, org: str) -> list[dict]:
     out = []
     for ev in _objects(text, "Event", rows).values():
         offer_id = ev.get("defaultOfferId")
-        if not offer_id or not ev.get("name") or not ev.get("eventStart"):
+        if not offer_id or not ev.get("name") or not ev.get("eventStart") or NOT_AN_EVENT.search(ev["name"].strip()):
             continue
         offer = offers.get(offer_id) or ev.get("defaultOffer")
         offer = offer if isinstance(offer, dict) else {}

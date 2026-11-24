@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-24** New: six more team box offices are sources of `GET /primary/events` and `GET /primary/listings`: `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders` and `northcarolinafc`. None has single matches on sale yet, so they return no rows today; their matches appear by themselves when they go on sale (section 6k).
 - **2026-11-23** Changed: box-office events are now read on their own cadence, not all every 30 minutes, and at a random 10-minute slot inside it. `GET /primary/events` gains `poll_every_minutes` (10 on the day of the event, 30 up to 2 days away or 5 for a Friday, Saturday or Sunday event, 60 otherwise), `next_poll_at` (the slot drawn for the next read), `median_price` and `listed_quantity`. Listings stay available between reads; `as_of` on a listing and `listings_as_of` on an event say how old they are (section 6k).
 - **2026-11-23** Changed on `GET /primary/listings`: `price` now means the same for every source, the price before fees and tax, and each listing carries `fee`, `tax` and `all_in_price` with `price` + `fee` + `tax` = `all_in_price`. Until now a Timberwolves `price` was the all-in total rounded to the dollar (55 where the ticket is 42.00 + 8.40 fees + 5.05 tax = 55.45); it is now 42.00 with `all_in_price` 55.45 and `price_estimated: true`, because that site shows only the total and we split it. SI Tickets gains `tax` and the per-order `order_fee`, and its `fee` is now the one inside the total. New fields are at the end of each row (section 6k).
 - **2026-11-23** New: `GET /primary/events` and `GET /primary/listings` carry the box offices we poll ourselves every 30 minutes: SI Tickets at Sports Illustrated Stadium (Red Bull New York, HSBC SVNS) with every seat block, its seats, the quantities a buyer may take, the order limit and the price; and the Timberwolves' home games with the team's own and resale seat blocks. Only the newest pull is served, and listings only for an event polled successfully in the last 35 minutes: otherwise the event says `listings_available: false` and why. Obstructed-view listings are never sent (section 6k).
@@ -992,6 +993,7 @@ Two box offices are read by us directly and served as two feeds. Each event is r
 | `sitickets` | SI Tickets, the box office of Sports Illustrated Stadium in Harrison, NJ: Red Bull New York home matches and other stadium events such as HSBC SVNS | Yes | Yes |
 | `timberwolves` | The Minnesota Timberwolves' own ticket site: every home game at Target Center | Yes, with seats available and the price range | Yes: the team's own seats (`primary`) and seats resold on the site (`resale`) |
 | `lynx` | The Minnesota Lynx's own ticket site, on the same platform: home games at Target Center | None until the WNBA schedule is released; they then appear by themselves | As for `timberwolves`, once there are games |
+| `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders`, `northcarolinafc` | The own ticket sites of NC Courage, Denver Summit, Seattle Reign and Boston Legacy (NWSL), Seattle Sounders (MLS) and North Carolina FC (USL), all on the same platform as `timberwolves` | None yet: no single matches were on sale on 2026-11-24 (Sounders, Reign and Boston Legacy sell there from the 2027 season). Matches appear by themselves when they go on sale; seasons, memberships and plans are left out | As for `timberwolves`, once there are matches |
 
 Season packages, memberships and deposits are left out.
 
@@ -1041,7 +1043,7 @@ GET /primary/listings?source=sitickets&event_id=2297105
 - **An empty `/primary/listings` for an event does not mean it is sold out.** Check `listings_available` on the event first.
 - **Obstructed-view listings are never sent.**
 - **Timberwolves prices are split from the total.** The site shows one all-in figure a ticket: to the cent for the team's own seats, to the dollar for resale. We split it into `price`, `fee` (20% of the price) and `tax` (12.025% of the price) and set `price_estimated: true`; `all_in_price` is the site's own figure. `max_per_order` is never above the game's `order_max`. On the event, `price_min` and `price_max` are all-in figures.
-- **`lynx` listings will carry `all_in_price` only** until its fee is confirmed: `price`, `fee` and `tax` are null there.
+- **Listings of every team site but `timberwolves` will carry `all_in_price` only** until that team's fee and tax are confirmed: `price`, `fee` and `tax` are null there.
 - **Timberwolves listings come from a separate worker.** Until it is switched on, every Timberwolves event has `listings_withheld: poll_failed`.
 - **`tevo_event_id` is filled by our event mapper**, not by the poll, so a newly listed event has a null until the mapper's next pass. Use `mapped=false` to see the ones still open.
 
