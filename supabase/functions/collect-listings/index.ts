@@ -1,4 +1,9 @@
-// Supabase Edge Function: collect-listings (v11)
+// Supabase Edge Function: collect-listings (v12)
+//
+// v12 (2026-11-17): after each EVO response, hand the ids of EVERY ticket group in it to
+//      listing_overlap_evo_seen() (mig 20261124120000). listings_snapshots only gets the groups
+//      that changed, so this is how the EVO / GoTickets overlap matcher knows which groups are
+//      still listed. Best effort: a failure is logged and never fails the poll. Nothing else changes.
 //
 // v11 (2026-09-11): capture TEvo `public_notes` + `view_type` per ticket group into
 //      listings_snapshots so the deal scanner can exclude obstructed / limited / partial /
@@ -540,6 +545,22 @@ Deno.serve(async (req) => {
     });
   };
 
+  // v12: tell the EVO / GoTickets overlap matcher which ticket groups this response held.
+  // Called BEFORE the listings insert so the id set is in place by the time event_metrics
+  // (the matcher's "a poll landed" signal) is written. Never throws.
+  const recordLiveBook = async (eventId: number, capturedAt: string, rows: ListingRow[]): Promise<void> => {
+    try {
+      const { error } = await db.rpc("listing_overlap_evo_seen", {
+        p_event_id: eventId,
+        p_captured_at: capturedAt,
+        p_ids: rows.map((r) => r.tevo_ticket_group_id),
+      });
+      if (error) console.warn(`listing_overlap_evo_seen failed for event ${eventId}: ${error.message}`);
+    } catch (e) {
+      console.warn(`listing_overlap_evo_seen threw for event ${eventId}: ${(e as Error).message}`);
+    }
+  };
+
   const url = new URL(req.url);
   const eventIdParam = url.searchParams.get("event_id");
   const windowParam = url.searchParams.get("window");
@@ -567,6 +588,7 @@ Deno.serve(async (req) => {
       const groups = await withRetry(() => evo.getTicketGroups(eid));
       const listingRows = buildListingRows(eid, capturedAt, groups, s4kBrokerageId);
       const rowsToInsert = await filterChangedListings(eid, listingRows);  // Wave 3: skip unchanged
+      await recordLiveBook(eid, capturedAt, listingRows);                   // v12: ids of the FULL response
 
       for (let i = 0; i < rowsToInsert.length; i += 500) {
         const chunk = rowsToInsert.slice(i, i + 500);
@@ -720,6 +742,7 @@ Deno.serve(async (req) => {
     async (eid) => {
       const groups = await withRetry(() => evo.getTicketGroups(eid));
       const listingRows = buildListingRows(eid, capturedAt, groups, s4kBrokerageId);
+      await recordLiveBook(eid, capturedAt, listingRows);                   // v12: ids of the FULL response
 
       // Insert raw listings in chunks. If ANY chunk fails, abort this event so
       // we don't compute metrics on partial data — throw so mapPool counts it.

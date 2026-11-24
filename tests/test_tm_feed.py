@@ -15,6 +15,7 @@ testclient = pytest.importorskip("fastapi.testclient")
 
 from fastapi import FastAPI  # noqa: E402
 
+from routers import feed_xmap  # noqa: E402
 from routers import subs_api as s  # noqa: E402
 from routers import tm_feed  # noqa: E402
 from routers.mcp_api import hash_key  # noqa: E402
@@ -64,9 +65,10 @@ class _Query:
 
 
 class FakeDB:
-    def __init__(self, rows=None, find=True, table_exc=None):
+    def __init__(self, rows=None, find=True, table_exc=None, market_ids=None, rpc_exc=None):
         self.rows, self.find, self.table_exc = rows, find, table_exc
-        self.queries, self.tables = [], []
+        self.market_ids, self.rpc_exc = market_ids, rpc_exc
+        self.queries, self.tables, self.rpcs = [], [], []
 
     def rpc(self, name, args):
         if name == "mcp_verify_key":
@@ -74,6 +76,11 @@ class FakeDB:
             return _Data([{"id": 7, "label": "crm", "tier": "external"}] if ok else [])
         if name == "sub_finder_access":
             return _Data({"find": self.find})
+        if name == feed_xmap.RPC:
+            self.rpcs.append(args)
+            if self.rpc_exc:
+                raise self.rpc_exc
+            return _Data(self.market_ids)
         return _Data(None)
 
     def table(self, name):
@@ -102,11 +109,13 @@ def test_events_default_is_real_events_only_and_pages():
     db = FakeDB(rows=[EVENT])
     r = _client(db).get(EVENTS, headers=H)
     assert r.status_code == 200
-    assert r.json() == {"count": 1, "offset": 0, "next_offset": None, "events": [EVENT]}
+    # every row carries the same event's id on the other marketplaces: null where we hold no pairing
+    assert r.json() == {"count": 1, "offset": 0, "next_offset": None,
+                        "events": [{**EVENT, **dict.fromkeys(tm_feed.MARKET_ID_COLUMNS)}]}
     calls = db.queries[0].calls
     # every column by default: the core ones, then everything else Ticketmaster returns
     assert db.tables == [tm_feed.EVENT_VIEW]
-    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS))
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS + tm_feed.FEED_COLUMNS))
     assert not any(c[:2] == ("eq", "safetix") for c in calls)      # SafeTix was not asked about
     assert ("eq", "is_product", False) in calls                    # parking and add-ons are left out
     assert ("range", 0, 999) in calls and ("order", "event_date") in calls and ("order", "tm_event_id") in calls
@@ -144,16 +153,18 @@ def test_events_detail_and_buy_limit_columns():
     db = FakeDB(rows=[EVENT])
     assert _client(db).get(EVENTS, headers=H, params={"detail": "false", "safetix": "true"}).status_code == 200
     calls = db.queries[0].calls
-    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS)) and ("eq", "safetix", True) in calls
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.SLIM_FEED_COLUMNS)) and ("eq", "safetix", True) in calls
     db = FakeDB(rows=[EVENT])
     _client(db).get(EVENTS, headers=H, params={"detail": "true", "safetix": "false"})
     calls = db.queries[0].calls
-    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS))
+    assert calls[0] == ("select", ",".join(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS + tm_feed.FEED_COLUMNS))
     assert ("eq", "safetix", False) in calls
     # the CSV header follows the columns asked for
     full = _client(FakeDB(rows=[EVENT])).get(EVENTS, headers=H, params={"format": "csv"}).text.split("\r\n")[0]
     slim = _client(FakeDB(rows=[EVENT])).get(EVENTS, headers=H, params={"format": "csv", "detail": "false"}).text.split("\r\n")[0]
-    assert full.endswith("venue_ada") and slim.endswith("changed_at") and "ticket_limit_count" in full
+    ids = "," + ",".join(tm_feed.MARKET_ID_COLUMNS)                # the marketplace ids are the last columns
+    assert full.endswith("detail_read_at" + ids) and slim.endswith("changed_at,source,tm_primary" + ids)
+    assert "ticket_limit_count" in full and "ticketmaster_event_id" not in full   # that one is tm_event_id here
 
 
 def test_markets_lists_the_paired_sites_and_filters_by_site():
@@ -256,4 +267,51 @@ def test_changes_refuse_a_bad_parameter_and_report_a_failed_read():
         r = _client(db).get(CHANGES, headers=H, params=bad)
         assert r.status_code == 422 and r.json()["error"] == "invalid" and db.tables == []
     r = _client(FakeDB(table_exc=RuntimeError("boom"))).get(CHANGES, headers=H)
+    assert r.status_code == 502 and r.json() == {"error": "upstream_error", "detail": "RuntimeError"}
+
+
+def test_events_carry_who_sells_them_and_filter_by_it():
+    """Operator 2026-11-22: "Add the new info to the tm API except images" and "only poll tm primary events"."""
+    for col in ("source", "tm_primary", "official_seller", "transactable", "hot_event", "legacy_event_id",
+                "legacy_venue_id", "promoter_names", "in_feed", "seatmap_url", "outlets", "detail_read_at"):
+        assert col in tm_feed.FEED_COLUMNS
+    assert not any("image" in c for c in tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS + tm_feed.FEED_COLUMNS)
+    assert not set(tm_feed.FEED_COLUMNS) & set(tm_feed.EVENT_COLUMNS + tm_feed.DETAIL_COLUMNS)
+    db = FakeDB(rows=[EVENT])
+    assert _client(db).get(EVENTS, headers=H).status_code == 200
+    assert not any(c[:2] in (("eq", "tm_primary"), ("eq", "source")) for c in db.queries[0].calls)   # not asked
+    db = FakeDB(rows=[EVENT])
+    assert _client(db).get(EVENTS, headers=H, params={"primary": "true", "source": "Ticketmaster"}).status_code == 200
+    assert ("eq", "tm_primary", True) in db.queries[0].calls and ("eq", "source", "ticketmaster") in db.queries[0].calls
+    db = FakeDB(rows=[EVENT])
+    _client(db).get(EVENTS, headers=H, params={"primary": "false", "source": "third-party primary"})
+    assert ("eq", "tm_primary", False) in db.queries[0].calls and ("eq", "source", "third-party primary") in db.queries[0].calls
+    for bad in ({"source": "tm;drop"}, {"source": "x"}, {"primary": "maybe"}):
+        db = FakeDB(rows=[EVENT])
+        r = _client(db).get(EVENTS, headers=H, params=bad)
+        assert r.status_code == 422 and db.tables == []
+
+
+def test_events_carry_the_same_event_on_every_marketplace():
+    """Operator 2026-11-22: "include the cross maps in all event mapping you push out, marketplace id"."""
+    other = {**EVENT, "tm_event_id": "vvG1zZ9xyz", "tevo_event_id": None}
+    ids = {"source_id": "G5diZ_o6tFFbU", "xmap_tevo_event_id": 3464939, "ticketmaster_event_id": "G5diZ_o6tFFbU",
+           "seatgeek_event_id": 18380001, "stubhub_event_id": 159000001, "vivid_event_id": 7306000,
+           "tickpick_event_id": 8141000, "gotickets_event_id": 5500001, "axs_event_id": "990001",
+           "aq_short_event_id": "AQ12345"}
+    db = FakeDB(rows=[EVENT, other], market_ids=[ids])
+    rows = _client(db).get(EVENTS, headers=H).json()["events"]
+    assert db.rpcs == [{"p_source": "ticketmaster", "p_ids": ["G5diZ_o6tFFbU", "vvG1zZ9xyz"]}]    # one call a page
+    assert {c: rows[0][c] for c in tm_feed.MARKET_ID_COLUMNS} == {c: ids[c] for c in tm_feed.MARKET_ID_COLUMNS}
+    assert "ticketmaster_event_id" not in rows[0] and "source_id" not in rows[0]
+    assert all(rows[1][c] is None for c in tm_feed.MARKET_ID_COLUMNS)       # no pairing held: nulls
+    assert rows[0]["tevo_event_id"] == 3464939 and rows[1]["tevo_event_id"] is None    # the feed's own match is untouched
+    # /tm/markets already carries the ids and /tm/changes is a change log: neither asks
+    for url in (MARKETS, CHANGES):
+        db = FakeDB(rows=[MARKET])
+        assert _client(db).get(url, headers=H).status_code == 200 and db.rpcs == []
+    # an empty page asks nothing; a failed lookup is a 502 naming the class only
+    db = FakeDB(rows=[])
+    assert _client(db).get(EVENTS, headers=H).json()["count"] == 0 and db.rpcs == []
+    r = _client(FakeDB(rows=[EVENT], rpc_exc=RuntimeError("relation secret"))).get(EVENTS, headers=H)
     assert r.status_code == 502 and r.json() == {"error": "upstream_error", "detail": "RuntimeError"}

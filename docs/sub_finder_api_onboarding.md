@@ -6,7 +6,7 @@ For the CRM team. You send us orders that need a substitute ("sub"); we pull fre
 
 Code: `routers/subs_api.py` · SQL: migrations `20261112000000` (buy follow-up) and `20261112010000` (the API) · operator switches: [§9](#9-for-s4k-operators-switching-it-on).
 
-**Contents:** [What changed for you](#what-changed-for-you) · [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [6e Audit log](#6e-the-audit-log) · [6f Your limits](#6f-your-own-limits-on-rebates-and-buys) · [6g MLB schedule](#6g-the-mlb-schedule-with-ticket-links) · [6h Ticketmaster events](#6h-ticketmasters-events-and-the-sites-they-pair-to) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
+**Contents:** [What changed for you](#what-changed-for-you) · [At a glance](#at-a-glance-what-flows-each-way) · [The one thing to build](#the-one-thing-we-ask-you-to-build-a-needs-sub-checkbox) · [1 Quick start](#1-quick-start-5-minutes) · [2 Access](#2-access-keys-limits-errors) · [3 Submit orders](#3-submit-orders) · [4 Read results](#4-read-results) · [5 The order object](#5-the-order-object) · [6 Keep in sync](#6-keep-in-sync) · [6a Notes](#6a-notes-on-an-order) · [6b Balances](#6b-balances) · [6c What we bought](#6c-what-we-bought) · [6d Loss limits](#6d-the-automatic-buys-loss-limits) · [6e Audit log](#6e-the-audit-log) · [6f Your limits](#6f-your-own-limits-on-rebates-and-buys) · [6g MLB schedule](#6g-the-mlb-schedule-with-ticket-links) · [6h Ticketmaster events](#6h-ticketmasters-events-and-the-sites-they-pair-to) · [6i AXS and SeatGeek events](#6i-axs-events-and-seatgeek-primary-events) · [6j Marketplace ids](#6j-the-same-event-on-every-marketplace) · [7 Buy a cover](#7-buy-a-cover) · [7a Offer a sub (GoTickets)](#7a-offer-a-sub-to-a-gotickets-customer) · [8 Rules and limits](#8-how-matching-works-and-what-it-does-not-do) · [9 Operators](#9-for-s4k-operators-switching-it-on) · [10 Troubleshooting](#10-troubleshooting)
 
 ## Keeping this guide current
 
@@ -23,7 +23,18 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
-- **2026-11-22** Ticketmaster events are now read again once a week each, not more often, so `GET /tm/changes` and `since` on `GET /tm/events` show a cancellation or a moved time up to 7 days after Ticketmaster makes it. Yesterday's schedule (6 hours for today and tomorrow) is withdrawn. Do not rely on this feed for same-day cancellations (section 6h).
+- **2026-11-24** Fixed on `GET /primary/listings` for `sitickets`: a general admission block (the HSBC SVNS ones) now carries `general_admission: true`; it has `GA` for a row and no seat numbers, which is how it is sold. `max_per_order` on those blocks is now the largest quantity one order may take (10); it read 1. Seated blocks are unchanged, and now say `general_admission: false`.
+- **2026-11-24** New: `GET /health` reports each box office we read: `box_office_sitickets` and `box_office_timberwolves`, with how many events are being sent and how many could not be read. A box office that stops answering us reads `degraded` or `down` there, and counts in the overall `status` (section 2).
+- **2026-11-24** Changed: a box-office event's listings stop at its start time. From tip-off, `GET /primary/events` shows it with `listings_available: false` and `listings_withheld: "event_started"`, and it has no rows in `GET /primary/listings`. Red Bull New York and the other Sports Illustrated Stadium events now carry `start_utc` and `timezone` too.
+- **2026-11-24** New: six more team box offices are sources of `GET /primary/events` and `GET /primary/listings`: `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders` and `northcarolinafc`. None has single matches on sale yet, so they return no rows today; their matches appear by themselves when they go on sale (section 6k).
+- **2026-11-23** Changed: box-office events are now read on their own cadence, not all every 30 minutes, and at a random 10-minute slot inside it. `GET /primary/events` gains `poll_every_minutes` (10 on the day of the event, 30 up to 2 days away or 5 for a Friday, Saturday or Sunday event, 60 otherwise), `next_poll_at` (the slot drawn for the next read), `median_price` and `listed_quantity`. Listings stay available between reads; `as_of` on a listing and `listings_as_of` on an event say how old they are (section 6k).
+- **2026-11-23** Changed on `GET /primary/listings`: `price` now means the same for every source, the price before fees and tax, and each listing carries `fee`, `tax` and `all_in_price` with `price` + `fee` + `tax` = `all_in_price`. Until now a Timberwolves `price` was the all-in total rounded to the dollar (55 where the ticket is 42.00 + 8.40 fees + 5.05 tax = 55.45); it is now 42.00 with `all_in_price` 55.45 and `price_estimated: true`, because that site shows only the total and we split it. SI Tickets gains `tax` and the per-order `order_fee`, and its `fee` is now the one inside the total. New fields are at the end of each row (section 6k).
+- **2026-11-23** New: `GET /primary/events` and `GET /primary/listings` carry the box offices we poll ourselves every 30 minutes: SI Tickets at Sports Illustrated Stadium (Red Bull New York, HSBC SVNS) with every seat block, its seats, the quantities a buyer may take, the order limit and the price; and the Timberwolves' home games with the team's own and resale seat blocks. Only the newest pull is served, and listings only for an event polled successfully in the last 35 minutes: otherwise the event says `listings_available: false` and why. Obstructed-view listings are never sent (section 6k).
+- **2026-11-22** Every event feed now carries the same event's id on each marketplace: `/tm/events`, `/axs/events`, `/seatgeek/events` and `/mlb/events` rows gain `xmap_tevo_event_id`, `ticketmaster_event_id`, `seatgeek_event_id`, `stubhub_event_id`, `vivid_event_id`, `tickpick_event_id`, `gotickets_event_id`, `axs_event_id` and `aq_short_event_id` (null where we hold no pairing), and `/mlb/schedule` gains `tickpick_event_id` and `axs_event_id`. Nothing was renamed or removed (section 6j).
+- **2026-11-22** Our matching gates, in one place. Every cover carries `gate` and `label`: 1 `Index` and 2 `S4KTrading` keep the buyer in the same section and the same or a better row (1 at a profit, 2 at up to 200% of the sale); 3 `Index offer subs` and 4 `offer subs s4ktrading` move the buyer to another section in the same zone; 5 `Index Down offer subs` and 6 `Down offer subs S4KTrading` move the buyer up to 5 rows back. Gates 3 to 6 need the buyer's agreement and are never bought by us. New: `GET /gates` returns the table as JSON (section 8).
+- **2026-11-22** New: `GET /axs/events` lists AXS's upcoming events, by default the 48,000 AXS itself sells (`primary=false` for the ones another ticketer sells), and `GET /seatgeek/events` lists the events where SeatGeek is the primary ticketer, from the SeatGeek events we hold. Both carry the EVO event each matched, take `q`, `since`, dates and state, and have no prices (section 6i).
+- **2026-11-22** `GET /tm/events` now says who really sells each event: `source` and `tm_primary` (Ticketmaster itself, a resale page, or another ticketer), with `official_seller`, `transactable`, `hot_event`, Ticketmaster's own page ids (`legacy_event_id`, `legacy_venue_id`), promoters, a seat map link and outlets. Filter with `primary=true` or `source=`. About a third of the events are resale pages. These fields are null for an event until Ticketmaster's daily bulk file has been loaded for it; the first load is being switched on now.
+- **2026-11-22** Ticketmaster changes will show within about a day: the catalogue is moving to Ticketmaster's daily bulk file, so `GET /tm/changes` and `since` on `GET /tm/events` pick up a cancellation or a moved time the day after. Until the first file is loaded, the once-a-week reads announced earlier today continue. Detail such as the ticket limit is read only for events Ticketmaster itself sells (section 6h).
 - **2026-11-21** Ticketmaster events are now read again on a schedule, so `GET /tm/changes` fills and `since` on `GET /tm/events` picks up changes. Until this day an event was read once and a later cancellation was not seen (section 6h).
 - **2026-11-21** New: `GET /tm/changes` lists each change to a Ticketmaster event's status, date, start time or venue, with the old and the new value, so you can catch a cancellation without reading the catalogue again. Page with `after_id`. The same changes now move `changed_at`, so `since` on `GET /tm/events` returns a changed event too. Logging starts today (section 6h).
 - **2026-11-21** New: `GET /tm/events?q=` searches the catalogue by name: every word must be in the event's name, its teams or performers, its venue or its city. Case and accents do not matter. It combines with the date, segment, state and status filters, so you need not keep a full copy to look an event up.
@@ -84,6 +95,9 @@ Three things move between the CRM and S4K. Nothing is pushed to you: every answe
 | `GET /tm/events?since=` | Ticketmaster's catalogue of upcoming US and Canadian events with the EVO event each matched ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /tm/markets?since=` | for each matched Ticketmaster event, its id on SeatGeek, Vivid Seats, TickPick, StubHub, GoTickets and AXS ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
 | `GET /tm/changes?after_id=` | each change to a Ticketmaster event's status, date, start time or venue, with the old and the new value ([§6h](#6h-ticketmasters-events-and-the-sites-they-pair-to)) |
+| `GET /axs/events?since=` | AXS's upcoming events, by default the ones AXS itself sells, with the EVO event each matched ([§6i](#6i-axs-events-and-seatgeek-primary-events)) |
+| `GET /seatgeek/events?since=` | the upcoming events where SeatGeek is the primary ticketer, with the EVO event each matched ([§6i](#6i-axs-events-and-seatgeek-primary-events)) |
+| `GET /gates` | our six matching gates: the seats rule, the cost rule, whether the buyer must agree and what we do with each ([§8](#8-how-matching-works-and-what-it-does-not-do)) |
 | `GET /ping`, `GET /docs` | your scopes, the address we see you call from, the limits your buys are held to, and this guide with its version |
 | `GET /health` | whether S4K's side is working: one overall status and one for each thing you depend on, with when it last ran ([§2](#2-access-keys-limits-errors)) |
 
@@ -339,6 +353,7 @@ The overall `status` is the worst of the checks that are not `off`. A field that
 | `offers` | GoTickets offers: `offers_waiting`, and `offers_to_check` for one that was sent with its outcome not known yet (`degraded`). `buy_after_accept` says whether we buy the seats when the customer accepts | 10 minutes | 1 hour |
 | `balances` | the hourly read behind `GET /balances` | 2 hours | 6 hours |
 | `mlb_schedule` | the MLB schedule reader, once that feed exists; `off` until it is served | 26 hours | 3 days |
+| `box_office_sitickets`, `box_office_timberwolves` | the box offices behind `GET /primary/events` and `/primary/listings` (section 6k), one check each; another appears by itself when another team's site starts listing games. `last_at` is the reader's last completed pull (it wakes every 10 minutes). `events` are the ones not yet started, `events_with_listings` the ones we are sending listings for, `events_failing` the ones that were readable and could not be read at the last try (`degraded`), `events_never_readable` a series or package with no listing page (it does not lower the status). `down` when no event of the box office can be read at all: a site refusing us shows here. `off` when the box office has nothing on sale | 25 minutes | 1 hour |
 
 Poll it once a minute at most. If `crm_feed` is not `ok` while your own API is up, tell S4K: a label you set will not reach us until it is. If `buying` is `down`, a buy call is still accepted and waits; nothing is bought until S4K has cleared it.
 
@@ -759,12 +774,13 @@ Concerts and other live events at MLB and minor league ballparks, from the same 
 
 Three read-only feeds from Ticketmaster's own event catalogue (its Discovery API): the events, the sites each matched event pairs to, and what changed. Any key that may find subs may read them, with that key's rate and quota. They carry names, dates, venues, status and on-sale dates: **no prices and no inventory**.
 
-How the catalogue is collected decides how fresh a row is, so read `last_seen_at` on each event: it is when we last read that event from Ticketmaster.
+How the catalogue is collected decides how fresh a row is:
 
-- **What we read.** One read per day, per segment (Sports, Music, Arts & Theatre) and per country (US and Canada), for each of the next 400 days. The horizon moves forward a day at a time.
-- **How often.** Each event is read again once a week, and no more often. That is about 2,700 calls a week to Ticketmaster, inside two daily budgets: 250 for re-reading known days, soonest first, and 1,000 for the rest.
-- **What that means for you.** A cancellation or a moved time shows up to 7 days after Ticketmaster makes it, whether the event is tonight or next year. A new event shows within 7 days of Ticketmaster listing it. `GET /tm/changes` and `since` report a change once the event has been read again; `detected_at` is that moment. Do not rely on this feed for same-day cancellations.
-- **One limit.** Ticketmaster returns at most 1,000 events for one read. A few of the busiest days have more in one segment; the events past the first 1,000 of such a day are not read.
+- **The bulk file, once a day.** Ticketmaster publishes its whole catalogue as one file per country. We load the US and Canada files each day. This is where new events, and a changed status, date, start time or venue, come from. So a cancellation or a moved time shows within about a day, and `GET /tm/changes` and `since` report it then.
+- **Who sells the event.** The file says who the real seller is (`source`). `ticketmaster` means Ticketmaster itself is the primary seller (`tm_primary` true); `tmr` is a resale-only page; the rest are other ticketers Ticketmaster lists (`universe`, `ticketweb`, `third-party primary`, `frontgate`). About a third of the events are resale pages.
+- **The search, only for primary events.** The detail the file lacks (ticket limit, SafeTix, presales, doors, add-ons) is read through Ticketmaster's search only for events Ticketmaster itself sells, in the US and Canada, when they are new or the file shows them changed. Other events have those columns empty; `detail_read_at` says when an event's detail was last read.
+- **Not in the file.** About a quarter of the events the search returns are not in the bulk file, nearly all of them resale pages and Universe events. `in_feed` is false for those, and they are not refreshed any more: read `last_seen_at`.
+- **No prices.** The file has price columns but they are empty for every event.
 
 ### Events: `GET /api/v1/subs/tm/events`
 
@@ -777,9 +793,11 @@ One row per upcoming Ticketmaster event.
 | `state` | the venue's two-letter state |
 | `status` | `onsale`, `offsale`, `cancelled`, `postponed`, `rescheduled` |
 | `mapped` | `true`: only events matched to an EVO event. `false`: only those not matched |
+| `primary` | `true`: only events Ticketmaster itself sells. `false`: only resale pages and other ticketers' events. An event that is not in the bulk file matches neither |
+| `source` | one seller type as the bulk file names it: `ticketmaster`, `tmr` (resale), `universe`, `ticketweb`, `third-party primary`, `frontgate`, `other` |
 | `products` | `true` to include parking, add-ons and packages. They are left out by default |
 | `safetix` | `true`: only events with SafeTix. `false`: only those without |
-| `detail` | `false` for the core columns only (the example below), about a quarter of the size. By default every column comes back |
+| `detail` | `false` for the core columns only (the example below) plus `source` and `tm_primary`, about a quarter of the size. By default every column comes back |
 | `q` | a search, up to 80 characters: every word must be in the event's name, its teams or performers, its venue or its city. Case and accents do not matter (`beyonce` finds Beyoncé). Combine it with any other filter |
 | `since` | only rows first seen, matched, or whose status, date, start time or venue changed, at or after this instant |
 | `format`, `limit`, `offset` | `json` or `csv`; up to 5000 (default 1000); `next_offset` is null on the last page |
@@ -810,6 +828,13 @@ One row per upcoming Ticketmaster event.
 
 | Field | Meaning |
 |---|---|
+| `source`, `tm_primary` | who really sells the event, as Ticketmaster's bulk file names it, and whether that is Ticketmaster itself. Null when the event is not in the file |
+| `official_seller`, `brand_name` | whether the page is an official seller's (false on resale pages), and the brand shown (`Ticketmaster`, `Universe`, `TicketWeb`, or a venue's own) |
+| `transactable`, `hot_event` | whether tickets can be bought on the page now, and Ticketmaster's own high-demand flag |
+| `legacy_event_id`, `legacy_venue_id` | the ids Ticketmaster's own pages use: the event id in `ticketmaster.com/event/<id>` and the venue id in a venue page's address |
+| `promoter_names` | the promoters Ticketmaster names for the event |
+| `in_feed`, `detail_read_at` | whether the event is in the newest bulk file, and when its detail was last read through the search (null: never, so the detail columns below are empty) |
+| `seatmap_url`, `outlets` | a link to Ticketmaster's static seat map picture, and where Ticketmaster says tickets are sold. Filled when the event's detail is next read |
 | `ticket_limit` | Ticketmaster's own sentence, for example `There is an overall 8 ticket limit for this event.` (a core column) |
 | `ticket_limit_count` | the limit as a number, when the sentence gives exactly one. Null when it gives none or more than one |
 | `ticket_limit_numbers` | every number in the sentence, in its order. `[4, 8]` for "a 4 ticket limit for presales and an 8 ticket limit for public onsale": read the sentence to see which is which |
@@ -886,6 +911,145 @@ One row per change to an event's status, date, start time or venue, oldest first
 - `detected_at` is when we next read the event from Ticketmaster and saw the difference, not when Ticketmaster made the change.
 - The same changes move `changed_at` on `/tm/events`, so `since` there returns a changed event too. Use whichever fits: `/tm/changes` tells you what changed.
 - An event Ticketmaster stops listing is not a change here: its `last_seen_at` on `/tm/events` simply stops moving.
+
+## 6i. AXS events and SeatGeek-primary events
+
+Two more read-only feeds, for the same keys as the Ticketmaster ones. Names, dates, venues, status and the ticket page: **no prices and no inventory**.
+
+### AXS: `GET /api/v1/subs/axs/events`
+
+One row per live upcoming AXS event. By default only the events AXS itself sells (`axs_primary` true, about 48,000); `primary=false` returns the events AXS lists and another ticketer sells (about 92,000). All are in the US.
+
+| Query | Meaning |
+|---|---|
+| `primary` | `false` for the events another ticketer sells. Default `true` |
+| `date_from`, `date_to` | the event's local date, `YYYY-MM-DD` |
+| `state` | the venue's two-letter state |
+| `mapped` | `true`: only events matched to an EVO event. `false`: only those not matched |
+| `q` | a search: every word must be in the name, the performers, the venue or the city |
+| `since` | only rows first seen, or matched, at or after this instant |
+| `format`, `limit`, `offset` | `json` or `csv`; up to 5000 (default 1000); `next_offset` is null on the last page |
+
+```json
+{"count": 1, "offset": 0, "next_offset": null, "events": [
+ {"axs_event_id": 1483914, "name": "Tape B", "headliner": "Tape B", "performers": ["Tape B"], "tour_title": null,
+  "category": "Music", "genre": "Dance / Electronic", "status": "Buy Tickets",
+  "event_date": "2026-11-21", "start_local_time": "20:30", "start_utc": "2026-11-22T02:30:00+00:00",
+  "timezone": "America/Chicago", "time_tba": false, "axs_venue_id": 126792, "venue_name": "Armory - Minneapolis",
+  "venue_city": "Minneapolis", "venue_state": "MN", "venue_country": "US",
+  "announce_utc": "2026-06-09T01:30:29+00:00", "onsale_utc": "2026-06-09T01:30:29+00:00", "presale_utc": null,
+  "ticket_url": "https://www.axs.com/events/1483914/tape-b-tickets", "ticketer": "axs", "axs_primary": true,
+  "tevo_event_id": 3412441, "tevo_event_name": "Tape B", "tevo_match_method": "venue_date",
+  "terminal_path": "/terminal/event.html?event=3412441", "first_seen_at": "2026-09-23T20:15:28+00:00",
+  "last_seen_at": "2026-11-21T17:23:47+00:00", "changed_at": "2026-11-19T20:04:00+00:00"}]}
+```
+
+- `status` is AXS's own button text: `Buy Tickets`, `Coming Soon`, `Sold Out`, `Cancelled` and so on.
+- `changed_at` moves when the event is first seen or matched to an EVO event, not when AXS changes its status. Read `last_seen_at` for freshness: the AXS list is read every minute.
+
+### SeatGeek primary: `GET /api/v1/subs/seatgeek/events`
+
+One row per upcoming event where SeatGeek is the primary ticketer, for example Dallas Cowboys and Washington Commanders home games. Same query as the AXS feed, without `primary`.
+
+```json
+{"count": 1, "offset": 0, "next_offset": null, "events": [
+ {"sg_event_id": 18116899, "name": "Tennessee Titans at Dallas Cowboys", "category": "nfl", "status": "normal",
+  "event_date": "2026-11-22", "start_local_time": "12:00", "start_utc": "2026-11-22T18:00:00+00:00", "time_tba": false,
+  "performers": ["Dallas Cowboys", "Tennessee Titans"], "sg_venue_id": null, "venue_name": "AT&T Stadium",
+  "venue_city": "Arlington", "venue_state": "TX", "venue_country": "US",
+  "ticket_url": "https://seatgeek.com/dallas-cowboys-tickets/11-22-2026-arlington-texas-at-t-stadium/nfl/18116899",
+  "seatgeek_open_id": "e_LPCw89YNJhRKrbRXfYm4KR3tgNzjmJ", "seatgeek_primary": true,
+  "tevo_event_id": 3285875, "tevo_event_name": "Tennessee Titans at Dallas Cowboys", "tevo_match_method": "matcher_v3_pm24h",
+  "terminal_path": "/terminal/event.html?event=3285875", "first_seen_at": "2026-08-01T00:00:00+00:00",
+  "last_seen_at": "2026-11-22T00:12:00+00:00", "changed_at": "2026-08-02T00:00:00+00:00"}]}
+```
+
+- **This feed is small on purpose.** We hold SeatGeek's own record for about 4,300 upcoming events, the ones we trade, not SeatGeek's whole catalogue. Of those, 45 were SeatGeek-primary on 2026-11-22. An event that is missing here may still be SeatGeek-primary.
+
+## 6j. The same event on every marketplace
+
+Every event row of `/tm/events`, `/axs/events`, `/seatgeek/events` and `/mlb/events` carries the id we hold for the same event on each other site, so you do not have to join the feeds yourself. A null means we hold no pairing with that site, not that the site does not list the event.
+
+| Field | The event's id on |
+|---|---|
+| `xmap_tevo_event_id` | EVO (Ticket Evolution): the feed's own match (`tevo_event_id`), else the one our cross-map holds. `tevo_event_id` itself is unchanged, and so is what `mapped=` filters on |
+| `ticketmaster_event_id` | Ticketmaster: the event Ticketmaster itself sells before a resale page (not on `/tm/events`, where it is `tm_event_id`) |
+| `seatgeek_event_id` | SeatGeek (not on `/seatgeek/events`, where it is `sg_event_id`) |
+| `stubhub_event_id` | StubHub |
+| `vivid_event_id` | Vivid Seats |
+| `tickpick_event_id` | TickPick |
+| `gotickets_event_id` | GoTickets |
+| `axs_event_id` | AXS, as text (on `/axs/events` it is the row's own id, a number) |
+| `aq_short_event_id` | Automatiq |
+
+- **Where they come from.** Our hub of traded events first, then our cross-map of every site's catalogue, then (Vivid Seats and TickPick) that site's own catalogue. `GET /tm/markets` reads the same sources in the same order, so the two agree for an event both list.
+- **An event with no EVO match can still be paired.** The cross-map pairs some Ticketmaster, AXS and SeatGeek events with other sites before our matcher finds the EVO event; those rows have a null `tevo_event_id` and ids here.
+- **`/mlb/schedule` already carried** `sg_event_id`, `sh_event_id`, `vivid_event_id`, `tm_event_id`, `gotickets_event_id` and `aq_short_event_id` under those names; it gains `tickpick_event_id` and `axs_event_id`.
+- **`since` does not see a new pairing by itself.** `changed_at` moves when the event or its EVO match changes. To pick up pairings added later, read the page again.
+- In CSV the fields are the last columns.
+
+## 6k. Box offices we poll ourselves: events and listings
+
+Two box offices are read by us directly and served as two feeds. Each event is read on its own cadence, by its date, its price and the tickets listed: every 10 minutes on the day of the event, every 30 minutes or every hour before, at a random slot inside that interval (see `poll_every_minutes` below). Same keys as `/mlb/schedule`.
+
+| Source | What it is | Events | Listings |
+|---|---|---|---|
+| `sitickets` | SI Tickets, the box office of Sports Illustrated Stadium in Harrison, NJ: Red Bull New York home matches and other stadium events such as HSBC SVNS | Yes | Yes |
+| `timberwolves` | The Minnesota Timberwolves' own ticket site: every home game at Target Center | Yes, with seats available and the price range | Yes: the team's own seats (`primary`) and seats resold on the site (`resale`) |
+| `lynx` | The Minnesota Lynx's own ticket site, on the same platform: home games at Target Center | None until the WNBA schedule is released; they then appear by themselves | As for `timberwolves`, once there are games |
+| `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders`, `northcarolinafc` | The own ticket sites of NC Courage, Denver Summit, Seattle Reign and Boston Legacy (NWSL), Seattle Sounders (MLS) and North Carolina FC (USL), all on the same platform as `timberwolves` | None yet: no single matches were on sale on 2026-11-24 (Sounders, Reign and Boston Legacy sell there from the 2027 season). Matches appear by themselves when they go on sale; seasons, memberships and plans are left out | As for `timberwolves`, once there are matches |
+
+Season packages, memberships and deposits are left out.
+
+```
+GET /primary/events?source=sitickets&date_from=2027-02-01&available=true
+GET /primary/listings?source=sitickets&event_id=2297105
+```
+
+**`GET /primary/events`** takes `source`, `date_from`, `date_to`, `q` (every word must be in the name, venue or city), `available=true|false`, `mapped=true|false`, `format=json|csv`, `limit` (max 5000) and `offset`.
+
+| Field | Meaning |
+|---|---|
+| `source`, `event_id` | The box office and its own id for the event. Together they identify the event |
+| `name`, `event_date`, `start_local_time`, `start_utc`, `timezone` | Local date and time at the venue. `start_utc` and `timezone` are null for `sitickets` |
+| `venue_name`, `venue_city`, `venue_state`, `ticket_url` | The venue and the event's page at the box office |
+| `offer_id`, `order_min`, `order_max` | `timberwolves`: the public single-game offer and its order limits, where the site gives them |
+| `total_available`, `price_min`, `price_max`, `currency` | `timberwolves`: seats the team says are available and the price range |
+| `listings_available` | True when the event's listings can be sent right now |
+| `listing_count`, `listings_as_of` | How many listings and when they were read. Null unless `listings_available` |
+| `listings_withheld` | Why not: `event_started` (the event has started: we stop reading it at its start time, so we stop sending its listings), `poll_failed` (the last read of this event failed), `not_polled` (never read yet) or `poll_stale` (no good read in the last 35 minutes and the event's next slot is more than 20 minutes behind) |
+| `tevo_event_id`, `tevo_match_method`, `terminal_path` | The EVO event our mapper matched, how, and its page in our terminal. Null until matched; a series or package that is not an EVO event stays null |
+| `last_poll_at`, `first_seen_at`, `last_seen_at` | When we last tried the event, first saw it and last saw it listed |
+| `median_price` | The median of what a buyer pays for a ticket (`all_in_price`) over the event's listings we send |
+| `listed_quantity` | The tickets listed, added up over the same listings. 0 when nothing is listed; null when the listings carry no quantity |
+| `poll_every_minutes` | How often this event's listings are read. By date: the day of the event 10; up to 2 days away, or a Friday, Saturday or Sunday event up to 5 days away, 30; further 60 (the longest). Then, except on the day of the event, by `median_price` (150 or more is one step faster, under 50 one step slower) and by `listed_quantity` (2,000 or more is one step faster, under 250 one step slower). The two add up, stay between 30 and 60, and together never slow an event by more than one step |
+| `next_poll_at` | The slot drawn for this event's next read. Time is cut into windows as long as the event's interval and each window into 10-minute slots; the event is read once a window, at a slot drawn at random, redrawn every cycle. So two reads of an hourly event are 10 to 110 minutes apart, an hour on average |
+
+**`GET /primary/listings`** takes `source`, `event_id`, `tevo_event_id`, `market=primary|resale`, `section`, `date_from`, `date_to`, `format`, `limit` and `offset`. Rows come cheapest first within an event.
+
+| Field | Meaning |
+|---|---|
+| `source`, `event_id`, `event_name`, `tevo_event_id`, `event_date`, `start_local_time` | The event, and the EVO event it matched (null until matched) |
+| `listing_id` | The box office's id for this block of seats; it stays the same from one read to the next |
+| `market` | `primary`: the box office's own seats. `resale`: resold on the same site |
+| `area`, `section`, `seat_row`, `seat_low`, `seat_high`, `seats` | Where the seats are. `seats` lists every seat number. A general admission block has no seats: `seat_low`, `seat_high` and `seats` are null and `general_admission` is true (`sitickets`: `seat_row` reads `GA`) |
+| `quantity`, `allowed_quantities`, `max_per_order` | Seats in the block, the quantities a buyer may take from it, and the most one order may take (`sitickets`: the largest of `allowed_quantities`) |
+| `order_min`, `order_max` | The event's own order limits, where the box office gives them |
+| `price`, `fee`, `tax`, `all_in_price`, `currency` | Per ticket, for every source: `price` is before fees and tax, and `price` + `fee` + `tax` = `all_in_price`, what the buyer pays |
+| `order_fee` | A fee charged once an order, not per ticket (`sitickets`: 0.30). Null where there is none |
+| `price_estimated` | `true` where `price`, `fee` and `tax` were worked out from the all-in total and not read from the box office (`timberwolves`: its site shows only the total). `all_in_price` is never estimated |
+| `price_includes_tax` | Kept for callers already reading it; `false` wherever `price` is filled |
+| `ticket_type`, `delivery`, `ada`, `aisle`, `general_admission` | The price type, how the ticket is delivered, and seat flags |
+| `as_of` | When this event's listings were read |
+
+- **Only the newest pull is served.** Each read replaces an event's listings, so a listing that is gone at the box office is gone here on the next read; we send no history. `/primary/events` holds the events of the box office's last completed read: an event it no longer lists drops out of both feeds.
+- **Listings are sent for 35 minutes after a good read, or until 20 minutes after the event's next slot (`next_poll_at`), whichever is later.** So an event read every hour keeps its listings between reads, and `as_of` on each listing says how old they are. A failed read deletes the event's listings on our side, so nothing old is sent. The event stays in `/primary/events` with `listings_available: false`.
+- **An empty `/primary/listings` for an event does not mean it is sold out.** Check `listings_available` on the event first.
+- **Obstructed-view listings are never sent.**
+- **Timberwolves prices are split from the total.** The site shows one all-in figure a ticket: to the cent for the team's own seats, to the dollar for resale. We split it into `price`, `fee` (20% of the price) and `tax` (12.025% of the price) and set `price_estimated: true`; `all_in_price` is the site's own figure. `max_per_order` is never above the game's `order_max`. On the event, `price_min` and `price_max` are all-in figures.
+- **Listings of every team site but `timberwolves` will carry `all_in_price` only** until that team's fee and tax are confirmed: `price`, `fee` and `tax` are null there.
+- **Timberwolves listings come from a separate worker.** Until it is switched on, every Timberwolves event has `listings_withheld: poll_failed`.
+- **`tevo_event_id` is filled by our event mapper**, not by the poll, so a newly listed event has a null until the mapper's next pass. Use `mapped=false` to see the ones still open.
 
 ## 7. Buy a cover
 
@@ -1029,16 +1193,27 @@ Rules:
 
 that passes one of these gates. They are the N2S desk's own rules and names (`docs/d7_n2s_pipeline.md` §4a):
 
-| `gate` | `label` | Seats | Cost |
-|---|---|---|---|
-| 1 | `Index` | same section, same or better row | less than the sale (a profit) |
-| 2 | `S4KTrading` | same section, same or better row | up to 200% of the sale |
-| 3 | `Index offer subs` | another section in the same zone, same or better row | a profit |
-| 4 | `offer subs s4ktrading` | another section in the same zone, same or better row | up to 200% |
-| 5 | `Index Down offer subs` | up to 5 rows back, same section or same zone | a profit |
-| 6 | `Down offer subs S4KTrading` | up to 5 rows back, same section or same zone | up to 200% |
+| `gate` | `label` | Seats | Cost | Buyer must agree | What we do with it |
+|---|---|---|---|---|---|
+| 1 | `Index` | same section, same or better row | less than the sale (a profit) | no | bought by us when automatic buys are on and the cover is on a market we can buy on; otherwise you buy it |
+| 2 | `S4KTrading` | same section, same or better row | up to 200% of the sale | no | bought by us only for a `need2buy` order with the loss inside your limit; otherwise you buy it |
+| 3 | `Index offer subs` | another section in the same zone, same or better row | a profit | yes | never bought by us; on a GoTickets order you may offer it to the customer |
+| 4 | `offer subs s4ktrading` | another section in the same zone, same or better row | up to 200% | yes | never bought by us; on a GoTickets order you may offer it to the customer |
+| 5 | `Index Down offer subs` | up to 5 rows back, same section or same zone | a profit | yes | never bought by us; on a GoTickets order you may offer it, and you set the rebate (`0` allowed) |
+| 6 | `Down offer subs S4KTrading` | up to 5 rows back, same section or same zone | up to 200% | yes | shown to you only: never offered or bought on an answer |
 
-Words added to a label: ` zone unverified` (rows back in the same section, where we hold no zone map to confirm the price tier), ` obstructed view`, ` single ticket` (a one-seat sale), ` repost single` (one spare ticket has to be bought and resold), ` no sale price` (no `sold_ea`, so the cost rule could not be checked), ` row letters differ` (a single-letter row against a double-letter row, shown either way round: we do not know which is in front).
+**`GET /api/v1/subs/gates`** returns this table and the next one as JSON, for any key that may find subs: `{"gates": [{"gate", "label", "seats", "cost", "needs_buyer_ok", "what_we_do"}], "label_words": [{"word", "meaning"}], "docs": {"version", "url"}}`. It is read from this guide, so the two never differ.
+
+A label can carry extra words after the gate's name:
+
+| Word added to `label` | Meaning |
+|---|---|
+| ` zone unverified` | rows back in the same section, where we hold no zone map to confirm the price tier |
+| ` obstructed view` | the listing discloses an obstructed view |
+| ` single ticket` | a one-seat sale |
+| ` repost single` | one spare ticket has to be bought and resold |
+| ` no sale price` | no `sold_ea`, so the cost rule could not be checked |
+| ` row letters differ` | a single-letter row against a double-letter row, shown either way round: we do not know which is in front |
 
 **Accessible seats are never swapped with ordinary seats** (mig `20261117101530`). Accessible (ADA / wheelchair) seating is for the customers who need it, so this is a block and not a review. A seat counts as accessible when its section carries a marker (`204LWC`, `103WC`, `103 WC`, `ADA 12`, `Wheelchair Platform`, `Accessible 5`) or its row does (`WC`, `ADA`, `Wheelchair`). A sold accessible seat is covered only by an accessible listing; a sold ordinary seat is never covered by an accessible one. A listing on the wrong side is left out of `covers` altogether, so an order whose only listings are on the wrong side has no cover: handle it by hand. A buy or offer for such a listing is refused: 422 `invalid` when it was never quoted, 403 `forbidden` with `limit: "ada_seating"` when it comes from a lookup made before this rule. `"confirm": true` does not override it.
 
@@ -1116,9 +1291,10 @@ Everything ships **off**. All switches are rows in `sub_finder_config` (one row)
 | 17 | How the TicketsData search finds the event (mig `20261114000000`) | `sub_finder_td_seeds(<tevo_event_id>)` lists the links a search can start from, best first: StubHub id (`aq_event_map.sh_event_id`), SeatGeek link (`sg_events_canonical.sg_url`), Vivid id (`aq_event_map.vivid_event_id`), across every map row of the event. An answer is used only at `td_min_confidence` (80) or more and on our event's local date; otherwise the next link is tried, at most `td_max_seeds` (2) per event per job, and the bad link goes to `sub_finder_td_seed_log` and is not asked again for 14 days. 429 is retried twice; 402 stops the job's remaining searches. Each answered search is checked against `td_budget_ok()` / `td_reports_budget_ok()` first and charged with `td_charge_credit()` after. With `td_writeback` on (default), an answer at `td_writeback_min_confidence` (90) or more gives its StubHub and Vivid ids to the event map through `event_mapper_apply()` (fill-only). `sub_finder_td_pull` shows each search: `seed`, `tried`, `note`, `match_confidence`, `match_date`, `learned` |
 | 18 | The CRM's two keys, addresses, limits and the record (mig `20261116000000`) | **Keys.** `sub_finder_key (key_id, account_id, can_buy, can_offer, allowed_ips inet[], note)`: a key listed there acts for `account_id` (the id in `key_ids` / `buy_key_ids` / `gt_offer_key_ids` that the jobs are filed under) and may only read unless `can_buy` / `can_offer`. The account id may be a revoked key: it is a filing id, not a credential. Issue a key with `mcp_issue_key`, then add its row; never put it in `key_ids`. **Addresses.** `allowed_ips` restricts every call with that key; `UPDATE sub_finder_key SET allowed_ips = '{203.0.113.7}' WHERE key_id = <id>;`. `sub_finder_config.write_requires_ip = true` refuses a buy, offer or settings change from any key with no address. **In force since 2026-11-16: `client_ip_header = 'cf-connecting-ip'`.** On Render the app receives `X-Forwarded-For: <caller>, <Cloudflare edge>` and `cf-connecting-ip: <caller>` (read with the `/ping` aid below). The router takes the caller's address from that header (mig `20261116020000`), and only when the last `X-Forwarded-For` entry is inside `sub_finder_config.trusted_proxy_cidrs` (Cloudflare's published ranges as of 2026-11-16; update the list if Cloudflare publishes a new range, until then calls through it have no address). Only `cf-connecting-ip` or `true-client-ip` is accepted, sent exactly once. Checked live: `your_ip` in `GET /ping` was the caller's own address plainly and with a made-up `X-Forwarded-For` or `True-Client-IP`; Cloudflare itself rejects a request that carries its own `CF-Connecting-IP` (error 1000); a buy key locked to another address was refused from here with every one of those. **The other way (mig `20261116010000`), used when no header is named:** the `X-Forwarded-For` entry `client_ip_hops` from the end, with every entry after it inside `trusted_proxy_cidrs`; on Render that would be 2. Never set it higher than a `/ping` test with a made-up header supports. **The `/ping` aid:** `UPDATE sub_finder_config SET ping_shows_headers = true WHERE id;` makes `GET /ping` return `forwarding_headers`, the headers as they reached the app; switch it off afterwards. A new deploy takes a minute or two to take all traffic: confirm the commit is live (`list_deploys`) before trusting a test. What this rests on: every public request reaches the app through Cloudflare and then Render's router, which writes the last entry itself. A caller already inside our own Render private network could write the whole chain, so the address lock adds nothing against one; it would still need the key. **Limits.** `crm_buy_per_order_cap_usd`, `crm_buy_daily_cap_usd` (buys a CRM key asks for, checked in `sub_finder_buy`; NULL = none) and `gt_offer_rebate_max_pct` (NULL = the sale total). **Record.** `sub_finder_audit`: one row per buy, offer or loss-limit change asked through the API, refusals included; `GET /audit`. **Rotate a key:** issue the new one, add its `sub_finder_key` row, then `UPDATE mcp_api_keys SET revoked_at = now() WHERE id = <old>;` (refused from its next call). **Label and feed.** `sub_finder_need2buy` now matches `status = 'need2buy'` only; `n2b_decisions_enabled` and `auto_buy_enabled` are off since 2026-11-16 at the CRM's request |
 | 19 | A second hostname for the API (temporary, operator 2026-11-16) | `render-subs-api.yaml` runs `core/subs_only.py`: the same `/api/v1/subs` router on a Render service of its own, with no storefront and **no worker**. Same database, so keys, the address lock, limits and the audit log are the same on either host; a buy or offer asked there is carried out by the main service's workers. Its counters for the per-key rate and the per-address ceiling are its own. It needs only `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, which Render copies from the main service. Starter plan since 2026-11-16 (operator: "pay the 7 for now"), so it is always on; it was created on the free plan, which sleeps after 15 idle minutes. It is still an `onrender.com` name; replace it with a custom domain when there is one. **Created 2026-11-16:** service `s4k-subs-api-siyb` (`srv-dbti97gu01pc73df7c40`), blueprint `exs-dbti89942hec73big7c0`, `https://s4k-subs-api-siyb.onrender.com`. A free-plan service receives `X-Forwarded-For: <caller>, <Cloudflare edge>, <10.x internal proxy>`, one hop more than the main service, so `10.0.0.0/8` was added to `sub_finder_config.trusted_proxy_cidrs`; the address lock was then checked live through this host, forged headers included |
+| 20 | The box-office poll behind `/primary/events` and `/primary/listings` (mig `20261123171030`, section 6k) | Apply the migration, then `PRIMARY_POLL_LIVE=1` on the web service: a worker (`core/primary_poll_sync.py`) reads SI Tickets' events at Sports Illustrated Stadium and the Timberwolves' games. It wakes every 10 minutes (`PRIMARY_POLL_INTERVAL_SECONDS`, default 600: one slot) and at each wake reads only the events that are due. Cadences (operator 2026-11-23: "create update cadances based on event date and median price", "Let's set longest interval to 1 hour", "Redraw every cycle ... For events day of draw every 10 mins"; mig `20261123194030`) are rows: `primary_poll_cadence` (the ladder by days to the event: 10 minutes the day of, 30 minutes up to 2 days away or 5 for a Friday, Saturday or Sunday event, one hour further), `primary_poll_price_band` and `primary_poll_qty_band` (the shifts by median price and by tickets listed); change a row to change a cadence, e.g. `UPDATE primary_poll_cadence SET poll_every = interval '20 minutes' WHERE step = 2;`. Each read falls on a random slot of `primary_poll_config.slot` (10 minutes) inside the event's interval, redrawn every cycle (`primary_poll_next()`, stored as `primary_poll_event.next_poll_at`). The worker's interval must not be longer than the ladder's fastest step. `primary_poll_config` holds `listing_grace`, `due_slack`, `retry_after` and the fallback `listing_max_age` and stores them through `primary_poll_ingest()`, closing each pull with `primary_poll_run_done()` so the feeds serve the newest pull only. GET only. Check: `SELECT * FROM primary_poll_source;` and `SELECT source, poll_status, count(*), max(poll_ok_at) FROM primary_poll_event GROUP BY 1, 2;`. Off: unset the variable; within 35 minutes the feed stops sending listings by itself. **Timberwolves listings** are read by a second worker, a headless browser on its own service (`core/primary_poll_browser.py`, `render-primary-poll-browser.yaml`): create the service from the blueprint, set `PRIMARY_POLL_BROWSER_LIVE=1` on it, and set `PRIMARY_POLL_SOURCES=sitickets` on the web service, so each source has one poller. Without it the Timberwolves' games carry no listings. |
 | 20 | The CRM sets its own limits (mig `20261116030000`, operator 2026-11-16: "the value should come from crm") | `sub_finder_crm_limit (kind, site, pct)`: `rebate_max` (0–100) and `buy_max_cost` (1–1000), percent of the sale total, `site` = the marketplace sold on or `*` for the default; set through `PUT /settings/limits` by a key that may buy or offer, history in `sub_finder_crm_limit_log`. `sub_finder_buy` and `sub_finder_gt_offer_request` read them. `sub_finder_config.gt_offer_rebate_max_pct` is now only S4K's outer bound (the lower of it and the CRM's applies) and is **NULL**: the 50 it held on 2026-11-16 was nobody's decision and was removed. `crm_buy_per_order_cap_usd` / `crm_buy_daily_cap_usd` remain S4K's dollar ceilings |
 | 21 | Telling the CRM something changed (operator 2026-11-16: "just update crm upon ping") | Add a line to [What changed for you](#what-changed-for-you), newest first, in the form `- **YYYY-MM-DD** text`. `/ping` returns the ten newest as `news` once the change is deployed; no database change and no message to send. Write it for the CRM: no table names, no keys. |
-| 22 | The health check the CRM reads (`GET /health`, mig `20261116210000`, operator 2026-11-16: "also add health check that feeds crm") | Nothing to switch. `sub_finder_health(key_id)` reads the last good run of each part and grades it against the two limits it returns: the CRM feed reader (`n2s_crm_direct_log`), the order book mirror (`s4kcs_orders.last_seen_at`), the caller's jobs and watched orders, the buy queue and its kill switch (`manual_sub_buy`, `manual_sub_buy_config`), GoTickets offers, `account_balance_run`, and `mlb_ticket_sync` where it exists. A part switched off here (`buy_enabled`, `gt_offer_enabled`, `manual_sub_buy_config.enabled`) reads `off`, not `down`. **The CRM sees `buying: down` whenever `manual_sub_buy_config.kill_switch` is on or a buy is `unknown`**, so check that buy on its market and clear it promptly (the paragraph under this table). To change a limit, change the function in a migration and the table in §2 with it. |
+| 22 | The health check the CRM reads (`GET /health`, mig `20261116210000`, operator 2026-11-16: "also add health check that feeds crm") | Nothing to switch. `sub_finder_health(key_id)` reads the last good run of each part and grades it against the two limits it returns: the CRM feed reader (`n2s_crm_direct_log`), the order book mirror (`s4kcs_orders.last_seen_at`), the caller's jobs and watched orders, the buy queue and its kill switch (`manual_sub_buy`, `manual_sub_buy_config`), GoTickets offers, `account_balance_run`, `mlb_ticket_sync` where it exists, and, since mig `20261124043030` (operator 2026-11-24: "add health of both sources to the api out health section"), each box office of `primary_poll_source` with its events from `v_primary_poll_events_feed` (a box office the workers have stopped on purpose reads `down` after an hour: there is no switch for it here). A part switched off here (`buy_enabled`, `gt_offer_enabled`, `manual_sub_buy_config.enabled`) reads `off`, not `down`. **The CRM sees `buying: down` whenever `manual_sub_buy_config.kill_switch` is on or a buy is `unknown`**, so check that buy on its market and clear it promptly (the paragraph under this table). To change a limit, change the function in a migration and the table in §2 with it. |
 | 23 | The MLB schedule feed (`GET /mlb/schedule`, migs `20261116190000` collector + `20261116200000` feed, operator 2026-11-16: "send it inside the subfinder api to crm") | Nothing to switch: any key that may find subs may read it, with that key's rate and quota. It reads `v_mlb_schedule_feed`, so **the route answers 502 until `20261116200000` is applied**. The collector is cron `mlb_ticket_tick_1min` (one GET at a time to MLB's public ticketing schedule; each club and season re-read every 11 hours); it writes `mlb_ticket_game` and matches games to EVO events fill-only. Check it: `SELECT team_id, season, last_ok_at, last_games, last_error FROM mlb_ticket_sync ORDER BY last_ok_at NULLS FIRST;` and `SELECT game_type, count(*), count(ticket_url), count(tevo_event_id) FROM v_mlb_schedule_feed GROUP BY 1;`. Stop it: `SELECT cron.unschedule('mlb_ticket_tick_1min');` (the feed keeps serving what it has). The CRM sees the reader's state as the `mlb_schedule` check of `GET /health` (row 22). Source, tables and matching rules: `RESOURCES_BIBLE.md` §1, *MLB ticketing schedule*. |
 | 24 | Accessible (ADA / wheelchair) seats (mig `20261117101530`, operator 2026-11-17: "it should also block because WC is ADA") | Nothing to switch, and no setting turns it off. `sub_finder_seat_is_ada(section, row)` decides what is accessible: the row test of `sub_finder_row_is_wheelchair`, or a section carrying `WC` / `ADA` as a word, `WC` straight after the section number with at most one letter between (`204LWC`, `103WC`), or the words wheelchair / accessible / handicap. `sub_finder_match` leaves out every listing whose answer differs from the sold seat's; `sub_finder_buy`, `sub_finder_gt_offer_request`, `sub_finder_autobuy` and `sub_finder_gt_offer_buy` refuse a cover or offer stored before the rule (`ada_seating`). A venue that marks accessible seats some other way is not recognised: add its marker to that one function. Check a label: `SELECT sub_finder_seat_is_ada('204LWC', '1');`. The N2S auto-buyer keeps its own row-only rule (`docs/d7_n2s_pipeline.md`). |
 | 25 | What the results feed shows (mig `20261118172530`, operator 2026-11-18: "only show n2s within the timeframe allotted, ped is now merged into need2buy, and remove duplicates when it makes sense") | Nothing to switch. `GET /results` calls `sub_finder_feed(key, since, limit, offset, scope)`; `sub_finder_results` is kept as the same feed at scope `n2s`. `sub_finder_n2s_window(order)` decides where an order stands: `need2buy` for an item labelled `need2buy` or one from the PED list (`item_source = 'gmail'`), `n2s` for any other item, inside its time while the item is open and, for an alert, `timer_expires_at` is still ahead (operator 2026-11-18, asked which cut-off: "15 mins timer"); for need2buy, the event day has not passed (New York date). The CRM's "Find sub" button can look up an alert of any age; one older than 15 minutes is answered by `GET /orders/{n}` only. A row is shown when it is the order's one row, still watched and inside its time, or holds a purchase or offer not final for more than 7 days. **Buying is not changed**: a PED item is still report-only (`sub_finder_report_only`). See what the feed would show and why not: `SELECT order_number, watching, closed_reason, sub_finder_n2s_window(order_number) FROM sub_finder_order WHERE key_id = <account> ORDER BY updated_at DESC;`. The whole record: `GET /results?scope=all`. Nothing starts a lookup on an alert by itself, so an alert is in the feed only when someone looked it up inside its 15 minutes. |
