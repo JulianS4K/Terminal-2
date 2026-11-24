@@ -21,6 +21,8 @@
 -- every 30 or 60 minutes, where change-only would save little, so this follows GoTickets: the whole book at
 -- every good read. A read that found nothing on sale writes no listing rows and a metrics row of zero, so,
 -- unlike GoTickets, an empty book is on record. A failed read writes nothing.
+-- Keeping the history never costs the feed a read: if it fails, the read is stored all the same and the
+-- failure is a warning in the database log.
 --
 -- SIZE. 2026-11-24: 15,738 listings over 39 events, read 24 to 48 times a day: about 590,000 listing rows a
 -- day, so about 9 million rows at the 15-day limit; the metrics are about 1,400 and 50,000 rows a day.
@@ -308,8 +310,13 @@ BEGIN
              listed_quantity = v_qty, poll_interval = v_every,
              next_poll_at = public.primary_poll_next(v_every, t.next_poll_at)
        WHERE t.source = p_source AND t.source_event_id = v_id;
-      -- the book as read, its figures and the day's row are kept (mig 20261124160030)
-      PERFORM public.primary_poll_keep_history(p_source, v_id);
+      -- the book as read, its figures and the day's row are kept (mig 20261124160030). The history never costs
+      -- the feed a read: if keeping it fails, the read stands and the failure is a warning in the database log.
+      BEGIN
+        PERFORM public.primary_poll_keep_history(p_source, v_id);
+      EXCEPTION WHEN OTHERS THEN
+        RAISE WARNING 'primary_poll_keep_history(%, %) failed: %', p_source, v_id, SQLERRM;
+      END;
       v_ok_n := v_ok_n + 1; v_listings := v_listings + v_n;
     ELSE
       -- a failed poll is tried again at the event's own cadence, in a window no longer than retry_after
