@@ -1190,7 +1190,7 @@ def test_gt_sub_offer_tick_offers_then_follows(monkeypatch):
     creds = {"GOTICKETS_ACCESS_ID": "a", "GOTICKETS_API_SECRET": "b"}
     fake = _WatchdogSb({"offer_id": 1})
     monkeypatch.setattr(app_module, "require_sb", lambda: fake)
-    monkeypatch.setattr(vault, "vault_secret", lambda db, name: creds[name])
+    monkeypatch.setattr(vault, "vault_secret", lambda db, name, on_error=None: creds[name])
     seen = {}
 
     def _fake_tick(rpc, client):
@@ -1207,6 +1207,74 @@ def test_gt_sub_offer_tick_offers_then_follows(monkeypatch):
     monkeypatch.setattr(gt_sub_offer, "tick", lambda rpc, client: {"action": "idle"})
     assert anyio.run(app_module._gt_sub_offer_tick) == {"action": "idle", "follow": {"action": "idle"}}
     creds["GOTICKETS_API_SECRET"] = None                          # no credentials: nothing is claimed
+    assert anyio.run(app_module._gt_sub_offer_tick)["action"] == "no_credentials"
+
+
+class _DroppingSb(_WatchdogSb):
+    """A service-role fake whose first `drops` calls fail the way a closed idle connection does."""
+    def __init__(self, data, drops):
+        super().__init__(data)
+        self.drops = drops
+
+    def rpc(self, name, params):
+        import httpx
+        q = super().rpc(name, params)
+        if self.drops > 0:
+            self.drops -= 1
+
+            class _Dropped:
+                def execute(self_inner):
+                    raise httpx.RemoteProtocolError("Server disconnected")
+            return _Dropped()
+        return q
+
+
+def test_sub_finder_workers_retry_once_when_the_db_connection_dropped(monkeypatch):
+    """Operator 2026-11-18: both workers logged "tick failed: Server disconnected" about 100 times a
+    day, each a skipped tick. One retry, as the N2S buyer has had since 20261112020000."""
+    import anyio
+    import core.vault as vault
+    from core import gt_sub_offer, manual_sub_buy, n2s_autobuy_live
+    monkeypatch.setattr(n2s_autobuy_live, "DB_RETRY_PAUSE_S", 0)
+    monkeypatch.setattr(app_module, "_autobuy_gt_buy_client", lambda: "GT")
+    monkeypatch.setattr(manual_sub_buy, "tick", lambda rpc, client, gt: {"action": "buy", "claim": rpc("manual_sub_buy_claim", {})})
+    monkeypatch.setattr(manual_sub_buy, "follow", lambda rpc, client, gt: {"action": "idle"})
+    fake = _DroppingSb({"row": 1}, drops=1)
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    assert anyio.run(app_module._manual_sub_buy_tick)["claim"] == {"row": 1}
+    assert [c[0] for c in fake.calls] == ["manual_sub_buy_claim"] * 2          # the same call, sent again
+    fake = _DroppingSb({"row": 1}, drops=2)                                     # still down: the tick fails
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    with pytest.raises(Exception, match="Server disconnected"):
+        anyio.run(app_module._manual_sub_buy_tick)
+
+    monkeypatch.setattr(vault, "vault_secret", lambda db, name, on_error=None: "k")
+    monkeypatch.setattr(gt_sub_offer, "tick", lambda rpc, client: {"action": "offer", "claim": rpc("sub_finder_gt_offer_claim", {})})
+    monkeypatch.setattr(gt_sub_offer, "follow", lambda rpc, client: {"action": "idle"})
+    fake = _DroppingSb({"offer_id": 1}, drops=1)
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    assert anyio.run(app_module._gt_sub_offer_tick)["claim"] == {"offer_id": 1}
+    assert [c[0] for c in fake.calls] == ["sub_finder_gt_offer_claim"] * 2
+
+
+def test_gt_sub_offer_key_read_that_failed_is_not_reported_as_no_credentials(monkeypatch):
+    """The Vault helper swallows a failed read and answers None, which this worker used to report
+    as `no_credentials` (three times on 2026-11-18, with both keys in Vault)."""
+    import anyio
+    from core import gt_sub_offer, n2s_autobuy_live
+    monkeypatch.setattr(n2s_autobuy_live, "DB_RETRY_PAUSE_S", 0)
+    monkeypatch.setattr(gt_sub_offer, "tick", lambda rpc, client: {"action": "idle", "ready": client.ready()})
+    monkeypatch.setattr(gt_sub_offer, "follow", lambda rpc, client: {"action": "idle"})
+    fake = _DroppingSb("secret", drops=1)                        # the first key read drops, then all is well
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    assert anyio.run(app_module._gt_sub_offer_tick) == {"action": "idle", "ready": True, "follow": {"action": "idle"}}
+    assert [c[1]["p_name"] for c in fake.calls] == ["GOTICKETS_ACCESS_ID", "GOTICKETS_ACCESS_ID", "GOTICKETS_API_SECRET"]
+    fake = _DroppingSb("secret", drops=2)                        # the read fails twice: a failed tick, by name
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
+    with pytest.raises(Exception, match="Server disconnected"):
+        anyio.run(app_module._gt_sub_offer_tick)
+    fake = _DroppingSb(None, drops=0)                            # a key truly absent is still no_credentials
+    monkeypatch.setattr(app_module, "require_sb", lambda: fake)
     assert anyio.run(app_module._gt_sub_offer_tick)["action"] == "no_credentials"
 
 
@@ -1238,6 +1306,153 @@ def test_gt_sub_offer_loop_off_by_default_then_ticks_and_survives_errors(monkeyp
     with pytest.raises(_Stop):
         anyio.run(app_module._gt_sub_offer_loop)
     assert ticks["n"] == 2 and app_module._gt_sub_offer_last["error"] == "db blip"
+
+
+def test_tm_feed_sync_tick_runs_one_load_and_only_retries_the_batches(monkeypatch):
+    import anyio
+    from core import tm_feed_sync
+    seen = {}
+
+    class _Res:
+        def __init__(self, data):
+            self.data = data
+
+        def execute(self):
+            return self
+
+    class _Sb:
+        def rpc(self, name, params):
+            seen.setdefault("rpc", []).append(name)
+            return _Res({"name": name})
+
+    def _run(rpc, client, workdir):
+        import os as _os
+        seen["client"], seen["dir_exists"] = client.__name__, _os.path.isdir(workdir)
+        seen["check"], seen["load"] = rpc("tm_feed_check", {}), rpc("tm_feed_load", {})
+        return {"action": "loaded", "files": []}
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb())
+    monkeypatch.setattr(tm_feed_sync, "run", _run)
+    retried = []
+    monkeypatch.setattr(app_module, "asyncio", app_module.asyncio)
+    from core import n2s_autobuy_live
+
+    def _retrying(rpc):
+        def call(name, params):
+            retried.append(name)
+            return rpc(name, params)
+        return call
+    monkeypatch.setattr(n2s_autobuy_live, "retrying", _retrying)
+    out = anyio.run(app_module._tm_feed_sync_tick)
+    assert out == {"action": "loaded", "files": []} and app_module._tm_feed_sync_last["result"] == out
+    assert seen["client"] == "tm_feed_client" and seen["dir_exists"] is True
+    assert seen["rpc"] == ["tm_feed_check", "tm_feed_load"] and retried == ["tm_feed_load"]   # the check is never retried
+    monkeypatch.setattr(tm_feed_sync, "run", lambda *_a: {"action": "idle", "skipped": None})
+    assert anyio.run(app_module._tm_feed_sync_tick)["action"] == "idle"
+
+
+def test_tm_feed_sync_loop_off_by_default_then_runs_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.delenv("TM_FEED_SYNC_LIVE", raising=False)
+    monkeypatch.setenv("GT_SUB_OFFER_LIVE", "1")                 # another worker's flag does not turn this on
+    anyio.run(app_module._tm_feed_sync_loop)  # returns at once
+    monkeypatch.setenv("TM_FEED_SYNC_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("s3 blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_tm_feed_sync_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._tm_feed_sync_loop)
+    assert ticks["n"] == 2 and app_module._tm_feed_sync_last["error"] == "s3 blip"
+
+
+def test_primary_poll_tick_runs_both_clients_through_a_retrying_rpc(monkeypatch):
+    import anyio
+    from core import n2s_autobuy_live, primary_poll_sync
+    seen = {}
+
+    class _Res:
+        def __init__(self, data):
+            self.data = data
+
+        def execute(self):
+            return self
+
+    class _Sb:
+        def rpc(self, name, params):
+            seen.setdefault("rpc", []).append(name)
+            return _Res({"events": 1})
+
+    def _run(rpc, sitickets, jump, sources):
+        seen["clients"], seen["sources"] = (sitickets.__name__, jump.__name__), sources
+        seen["stored"] = rpc("primary_poll_ingest", {"p_source": "sitickets", "p_events": []})
+        return {"sitickets": {"events": 1}, "timberwolves": {"events": 0}}
+
+    retried = []
+
+    def _retrying(rpc):
+        def call(name, params):
+            retried.append(name)
+            return rpc(name, params)
+        return call
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb())
+    monkeypatch.setattr(primary_poll_sync, "run", _run)
+    monkeypatch.setattr(n2s_autobuy_live, "retrying", _retrying)
+    out = anyio.run(app_module._primary_poll_tick)
+    assert out == {"sitickets": {"events": 1}, "timberwolves": {"events": 0}}
+    assert app_module._primary_poll_last["result"] == out and app_module._primary_poll_last["error"] is None
+    assert seen["clients"] == ("sitickets_client", "jump_client") and seen["stored"] == {"events": 1}
+    assert seen["rpc"] == ["primary_poll_ingest"] and retried == ["primary_poll_ingest"]
+    assert seen["sources"] == ("sitickets", "timberwolves")
+    monkeypatch.setenv("PRIMARY_POLL_SOURCES", "sitickets")      # the browser worker reads the Timberwolves
+    anyio.run(app_module._primary_poll_tick)
+    assert seen["sources"] == ("sitickets",)
+
+
+def test_primary_poll_loop_off_by_default_then_runs_and_survives_errors(monkeypatch):
+    import anyio
+    monkeypatch.delenv("PRIMARY_POLL_LIVE", raising=False)
+    monkeypatch.setenv("TM_FEED_SYNC_LIVE", "1")                 # another worker's flag does not turn this on
+    anyio.run(app_module._primary_poll_loop)  # returns at once
+    monkeypatch.setenv("PRIMARY_POLL_LIVE", "1")
+    monkeypatch.setattr(app_module, "sb", object())
+    monkeypatch.setattr(app_module, "SANDBOX", False)
+    ticks = {"n": 0}
+
+    async def _tick():
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            raise RuntimeError("site blip")
+        return {}
+
+    class _Stop(Exception):
+        pass
+
+    async def _sleep(_s):
+        if ticks["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(app_module, "_primary_poll_tick", _tick)
+    monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
+    with pytest.raises(_Stop):
+        anyio.run(app_module._primary_poll_loop)
+    assert ticks["n"] == 2 and app_module._primary_poll_last["error"] == "site blip"
 
 
 def test_gt_sub_offer_status_route(client, monkeypatch):

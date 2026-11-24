@@ -221,6 +221,8 @@ Baseline: backend pytest 2,219 passed / 17 skipped / 100.00% coverage; frontend 
 
 ## ✅ Closed-on-reset (2026-10-21 audit — verified done, obsolete or moot)
 
+- **Box-office poll feed** — `/primary/events` and `/primary/listings` live 2026-11-23: mig `20261123171030` applied, `PRIMARY_POLL_LIVE=1` + `PRIMARY_POLL_SOURCES=sitickets` on the web service, the Timberwolves browser worker created (`s4k-primary-poll-browser-ksun`) and switched on. First pulls: SI Tickets 12 events / 1,584 listings, Timberwolves 30 games / 14,727 listings sent — PR #1180.
+- **Box-office poll: every 30 minutes, cleanup, new events announced, the Lynx** — migs `20261123183730` (when a pull closes, listings of events no longer listed are deleted and new events are posted once to the mapping thread) and `20261123190030` (the feed's age limit is a setting, 35 minutes) applied 2026-11-23; both workers at `PRIMARY_POLL_INTERVAL_SECONDS=1800`; the browser worker reads `lynx`, which lists no games until the WNBA schedule is released (a Lynx game page is untested until then) — PR #1182.
 - **D1-UX-1/2/3** — mobile overflow / tap targets / safe-area fixes are in `static/store/style.css`.
 - **A1-OPS-33** — no TicketsData cron is active (0 active, 0 inactive by command match).
 - **A1-OPS-32** — Paciolan crons 532/533 deactivated (0 active Paciolan jobs).
