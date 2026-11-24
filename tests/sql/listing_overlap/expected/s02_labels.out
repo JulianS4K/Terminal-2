@@ -1,0 +1,67 @@
+evo poll of event 10: 14 rows stored
+gotickets poll of event 900: 11 listings stored
+gotickets poll of event 901: 1 listings stored
+gotickets poll of event 902: 1 listings stored
+1 the labels, straight from the two books (nothing stored yet):
+evo|1|both|paired|101|0.986
+evo|2|both|paired|102|0.982
+evo|3|both|paired|103|0.989
+evo|4|evo_only|extra_copy|-|-
+evo|5|unclear|price_gap|-|-
+evo|6|evo_only|qty_differs|-|-
+evo|7|evo_only|row_absent|-|-
+evo|8|evo_only|section_absent|-|-
+evo|9|both|paired|109|0.988
+evo|11|both|paired|111|0.981
+evo|13|evo_only|section_absent|-|-
+evo|14|evo_only|section_absent|-|-
+gt|101|both|paired|1|0.986
+gt|102|both|paired|2|0.982
+gt|103|both|paired|3|0.989
+gt|105|unclear|price_gap|-|-
+gt|106|gt_only|qty_differs|-|-
+gt|107|gt_only|row_absent|-|-
+gt|108|gt_only|section_absent|-|-
+gt|109|both|paired|9|0.988
+gt|111|both|paired|11|0.981
+gt|112|gt_only|extra_copy|-|-
+gt|114|gt_only|section_absent|-|-
+stored before any match: 0
+2 match the event:
+{"status": "ok", "gt_only": 5, "event_id": 10, "evo_only": 6, "evo_exact": false, "both_pairs": 5, "gt_unclear": 1, "evo_unclear": 1, "gt_listings": 11, "evo_listings": 12, "labels_removed": 0, "labels_written": 23}
+ok|f|12|11|5|6|5|1|1
+Home at Away|45.5|41.7
+3 the reading function: both books with their labels
+evo|1|105|19|2|1917.40|false|both|paired|101
+evo|2|105|19|2|3455.70|false|both|paired|102
+evo|3|C129|4|2|500.00|false|both|paired|103
+evo|4|Club 129|4|2|900.00|false|evo_only|extra_copy|-
+evo|5|223|12|4|688.49|false|unclear|price_gap|-
+evo|6|223|15|2|832.64|false|evo_only|qty_differs|-
+evo|7|223|30|2|400.00|false|evo_only|row_absent|-
+evo|8|347|1|2|150.00|false|evo_only|section_absent|-
+evo|9|FLOORE|Row 3|2|2500.00|true|both|paired|109
+evo|11|106|7|2|3283.38|false|both|paired|111
+evo|13||1|2|75.00|false|evo_only|section_absent|-
+evo|14|C-B|2|2|1200.00|false|evo_only|section_absent|-
+gt|101|Section 105|19|2|1890.76|-|both|paired|1
+gt|102|Section 105|19|2|3394.12|-|both|paired|2
+gt|103|Club 129|4|2|494.50|-|both|paired|3
+gt|105|Section 223|12|4|420.00|-|unclear|price_gap|-
+gt|106|Section 223|15|4|694.84|-|gt_only|qty_differs|-
+gt|107|Section 223|06|4|861.68|-|gt_only|row_absent|-
+gt|108|Lower 113|16|2|300.00|-|gt_only|section_absent|-
+gt|109|Floor E|3|2|2470.00|-|both|paired|9
+gt|111|Section 106|7|2|3221.88|-|both|paired|11
+gt|112|Section 106|7|2|3260.00|-|gt_only|extra_copy|-
+gt|114|Club B|2|2|1190.00|-|gt_only|section_absent|-
+4 a second match of the same books rewrites nothing:
+0
+rows whose timestamps moved: 0
+5 a much tighter band: pairs outside it fall back to unclear, and a spot is re-walked to the copy that fits:
+4
+evo|2|unclear|price_gap
+evo|11|both|paired
+gt|102|unclear|price_gap
+gt|111|gt_only|extra_copy
+gt|112|both|paired
