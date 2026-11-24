@@ -24,8 +24,7 @@ BEGIN
                 WHEN l.quantity = o.qty + 1 THEN o.qty + 1 END AS buy_qty,
            public.seat_row_rank(l.seat_row) - public.seat_row_rank(o.seat_row) AS row_delta,
            -- 20261113450000: rows whose order cannot be trusted. A person reviews these.
-           public.sub_finder_row_letters_differ(o.seat_row, l.seat_row) AS letters_differ,
-           public.sub_finder_row_is_wheelchair(o.seat_row) <> public.sub_finder_row_is_wheelchair(l.seat_row) AS wc_differs
+           public.sub_finder_row_letters_differ(o.seat_row, l.seat_row) AS letters_differ
     FROM o JOIN _sf_l l ON l.eid = o.tevo_event_id
      AND public.seat_section_norm(l.section) = public.seat_section_norm(o.section)
      AND public.seat_row_kind(l.seat_row) = public.seat_row_kind(o.seat_row)
@@ -34,6 +33,9 @@ BEGIN
      AND (public.seat_row_rank(l.seat_row) <= public.seat_row_rank(o.seat_row) + v_back
           OR public.sub_finder_row_letters_differ(o.seat_row, l.seat_row))
     WHERE l.px > 0 AND l.quantity > 0
+      -- 20261117101530: an accessible (ADA / wheelchair) seat and an ordinary seat never replace
+      -- each other, whichever was sold. Not a flag a person can confirm: the listing is not a cover.
+      AND public.sub_finder_seat_is_ada(o.section, o.seat_row) = public.sub_finder_seat_is_ada(l.section, l.seat_row)
   ), strict_ok AS (
     -- orders that HAVE "a buy in that same section, same row or better" (gate 1 or 2)
     SELECT DISTINCT s.job_id, s.idx FROM same_sec s
@@ -97,8 +99,7 @@ BEGIN
            CASE WHEN n.qty = ANY (l.sp) OR l.quantity = n.qty THEN n.qty
                 WHEN l.quantity = n.qty + 1 THEN n.qty + 1 END AS buy_qty,
            public.seat_row_rank(l.seat_row) - public.seat_row_rank(n.seat_row) AS row_delta,
-           public.sub_finder_row_letters_differ(n.seat_row, l.seat_row) AS letters_differ,
-           public.sub_finder_row_is_wheelchair(n.seat_row) <> public.sub_finder_row_is_wheelchair(l.seat_row) AS wc_differs
+           public.sub_finder_row_letters_differ(n.seat_row, l.seat_row) AS letters_differ
     FROM need n
     JOIN oz ON oz.job_id = n.job_id AND oz.idx = n.idx AND oz.z IS NOT NULL
     JOIN lz ON lz.eid = n.tevo_event_id AND lz.z = oz.z
@@ -108,6 +109,7 @@ BEGIN
      AND (public.seat_row_rank(l.seat_row) <= public.seat_row_rank(n.seat_row) + v_back
           OR public.sub_finder_row_letters_differ(n.seat_row, l.seat_row))
     WHERE l.px > 0 AND l.quantity > 0
+      AND public.sub_finder_seat_is_ada(n.section, n.seat_row) = public.sub_finder_seat_is_ada(l.section, l.seat_row)
   ), cand AS (
     SELECT * FROM same_sec UNION ALL SELECT * FROM zone_sec
   ), taxed AS (
@@ -153,7 +155,7 @@ BEGIN
              'price_ea', px, 'subtotal', round(buy_qty * px, 2), 'tax_pct', tax_pct,
              'tax_est', round(total - buy_qty * px, 2), 'total', round(total, 2),   -- total includes the expected tax
              'profit', profit, 'price_note', price_note,
-             'row_relation', CASE WHEN letters_differ OR wc_differs THEN 'unknown'
+             'row_relation', CASE WHEN letters_differ THEN 'unknown'
                                   WHEN row_delta < 0 THEN 'better' WHEN row_delta = 0 THEN 'same' ELSE 'back' END,
              'gate', gate,
              'label', CASE gate WHEN 1 THEN 'Index' WHEN 2 THEN 'S4KTrading' WHEN 3 THEN 'Index offer subs'
@@ -161,7 +163,6 @@ BEGIN
                                 WHEN 6 THEN 'Down offer subs S4KTrading' ELSE 'over 200% of sale' END
                       || CASE WHEN gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL THEN ' zone unverified' ELSE '' END
                       || CASE WHEN view_note = 'obstructed' THEN ' obstructed view' ELSE '' END
-                      || CASE WHEN wc_differs THEN ' wheelchair row' ELSE '' END
                       || CASE WHEN letters_differ THEN ' row letters differ' ELSE '' END
                       || CASE WHEN qty = 1 THEN ' single ticket' ELSE '' END
                       || CASE WHEN buy_qty > qty THEN ' repost single' ELSE '' END
@@ -173,14 +174,13 @@ BEGIN
              'flags', to_jsonb(array_remove(ARRAY[
                         CASE WHEN gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL THEN 'zone_unverified' END,
                         CASE WHEN view_note = 'obstructed' THEN 'obstructed_view' END,
-                        CASE WHEN wc_differs THEN 'wheelchair_row' END,
                         CASE WHEN letters_differ THEN 'row_letter_mismatch' END,
                         CASE WHEN qty = 1 AND row_delta <> 0 THEN 'single_ticket_row_differs' END,
                         CASE WHEN buy_qty > qty THEN 'repost_single' END,
                         CASE WHEN sold_ea IS NULL AND gate IS NOT NULL THEN 'no_sale_price' END], NULL)),
              'confirm_needed', (gate IN (5, 6) AND o_zone IS NULL AND l_zone IS NULL)
                                OR view_note IS NOT DISTINCT FROM 'obstructed' OR (qty = 1 AND row_delta <> 0)
-                               OR wc_differs OR letters_differ
+                               OR letters_differ
                                OR buy_qty > qty OR (sold_ea IS NULL AND gate IS NOT NULL),
              'zone', l_zone, 'view', view_note,
              'link', link, 'buyable', public.sub_finder_market_buyable(market), 'listing_seen_at', pulled_at) AS cover

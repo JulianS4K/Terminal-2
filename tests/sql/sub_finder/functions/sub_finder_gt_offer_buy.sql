@@ -27,6 +27,10 @@ BEGIN
       OR public.sub_finder_order_closed(r.order_number, 'GoTickets') IS NOT NULL
       THEN 'order_closed'
     WHEN public.sub_finder_report_only(r.order_number) THEN 'report_only'   -- 20261113250000
+    -- 20261117101530: never an accessible seat for an ordinary one, or the other way round, even
+    -- when the customer accepted an offer made before that rule
+    WHEN public.sub_finder_seat_is_ada(o.section, o.seat_row)
+         <> public.sub_finder_seat_is_ada(r.section, r.seat_row) THEN 'ada_seating'
     WHEN NOT public.sub_finder_market_buyable(r.market) THEN 'not_on_evo'
     WHEN r.buy_qty <> r.qty THEN 'needs_spare_ticket'
     WHEN o.buy_id IS NOT NULL

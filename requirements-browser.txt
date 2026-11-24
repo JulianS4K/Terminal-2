@@ -1,0 +1,4 @@
+# The Timberwolves browser worker only (core/primary_poll_browser.py, Dockerfile.primary-poll-browser).
+# Not installed on the web service. Keep the version equal to the image tag in the Dockerfile:
+# the image ships the browser this version drives.
+playwright==1.63.0

@@ -36,11 +36,14 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 from datetime import date, datetime
 from typing import Any
 
 from fastapi.responses import JSONResponse, Response
+
+from routers import feed_xmap
 
 VIEW = "v_mlb_schedule_feed"
 MAX_LIMIT = 5000
@@ -57,8 +60,25 @@ COLUMNS = ("mlb_schedule_id", "mlb_game_id", "season", "game_type", "game_date",
            "tevo_event_id", "tevo_match_method", "tevo_start_local", "tevo_time_check",
            "aq_short_event_id", "sg_event_id", "sh_event_id", "vivid_event_id", "tm_event_id",
            "gotickets_event_id", "sg_url", "sg_match_method", "terminal_path", "changed_at", "last_seen_at",
-           "level", "league_name", "parent_org")
+           "level", "league_name", "parent_org", "removed", "promotions")
+# the marketplace ids the view does not hold, read by EVO event id (routers/feed_xmap.py)
+MARKET_IDS = ("tickpick_event_id", "axs_event_id")
 _ABBREV = re.compile(r"^[A-Za-z]{2,3}$")
+
+EVENT_VIEW = "v_mlb_stadium_events"
+EVENT_COLUMNS = ("mlb_schedule_id", "season", "event_type", "title", "description", "event_date", "start_local",
+                 "time_zone", "start_utc", "time_tbd", "multi_day", "home_team_id", "home_abbrev", "home_name",
+                 "level", "venue_id", "venue_name", "venue_city", "venue_postal_code", "ticket_url",
+                 "tevo_event_id", "tevo_match_method", "tevo_event_name", "terminal_path", "removed",
+                 "changed_at", "last_seen_at")
+EVENT_MARKET_IDS = feed_xmap.columns("xmap_tevo_event_id")   # found by the row's own EVO event id
+CHANGES_VIEW = "v_mlb_ticket_changes"
+CHANGE_COLUMNS = ("change_id", "entity", "mlb_schedule_id", "kind", "old_value", "new_value", "notable",
+                  "detected_at", "season", "date", "home_abbrev", "away_abbrev", "home_team_id", "event_title",
+                  "venue_name", "level", "ticket_url", "tevo_event_id")
+CHANGE_KINDS = {"added", "link_live", "link_removed", "link_changed", "date_changed", "time_changed",
+                "venue_changed", "status_changed", "on_sale_set", "on_sale_changed", "removed", "restored",
+                "promo_added", "event_added", "event_moved", "event_removed"}
 
 
 def _err(status: int, error: str, detail: str | None = None, **extra: Any) -> JSONResponse:
@@ -139,15 +159,142 @@ def schedule_response(db: Any, params: Any) -> Any:
     try:
         rows = (sel.order("game_date").order("start_utc").order("mlb_schedule_id")
                 .range(offset, offset + limit - 1).execute().data) or []
+        rows = feed_xmap.add(db, rows, "tevo", "tevo_event_id", MARKET_IDS)
     except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
         return _err(502, "upstream_error", type(exc).__name__)
 
     if fmt == "csv":
-        buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=COLUMNS, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(rows)
-        return Response(buf.getvalue(), media_type="text/csv",
-                        headers={"Content-Disposition": "attachment; filename=mlb_schedule.csv"})
+        return _csv(rows, COLUMNS + MARKET_IDS, "mlb_schedule.csv")
     nxt = offset + limit if len(rows) == limit else None
     return {"count": len(rows), "offset": offset, "next_offset": nxt, "games": rows}
+
+
+def _csv(rows: list, columns: tuple, filename: str) -> Response:
+    """CSV of `rows`; nested values (promotions) are written as JSON text."""
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    w.writeheader()
+    for r in rows:
+        w.writerow({k: (json.dumps(v) if isinstance(v, (list, dict)) else v) for k, v in r.items()})
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+def _paging(q: Any) -> tuple[int, int]:
+    limit = int(q.get("limit") or DEFAULT_LIMIT)
+    offset = int(q.get("offset") or 0)
+    if not 1 <= limit <= MAX_LIMIT or offset < 0:
+        raise ValueError("limit")
+    return limit, offset
+
+
+def _fmt(q: Any) -> str:
+    fmt = (q.get("format") or "json").strip().lower()
+    if fmt not in ("json", "csv"):
+        raise ValueError("format")
+    return fmt
+
+
+def _team(q: Any) -> str:
+    team = (q.get("team") or "").strip()
+    if team and not (team.isdigit() or _ABBREV.match(team)):
+        raise ValueError("team")
+    return team
+
+
+def _level(q: Any, default: str) -> str:
+    level = (q.get("level") or default).strip().lower()
+    if level not in LEVELS:
+        raise ValueError("level")
+    return level
+
+
+def events_response(db: Any, params: Any) -> Any:
+    """Concerts and other live events at the ballparks (mig 20261117060000): GET /api/v1/subs/mlb/events.
+    Query: team (home club id or abbreviation), level (default all), date_from, date_to, since, mapped,
+    format, limit, offset."""
+    q = params
+    try:
+        team = _team(q)
+        level = _level(q, "all")
+        date_from, date_to = _date(q.get("date_from")), _date(q.get("date_to"))
+        since = _since(q.get("since"))
+        mapped = _bool(q.get("mapped"))
+        fmt = _fmt(q)
+        limit, offset = _paging(q)
+    except (ValueError, KeyError) as exc:
+        return _err(422, "invalid", f"invalid parameter: {exc}")
+
+    sel = db.table(EVENT_VIEW).select(",".join(EVENT_COLUMNS))
+    if team:
+        sel = sel.eq("home_team_id", team) if team.isdigit() else sel.eq("home_abbrev", team.upper())
+    if LEVELS[level] is not None:
+        sel = sel.in_("level", LEVELS[level])
+    if date_from:
+        sel = sel.gte("event_date", date_from)
+    if date_to:
+        sel = sel.lte("event_date", date_to)
+    if since:
+        sel = sel.gte("changed_at", since)
+    if mapped:
+        sel = sel.not_.is_("tevo_event_id", "null")
+    try:
+        rows = (sel.order("event_date").order("start_utc").order("mlb_schedule_id")
+                .range(offset, offset + limit - 1).execute().data) or []
+        rows = feed_xmap.add(db, rows, "tevo", "tevo_event_id", EVENT_MARKET_IDS)
+    except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
+        return _err(502, "upstream_error", type(exc).__name__)
+    if fmt == "csv":
+        return _csv(rows, EVENT_COLUMNS + EVENT_MARKET_IDS, "mlb_events.csv")
+    nxt = offset + limit if len(rows) == limit else None
+    return {"count": len(rows), "offset": offset, "next_offset": nxt, "events": rows}
+
+
+def changes_response(db: Any, params: Any) -> Any:
+    """Every change the poller detected (mig 20261117060000): GET /api/v1/subs/mlb/changes.
+    Query: after_id (resume after the last change_id you read) or since (ISO instant), kind
+    (comma list), entity (game | event | promotion), notable, team, level (default all), format, limit.
+    Ordered by change_id; `next_after_id` is the cursor for the next page."""
+    q = params
+    try:
+        after_id = int(q["after_id"]) if q.get("after_id") else None
+        if after_id is not None and after_id < 0:
+            raise ValueError("after_id")
+        since = _since(q.get("since"))
+        kinds = [k.strip().lower() for k in (q.get("kind") or "").split(",") if k.strip()]
+        if any(k not in CHANGE_KINDS for k in kinds):
+            raise ValueError("kind")
+        entity = (q.get("entity") or "").strip().lower()
+        if entity and entity not in ("game", "event", "promotion"):
+            raise ValueError("entity")
+        notable = _bool(q.get("notable"))
+        team = _team(q)
+        level = _level(q, "all")
+        fmt = _fmt(q)
+        limit, _ = _paging(q)
+    except (ValueError, KeyError) as exc:
+        return _err(422, "invalid", f"invalid parameter: {exc}")
+
+    sel = db.table(CHANGES_VIEW).select(",".join(CHANGE_COLUMNS))
+    if after_id is not None:
+        sel = sel.gt("change_id", after_id)
+    if since:
+        sel = sel.gte("detected_at", since)
+    if kinds:
+        sel = sel.in_("kind", kinds)
+    if entity:
+        sel = sel.eq("entity", entity)
+    if notable is not None:
+        sel = sel.eq("notable", notable)
+    if team:
+        sel = sel.eq("home_team_id", team) if team.isdigit() else sel.eq("home_abbrev", team.upper())
+    if LEVELS[level] is not None:
+        sel = sel.in_("level", LEVELS[level])
+    try:
+        rows = sel.order("change_id").limit(limit).execute().data or []
+    except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
+        return _err(502, "upstream_error", type(exc).__name__)
+    if fmt == "csv":
+        return _csv(rows, CHANGE_COLUMNS, "mlb_changes.csv")
+    nxt = rows[-1]["change_id"] if len(rows) == limit else None
+    return {"count": len(rows), "next_after_id": nxt, "changes": rows}

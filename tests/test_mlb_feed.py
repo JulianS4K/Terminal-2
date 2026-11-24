@@ -62,7 +62,7 @@ class _Query:
 class FakeDB:
     def __init__(self, rows=None, find=True, table_exc=None):
         self.rows, self.find, self.table_exc = rows, find, table_exc
-        self.rpcs, self.queries = [], []
+        self.rpcs, self.queries, self.tables = [], [], []
 
     def rpc(self, name, args):
         self.rpcs.append((name, args))
@@ -74,7 +74,8 @@ class FakeDB:
         return _Data(None)
 
     def table(self, name):
-        assert name == mlb_feed.VIEW
+        assert name in (mlb_feed.VIEW, mlb_feed.EVENT_VIEW, mlb_feed.CHANGES_VIEW)
+        self.tables.append(name)
         q = _Query(self)
         self.queries.append(q)
         return q
@@ -101,7 +102,8 @@ def test_returns_games_and_stamps_the_call():
     db = FakeDB(rows=[ROW])
     r = _client(db).get(URL, headers=H)
     assert r.status_code == 200
-    assert r.json() == {"count": 1, "offset": 0, "next_offset": None, "games": [ROW]}
+    assert r.json() == {"count": 1, "offset": 0, "next_offset": None,
+                        "games": [{**ROW, **dict.fromkeys(mlb_feed.MARKET_IDS)}]}
     assert ("mcp_count_call", {"p_key_id": 7, "p_tool": "subs.mlb_schedule"}) in db.rpcs
     q = db.queries[0].calls
     assert q[0][0] == "select" and "ticket_url" in q[0][1] and "aq_short_event_id" in q[0][1]
@@ -177,10 +179,114 @@ def test_csv_has_every_column():
     r = _client(FakeDB(rows=[ROW])).get(URL + "?format=csv", headers=H)
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
     lines = r.text.strip().splitlines()
-    assert lines[0].split(",") == list(mlb_feed.COLUMNS)
+    assert lines[0].split(",") == list(mlb_feed.COLUMNS + mlb_feed.MARKET_IDS)
     assert "https://www.ticketmaster.com/event/0D00" in lines[1] and len(lines) == 2
 
 
 def test_database_error_is_a_502_without_detail():
     r = _client(FakeDB(table_exc=RuntimeError("relation secret does not exist"))).get(URL, headers=H)
     assert r.status_code == 502 and "secret" not in r.text and r.json()["detail"] == "RuntimeError"
+
+
+def test_csv_writes_promotions_as_json():
+    row = dict(ROW, promotions=[{"type": "Giveaway", "name": "Bobblehead"}])
+    r = _client(FakeDB(rows=[row])).get(URL + "?format=csv", headers=H)
+    assert '"[{""type"": ""Giveaway"", ""name"": ""Bobblehead""}]"' in r.text
+
+
+# ---------- /mlb/events ----------
+
+EV_URL = "/api/v1/subs/mlb/events"
+EV = {"mlb_schedule_id": 9, "title": "Monster Jam", "event_date": "2027-01-16", "venue_name": "Angel Stadium",
+      "tevo_event_id": 7777}
+
+
+def test_events_need_a_key_that_may_find():
+    assert _client(FakeDB(rows=[EV])).get(EV_URL).status_code == 401
+    r = _client(FakeDB(rows=[EV], find=False)).get(EV_URL, headers=H)
+    assert r.status_code == 403
+
+
+def test_events_default_lists_every_level():
+    db = FakeDB(rows=[EV, EV])
+    body = _client(db).get(EV_URL + "?limit=2", headers=H).json()
+    row = {**EV, **dict.fromkeys(mlb_feed.EVENT_MARKET_IDS)}
+    assert body == {"count": 2, "offset": 0, "next_offset": 2, "events": [row, row]}
+    assert db.tables == [mlb_feed.EVENT_VIEW]
+    q = db.queries[0].calls
+    assert not any(c[:2] == ("in_", "level") for c in q) and ("order", "event_date") in q
+    assert ("mcp_count_call", {"p_key_id": 7, "p_tool": "subs.mlb_events"}) in db.rpcs
+
+
+def test_events_filters():
+    db = FakeDB(rows=[])
+    url = EV_URL + "?team=laa&level=mlb&date_from=2027-01-01&date_to=2027-02-01&since=2026-11-17T00:00:00Z&mapped=true"
+    assert _client(db).get(url, headers=H).json()["next_offset"] is None
+    q = db.queries[0].calls
+    assert ("eq", "home_abbrev", "LAA") in q and ("in_", "level", ["mlb"]) in q
+    assert ("gte", "event_date", "2027-01-01") in q and ("lte", "event_date", "2027-02-01") in q
+    assert ("gte", "changed_at", "2026-11-17T00:00:00+00:00") in q and ("is_", "tevo_event_id", "null") in q
+    db2 = FakeDB(rows=[])
+    _client(db2).get(EV_URL + "?team=108", headers=H)
+    assert ("eq", "home_team_id", "108") in db2.queries[0].calls
+
+
+def test_events_csv_bad_input_and_db_error():
+    r = _client(FakeDB(rows=[EV])).get(EV_URL + "?format=csv", headers=H)
+    assert r.text.splitlines()[0].split(",") == list(mlb_feed.EVENT_COLUMNS + mlb_feed.EVENT_MARKET_IDS)
+    for qs in ("?team=N-Y", "?level=rookie", "?format=xml", "?limit=0", "?date_to=2027-02-30", "?mapped=perhaps"):
+        assert _client(FakeDB(rows=[EV])).get(EV_URL + qs, headers=H).status_code == 422
+    r = _client(FakeDB(table_exc=RuntimeError("secret"))).get(EV_URL, headers=H)
+    assert r.status_code == 502 and "secret" not in r.text
+
+
+# ---------- /mlb/changes ----------
+
+CH_URL = "/api/v1/subs/mlb/changes"
+CH = {"change_id": 41, "entity": "game", "kind": "link_live", "new_value": "https://www.ticketmaster.com/event/0B",
+      "notable": True}
+
+
+def test_changes_need_a_key_that_may_find():
+    assert _client(FakeDB(rows=[CH])).get(CH_URL).status_code == 401
+    assert _client(FakeDB(rows=[CH], find=False)).get(CH_URL, headers=H).status_code == 403
+
+
+def test_changes_page_by_change_id():
+    db = FakeDB(rows=[CH, dict(CH, change_id=42)])
+    body = _client(db).get(CH_URL + "?after_id=40&limit=2", headers=H).json()
+    assert body["count"] == 2 and body["next_after_id"] == 42
+    q = db.queries[0].calls
+    assert ("gt", "change_id", 40) in q and ("order", "change_id") in q and ("limit", 2) in q
+    assert db.tables == [mlb_feed.CHANGES_VIEW]
+    assert _client(FakeDB(rows=[CH])).get(CH_URL, headers=H).json()["next_after_id"] is None
+
+
+def test_changes_filters():
+    db = FakeDB(rows=[])
+    url = (CH_URL + "?since=2026-11-17T00:00:00Z&kind=link_live,%20time_changed&entity=game&notable=false"
+           "&team=147&level=milb")
+    assert _client(db).get(url, headers=H).status_code == 200
+    q = db.queries[0].calls
+    assert ("gte", "detected_at", "2026-11-17T00:00:00+00:00") in q
+    assert ("in_", "kind", ["link_live", "time_changed"]) in q and ("eq", "entity", "game") in q
+    assert ("eq", "notable", False) in q and ("eq", "home_team_id", "147") in q
+    assert ("in_", "level", mlb_feed.LEVELS["milb"]) in q
+    db2 = FakeDB(rows=[])
+    _client(db2).get(CH_URL + "?team=nyy", headers=H)
+    assert ("eq", "home_abbrev", "NYY") in db2.queries[0].calls
+
+
+@pytest.mark.parametrize("qs", ["?after_id=-1", "?after_id=x", "?kind=exploded", "?entity=player", "?notable=maybe",
+                                "?team=1-2", "?level=x", "?format=pdf", "?limit=99999", "?since=soon"])
+def test_changes_bad_parameters_are_422(qs):
+    db = FakeDB(rows=[CH])
+    r = _client(db).get(CH_URL + qs, headers=H)
+    assert r.status_code == 422 and db.queries == []
+
+
+def test_changes_csv_and_db_error():
+    r = _client(FakeDB(rows=[CH])).get(CH_URL + "?format=csv", headers=H)
+    assert r.headers["content-type"].startswith("text/csv") and "link_live" in r.text
+    r = _client(FakeDB(table_exc=RuntimeError("secret"))).get(CH_URL, headers=H)
+    assert r.status_code == 502 and "secret" not in r.text
