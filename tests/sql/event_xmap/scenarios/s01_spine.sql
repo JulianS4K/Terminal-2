@@ -95,7 +95,7 @@ SELECT source, in_spine, with_evo, without_evo_but_cross_mapped, in_three_or_mor
 SELECT name, evo_name, tickpick_name, vivid_name, gotickets_name, mlb_name FROM v_event_xmap ORDER BY local_day, start_local, xmap_id;
 
 \echo G who may run what; the crons
-SELECT has_function_privilege('anon', 'event_xmap_tick(integer,boolean)', 'EXECUTE'), has_function_privilege('service_role', 'event_xmap_tick(integer,boolean)', 'EXECUTE'), has_table_privilege('anon', 'event_xmap', 'SELECT');
+SELECT has_function_privilege('anon', 'event_xmap_tick(integer,boolean,integer)', 'EXECUTE'), has_function_privilege('service_role', 'event_xmap_tick(integer,boolean,integer)', 'EXECUTE'), has_table_privilege('anon', 'event_xmap', 'SELECT');
 SELECT jobname, schedule FROM cron.job WHERE jobname LIKE 'event_xmap%' ORDER BY 1;
 
 \echo H steady state (mig 20261117150000)
@@ -227,3 +227,30 @@ SELECT local_day - current_date AS day, tm_event_seq IS NOT NULL AS has_tm, vivi
 SELECT a.action, a.source, a.note, x.local_day - current_date AS day FROM event_xmap_audit a JOIN event_xmap x ON x.xmap_id = a.xmap_id
  WHERE a.source = 'tm' AND a.source_id = (SELECT tm_seq FROM tm_discovery_event WHERE tm_event_id = 'Z7r9jZ1TEST1') ORDER BY a.id;
 SELECT event_key_lookup_tm('Z7r9jZ1TEST1') = event_key_lookup('vivid', 2303) AS key_follows_the_show;
+
+\echo N the nightly in chunks (mig 20261124040000): tick(days, apply, from_days) runs a window that starts after the hourly; the working set carries a two-day margin, so a member whose source sits a day past a window edge is not read as gone
+-- EVO 406 on day 45 at Yankee Stadium; TickPick dates its mapped listing day 46 (the edge of the hourly window, the first day of chunk one)
+INSERT INTO events (id, name, occurs_at_local, state, venue_id, venue_name, venue_location, primary_performer_name) VALUES
+  (406, 'Edge Night', at_(45, '23:30'), 'shown', 100, 'Yankee Stadium', 'Bronx, NY', 'Edge Night');
+INSERT INTO tickpick_catalog_event (tp_event_id, name, status, event_local, event_date, time_confirmed, tp_venue_id, venue_country, performers, tevo_event_id) VALUES
+  (1014, 'Edge Night', 'active', ts_(46, '00:30'), d(46), true, 11, 'US', '[{"name":"Edge Night"}]', 406);
+-- a TM + Vivid pair on day 80 at Barclays Center: beyond the hourly, inside chunk one
+INSERT INTO tm_discovery_event (tm_event_id, name, local_date, local_time, date_tbd, time_tba, status_code, tm_venue_id, venue_name, venue_city, venue_state, venue_country, attraction_names, is_product, tevo_event_id) VALUES
+  ('G5diZ_chunk80', 'Chunk Show', d(80), '20:00', false, false, 'onsale', 'KovZpZAEkn6A', 'Barclays Center', 'Brooklyn', 'NY', 'US', ARRAY['Chunk Show'], false, NULL);
+INSERT INTO vivid_catalog_event (vivid_event_id, name, event_local, event_date, vivid_venue_id, venue_country, performers) VALUES
+  (2304, 'Chunk Show', ts_(80, '20:00'), d(80), 78, 'US', '["Chunk Show"]');
+\echo N1 the hourly (-1..45): the TickPick row is dated day 46 and day 80 is further out, so neither EVO 406 nor the day-80 pair has a cluster yet
+SELECT (event_xmap_tick(45, true))->'seeded_by_source' AS hourly_seeds, (SELECT count(*) FROM event_xmap WHERE local_day = d(80)) AS day80_rows;
+SELECT local_day - current_date AS day, tp_event_id, tevo_event_id, sources FROM event_xmap WHERE tevo_event_id = 406;
+\echo N2 chunk one (46..110): the TickPick row brings EVO 406 in as a cluster on EVO's own day 45 (a day before the chunk); the day-80 pair seeds; the window is recorded
+WITH r AS (SELECT event_xmap_tick(110, true, 46) - 'run_id' - 'ms' AS j)
+SELECT j->'window' = jsonb_build_array(d(46), d(110)) AS window_ok, j->'rows_by_source'->'tm' AS tm_rows, j->'seeded_by_source' AS seeded, j->'detached' AS detached FROM r;
+SELECT local_day - current_date AS day, tp_event_id, tevo_event_id, sources FROM event_xmap WHERE tevo_event_id = 406;
+SELECT local_day - current_date AS day, tm_event_seq IS NOT NULL AS has_tm, vivid_event_id, sources FROM event_xmap WHERE vivid_event_id = 2304;
+\echo N3 the hourly again: its member on day 46 is in the margin, not gone, so nothing is detached and the edge cluster stays; chunk two (111..175) leaves day 80 alone
+SELECT (event_xmap_tick(45, true))->'detached' AS hourly_detached, (event_xmap_tick(175, true, 111))->'detached' AS chunk2_detached;
+SELECT local_day - current_date AS day, tp_event_id, tevo_event_id, sources FROM event_xmap WHERE tevo_event_id = 406;
+SELECT (SELECT count(*) FROM event_xmap WHERE vivid_event_id = 2304) AS day80_cluster_kept;
+\echo N4 the crons: the hourly as before; the nightly runs five chunks, each its own 900 s transaction
+SELECT jobname, schedule, regexp_count(command, 'event_xmap_tick\(') AS calls, command ~ 'event_xmap_tick\(110, true, 46\)' AND command ~ 'event_xmap_tick\(365, true, 306\)' AS chunk_bounds_ok
+  FROM cron.job WHERE jobname LIKE 'event_xmap%' ORDER BY 1;
