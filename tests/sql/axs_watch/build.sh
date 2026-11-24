@@ -27,4 +27,5 @@ stub_00_base.sql
 20261124200000_axs_watch_listings_parse.sql
 20261124210000_axs_watch_listing_status.sql
 20261124220000_axs_watch_spaced_fires.sql
+20261124230000_axs_watch_no_premium.sql
 STEPS
