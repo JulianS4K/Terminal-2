@@ -555,7 +555,7 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
     for n in news:
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
     # a listing over its order limit is sent as several (operator 2026-11-24: "make the next set a seperate listing")
-    assert "split_of" in news[0]["text"] and "no single seat is left behind" in news[0]["text"]
+    assert "`-1`, `-2`" in news[0]["text"] and "no single seat is left behind" in news[0]["text"]
     assert "box_office_axs" in news[1]["text"] and "last activity" in news[1]["text"]             # the health check (2026-11-24)
     # the AXS watch and the box offices carry the marketplace ids too (operator 2026-11-24: "integrate them into the out api")
     assert "/axs/watch" in news[2]["text"] and "/primary/events" in news[2]["text"] and "tickpick_event_id" in news[2]["text"]

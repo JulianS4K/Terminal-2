@@ -1,12 +1,14 @@
--- Migration 20261124230030 · level:data-collection · lane:A1 (box-office collector) + D0 (the feed's view) · writes:primary_poll_config(+split_over_limit),primary_poll_listing(+order_limit),primary_poll_listing_piece(new),primary_poll_limit()(new),primary_poll_pieces()(new),primary_poll_split_event()(new),primary_poll_ingest()(replaced),v_primary_poll_listings_feed(replaced: listings over their limit are sent as their pieces; +split_of,+split_part,+split_parts) · reads:primary_poll_event,primary_poll_source · pre:20261124041030,20261124203030
--- Already applied to prod · via MCP 2026-11-24 (operator: "when done test what we're pushing out against the new fixes and then apply and merge and send to main"); re-apply is a no-op.
+-- Migration 20261124230030 · level:data-collection · lane:A1 (box-office collector) + D0 (the feed's view) · writes:primary_poll_config(+split_over_limit),primary_poll_listing(+order_limit),primary_poll_listing_piece(new),primary_poll_limit()(new),primary_poll_pieces()(new),primary_poll_split_event()(new),primary_poll_ingest()(replaced),v_primary_poll_listings_feed(re-created, same columns: listings over their limit are sent as their pieces) · reads:primary_poll_event,primary_poll_source · pre:20261124041030,20261124203030
+-- Already applied to prod · via MCP 2026-11-24 (operator: "when done test what we're pushing out against the new fixes and then apply and merge and send to main"; the view again the same day without the three split columns, operator: "dont add these, split_of, split_part, split_parts, just add a -\"listing number\" as a suffix on the split listing id and call it a day"); re-apply is a no-op.
 --
 -- A LISTING THAT HOLDS MORE TICKETS THAN ONE ORDER MAY TAKE IS SENT AS SEVERAL LISTINGS.
 -- Operator 2026-11-24: "when a listing goes over qty limit make the next set a seperate listing in API to
 -- broadcast, for all 3 sources, so if 4 is max and listing is 5, split 5th into a listing of a single. first test
 -- that on existing listing data."; then, on the test's findings: "split GA, and 2 is a good rule."; then, while
 -- it was being built: "take into account inability to leave single behind, in those cases push out one above
--- limit."
+-- limit."; and on the first version, which sent three columns naming the block a piece came from: "dont add
+-- these, split_of, split_part, split_parts, just add a -"listing number" as a suffix on the split listing id and
+-- call it a day".
 --
 -- THE LIMIT of a listing (primary_poll_limit): the most one order may take of it.
 --   the order cap is the event's own (order_max: the Timberwolves' 6, an AXS event's 4 to 14) or, where the box
@@ -33,12 +35,13 @@
 --   of 10 and one of 4. Their pieces carry no seat numbers, and the last may be a single ticket: general
 --   admission has no seat to strand.
 --
--- WHAT A PIECE CARRIES. listing_id is the box office's id with ":<n>" after it (stable while the block does not
--- change); split_of is the box office's id, split_part and split_parts say which piece of how many. quantity,
--- seat_low, seat_high and seats are the piece's own; allowed_quantities keeps the listing's quantities that fit
--- the piece; max_per_order is the piece's quantity, or the limit for the piece that is one over it. Price, fee,
--- tax and the rest are the listing's. A listing that is not split has split_of null. max_per_order is now filled
--- for every listing whose limit is known (AXS listings carried none), and is never more than the limit.
+-- WHAT A PIECE CARRIES. listing_id is the box office's id with "-<n>" after it: -1, -2 and so on (stable while
+-- the block does not change; no box office's own id held a hyphen when this was written). Nothing else marks a
+-- piece: the feed's columns are the ones it had. quantity, seat_low, seat_high and seats are the piece's own;
+-- allowed_quantities keeps the listing's quantities that fit the piece; max_per_order is the piece's quantity,
+-- or the limit for the piece that is one over it. Price, fee, tax and the rest are the listing's. max_per_order
+-- is now filled for every listing whose limit is known (AXS listings carried none), and is never more than the
+-- limit.
 --
 -- WHERE. The pieces are worked out once, when an event's read is stored (primary_poll_split_event, called by
 -- primary_poll_ingest), and kept in primary_poll_listing_piece; the feed's view sends them in place of their
@@ -54,9 +57,9 @@
 -- Timberwolves 1,667 -> 4,256; AXS 10,874 -> 31,817). The finished rules were run over the live listings again
 -- before the apply, which is where the odd-and-even numbering was found.
 --
--- rollback: UPDATE primary_poll_config SET split_over_limit = false (the feed is as before, plus three null
---           columns). To remove: re-apply primary_poll_ingest() from 20261124203030 and
---           v_primary_poll_listings_feed from 20261124041030 (after DROP VIEW); DROP FUNCTION
+-- rollback: UPDATE primary_poll_config SET split_over_limit = false (the feed is as before).
+--           To remove: re-apply primary_poll_ingest() from 20261124203030 and
+--           v_primary_poll_listings_feed from 20261124041030; DROP FUNCTION
 --           primary_poll_split_event(text, text), primary_poll_pieces(jsonb, integer, integer),
 --           primary_poll_limit(jsonb, integer, integer); DROP TABLE primary_poll_listing_piece;
 --           ALTER TABLE primary_poll_listing DROP COLUMN order_limit.
@@ -283,9 +286,11 @@ REVOKE ALL ON FUNCTION public.primary_poll_ingest(text, jsonb) FROM PUBLIC, anon
 GRANT EXECUTE ON FUNCTION public.primary_poll_ingest(text, jsonb) TO service_role;
 
 -- GET /primary/listings: as 20261124041030 left it (the listings of the events whose last poll succeeded within the
--- age limit, without the obstructed-view ones), with a listing over its limit sent as its pieces. The first 33
--- columns are the same, in the same order; three are added.
-CREATE OR REPLACE VIEW public.v_primary_poll_listings_feed
+-- age limit, without the obstructed-view ones), with a listing over its limit sent as its pieces. The same 33
+-- columns, in the same order. Dropped first: the first version of this migration added three columns, which a
+-- CREATE OR REPLACE cannot take away. Nothing depends on the view.
+DROP VIEW IF EXISTS public.v_primary_poll_listings_feed;
+CREATE VIEW public.v_primary_poll_listings_feed
 WITH (security_invoker = true) AS
 SELECT l.source,
        l.source_event_id AS event_id,
@@ -293,7 +298,7 @@ SELECT l.source,
        t.tevo_event_id,
        t.event_date,
        t.start_local_time,
-       CASE WHEN p.part IS NOT NULL THEN l.listing_id || ':' || p.part ELSE l.listing_id END AS listing_id,
+       CASE WHEN p.part IS NOT NULL THEN l.listing_id || '-' || p.part ELSE l.listing_id END AS listing_id,
        l.market,
        l.area,
        l.section,
@@ -324,10 +329,7 @@ SELECT l.source,
        t.poll_ok_at AS as_of,
        l.tax,
        l.order_fee,
-       l.price_estimated,
-       CASE WHEN p.part IS NOT NULL THEN l.listing_id END AS split_of,
-       p.part AS split_part,
-       p.parts AS split_parts
+       l.price_estimated
   FROM public.primary_poll_listing l
   JOIN public.primary_poll_event t ON t.source = l.source AND t.source_event_id = l.source_event_id
   JOIN public.primary_poll_source s ON s.source = t.source AND s.current_run = t.last_run
@@ -337,6 +339,9 @@ SELECT l.source,
  WHERE t.poll_status = 'ok' AND NOT public.primary_poll_ended(t.start_utc, t.event_date) AND now() < greatest(t.poll_ok_at + (SELECT c.listing_max_age FROM public.primary_poll_config c), t.next_poll_at + (SELECT c.listing_grace FROM public.primary_poll_config c))
    AND NOT l.obstructed
    AND (t.event_date IS NULL OR t.event_date >= CURRENT_DATE - 1);
+
+REVOKE ALL ON public.v_primary_poll_listings_feed FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.v_primary_poll_listings_feed TO service_role;
 
 -- The listings already stored get their limit and their pieces now, so the feed is split from this moment and not
 -- from each event's next read.

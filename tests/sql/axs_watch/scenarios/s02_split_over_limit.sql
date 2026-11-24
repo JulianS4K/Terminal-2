@@ -56,8 +56,10 @@ SELECT listing_id, quantity, max_per_order, order_limit, obstructed FROM public.
 SELECT listing_count, listed_quantity FROM public.primary_poll_event WHERE source = 'timberwolves';
 
 \echo '--- D. the feed sends the pieces in place of a listing over its limit; the obstructed one is never sent'
-SELECT listing_id, section, seat_low, seat_high, seats, quantity, allowed_quantities, max_per_order, split_of, split_part AS part, split_parts AS parts
-  FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves' ORDER BY section, split_part;
+SELECT listing_id, section, seat_low, seat_high, seats, quantity, allowed_quantities, max_per_order
+  FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves' ORDER BY section, listing_id;
+SELECT count(*) AS columns_of_the_feed, count(*) FILTER (WHERE column_name LIKE 'split%') AS split_columns
+  FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'v_primary_poll_listings_feed';
 SELECT count(*) AS listings_sent, sum(quantity) AS tickets_sent,
        (SELECT sum(l.quantity) FROM public.primary_poll_listing l WHERE l.source = 'timberwolves' AND NOT l.obstructed) AS tickets_stored
   FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves';
@@ -79,15 +81,17 @@ SELECT public.primary_poll_ingest('timberwolves', jsonb_build_array(jsonb_build_
   'listings', jsonb_build_array(
     jsonb_build_object('id', 'thirteen', 'market', 'primary', 'section', '103', 'row', 'C', 'seat_low', '1', 'seat_high', '13', 'seats', (SELECT jsonb_agg(v::text) FROM generate_series(1, 13) v), 'qty', 13, 'allowed_quantities', '[1,2,3,4,5,6]'::jsonb, 'max_per_order', 6, 'price', 70))))) AS stored;
 UPDATE public.primary_poll_config SET split_over_limit = false;
-SELECT listing_id, seat_low, seat_high, quantity, max_per_order, split_of FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves';
+SELECT listing_id, seat_low, seat_high, quantity, max_per_order FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves';
 UPDATE public.primary_poll_config SET split_over_limit = true;
-SELECT listing_id, seat_low, seat_high, quantity, max_per_order, split_of FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves' ORDER BY split_part;
+SELECT listing_id, seat_low, seat_high, quantity, max_per_order FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves' ORDER BY listing_id;
 
 \echo '--- G. service only'
 SET ROLE anon;
 SELECT public.primary_poll_split_event('timberwolves', 'G1');
 SELECT count(*) FROM public.primary_poll_listing_piece;
 RESET ROLE;
+SELECT has_table_privilege('service_role', 'public.v_primary_poll_listings_feed', 'SELECT') AS service_reads_the_feed,
+       has_table_privilege('anon', 'public.v_primary_poll_listings_feed', 'SELECT') AS anon_reads_the_feed;
 SELECT has_function_privilege('service_role', 'public.primary_poll_split_event(text, text)', 'EXECUTE') AS service_can_split,
        has_table_privilege('service_role', 'public.primary_poll_listing_piece', 'SELECT') AS service_can_read,
        has_table_privilege('anon', 'public.primary_poll_listing_piece', 'SELECT') AS anon_can_read;
