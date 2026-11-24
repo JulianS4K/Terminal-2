@@ -1,0 +1,120 @@
+--- A. the database reads by default: the worker is handed nothing, the tick fires as before (the most overdue event with a page)
+ reader |                             next_for_worker                              
+--------+--------------------------------------------------------------------------
+ db     | {"events": [], "reason": "the database reads (axs_watch_config.reader)"}
+
+                                tick_db_reads                                
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "upstream_errors": 0}
+
+ id |           event_url           
+----+-------------------------------
+  1 | https://www.axs.com/events/31
+
+--- B. the worker reads: the tick still settles what pg_net brings (a 503) but fires nothing; next hands out the due events most overdue first (no page = never), within the batch asked
+                     tick_worker_reads                     
+-----------------------------------------------------------
+ {"lost": 0, "fired": 0, "reader": "worker", "settled": 1}
+
+ requests_sent 
+---------------
+             1
+
+                                                                                                                                  next_all                                                                                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "spacing_ms": 3000, "upstream_errors": 1}
+
+ batch_of_two | first | second 
+--------------+-------+--------
+            2 | 31    | 32
+
+--- C. a read recorded: TicketsData's JSON as the worker got it; the listings stored (the AXS Premium block not), the credit logged with the pool, the ledger row marked worker
+                                                    recorded                                                    
+----------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "event_id": "33", "listings": 2, "response_s": 7.9, "quota_remaining": 99990}
+
+  request_id   | id | reader | status_code |    outcome     | response_s | listings | quota_remaining |           error           | settled 
+---------------+----+--------+-------------+----------------+------------+----------+-----------------+---------------------------+---------
+             1 | 31 | db     |         503 | upstream_error |          - |        - |               - | HTTP 503 from TicketsData | t
+ 1000000000000 | 33 | worker |         200 | ok             |        7.9 |        2 |           99990 | -                         | t
+
+ id | poll_status | listing_count | offer_id | order_min | order_max | total_available | price_min | price_max | next_in_future 
+----+-------------+---------------+----------+-----------+-----------+-----------------+-----------+-----------+----------------
+ 33 | ok          |             2 | 900      |         1 |         8 |               3 |        80 |      95.5 | t
+
+ market  | section | row | qty | price |  fee  | all_in | ticket_type 
+---------+---------+-----+-----+-------+-------+--------+-------------
+ primary | 101     | A   |   2 |    80 |    12 |     92 | STANDARD
+ resale  | 102     | B   |   1 |  95.5 | 24.35 | 119.85 | FLASHSEATS
+
+ platform | endpoint | status_code | quota_remaining | credits 
+----------+----------+-------------+-----------------+---------
+ AXS      | /fetch   |         200 |           99990 |       1
+
+ fired_today | in_flight 
+-------------+-----------
+ 2           | 0
+
+--- D. the read event is no longer due; a transport failure and refusals are failed polls; after three the worker is held, and let go once a read works
+                                                                next_after_read                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------
+ [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}]
+
+                                                                    timed_out                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": "ReadTimeout: read timed out", "outcome": "timeout", "event_id": "31", "listings": null, "response_s": null, "quota_remaining": null}
+
+                                                                     refused_once                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": "HTTP 429 from TicketsData", "outcome": "upstream_error", "event_id": "32", "listings": null, "response_s": null, "quota_remaining": null}
+
+                                                                    refused_twice                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": "HTTP 429 from TicketsData", "outcome": "upstream_error", "event_id": "32", "listings": null, "response_s": null, "quota_remaining": null}
+
+                     next_held                      
+----------------------------------------------------
+ {"events": [], "hold_s": 60, "upstream_errors": 4}
+
+ id | poll_status |         poll_error          | listing_count 
+----+-------------+-----------------------------+---------------
+ 31 | failed      | ReadTimeout: read timed out |             0
+ 32 | failed      | HTTP 429 from TicketsData   |             0
+
+                                                    read_again                                                     
+-------------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "empty", "event_id": "31", "listings": 0, "response_s": 6.2, "quota_remaining": 99989}
+
+                              next_released                              
+-------------------------------------------------------------------------
+ [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}]
+
+--- E. over the day's cap (pinned at 6; 6 reads today) only an event on a hot cadence is handed out, and only up to the overrun
+                                                                                                    next_capped                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"events": [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "daily_cap": 6, "fired_today": 6, "upstream_errors": 4}
+
+ next_capped_no_overrun 
+------------------------
+ []
+
+--- F. paused: nothing for the worker either; back to the database: the tick fires again
+            next_paused             
+------------------------------------
+ {"events": [], "reason": "paused"}
+
+                                tick_db_again                                
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "upstream_errors": 4}
+
+ id |           event_url           
+----+-------------------------------
+  1 | https://www.axs.com/events/31
+  2 | https://www.axs.com/events/32
+
+--- G. privileges: service_role only
+       proname        | anon_can | service_can 
+----------------------+----------+-------------
+ axs_watch_next       | f        | t
+ axs_watch_record     | f        | t
+ axs_watch_settle_one | f        | t
