@@ -120,6 +120,9 @@ SELECT 'in the feed from this path: ' || string_agg(i->>'buy_ref', ', ' ORDER BY
 SELECT 'bought rows by origin: ' || string_agg(origin || ' ' || n, ', ' ORDER BY origin) FROM (SELECT origin, count(*) n FROM manual_sub_buy WHERE state = 'bought' GROUP BY 1) q;
 SELECT 'spent today, counted once: ' || sub_buy_spent_today();
 UPDATE manual_sub_buy_config SET alerts_enabled = true WHERE id;
+-- the sub buy alerts keep their own sender and list whatever N2S's settings say (20261120165800)
+UPDATE n2s_autobuy_config SET email_from = 'N2S Auto-buy <n2s@x.test>', email_to = ARRAY['n2s-only@x.test'] WHERE id;
 SELECT 'alerts sent: ' || (manual_sub_buy_alert_tick() + manual_sub_buy_alert_tick());
 SELECT 'alerted, by origin: ' || string_agg(origin || ' ' || n, ', ' ORDER BY origin)
   FROM (SELECT origin, count(*) FILTER (WHERE coalesce(alerted_bought_at, alerted_unknown_at) IS NOT NULL) n FROM manual_sub_buy GROUP BY 1) q;
+SELECT 'alerts from: ' || string_agg(DISTINCT body->>'from', ', ') || ' · to: ' || string_agg(DISTINCT body->'to'->>0, ', ') FROM sent_log;

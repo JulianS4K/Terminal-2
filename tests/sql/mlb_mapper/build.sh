@@ -29,4 +29,6 @@ stub_00_base.sql
 20261117110000_catalog_hub_fill_skip_locked.sql
 20261117165000_event_key_lookup_hotfix.sql
 20261117171000_resolver_reads_the_key.sql
+stub_10_alert_mail.sql
+20261120165830_mlb_ticket_alert_own_sender.sql
 STEPS

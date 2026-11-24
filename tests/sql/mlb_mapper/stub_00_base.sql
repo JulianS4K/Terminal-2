@@ -7,7 +7,7 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
 END $$;
 CREATE SCHEMA IF NOT EXISTS extensions;
--- pgsql-http, as far as the alert digest (mig 20261117060000) declares it; never called by a scenario
+-- pgsql-http, as far as the alert digest (mig 20261117060000) declares it; stub_10_alert_mail.sql adds the calls
 CREATE TYPE extensions.http_header AS (field text, value text);
 CREATE TYPE extensions.http_request AS (method text, uri text, headers extensions.http_header[], content_type text, content text);
 CREATE TYPE extensions.http_response AS (status int, content_type text, headers extensions.http_header[], content text);

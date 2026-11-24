@@ -18,7 +18,8 @@ DECLARE
 BEGIN
   SELECT * INTO c FROM public.manual_sub_buy_config;
   IF NOT coalesce(c.alerts_enabled, false) THEN RETURN 0; END IF;
-  SELECT coalesce(c.alert_email_to, a.email_to), a.email_from INTO v_to, v_from FROM public.n2s_autobuy_config a;
+  v_to := c.alert_email_to;
+  v_from := c.alert_email_from;
   SELECT max(decrypted_secret) FILTER (WHERE name = 'RESEND_API_KEY') INTO rk FROM vault.decrypted_secrets;
   IF rk IS NULL OR v_from IS NULL OR coalesce(cardinality(v_to), 0) = 0 THEN RETURN 0; END IF;
   PERFORM set_config('http.timeout_msec', '5000', true);
