@@ -554,20 +554,20 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
     assert news and news == sorted(news, key=lambda n: n["date"], reverse=True)     # newest first
     for n in news:
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
-    assert "nccourage" in news[0]["text"] and "sounders" in news[0]["text"] and "/primary/events" in news[0]["text"]
-    assert "poll_every_minutes" in news[1]["text"] and "next_poll_at" in news[1]["text"]
-    assert "price_estimated" in news[2]["text"] and "all_in_price" in news[2]["text"]
-    assert "/primary/events" in news[3]["text"] and "/primary/listings" in news[3]["text"]
-    assert "id on each marketplace" in news[4]["text"] and "xmap_tevo_event_id" in news[4]["text"]
-    assert "matching gates" in news[5]["text"] and "GET /gates" in news[5]["text"]
-    assert "/axs/events" in news[6]["text"] and "/seatgeek/events" in news[6]["text"]
-    assert "tm_primary" in news[7]["text"] and "daily bulk file" in news[8]["text"]
-    assert "read again on a schedule" in news[9]["text"]
-    assert "/tm/changes" in news[10]["text"] and "/tm/events?q=" in news[11]["text"]
-    assert "no longer answers 502" in news[12]["text"]
-    assert "ticket_limit_count" in news[13]["text"] and "/tm/markets" in news[14]["text"] and "/tm/events" in news[15]["text"]
-    assert "orders still in play" in news[16]["text"] and "buy key is now registered" in news[17]["text"]
-    assert "Accessible seats" in news[18]["text"] and "mlb/changes" in news[19]["text"] and "minor league" in news[20]["text"]
+    assert "/axs/watch" in news[0]["text"] and "/axs/watch/listings" in news[0]["text"]       # the AXS watch (2026-11-24)
+    assert any("nccourage" in n["text"] and "sounders" in n["text"] and "/primary/events" in n["text"] for n in news[:4])
+    assert any("poll_every_minutes" in n["text"] and "next_poll_at" in n["text"] for n in news[:5])
+    assert any("price_estimated" in n["text"] and "all_in_price" in n["text"] for n in news[:6])
+    # the older lines are still there (the AXS-watch lines of 2026-11-24 sit above them)
+    texts = [n["text"] for n in news]
+    for words in (("id on each marketplace", "xmap_tevo_event_id"), ("matching gates", "GET /gates"), ("/axs/events", "/seatgeek/events"),
+                  ("tm_primary",), ("daily bulk file",), ("read again on a schedule",)):
+        assert any(all(w in t for w in words) for t in texts), words
+    assert any("/tm/changes" in t for t in texts) and any("/tm/events?q=" in t for t in texts)
+    assert "no longer answers 502" in news[14]["text"]
+    assert "ticket_limit_count" in news[15]["text"] and "/tm/markets" in news[16]["text"] and "/tm/events" in news[17]["text"]
+    assert "orders still in play" in news[18]["text"] and "buy key is now registered" in news[19]["text"]
+    assert "Accessible seats" in news[20]["text"] and "mlb/changes" in news[21]["text"] and "minor league" in news[22]["text"]
 
 
 def test_gates_are_served_from_the_guide_and_match_the_matcher():
