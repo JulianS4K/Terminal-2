@@ -92,3 +92,13 @@ SELECT mlb_stadium_title_fits('FALL OUT BOY: TWILIGHT OF THE PUNKS', 'Fall Out B
 SELECT has_function_privilege('anon', 'mlb_stadium_title_fits(text,text)', 'EXECUTE'), has_function_privilege('service_role', 'mlb_ticket_map(boolean)', 'EXECUTE'),
        (SELECT command FROM cron.job WHERE jobname = 'mlb_ticket_map_hourly'),
        (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = 'mlb_hub_link'::regclass AND c.contype = 'p');
+
+\echo H the internal key in the resolver (mig 20261117171000): a SeatGeek id no mapper matched sits in a spine cluster another source tied to EVO 751 -> identity_spine; an ESPN game matched by espn_ticket_match -> identity_espn_game; the key-first form carries both; an unknown id answers nothing
+INSERT INTO events (id, name, occurs_at_local, state, venue_id) VALUES (751, 'Spine Game', to_char(current_date + 20, 'YYYY-MM-DD') || 'T19:05:00', 'shown', 100);
+INSERT INTO event_xmap (tevo_event_id, sg_event_id, vivid_event_id) VALUES (751, 7001, 8001);
+INSERT INTO espn_ticket_game (espn_event_id, tevo_event_id) VALUES ('401900001', 751);
+SELECT * FROM event_mapper_identity('seatgeek', 7001);
+SELECT * FROM event_mapper_identity('espn', 401900001);
+SELECT * FROM event_key_identity('sg', 7001);
+SELECT * FROM event_key_identity('vivid', 8001);
+SELECT count(*) FROM event_key_identity('seatgeek', 7777);

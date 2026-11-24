@@ -102,7 +102,8 @@ def test_returns_games_and_stamps_the_call():
     db = FakeDB(rows=[ROW])
     r = _client(db).get(URL, headers=H)
     assert r.status_code == 200
-    assert r.json() == {"count": 1, "offset": 0, "next_offset": None, "games": [ROW]}
+    assert r.json() == {"count": 1, "offset": 0, "next_offset": None,
+                        "games": [{**ROW, **dict.fromkeys(mlb_feed.MARKET_IDS)}]}
     assert ("mcp_count_call", {"p_key_id": 7, "p_tool": "subs.mlb_schedule"}) in db.rpcs
     q = db.queries[0].calls
     assert q[0][0] == "select" and "ticket_url" in q[0][1] and "aq_short_event_id" in q[0][1]
@@ -178,7 +179,7 @@ def test_csv_has_every_column():
     r = _client(FakeDB(rows=[ROW])).get(URL + "?format=csv", headers=H)
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
     lines = r.text.strip().splitlines()
-    assert lines[0].split(",") == list(mlb_feed.COLUMNS)
+    assert lines[0].split(",") == list(mlb_feed.COLUMNS + mlb_feed.MARKET_IDS)
     assert "https://www.ticketmaster.com/event/0D00" in lines[1] and len(lines) == 2
 
 
@@ -209,7 +210,8 @@ def test_events_need_a_key_that_may_find():
 def test_events_default_lists_every_level():
     db = FakeDB(rows=[EV, EV])
     body = _client(db).get(EV_URL + "?limit=2", headers=H).json()
-    assert body == {"count": 2, "offset": 0, "next_offset": 2, "events": [EV, EV]}
+    row = {**EV, **dict.fromkeys(mlb_feed.EVENT_MARKET_IDS)}
+    assert body == {"count": 2, "offset": 0, "next_offset": 2, "events": [row, row]}
     assert db.tables == [mlb_feed.EVENT_VIEW]
     q = db.queries[0].calls
     assert not any(c[:2] == ("in_", "level") for c in q) and ("order", "event_date") in q
@@ -231,7 +233,7 @@ def test_events_filters():
 
 def test_events_csv_bad_input_and_db_error():
     r = _client(FakeDB(rows=[EV])).get(EV_URL + "?format=csv", headers=H)
-    assert r.text.splitlines()[0].split(",") == list(mlb_feed.EVENT_COLUMNS)
+    assert r.text.splitlines()[0].split(",") == list(mlb_feed.EVENT_COLUMNS + mlb_feed.EVENT_MARKET_IDS)
     for qs in ("?team=N-Y", "?level=rookie", "?format=xml", "?limit=0", "?date_to=2027-02-30", "?mapped=perhaps"):
         assert _client(FakeDB(rows=[EV])).get(EV_URL + qs, headers=H).status_code == 422
     r = _client(FakeDB(table_exc=RuntimeError("secret"))).get(EV_URL, headers=H)

@@ -33,6 +33,11 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/tm/events?date_from=&segment=&since=    Ticketmaster's catalogue of upcoming events + the EVO event each matched (routers/tm_feed.py)
   GET  /api/v1/subs/tm/markets?site=&since=                 the other sites each mapped Ticketmaster event pairs to (routers/tm_feed.py)
   GET  /api/v1/subs/tm/changes?after_id=&kind=              changes to a Ticketmaster event's status, date, time or venue (routers/tm_feed.py)
+  GET  /api/v1/subs/axs/events?primary=&q=&since=           AXS's events, by default the ones AXS itself sells (routers/primary_feed.py)
+  GET  /api/v1/subs/seatgeek/events?q=&since=               the events SeatGeek tickets as the primary seller (routers/primary_feed.py)
+  GET  /api/v1/subs/primary/events?source=&available=       the events of the box offices we poll ourselves, with whether listings can be sent (routers/primary_poll_feed.py)
+  GET  /api/v1/subs/primary/listings?source=&event_id=      their listings, only for events polled successfully within the age limit, 35 minutes (routers/primary_poll_feed.py)
+  GET  /api/v1/subs/gates                                   our six matching gates and the words a label can carry, from the guide's section 8
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
 changed and fetch it again (operator 2026-11-13: "update it in crm when they ping us"). It also
@@ -92,6 +97,10 @@ from routers.mcp_api import DEFAULT_DAILY_QUOTA, DEFAULT_RATE_PER_MIN, hash_key
 from routers.mlb_feed import changes_response as mlb_changes_response
 from routers.mlb_feed import events_response as mlb_events_response
 from routers.mlb_feed import schedule_response as mlb_schedule_response
+from routers.primary_feed import axs_response as axs_events_response
+from routers.primary_feed import seatgeek_response as seatgeek_events_response
+from routers.primary_poll_feed import events_response as primary_events_response
+from routers.primary_poll_feed import listings_response as primary_listings_response
 from routers.tm_feed import changes_response as tm_changes_response
 from routers.tm_feed import events_response as tm_events_response
 from routers.tm_feed import markets_response as tm_markets_response
@@ -193,6 +202,9 @@ _DOC_OPERATORS = re.compile(r"^## 9\. For S4K operators.*?(?=^## )", re.DOTALL |
 _DOC_OPERATORS_LINK = re.compile(r"\s*·\s*\[9 Operators\]\([^)]*\)")                              # its contents entry
 _DOC_NEWS = re.compile(r"^## What changed for you\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)     # the dated list
 _DOC_NEWS_ITEM = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*[ .:·—-]*(.+)$", re.MULTILINE)          # one entry of it
+_DOC_MATCHING = re.compile(r"^## 8\. How matching works.*?(?=^## |\Z)", re.DOTALL | re.MULTILINE)   # the gates' section
+_DOC_GATE_ROW = re.compile(r"^\| (\d) \| `([^`]+)` \| ([^|]+) \| ([^|]+) \| (yes|no) \| ([^|]+) \|$", re.MULTILINE)
+_DOC_LABEL_WORD = re.compile(r"^\| ` ([^`]+)` \| ([^|]+) \|$", re.MULTILINE)
 FEED_SCOPES = ("n2s", "all")                # GET /results: what is still in play, or every answered lookup
 NEWS_ON_PING = 10                           # entries /ping carries; the guide has them all
 
@@ -203,7 +215,9 @@ def render_crm_doc(text: str) -> dict:
     and only when, the guide the CRM reads changes. Nobody numbers it by hand (the doc's version
     line is not edited, README *Doc-writing rules* §5). `updated` is kept as a key for older
     clients and is always None: compare `version` for equality. `news` is the guide's own
-    "What changed for you" list, in the order written (newest first), as {date, text}."""
+    "What changed for you" list, in the order written (newest first), as {date, text}.
+    `gates` and `label_words` are the two tables of the guide's section 8 (the matching gates and
+    the words a label can carry), which GET /gates serves: the guide is their one home."""
     lines = []
     for line in text.splitlines():
         if line.startswith("> **Doc version:**"):
@@ -215,7 +229,13 @@ def render_crm_doc(text: str) -> dict:
     version = hashlib.sha256(markdown.encode("utf-8")).hexdigest()[:12]
     section = _DOC_NEWS.search(markdown)
     news = [{"date": d, "text": t.strip()} for d, t in _DOC_NEWS_ITEM.findall(section.group(1))] if section else []
-    return {"version": version, "updated": None, "news": news,
+    matching = _DOC_MATCHING.search(markdown)
+    rules = matching.group(0) if matching else ""
+    gates = [{"gate": int(g), "label": label, "seats": seats.strip(), "cost": cost.strip(),
+              "needs_buyer_ok": agree == "yes", "what_we_do": does.strip()}
+             for g, label, seats, cost, agree, does in _DOC_GATE_ROW.findall(rules)]
+    words = [{"word": w, "meaning": m.strip()} for w, m in _DOC_LABEL_WORD.findall(rules)]
+    return {"version": version, "updated": None, "news": news, "gates": gates, "label_words": words,
             "markdown": markdown.replace(_DOC_VERSION_MARK, version)}
 
 
@@ -634,6 +654,52 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         changed"; mig 20261121171530). Page with after_id. Same keys as /mlb/schedule."""
         denied = _mlb_reader(request, "tm_changes")
         return denied or tm_changes_response(get_db(), request.query_params)
+
+    @router.get("/axs/events")
+    def axs_events(request: Request):
+        """Every live upcoming AXS event we hold, by default only the ones AXS itself sells, with the EVO
+        event each matched (operator 2026-11-22: "push out axs and SeatGeek primary in API"; mig
+        20261122031530). Same keys as /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "axs_events")
+        return denied or axs_events_response(get_db(), request.query_params)
+
+    @router.get("/seatgeek/events")
+    def seatgeek_events(request: Request):
+        """The upcoming events where SeatGeek is the primary ticketer, from the SeatGeek events we hold,
+        with the EVO event each matched (operator 2026-11-22; mig 20261122031530). Same keys as
+        /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "seatgeek_events")
+        return denied or seatgeek_events_response(get_db(), request.query_params)
+
+    @router.get("/primary/events")
+    def primary_events(request: Request):
+        """Every upcoming event of the box offices we poll ourselves (SI Tickets at Sports Illustrated
+        Stadium, the Timberwolves' own site), with whether its listings can be sent right now and, if
+        not, why (operator 2026-11-23: "push the list of events and their respective listings out";
+        mig 20261123171030). Same keys as /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "primary_events")
+        return denied or primary_events_response(get_db(), request.query_params)
+
+    @router.get("/primary/listings")
+    def primary_listings(request: Request):
+        """The listings of those events: section, row, seats, quantity, the quantities a buyer may
+        take, the order limit and the price. Only for an event whose last poll succeeded within the age
+        limit (35 minutes) (operator 2026-11-23: "if poller fails to run for an event, do not send listing
+        information"), and never an obstructed-view listing. Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "primary_listings")
+        return denied or primary_listings_response(get_db(), request.query_params)
+
+    @router.get("/gates")
+    def gates(request: Request):
+        """Our six matching gates and the words a label can carry, as the guide's section 8 states
+        them (operator 2026-11-22: "announce our gates in news and push out in API"). Read from the
+        guide, so the two never differ. Same keys as /mlb/schedule. Reads no table."""
+        denied = _mlb_reader(request, "gates")
+        if denied:
+            return denied
+        doc = crm_doc(DOC_PATH) or {}
+        return {"gates": doc.get("gates") or [], "label_words": doc.get("label_words") or [],
+                "docs": {"version": doc.get("version"), "url": DOCS_ROUTE}}
 
     @router.get("/autobuys")
     def autobuys(request: Request, updated_since: str | None = None, limit: int = 200, offset: int = 0):

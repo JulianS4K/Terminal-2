@@ -43,6 +43,8 @@ from typing import Any
 
 from fastapi.responses import JSONResponse, Response
 
+from routers import feed_xmap
+
 VIEW = "v_mlb_schedule_feed"
 MAX_LIMIT = 5000
 DEFAULT_LIMIT = 1000
@@ -59,6 +61,8 @@ COLUMNS = ("mlb_schedule_id", "mlb_game_id", "season", "game_type", "game_date",
            "aq_short_event_id", "sg_event_id", "sh_event_id", "vivid_event_id", "tm_event_id",
            "gotickets_event_id", "sg_url", "sg_match_method", "terminal_path", "changed_at", "last_seen_at",
            "level", "league_name", "parent_org", "removed", "promotions")
+# the marketplace ids the view does not hold, read by EVO event id (routers/feed_xmap.py)
+MARKET_IDS = ("tickpick_event_id", "axs_event_id")
 _ABBREV = re.compile(r"^[A-Za-z]{2,3}$")
 
 EVENT_VIEW = "v_mlb_stadium_events"
@@ -67,6 +71,7 @@ EVENT_COLUMNS = ("mlb_schedule_id", "season", "event_type", "title", "descriptio
                  "level", "venue_id", "venue_name", "venue_city", "venue_postal_code", "ticket_url",
                  "tevo_event_id", "tevo_match_method", "tevo_event_name", "terminal_path", "removed",
                  "changed_at", "last_seen_at")
+EVENT_MARKET_IDS = feed_xmap.columns("xmap_tevo_event_id")   # found by the row's own EVO event id
 CHANGES_VIEW = "v_mlb_ticket_changes"
 CHANGE_COLUMNS = ("change_id", "entity", "mlb_schedule_id", "kind", "old_value", "new_value", "notable",
                   "detected_at", "season", "date", "home_abbrev", "away_abbrev", "home_team_id", "event_title",
@@ -154,11 +159,12 @@ def schedule_response(db: Any, params: Any) -> Any:
     try:
         rows = (sel.order("game_date").order("start_utc").order("mlb_schedule_id")
                 .range(offset, offset + limit - 1).execute().data) or []
+        rows = feed_xmap.add(db, rows, "tevo", "tevo_event_id", MARKET_IDS)
     except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
         return _err(502, "upstream_error", type(exc).__name__)
 
     if fmt == "csv":
-        return _csv(rows, COLUMNS, "mlb_schedule.csv")
+        return _csv(rows, COLUMNS + MARKET_IDS, "mlb_schedule.csv")
     nxt = offset + limit if len(rows) == limit else None
     return {"count": len(rows), "offset": offset, "next_offset": nxt, "games": rows}
 
@@ -235,10 +241,11 @@ def events_response(db: Any, params: Any) -> Any:
     try:
         rows = (sel.order("event_date").order("start_utc").order("mlb_schedule_id")
                 .range(offset, offset + limit - 1).execute().data) or []
+        rows = feed_xmap.add(db, rows, "tevo", "tevo_event_id", EVENT_MARKET_IDS)
     except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
         return _err(502, "upstream_error", type(exc).__name__)
     if fmt == "csv":
-        return _csv(rows, EVENT_COLUMNS, "mlb_events.csv")
+        return _csv(rows, EVENT_COLUMNS + EVENT_MARKET_IDS, "mlb_events.csv")
     nxt = offset + limit if len(rows) == limit else None
     return {"count": len(rows), "offset": offset, "next_offset": nxt, "events": rows}
 

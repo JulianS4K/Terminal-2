@@ -1,0 +1,15 @@
+# The Timberwolves browser worker (core/primary_poll_browser.py): a headless browser that opens each
+# game's public page and stores the seat listings the page shows. Operator 2026-11-23.
+# The image carries Chromium and its system libraries; its tag must equal the playwright version
+# pinned in requirements-browser.txt.
+FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PIP_BREAK_SYSTEM_PACKAGES=1
+
+COPY requirements.txt requirements-browser.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-browser.txt
+
+COPY . .
+
+CMD ["python", "-m", "core.primary_poll_browser"]
