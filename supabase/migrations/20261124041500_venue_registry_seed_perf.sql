@@ -1,4 +1,4 @@
--- Migration 20261124041500 · level:data-collection · lane:A1 (data plane — cross-source venues) · writes:venue_registry_tick() · reads:axs_export_event,axs_venue_catalog,tm_venue_xref,mlb_venue_xref,tickpick_catalog_venue,vivid_catalog_venue,evo_gt_venue_link · pre:20261122040000
+-- Migration 20261124041500 · level:data-collection · lane:A1 (data plane — cross-source venues) · writes:venue_registry_tick() · reads:axs_export_event,axs_venue_catalog,tm_venue_xref,mlb_venue_xref,tickpick_catalog_venue,vivid_catalog_venue,evo_gt_venue_link · pre:20261122040040
 --
 -- Perf fix for venue_registry_tick (mig 20261122040000). The AXS seed put the SG-id lookup in a correlated
 -- subquery inside a DISTINCT ON over all ~161k axs_export_event rows, so it was evaluated per input row and the

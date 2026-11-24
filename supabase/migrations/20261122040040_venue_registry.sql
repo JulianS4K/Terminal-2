@@ -1,4 +1,4 @@
--- Migration 20261122040000 · level:data-collection · lane:A1 (data plane — cross-source venues) · writes:venue_registry(new),venue_registry_audit(new),venue_registry_tick()(new),cron:venue_registry_hourly(new) · reads:axs_export_event,axs_venue_catalog,tm_venue_xref,mlb_venue_xref,tickpick_catalog_venue,vivid_catalog_venue,evo_gt_venue_link · pre:20261122015530
+-- Migration 20261122040040 · level:data-collection · lane:A1 (data plane — cross-source venues) · writes:venue_registry(new),venue_registry_audit(new),venue_registry_tick()(new),cron:venue_registry_hourly(new) · reads:axs_export_event,axs_venue_catalog,tm_venue_xref,mlb_venue_xref,tickpick_catalog_venue,vivid_catalog_venue,evo_gt_venue_link · pre:20261122015530
 --
 -- Operator 2026-11-22: build an AXS-seeded canonical venue registry as a NEW table alongside aq_venue_map.
 --
