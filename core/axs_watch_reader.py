@@ -38,10 +38,15 @@ ERROR_MAX = 200
 DEFAULT_SPACING_S = 3.0
 DEFAULT_BATCH = 20
 _HTTP_STATUS = re.compile(r"HTTP (\d{3})")
+# a transport error names the URL it was sent to, and TicketsData takes the login in the query string: the query is
+# never recorded, and a username= / password= value is masked wherever else it appears
+_QUERY = re.compile(r"\?[^\s)'\"]*")
+_LOGIN = re.compile(r"(username|password)=[^&\s)'\"]*", re.IGNORECASE)
 
 
 def _why(exc: BaseException) -> str:
-    return f"{type(exc).__name__}: {exc}"[:ERROR_MAX]
+    text = _LOGIN.sub(r"\1=<redacted>", _QUERY.sub("?<redacted>", str(exc)))
+    return f"{type(exc).__name__}: {text}"[:ERROR_MAX]
 
 
 def read_one(td: Any, rpc: Rpc, event: dict) -> dict:
