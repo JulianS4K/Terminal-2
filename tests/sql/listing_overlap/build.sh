@@ -19,4 +19,5 @@ while read -r step; do
 done <<'STEPS'
 stub_00_base.sql
 20261124120000_listing_overlap_evo_gotickets.sql
+20261124123000_listing_overlap_poll_round.sql
 STEPS

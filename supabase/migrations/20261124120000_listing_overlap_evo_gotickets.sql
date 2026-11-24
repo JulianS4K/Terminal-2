@@ -15,6 +15,9 @@
 --           function that calls listing_overlap_evo_seen(); until that is deployed the
 --           matcher runs on the change-only firehose and says so (evo_exact = false).
 --
+-- Already applied to prod · via MCP 2026-11-24 04:03Z (operator approved 2026-11-17, confirmed 2026-11-24);
+-- collect-listings v12 deployed 04:07Z (platform version 19). All 12 function bodies on prod match this file.
+--
 -- Prefix note: authored 2026-11-17 as 20261117030000; renumbered 20261124120000 before it was
 -- applied anywhere, because 20261117030000_mapping_program_batch2 took that slot on main.
 --
