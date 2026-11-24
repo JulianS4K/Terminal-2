@@ -1,0 +1,113 @@
+--- A. the limit: the largest quantity the listing sells within the order cap; none where it sells only whole and over it
+                  label                  | order_limit 
+-----------------------------------------+-------------
+ 7 seats sold as 1-5 or all 7, cap 6     |           5
+ sold only whole (8), cap 6              |           -
+ no quantities given, cap 8              |           8
+ no cap on the event, the listing says 4 |           4
+ pairs only, cap 8                       |           8
+ nothing known                           |           -
+
+--- B. the pieces: cut at the gaps, then by the limit; a seat that would be left alone stays with the set before it
+                  label                   |           sent_as           
+------------------------------------------+-----------------------------
+ 5 together, limit 4                      | 5 [1-5]
+ 7 together, limit 4                      | 4 [1-4] + 3 [5-7]
+ 8 together, limit 4                      | 4 [1-4] + 4 [5-8]
+ 9 together, limit 4                      | 4 [1-4] + 5 [5-9]
+ 3 together, limit 2                      | 3 [1-3]
+ 3 together, limit 1                      | 1 [1-1] + 1 [2-2] + 1 [3-3]
+ 1-4 and 6, limit 4                       | 4 [1-4] + 1 [6-6]
+ 1-5 and 9-10, limit 4                    | 5 [1-5] + 2 [9-10]
+ unordered 9,7,8,1,2, limit 2             | 2 [1-2] + 3 [7-9]
+ general admission 11, limit 10           | 10 + 1
+ seats not numbers (A-E), limit 4         | 4 + 1
+ fewer seat numbers than tickets, limit 2 | 2 + 2 + 1
+
+ pieces | tickets | smallest | largest 
+--------+---------+----------+---------
+   1302 |   13014 |        4 |      10
+
+--- C. a read is stored: the listings keep the box office's blocks, with their limit
+                       stored                       
+----------------------------------------------------
+ {"ok": 1, "events": 1, "failed": 0, "listings": 7}
+
+ listing_id | quantity | max_per_order | order_limit | obstructed 
+------------+----------+---------------+-------------+------------
+ blocked    |        9 |             6 |           6 | t
+ ga         |       14 |             6 |           6 | f
+ gaps       |       10 |             6 |           6 | f
+ oneover    |        7 |             6 |           6 | f
+ seven      |        7 |             5 |           5 | f
+ thirteen   |       13 |             6 |           6 | f
+ under      |        4 |             4 |           4 | f
+ whole      |        8 |             - |           - | f
+
+ listing_count | listed_quantity 
+---------------+-----------------
+             7 |              63
+
+--- D. the feed sends the pieces in place of a listing over its limit; the obstructed one is never sent
+ listing_id | section | seat_low | seat_high |                  seats                   | quantity | allowed_quantities | max_per_order | split_of | part | parts 
+------------+---------+----------+-----------+------------------------------------------+----------+--------------------+---------------+----------+------+-------
+ under      | 101     | 1        | 4         | ["1", "2", "3", "4"]                     |        4 | [1, 2, 4]          |             4 | -        |    - |     -
+ seven:1    | 102     | 3        | 7         | ["3", "4", "5", "6", "7"]                |        5 | [1, 2, 3, 4, 5]    |             5 | seven    |    1 |     2
+ seven:2    | 102     | 8        | 9         | ["8", "9"]                               |        2 | [1, 2]             |             2 | seven    |    2 |     2
+ thirteen:1 | 103     | 1        | 6         | ["1", "2", "3", "4", "5", "6"]           |        6 | [1, 2, 3, 4, 5, 6] |             6 | thirteen |    1 |     2
+ thirteen:2 | 103     | 7        | 13        | ["7", "8", "9", "10", "11", "12", "13"]  |        7 | [1, 2, 3, 4, 5, 6] |             6 | thirteen |    2 |     2
+ gaps:1     | 104     | 1        | 6         | ["1", "2", "3", "4", "5", "6"]           |        6 | [1, 2, 3, 4, 5, 6] |             6 | gaps     |    1 |     3
+ gaps:2     | 104     | 7        | 8         | ["7", "8"]                               |        2 | [1, 2]             |             2 | gaps     |    2 |     3
+ gaps:3     | 104     | 20       | 21        | ["20", "21"]                             |        2 | [1, 2]             |             2 | gaps     |    3 |     3
+ oneover    | 105     | 1        | 7         | ["1", "2", "3", "4", "5", "6", "7"]      |        7 | [1, 2, 3, 4, 5, 6] |             6 | -        |    - |     -
+ whole      | 106     | 1        | 8         | ["1", "2", "3", "4", "5", "6", "7", "8"] |        8 | [8]                |             - | -        |    - |     -
+ ga:1       | GA      | -        | -         | -                                        |        6 | [1, 2, 3, 4, 5, 6] |             6 | ga       |    1 |     3
+ ga:2       | GA      | -        | -         | -                                        |        6 | [1, 2, 3, 4, 5, 6] |             6 | ga       |    2 |     3
+ ga:3       | GA      | -        | -         | -                                        |        2 | [1, 2]             |             2 | ga       |    3 |     3
+
+ listings_sent | tickets_sent | tickets_stored 
+---------------+--------------+----------------
+            13 |           63 |             63
+
+--- E. the next read replaces the pieces with the listings; a failed read removes both
+                       stored                       
+----------------------------------------------------
+ {"ok": 1, "events": 1, "failed": 0, "listings": 1}
+
+ listing_id | seat_low | seat_high | quantity | max_per_order 
+------------+----------+-----------+----------+---------------
+ thirteen:1 | 1        | 6         |        6 |             6
+ thirteen:2 | 7        | 9         |        3 |             3
+
+ pieces_stored 
+---------------
+             2
+
+                       stored                       
+----------------------------------------------------
+ {"ok": 0, "events": 1, "failed": 1, "listings": 0}
+
+ listings_stored | pieces_stored 
+-----------------+---------------
+               0 |             0
+
+--- F. the switch: off, the blocks go out as the box office gave them
+                       stored                       
+----------------------------------------------------
+ {"ok": 1, "events": 1, "failed": 0, "listings": 1}
+
+ listing_id | seat_low | seat_high | quantity | max_per_order | split_of 
+------------+----------+-----------+----------+---------------+----------
+ thirteen   | 1        | 13        |       13 |             6 | -
+
+ listing_id | seat_low | seat_high | quantity | max_per_order | split_of 
+------------+----------+-----------+----------+---------------+----------
+ thirteen:1 | 1        | 6         |        6 |             6 | thirteen
+ thirteen:2 | 7        | 13        |        7 |             6 | thirteen
+
+--- G. service only
+psql:s02_split_over_limit.sql:85: ERROR:  permission denied for function primary_poll_split_event
+psql:s02_split_over_limit.sql:86: ERROR:  permission denied for table primary_poll_listing_piece
+ service_can_split | service_can_read | anon_can_read 
+-------------------+------------------+---------------
+ t                 | t                | f

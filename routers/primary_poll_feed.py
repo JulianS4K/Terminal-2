@@ -36,8 +36,17 @@ are served for 35 minutes after a good read, or until 20 minutes after the next 
 with listings_available = false and listings_withheld = poll_failed | not_polled | poll_stale; so is an event
 that has started (event_started: we stop reading it at its start time, mig 20261124041030). Such an event has
 no row in /primary/listings. Listings flagged as an obstructed view are never sent. The views are mig
-20261123171030. This module only answers the query: it reads our own tables and makes no upstream
-call (RULE 2).
+20261123171030.
+
+A listing holding more tickets than one order may take is sent as several (operator 2026-11-24: "when a
+listing goes over qty limit make the next set a seperate listing in API to broadcast, for all 3 sources",
+"split GA"; mig 20261124230030): each piece is a listing of its own with id `<listing_id>:<n>`, its own seats and
+quantity, `max_per_order` = its quantity, and `split_of` / `split_part` / `split_parts` naming the block it came
+from. A seated block is cut at every gap in its seat numbers first, then by the limit; general admission by count.
+`max_per_order` on an unsplit listing is the most one order can take of it. The pieces are stored when the event
+is read, so the view only joins them.
+
+This module only answers the query: it reads our own tables and makes no upstream call (RULE 2).
 """
 from __future__ import annotations
 
@@ -64,7 +73,7 @@ LISTING_COLUMNS = ("source", "event_id", "event_name", "tevo_event_id", "event_d
                    "area", "section", "seat_row", "seat_low", "seat_high", "seats", "quantity", "allowed_quantities",
                    "max_per_order", "order_min", "order_max", "price", "fee", "all_in_price", "price_includes_tax",
                    "currency", "ticket_type", "delivery", "ada", "aisle", "general_admission", "as_of", "tax", "order_fee",
-                   "price_estimated")
+                   "price_estimated", "split_of", "split_part", "split_parts")
 # the same event's id on the other marketplaces, on every event row; `tevo_event_id` is the row's own
 MARKET_IDS = feed_xmap.columns("xmap_tevo_event_id")
 AXS = "axs"
