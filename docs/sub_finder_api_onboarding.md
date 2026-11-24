@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-24** Fixed on `GET /primary/listings` for `sitickets`: a general admission block (the HSBC SVNS ones) now carries `general_admission: true`; it has `GA` for a row and no seat numbers, which is how it is sold. `max_per_order` on those blocks is now the largest quantity one order may take (10); it read 1. Seated blocks are unchanged, and now say `general_admission: false`.
 - **2026-11-24** New: `GET /health` reports each box office we read: `box_office_sitickets` and `box_office_timberwolves`, with how many events are being sent and how many could not be read. A box office that stops answering us reads `degraded` or `down` there, and counts in the overall `status` (section 2).
 - **2026-11-24** Changed: a box-office event's listings stop at its start time. From tip-off, `GET /primary/events` shows it with `listings_available: false` and `listings_withheld: "event_started"`, and it has no rows in `GET /primary/listings`. Red Bull New York and the other Sports Illustrated Stadium events now carry `start_utc` and `timezone` too.
 - **2026-11-24** New: six more team box offices are sources of `GET /primary/events` and `GET /primary/listings`: `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders` and `northcarolinafc`. None has single matches on sale yet, so they return no rows today; their matches appear by themselves when they go on sale (section 6k).
@@ -1031,8 +1032,8 @@ GET /primary/listings?source=sitickets&event_id=2297105
 | `source`, `event_id`, `event_name`, `tevo_event_id`, `event_date`, `start_local_time` | The event, and the EVO event it matched (null until matched) |
 | `listing_id` | The box office's id for this block of seats; it stays the same from one read to the next |
 | `market` | `primary`: the box office's own seats. `resale`: resold on the same site |
-| `area`, `section`, `seat_row`, `seat_low`, `seat_high`, `seats` | Where the seats are. `seats` lists every seat number |
-| `quantity`, `allowed_quantities`, `max_per_order` | Seats in the block, the quantities a buyer may take from it, and the most one order may take |
+| `area`, `section`, `seat_row`, `seat_low`, `seat_high`, `seats` | Where the seats are. `seats` lists every seat number. A general admission block has no seats: `seat_low`, `seat_high` and `seats` are null and `general_admission` is true (`sitickets`: `seat_row` reads `GA`) |
+| `quantity`, `allowed_quantities`, `max_per_order` | Seats in the block, the quantities a buyer may take from it, and the most one order may take (`sitickets`: the largest of `allowed_quantities`) |
 | `order_min`, `order_max` | The event's own order limits, where the box office gives them |
 | `price`, `fee`, `tax`, `all_in_price`, `currency` | Per ticket, for every source: `price` is before fees and tax, and `price` + `fee` + `tax` = `all_in_price`, what the buyer pays |
 | `order_fee` | A fee charged once an order, not per ticket (`sitickets`: 0.30). Null where there is none |
