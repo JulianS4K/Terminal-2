@@ -1,0 +1,50 @@
+name: ESPN ticket-link SQL scenarios
+
+# Runs the TickPick catalogue collector + mapper's SQL scenario tests (tests/sql/espn_ticket_link) against
+# a throwaway Postgres: small stand-ins + the real migration, then each scenario's output is compared with
+# its expected file. Blocking — a migration that changes the behaviour updates the expected output in the
+# same PR (tests/sql/espn_ticket_link/run.sh --update).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**espn_ticket_link**"
+      - "tests/sql/espn_ticket_link/**"
+      - ".github/workflows/espn-ticket-link-sql.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**espn_ticket_link**"
+      - "tests/sql/espn_ticket_link/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  espn-ticket-link-sql:
+    name: ESPN ticket-link SQL scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run scenarios
+        run: bash tests/sql/espn_ticket_link/run.sh

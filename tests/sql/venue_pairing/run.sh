@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# venue pairer SQL scenario tests.
+#
+# Builds a database from small stand-ins plus the real venue-pairing migration (build.sh), then runs
+# each file in scenarios/ against a fresh copy and compares what it prints with expected/<name>.out.
+# A scenario fails when its output changes — a migration that alters behaviour updates the expected
+# file in the same PR, where the diff is reviewed.
+#
+#   run.sh            run every scenario, fail on any difference
+#   run.sh --update   rewrite the expected files from the current output
+#
+# A new migration that touches the venue pairer is added to the list in build.sh.
+# psql connects using the standard PG* environment variables.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+TPL="venue_pairing_test_tpl"
+DB="venue_pairing_test"
+UPDATE=0; [ "${1:-}" = "--update" ] && UPDATE=1
+
+"$HERE/build.sh" "$TPL"
+fail=0
+cd "$HERE/scenarios"
+for f in *.sql; do
+  name="${f%.sql}"
+  psql -q -X -d postgres -c "DROP DATABASE IF EXISTS \"$DB\"" -c "CREATE DATABASE \"$DB\" TEMPLATE \"$TPL\"" 2>/dev/null
+  got="$(psql -q -X -d "$DB" -f "$f" 2>&1 || true)"
+  if [ "$UPDATE" = 1 ]; then
+    printf '%s\n' "$got" > "$HERE/expected/$name.out"
+    echo "updated $name"
+  elif [ "$got" == "$(cat "$HERE/expected/$name.out" 2>/dev/null)" ]; then
+    echo "ok      $name"
+  else
+    echo "FAILED  $name"
+    diff <(cat "$HERE/expected/$name.out" 2>/dev/null) <(printf '%s\n' "$got") || true
+    fail=1
+  fi
+done
+psql -q -X -d postgres -c "DROP DATABASE IF EXISTS \"$DB\"" -c "DROP DATABASE IF EXISTS \"$TPL\"" 2>/dev/null
+exit $fail
