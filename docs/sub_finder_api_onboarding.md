@@ -23,6 +23,8 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-24** New: `GET /axs/watch` and `GET /axs/watch/listings`: the AXS watch as its own call, the 200 upcoming events AXS sells at ten venues and their listings, refilled nightly as events pass (section 6k). The same rows as `/primary/events?source=axs` and `/primary/listings?source=axs`.
+- **2026-11-24** New: `axs` is a source of `GET /primary/events` and `GET /primary/listings`: 200 upcoming events AXS sells at ten venues, with their listings (section 6k). The list refills itself nightly as events pass.
 - **2026-11-24** Fixed on `GET /primary/listings` for `sitickets`: a general admission block (the HSBC SVNS ones) now carries `general_admission: true`; it has `GA` for a row and no seat numbers, which is how it is sold. `max_per_order` on those blocks is now the largest quantity one order may take (10); it read 1. Seated blocks are unchanged, and now say `general_admission: false`.
 - **2026-11-24** New: `GET /health` reports each box office we read: `box_office_sitickets` and `box_office_timberwolves`, with how many events are being sent and how many could not be read. A box office that stops answering us reads `degraded` or `down` there, and counts in the overall `status` (section 2).
 - **2026-11-24** Changed: a box-office event's listings stop at its start time. From tip-off, `GET /primary/events` shows it with `listings_available: false` and `listings_withheld: "event_started"`, and it has no rows in `GET /primary/listings`. Red Bull New York and the other Sports Illustrated Stadium events now carry `start_utc` and `timezone` too.
@@ -998,12 +1000,15 @@ Two box offices are read by us directly and served as two feeds. Each event is r
 | `timberwolves` | The Minnesota Timberwolves' own ticket site: every home game at Target Center | Yes, with seats available and the price range | Yes: the team's own seats (`primary`) and seats resold on the site (`resale`) |
 | `lynx` | The Minnesota Lynx's own ticket site, on the same platform: home games at Target Center | None until the WNBA schedule is released; they then appear by themselves | As for `timberwolves`, once there are games |
 | `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders`, `northcarolinafc` | The own ticket sites of NC Courage, Denver Summit, Seattle Reign and Boston Legacy (NWSL), Seattle Sounders (MLS) and North Carolina FC (USL), all on the same platform as `timberwolves` | None yet: no single matches were on sale on 2026-11-24 (Sounders, Reign and Boston Legacy sell there from the 2027 season). Matches appear by themselves when they go on sale; seasons, memberships and plans are left out | As for `timberwolves`, once there are matches |
+| `axs` | The AXS watch: a list of 200 upcoming events that AXS itself sells (or an AXS-powered team shop such as the Rockets' `nba` store) at ten venues — Crypto.com Arena, Toyota Center, T-Mobile Arena, Red Rocks, RodeoHouston, PeoplesBank Arena, MGM Grand Garden Arena, Target Center (concerts only), Greek Theatre, Soldier Field — refilled nightly as events pass; sports only for major-league teams (Lakers, Kings, Rockets, Golden Knights) | Yes, with the price range, seats available and the order limits; `tevo_event_id` from the AXS export's own match | Yes: AXS's own seats (`primary`) and AXS Official Resale (`resale`), each listing a block of adjoining seats with its seat numbers, or a general-admission level with its amount. Prices are the AXS base price (the facility fee included, the service fee not: `fee` is null). Read through TicketsData, about 40 seconds a read, so a listing is 10 to 60 minutes old (`poll_every_minutes`) |
 
-Season packages, memberships and deposits are left out.
+Season packages, memberships and deposits are left out. For `axs`, parking, suites, packages and passes too, and the Timberwolves and Lynx, which `timberwolves` and `lynx` carry.
 
 ```
 GET /primary/events?source=sitickets&date_from=2027-02-01&available=true
 GET /primary/listings?source=sitickets&event_id=2297105
+GET /axs/watch?available=true                      the AXS watch on its own: /primary/events pinned to source axs
+GET /axs/watch/listings?event_id=1457748           its listings: /primary/listings pinned to source axs
 ```
 
 **`GET /primary/events`** takes `source`, `date_from`, `date_to`, `q` (every word must be in the name, venue or city), `available=true|false`, `mapped=true|false`, `format=json|csv`, `limit` (max 5000) and `offset`.

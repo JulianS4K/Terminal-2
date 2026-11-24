@@ -1,0 +1,373 @@
+ views_built 
+-------------
+ true
+
+== EVENT front door: which EVO event is this listing (every source, its own id)
+    src    |      id      | tevo_event_id |     method      |         origin         
+-----------+--------------+---------------+-----------------+------------------------
+ axs       | 4001         |             1 | venue_date_time | axs_export_event
+ evo       | 1            |             1 | identity_tevo   | event_mapper_identity
+ gotickets | 8001         |             1 | venue_day_name  | gotickets_event
+ gotickets | 8002         |               |                 | 
+ mlb       | 777001       |               |                 | 
+ seatdata  | 6501         |             1 | identity_hub    | event_mapper_identity
+ sg        | 5001         |             1 | matcher_v3      | sg_events_canonical
+ stubhub   | 6001         |             1 | identity_hub    | event_mapper_identity
+ tickpick  | 9001         |             1 | identity_hub    | event_mapper_identity
+ tickpick  | not-a-number |               |                 | 
+ tp        | 9002         |             2 | venue_day_name  | tickpick_catalog_event
+ vivid     | 7001         |             1 | hub_identity    | vivid_catalog_event
+
+== EVENT front door, the other way: an EVO event on every source
+  source   | source_event_id |       name       |     method      |         origin         
+-----------+-----------------+------------------+-----------------+------------------------
+ axs       | 4001            | Billy Joel       | venue_date_time | axs_export_event
+ gotickets | 8001            | Billy Joel       | venue_day_name  | gotickets_event
+ seatdata  | 6501            | Billy Joel       | hub             | aq_event_map
+ seatgeek  | 5001            | Billy Joel       | matcher_v3      | sg_events_canonical
+ stubhub   | 6001            | Billy Joel       | hub             | aq_event_map
+ tickpick  | 9001            | Billy Joel       | hub_identity    | tickpick_catalog_event
+ tickpick  | 9011            | Split Act        | venue_day_name  | tickpick_catalog_event
+ tickpick  | 9014            | Billy Joel       | hub_identity    | tickpick_catalog_event
+ vivid     | 7001            | Billy Joel       | hub_identity    | vivid_catalog_event
+ vivid     | 7003            | Billy Joel Night | venue_day_name  | vivid_catalog_event
+
+  source  | source_event_id |               name                |     method      |         origin         
+----------+-----------------+-----------------------------------+-----------------+------------------------
+ stubhub  | 6002            | Celtics at Knicks                 | hub             | aq_event_map
+ tickpick | 9002            | Knicks vs Celtics                 | venue_day_name  | tickpick_catalog_event
+ tickpick | 9999            | Celtics at Knicks                 | hub             | aq_event_map
+ vivid    | 7002            | Boston Celtics at New York Knicks | venue_time_name | vivid_catalog_event
+
+== VENUE front door
+                    label                    | tevo_venue_id |     method     |                   origin                    
+---------------------------------------------+---------------+----------------+---------------------------------------------
+ TickPick venue id, two stores agree         |           100 | id             | aq_venue_map, tickpick_catalog_venue
+ TickPick venue id, two stores DISAGREE      |               | conflict       | aq_venue_map, tickpick_catalog_venue
+ Vivid venue id                              |           800 | id             | vivid_catalog_venue
+ AXS venue id                                |           100 | id             | axs_export_event
+ a name the shared resolver knows            |           100 | name           | cross_source_venue_map
+ a name only a catalogue knows (before sync) |           800 | catalogue_name | tickpick_catalog_venue, vivid_catalog_venue
+ a name two venues share in the state        |               |                | 
+ …told apart by the city                     |           500 | catalogue_name | tickpick_catalog_venue
+ unpaired venue id, unknown name             |               |                | 
+
+  source  | source_venue_id |         venue_name          | tevo_venues |                                                                        pairings                                                                        
+----------+-----------------+-----------------------------+-------------+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ tickpick | 77              | Richard Rodgers Theatre NYC |           2 | [{"method": "id", "origin": "aq_venue_map", "tevo_venue_id": 300}, {"method": "name_state", "origin": "tickpick_catalog_venue", "tevo_venue_id": 301}]
+
+== VENUE sync, dry run: what would be copied into the table the shared resolver reads
+                 out_                 
+--------------------------------------
+ {                                   +
+     "aliases": 3,                   +
+     "applied": false,               +
+     "new_rows": 5,                  +
+     "tickpick_ids": 3,              +
+     "pairings_read": 18,            +
+     "tevo_venues_paired": 10,       +
+     "skipped_no_evo_name": 1,       +
+     "waiting_for_next_run": 0,      +
+     "skipped_weak_single_source": 1,+
+     "skipped_name_taken_in_state": 2+
+ }
+
+ rows_before 
+-------------
+           1
+
+== VENUE sync, applied
+                 out_                 
+--------------------------------------
+ {                                   +
+     "aliases": 3,                   +
+     "applied": true,                +
+     "new_rows": 5,                  +
+     "tickpick_ids": 3,              +
+     "pairings_read": 18,            +
+     "tevo_venues_paired": 10,       +
+     "skipped_no_evo_name": 1,       +
+     "waiting_for_next_run": 0,      +
+     "skipped_weak_single_source": 1,+
+     "skipped_name_taken_in_state": 2+
+ }
+
+ tevo_venue_id |     tevo_venue_name     |    canonical_name     |    city    | state | tickpick_venue_id |  tickpick_aliases   |              vivid_aliases               |      gotickets_aliases       | from_sync 
+---------------+-------------------------+-----------------------+------------+-------+-------------------+---------------------+------------------------------------------+------------------------------+-----------
+           100 | Madison Square Garden   | madisonsquaregarden   | New York   | NY    |                 1 | ["MSG"]             | ["Madison Square Garden - New York, NY"] | []                           | f
+           300 | Richard Rodgers Theatre | richardrodgerstheatre | New York   | NY    |                 2 | ["Rodgers Theatre"] | []                                       | []                           | t
+           400 | Sphere                  | sphere                | Las Vegas  | NV    |                   | []                  | []                                       | []                           | t
+           700 | The Anthem              | theanthem             | Washington | DC    |                   | []                  | []                                       | []                           | t
+           800 | Capital One Arena       | capitalonearena       | Washington | DC    |                 8 | []                  | []                                       | []                           | t
+           900 | Echo Lounge             | echolounge            | Dallas     | TX    |                   | []                  | []                                       | ["Echo Lounge & Music Hall"] | t
+
+   action    |  source   |              source_id               | tevo_id 
+-------------+-----------+--------------------------------------+---------
+ venue_alias | vivid     | Madison Square Garden - New York, NY |     100
+ venue_alias | tickpick  | Rodgers Theatre                      |     300
+ venue_alias | gotickets | Echo Lounge & Music Hall             |     900
+ venue_id    | tickpick  | 1                                    |     100
+ venue_id    | tickpick  | 2                                    |     300
+ venue_id    | tickpick  | 8                                    |     800
+ venue_row   |           |                                      |     300
+ venue_row   |           |                                      |     400
+ venue_row   |           |                                      |     700
+ venue_row   |           |                                      |     800
+ venue_row   |           |                                      |     900
+
+== …and the shared resolver now reads them (the function itself was not touched)
+              nm               | st | tevo_venue_id 
+-------------------------------+----+---------------
+ Capital One Arena             | DC |           800
+ Rodgers Theatre               | NY |           300
+ Echo Lounge & Music Hall      | TX |           900
+ The Anthem                    | DC |           700
+ Anthem DC                     | DC |              
+ Sphere                        | NV |           400
+ Arena DC                      | DC |              
+ The Anthem Parking            | DC |           700
+ Madison Square Garden Parking | NY |           100
+ Palace Theatre                | NY |              
+
+== VENUE sync again: nothing left to do; and the limit
+                 out_                 
+--------------------------------------
+ {                                   +
+     "aliases": 0,                   +
+     "applied": true,                +
+     "new_rows": 0,                  +
+     "tickpick_ids": 0,              +
+     "pairings_read": 18,            +
+     "tevo_venues_paired": 10,       +
+     "skipped_no_evo_name": 1,       +
+     "waiting_for_next_run": 0,      +
+     "skipped_weak_single_source": 1,+
+     "skipped_name_taken_in_state": 2+
+ }
+
+ new_rows | waiting 
+----------+---------
+ 1        | 2
+
+== PERFORMER front door, before the derive
+             label              | tevo_performer_id | method |          origin           
+--------------------------------+-------------------+--------+---------------------------
+ SeatGeek id                    |                11 | id     | performer_external_ids
+ MLB team id                    |              9121 | id     | mlb_ticket_team
+ AXS artist id                  |                11 | id     | axs_event_performer_xref
+ TickPick id (not learned yet)  |                   |        | 
+ exact name, the TEvo list      |                11 | name   | performer_metadata
+ exact name, a store alias      |                11 | name   | aq_performer_map
+ exact name, the SeatGeek store |                12 | name   | seatgeek_performer_xref
+ a near name, exact only        |                   |        | 
+ a near name, guess allowed     |                11 | fuzzy  | event_mapper_performer_id
+
+== PERFORMER derive, dry run then applied
+                out_                 
+-------------------------------------
+ {                                  +
+     "applied": false,              +
+     "by_source": {                 +
+         "vivid": {                 +
+             "write": 2,            +
+             "decline_rival": 2     +
+         },                         +
+         "tickpick": {              +
+             "write": 6,            +
+             "decline_name": 3,     +
+             "decline_thin": 1,     +
+             "decline_split": 1,    +
+             "decline_taken": 1     +
+         }                          +
+     },                             +
+     "catalogue_performers_seen": 18+
+ }
+
+ rows_before 
+-------------
+           2
+
+                out_                 
+-------------------------------------
+ {                                  +
+     "applied": true,               +
+     "written": 8,                  +
+     "by_source": {                 +
+         "vivid": {                 +
+             "write": 2,            +
+             "decline_rival": 2     +
+         },                         +
+         "tickpick": {              +
+             "write": 6,            +
+             "decline_name": 3,     +
+             "decline_thin": 1,     +
+             "decline_split": 1,    +
+             "decline_taken": 1     +
+         }                          +
+     },                             +
+     "catalogue_performers_seen": 18+
+ }
+
+  source  | external_id |  external_name  | performer_id | evidence | share | overlap 
+----------+-------------+-----------------+--------------+----------+-------+---------
+ tickpick | 501         | Billy Joel      |           11 | 2        | 1.000 | 1.000
+ tickpick | 502         | New York Knicks |           12 | 2        | 1.000 | 1.000
+ tickpick | 506         | U2              |           14 | 1        | 1.000 | 1
+ tickpick | 508         | Swan Lake       |           16 | 1        | 1.000 | 1.000
+ tickpick | 509         | Phish           |           17 | 2        | 1.000 | 1.000
+ tickpick | 513         | Hamilton        |           15 | 1        | 1.000 | 1.000
+ vivid    | 802         | New York Knicks |           12 | 1        | 1.000 | 1.000
+ vivid    | 803         | Boston Celtics  |           13 | 1        | 1.000 | 1.000
+
+not learned: 503 Celtics (the performer already holds another TickPick id), 504 "LA Lakers" (an away team whose name is not the EVO name),
+505 "Hamilton - The Musical", 510 and 514 "Hamil" (name does not fit), 511 (evidence split), 512 "Billy Joel Parking" (never read),
+516 "Swan" (one event, and "Swan" is not "Swan Lake"), Vivid 801 and 899 (both want Billy Joel on equal evidence)
+            label             | tevo_performer_id | method |         origin         
+------------------------------+-------------------+--------+------------------------
+ TickPick id, now learned     |                11 | id     | performer_external_ids
+ TickPick home team           |                12 | id     | performer_external_ids
+ TickPick "U2" (no long word) |                14 | id     | performer_external_ids
+ Vivid id                     |                   |        | 
+ Vivid away team              |                13 | id     | performer_external_ids
+ TickPick declined id         |                   |        | 
+
+         again: nothing new          
+-------------------------------------
+ {                                  +
+     "applied": true,               +
+     "written": 0,                  +
+     "by_source": {                 +
+         "vivid": {                 +
+             "already": 2,          +
+             "decline_rival": 2     +
+         },                         +
+         "tickpick": {              +
+             "already": 6,          +
+             "decline_name": 3,     +
+             "decline_thin": 1,     +
+             "decline_split": 1,    +
+             "decline_taken": 1     +
+         }                          +
+     },                             +
+     "catalogue_performers_seen": 18+
+ }
+
+== one shape for every source, and the coverage readout
+  source   | listings | mapped 
+-----------+----------+--------
+ axs       |        2 |      1
+ gotickets |        2 |      1
+ mlb       |        1 |      0
+ seatdata  |        1 |      1
+ seatgeek  |        1 |      1
+ stubhub   |        2 |      2
+ tickpick  |       16 |     14
+ vivid     |        4 |      3
+
+  mapper   |  source   | total | mapped | mapped_pct 
+-----------+-----------+-------+--------+------------
+ event     | axs       |     2 |      1 |       50.0
+ event     | gotickets |     2 |      1 |       50.0
+ event     | mlb       |     1 |      0 |        0.0
+ event     | seatdata  |     1 |      1 |      100.0
+ event     | seatgeek  |     1 |      1 |      100.0
+ event     | stubhub   |     2 |      2 |      100.0
+ event     | tickpick  |    15 |     14 |       93.3
+ event     | vivid     |     4 |      3 |       75.0
+ performer | aq        |     1 |      1 |      100.0
+ performer | axs       |     1 |      1 |      100.0
+ performer | espn      |     1 |      1 |      100.0
+ performer | mlb       |     1 |      1 |      100.0
+ performer | seatgeek  |     2 |      2 |      100.0
+ performer | tickpick  |     7 |      7 |      100.0
+ performer | vivid     |     2 |      2 |      100.0
+ venue     | axs       |     1 |      1 |      100.0
+ venue     | gotickets |     2 |      2 |      100.0
+ venue     | mlb       |     1 |      1 |      100.0
+ venue     | seatgeek  |     2 |      2 |      100.0
+ venue     | tickpick  |    12 |     11 |       91.7
+ venue     | vivid     |     6 |      6 |      100.0
+
+== Ticketmaster and ESPN join when their tables exist (prod today; main once PR #1156 lands)
+                                  same tables: not rebuilt                                   
+---------------------------------------------------------------------------------------------
+ {"rebuilt": false, "sources": "tm_ev=f tm_ven=f tm_att=f espn=f xref=f gt_link=t axs_pf=t"}
+
+                             the daily pass sees the new tables                             
+--------------------------------------------------------------------------------------------
+ {"rebuilt": true, "sources": "tm_ev=t tm_ven=t tm_att=t espn=t xref=f gt_link=t axs_pf=t"}
+
+ venue_copy_applied | performer_derive_applied 
+--------------------+--------------------------
+ false              | true
+
+     src      |    id     | tevo_event_id |     method      |       origin        | event_key 
+--------------+-----------+---------------+-----------------+---------------------+-----------
+ espn         | 401700001 |             2 | espn_time_name  | espn_ticket_game    |          
+ ticketmaster | vvG1abc   |             1 | venue_date_name | tm_discovery_event  |    990001
+ tm           | vvG1zzz   |               |                 |                     |          
+ vivid        | 7001      |             1 | hub_identity    | vivid_catalog_event |    887001
+ vivid        | 7004      |               |                 |                     |    887004
+
+    source    | source_event_id |    name    |     method      |       origin       
+--------------+-----------------+------------+-----------------+--------------------
+ ticketmaster | vvG1abc         | Billy Joel | venue_date_name | tm_discovery_event
+
+ source | source_event_id |               name                |     method     |      origin      
+--------+-----------------+-----------------------------------+----------------+------------------
+ espn   | 401700001       | Boston Celtics at New York Knicks | espn_time_name | espn_ticket_game
+
+ tevo_venue_id | method |    origin     
+---------------+--------+---------------
+           800 | id     | tm_venue_xref
+
+ tevo_performer_id | method |       origin       
+-------------------+--------+--------------------
+                11 | id     | tm_attraction_xref
+
+  mapper   |    source    | total | mapped 
+-----------+--------------+-------+--------
+ event     | espn         |     1 |      1
+ event     | ticketmaster |     2 |      1
+ performer | espn         |     1 |      1
+ performer | ticketmaster |     2 |      1
+ venue     | ticketmaster |     2 |      2
+
+ venue 800 again, now with Ticketmaster as a source | pairings 
+----------------------------------------------------+----------
+ 3                                                  | 20
+
+== guards
+                                                               unknown source (event)                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ event_map_lookup: unknown source craigslist (evo | tickpick | vivid | gotickets | seatgeek | axs | mlb | ticketmaster | espn | stubhub | seatdata)
+
+                                              unknown source (venue)                                               
+-------------------------------------------------------------------------------------------------------------------
+ venue_map_resolve: unknown source craigslist (tickpick | vivid | gotickets | seatgeek | axs | mlb | ticketmaster)
+
+                                                         unknown source (performer)                                                         
+--------------------------------------------------------------------------------------------------------------------------------------------
+ performer_map_resolve: unknown source craigslist (tickpick | vivid | gotickets | seatgeek | axs | mlb | ticketmaster | espn | tickets_dev)
+
+     role      | sync | lookup | view_event | view_performer | audit 
+---------------+------+--------+------------+----------------+-------
+ anon          | f    | f      | f          | f              | f
+ authenticated | f    | f      | f          | f              | f
+ service_role  | t    | t      | t          | t              | t
+
+      jobname      |  schedule   | gated 
+-------------------+-------------+-------
+ mapper_sync_daily | 52 10 * * * | t
+
+      jobname      | peak_min_interval_min | enabled 
+-------------------+-----------------------+---------
+ mapper_sync_daily |                  1200 | t
+
+         kind         | applied | runs 
+----------------------+---------+------
+ performer_map_derive | t       |    3
+ tick                 | f       |    1
+ tick                 | t       |    1
+ venue_map_sync       | t       |    2
+ views                | t       |    3

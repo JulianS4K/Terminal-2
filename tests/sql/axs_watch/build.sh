@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Build the AXS watch test database: stand-ins for what the migrations read (the AXS export, pg_net, pg_cron, the vault
+# helper, the TicketsData credit ledger, bot_chat), then the real box-office poll migrations and the AXS watch itself.
+# Usage: build.sh <database>   (psql connection comes from the PG* variables)
+set -euo pipefail
+export PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning"
+DB="$1"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+MIG="$HERE/../../../supabase/migrations"
+run() { psql -q -X -v ON_ERROR_STOP=1 -d "$DB" -f "$1" >/dev/null; }
+
+psql -q -X -d postgres -c "DROP DATABASE IF EXISTS \"$DB\"" -c "CREATE DATABASE \"$DB\"" 2>/dev/null
+while read -r step; do
+  [ -z "$step" ] && continue
+  case "$step" in
+    stub_*) run "$HERE/$step" ;;
+    *)      run "$MIG/$step" ;;
+  esac
+done <<'STEPS'
+stub_00_base.sql
+20261123171030_primary_poll_feed.sql
+20261123183730_primary_poll_cleanup_and_announce.sql
+20261123190030_primary_poll_max_age.sql
+20261123192030_primary_poll_fees_and_tax.sql
+20261123194030_primary_poll_cadence.sql
+20261124190000_axs_watch.sql
+20261124200000_axs_watch_listings_parse.sql
+STEPS
