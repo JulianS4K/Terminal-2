@@ -503,6 +503,7 @@ def test_listings_can_be_narrowed_to_an_event_a_market_and_a_section():
     for column in ("price", "fee", "tax", "all_in_price", "order_fee", "price_estimated"):
         assert column in pp.LISTING_COLUMNS
     assert pp.LISTING_COLUMNS[-3:] == ("tax", "order_fee", "price_estimated")   # the view gained them at its end
+    assert not [c for c in pp.LISTING_COLUMNS if c.startswith("split")]         # a split listing is marked by its id alone
     db = FakeDB(rows=None)
     r = _client(db).get(LISTINGS, headers=H, params={"source": "timberwolves", "event_id": "1729",
                                                     "tevo_event_id": "3466081", "market": "Resale", "section": "218"})

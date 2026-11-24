@@ -128,7 +128,7 @@
 
  listings_in_feed | cheapest 
 ------------------+----------
-                6 |       40
+               10 |       40
 
 --- H. the two events not yet read were fired as soon as the settled ones freed their slots; a request that never answers is lost after stale_after and the poll fails
                                            tick_next                                           
