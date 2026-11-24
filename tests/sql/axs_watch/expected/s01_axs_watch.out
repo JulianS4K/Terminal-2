@@ -82,7 +82,7 @@
 -----------------------------------------------------------------------------------------------
  {"lost": 0, "fired": 0, "settled": 0, "in_flight": 2, "fired_today": 2, "upstream_errors": 0}
 
---- F. the answers land: seats in blocks, a resale seat, a GA level by amount; an expired event is a failed poll; the credit is logged
+--- F. the answers land: the listings TicketsData sends (seat blocks, an ADA seat, a GA amount, a resale block with its fee); a sold block and a parking offer are left out; the obstructed one is kept but not sent; an expired event is a failed poll; the credit is logged
                                 tick_settles                                 
 -----------------------------------------------------------------------------
  {"lost": 0, "fired": 2, "settled": 2, "in_flight": 2, "upstream_errors": 0}
@@ -97,16 +97,16 @@
  id | poll_status |            poll_error             | listing_count | offer_id | order_min | order_max | total_available | price_min | price_max | median_price | listed_quantity | every_min | next_in_future 
 ----+-------------+-----------------------------------+---------------+----------+-----------+-----------+-----------------+-----------+-----------+--------------+-----------------+-----------+----------------
  11 | failed      | expired: the event is over on AXS |             0 | -        |         - |         - |               - |         - |         - |            - |               - |        30 | t
- 21 | ok          | -                                 |             6 | 555      |         1 |         8 |              47 |     40.00 |    125.00 |        77.75 |              47 |        60 | t
+ 21 | ok          | -                                 |             5 | 555      |         1 |         8 |              47 |        40 |       125 |        65.50 |              46 |        60 | t
 
- market  |    section    | row | seat_low | seat_high |      seats      | qty | max | price  | fee |    area    | ticket_type | ada | ga | obstructed 
----------+---------------+-----+----------+-----------+-----------------+-----+-----+--------+-----+------------+-------------+-----+----+------------
- primary | 101           | A   | 1        | 3         | ["1", "2", "3"] |   3 |   8 | 125.00 |   - | Lower Bowl | STANDARD    | f   | f  | f
- primary | 101           | A   | 5        | 5         | ["5"]           |   1 |   8 | 125.00 |   - | Lower Bowl | STANDARD    | f   | f  | f
- primary | 101           | A   | 6        | 6         | ["6"]           |   1 |   8 |  60.00 |   - | Lower Bowl | STANDARD    | f   | f  | f
- resale  | 101           | B   | 7        | 7         | ["7"]           |   1 |   2 |  95.50 |   - | -          | STANDARD    | f   | f  | f
- primary | 305           | K   | 12       | 12        | ["12"]          |   1 |   8 |  60.00 |   - | Upper Bowl | ADA         | t   | f  | f
- primary | Standing Room | -   | -        | -         | -               |  40 |   8 |  40.00 |   - | -          | GA          | -   | t  | f
+ market  |    section    | row | seat_low | seat_high |      seats      | qty | allowed | price |  fee  | all_in | tax |    area    | ticket_type | ada | ga | obstructed 
+---------+---------------+-----+----------+-----------+-----------------+-----+---------+-------+-------+--------+-----+------------+-------------+-----+----+------------
+ primary | 101           | A   | 1        | 3         | ["1", "2", "3"] |   3 | -       |   125 |  7.94 | 132.94 |   0 | Lower Bowl | STANDARD    | f   | f  | f
+ primary | 101           | A   | 5        | 5         | ["5"]           |   1 | -       |   125 |  7.94 | 132.94 |   0 | Lower Bowl | STANDARD    | f   | f  | f
+ primary | 101           | A   | 6        | 6         | ["6"]           |   1 | -       |    60 |   5.5 |   65.5 |   0 | Lower Bowl | STANDARD    | f   | f  | f
+ resale  | 101           | B   | 7        | 7         | ["7"]           |   1 | [1]     |  95.5 | 24.35 | 119.85 |   0 | Lower Bowl | FLASHSEATS  | f   | f  | t
+ primary | 305           | K   | 12       | 12        | ["12"]          |   1 | -       |    60 |   5.5 |   65.5 |   0 | Upper Bowl | ADA         | t   | f  | f
+ primary | Standing Room | -   | -        | -         | -               |  40 | -       |    40 |     4 |     44 |   0 | -          | GA          | f   | t  | f
 
  platform | endpoint | status_code | quota_remaining | event_id | credits 
 ----------+----------+-------------+-----------------+----------+---------
@@ -123,11 +123,11 @@
  11       | Lakers vs. Denver               | f                  |             - | poll_failed       |                 30 |        900011
  14       | Big Concert                     | f                  |             - | not_polled        |                  - |        900014
  18       | Disney On Ice presents Jump In! | f                  |             - | not_polled        |                  - |             -
- 21       | Small Hall Show                 | t                  |             6 | -                 |                 60 |             -
+ 21       | Small Hall Show                 | t                  |             5 | -                 |                 60 |             -
 
  listings_in_feed | cheapest 
 ------------------+----------
-                6 |    40.00
+                5 |       40
 
 --- H. the two events not yet read were fired as soon as the settled ones freed their slots; a request that never answers is lost after stale_after and the poll fails
                                            tick_next                                           
@@ -153,7 +153,7 @@
  11 | failed      | expired: the event is over on AXS  |             0
  14 | failed      | lost: no response from TicketsData |             0
  18 | failed      | HTTP 503 from TicketsData          |             0
- 21 | ok          | -                                  |             6
+ 21 | ok          | -                                  |             5
 
 --- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight
                                           tick_slowed                                          

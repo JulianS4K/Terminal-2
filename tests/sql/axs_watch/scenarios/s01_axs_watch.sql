@@ -70,36 +70,30 @@ SELECT s.id, s.url, s.params->>'platform' AS platform, s.params->>'event_url' AS
 SELECT request_id, axs_event_id, checked_at IS NULL AS pending FROM public.axs_watch_poll ORDER BY request_id;
 SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' AS tick_full;
 
-\echo '--- F. the answers land: seats in blocks, a resale seat, a GA level by amount; an expired event is a failed poll; the credit is logged'
+\echo '--- F. the answers land: the listings TicketsData sends (seat blocks, an ADA seat, a GA amount, a resale block with its fee); a sold block and a parking offer are left out; the obstructed one is kept but not sent; an expired event is a failed poll; the credit is logged'
 INSERT INTO net._http_response (id, status_code, content) VALUES
   (1, 200, $j${"quota_remaining": 99998, "body": {"status": "ok", "exit_code": 0, "elapsed_seconds": 41.2,
      "event": {"title": "Lakers vs. Denver", "starts_local": "2026-12-23 19:30:00"},
      "onsale": {"offer_id": 555, "status": {"onSaleNow": true}},
-     "inventory": {
-       "offer_search": [{"offers": [
-          {"offerID": "555", "items": [
-            {"sectionLabel": "101", "rowLabel": "A", "number": "1", "seatType": "STANDARD", "priceLevelID": "P1", "isGASection": false, "neighborhoodPrintDescription": "Lower Bowl", "statusCodeLabel": "AVAILABLE"},
-            {"sectionLabel": "101", "rowLabel": "A", "number": "2", "seatType": "STANDARD", "priceLevelID": "P1", "isGASection": false, "neighborhoodPrintDescription": "Lower Bowl", "statusCodeLabel": "AVAILABLE"},
-            {"sectionLabel": "101", "rowLabel": "A", "number": "3", "seatType": "STANDARD", "priceLevelID": "P1", "isGASection": false, "neighborhoodPrintDescription": "Lower Bowl", "statusCodeLabel": "AVAILABLE"},
-            {"sectionLabel": "101", "rowLabel": "A", "number": "5", "seatType": "STANDARD", "priceLevelID": "P1", "isGASection": false, "neighborhoodPrintDescription": "Lower Bowl", "statusCodeLabel": "AVAILABLE"},
-            {"sectionLabel": "101", "rowLabel": "A", "number": "6", "seatType": "STANDARD", "priceLevelID": "P2", "isGASection": false, "neighborhoodPrintDescription": "Lower Bowl", "statusCodeLabel": "AVAILABLE"},
-            {"sectionLabel": "305", "rowLabel": "K", "number": "12", "seatType": "ADA", "priceLevelID": "P2", "isGASection": false, "neighborhoodPrintDescription": "Upper Bowl", "statusCodeLabel": "Wheelchair accessible"}]},
-          {"offerID": "777", "items": [
-            {"sectionLabel": "101", "rowLabel": "B", "number": "7", "seatType": "STANDARD", "priceLevelID": "R1", "isGASection": false, "originalPrice": "95.5"}]}]}],
-       "inventory_v4": [{"offerPrices": [
-          {"offerID": "555", "offerType": "Single", "min": 1, "max": 8, "zonePrices": [{"isSoldOut": false, "priceLevels": [
-             {"priceLevelID": "P1", "label": "Lower", "prices": [{"base": 12500}], "availability": {"amount": 4}},
-             {"priceLevelID": "P2", "label": "Upper", "prices": [{"base": 6000}], "availability": {"amount": 2}},
-             {"priceLevelID": "G1", "label": "Standing Room", "prices": [{"base": 4000}], "availability": {"amount": 40}}]}]},
-          {"offerID": "777", "offerType": "AXS Official Resale", "min": 1, "max": 2, "zonePrices": [{"isSoldOut": false, "priceLevels": [
-             {"priceLevelID": "R1", "label": "Resale", "prices": [{"base": 9550}], "availability": {"amount": 1}}]}]}]}]}}}$j$),
+     "groups": [{"label": "Public", "offer_id": 555, "seat_type": "STANDARD", "ticket_qty": {"min": 1, "max": 8}},
+                {"label": "Resale", "offer_id": 777, "seat_type": "FLASHSEATS", "ticket_qty": {"min": 0, "max": 2}}],
+     "listings_summary": {"listings": 8, "primary_listings": 6, "resale_listings": 2},
+     "listings": [
+       {"kind": "primary", "section": "101", "row": "A", "seats": ["1", "2", "3"], "quantity": 3, "seat_type": "STANDARD", "status": "Available", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Lower", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 125, "fees": [{"name": "VEN_FEE", "amount": 7.94}], "fees_total": 7.94, "tax": 0, "all_in": 132.94}},
+       {"kind": "primary", "section": "101", "row": "A", "seats": ["5"], "quantity": 1, "seat_type": "STANDARD", "status": "Available", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Lower", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 125, "fees_total": 7.94, "tax": 0, "all_in": 132.94}},
+       {"kind": "primary", "section": "101", "row": "A", "seats": ["6"], "quantity": 1, "seat_type": "STANDARD", "status": "Available", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Upper", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 60, "fees_total": 5.5, "tax": 0, "all_in": 65.5}},
+       {"kind": "primary", "section": "305", "row": "K", "seats": ["12"], "quantity": 1, "seat_type": "ADA", "status": "Available", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Upper - Wheelchair", "neighborhood": "Upper Bowl", "general_admission": false, "pricing": {"face": 60, "fees_total": 5.5, "tax": 0, "all_in": 65.5}},
+       {"kind": "primary", "section": "Standing Room", "row": null, "seats": null, "quantity": 40, "seat_type": "GA", "status": "Available", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Standing Room", "general_admission": true, "pricing": {"face": 40, "fees_total": 4, "tax": 0, "all_in": 44}},
+       {"kind": "primary", "section": "Lot W", "row": null, "seats": null, "quantity": 29, "seat_type": "PARKING", "status": "Available", "offer_id": "556", "offer_name": "LOT W $40 or LOT 4 $35 Parking", "offer_type": "Parking", "pricing": {"face": 40, "all_in": 40}},
+       {"kind": "primary", "section": "102", "row": "B", "seats": ["9", "10"], "quantity": 2, "seat_type": "STANDARD", "status": "Sold", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Lower", "pricing": {"face": 125, "all_in": 132.94}},
+       {"kind": "resale", "section": "101", "row": "B", "seats": ["7"], "quantity": 1, "seat_type": "FLASHSEATS", "offer_id": "777", "offer_type": "FLASHSEATS", "price_level": "Lower - Limited view", "neighborhood": "Lower Bowl", "original_price": 95.5, "purchasable_quantities": [1], "seller_notes": null, "pricing": {"face": 95.5, "connection_fee": 24.35, "all_in": 119.85, "tax": 0}}]}}$j$),
   (2, 200, $j${"quota_remaining": 99997, "body": {"status": "expired", "message": "Event has passed"}}$j$);
 SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_settles;
 SELECT request_id, axs_event_id AS id, status_code, outcome, response_s, listings, quota_remaining, error FROM public.axs_watch_poll ORDER BY request_id;
 SELECT source_event_id AS id, poll_status, poll_error, listing_count, offer_id, order_min, order_max, total_available, price_min, price_max, median_price, listed_quantity,
        (extract(epoch FROM poll_interval) / 60)::integer AS every_min, next_poll_at > now() AS next_in_future
   FROM public.primary_poll_event WHERE source = 'axs' AND source_event_id IN ('11', '21') ORDER BY source_event_id;
-SELECT market, section, seat_row AS "row", seat_low, seat_high, seats, quantity AS qty, max_per_order AS max, price, fee, area, ticket_type, ada, general_admission AS ga, obstructed
+SELECT market, section, seat_row AS "row", seat_low, seat_high, seats, quantity AS qty, allowed_quantities AS allowed, price, fee, all_in_price AS all_in, tax, area, ticket_type, ada, general_admission AS ga, obstructed
   FROM public.primary_poll_listing WHERE source = 'axs' ORDER BY section, seat_row, seat_low;
 SELECT platform, endpoint, status_code, quota_remaining, event_id, credits FROM public.ticketsdata_credit_usage WHERE endpoint = '/fetch' ORDER BY id;
 SELECT (public.axs_watch_budget())->'fired_today' AS fired_today, (public.axs_watch_budget())->'in_flight' AS in_flight;
