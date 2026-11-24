@@ -63,7 +63,13 @@ def test_sitickets_events_are_the_box_office_ones_without_packages_and_membershi
     events = si.parse_events(SI_VENUE)
     assert [e["id"] for e in events] == ["2297105", "2226372"]
     game, series = events
-    assert game["local_date"] == "2027-05-01" and game["local_time"] == "19:00" and game["start_utc"] is None
+    assert game["local_date"] == "2027-05-01" and game["local_time"] == "19:00"
+    # the stadium's local time made a moment (7 pm in New Jersey in May is 23:00 UTC): an event that has
+    # started is no longer read (operator 2026-11-24: "fix the game day wart, end it at tipoff")
+    assert game["start_utc"] == "2027-05-01T23:00:00+00:00" and game["timezone"] == "America/New_York"
+    assert series["start_utc"] is None and series["timezone"] is None            # no readable time: no moment
+    elsewhere = si.parse_events(SI_VENUE, "some-other-venue")[0]                   # a venue whose zone we do not know
+    assert elsewhere["local_time"] == "19:00" and elsewhere["start_utc"] is None and elsewhere["timezone"] is None
     assert game["venue"] == "Sports Illustrated Stadium" and game["state"] == "NJ"
     assert game["url"] == "https://www.sitickets.com/event/sprint-rbny-vs-new-england"
     assert game["_slug"] == "sprint-rbny-vs-new-england"

@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 
 import requests
@@ -46,6 +48,10 @@ _assert_readonly_method = build_readonly_guard(
 
 BASE = "https://www.sitickets.com"
 VENUE_SLUG = "sports-illustrated-stadium"
+# the venue's time zone: SI writes an event's start in the venue's local time, so this is what turns it into
+# a moment. The poll needs the moment: an event that has started is no longer read (operator 2026-11-24:
+# "fix the game day wart, end it at tipoff"; mig 20261124041030). A venue not listed gets no start time.
+VENUE_TIMEZONES = {"sports-illustrated-stadium": "America/New_York"}
 USER_AGENT = "S4K-primary-poll/1.0"
 TIMEOUT_S = 30
 SLUG_OK = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -85,10 +91,13 @@ def parse_events(props: dict, venue_slug: str = VENUE_SLUG) -> list[dict]:
         # SI writes the venue's local time with a Z; it is not UTC (the page shows the same hour)
         local = _LOCAL.match(ev.get("occurs_at") or "")
         slug = ev.get("event_slug") or ""
+        zone = VENUE_TIMEZONES.get(venue_slug)
+        start = (datetime.fromisoformat(f"{local.group(1)}T{local.group(2)}").replace(tzinfo=ZoneInfo(zone))
+                 .astimezone(timezone.utc).isoformat() if local and zone else None)
         out.append({
             "id": str(ev["event_id"]), "name": name,
             "local_date": local.group(1) if local else None, "local_time": local.group(2) if local else None,
-            "start_utc": None, "timezone": None,
+            "start_utc": start, "timezone": zone if start else None,
             "venue": ev.get("venue_name") or venue.get("name"), "city": ev.get("venue_city") or venue.get("city"),
             "state": ev.get("venue_state") or venue.get("state"),
             "url": f"{BASE}/event/{quote(slug)}" if slug else None,
