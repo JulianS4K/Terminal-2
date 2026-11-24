@@ -1,0 +1,52 @@
+name: AXS watch SQL scenarios
+
+# Runs the AXS watch's SQL scenario tests (tests/sql/axs_watch) against a throwaway Postgres: small stand-ins + the
+# real box-office poll migrations + the AXS watch migration, then each scenario's output is compared with its
+# expected file. Blocking — a migration that changes the behaviour updates the expected output in the same PR
+# (tests/sql/axs_watch/run.sh --update).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**axs_watch**"
+      - "supabase/migrations/**primary_poll**"
+      - "tests/sql/axs_watch/**"
+      - ".github/workflows/axs-watch-sql.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**axs_watch**"
+      - "supabase/migrations/**primary_poll**"
+      - "tests/sql/axs_watch/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  axs-watch-sql:
+    name: AXS watch SQL scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run scenarios
+        run: bash tests/sql/axs_watch/run.sh

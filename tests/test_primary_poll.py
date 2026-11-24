@@ -483,8 +483,9 @@ def test_csv_bad_parameters_and_a_database_error():
 
 def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
     # operator 2026-11-24: "Add all those jump teams to the catalogue scanner and push through into api"
-    assert pp.SOURCES == ("sitickets", *jc.SITES) and len(jc.SITES) == 8
-    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx"):
+    # ... and the AXS watch (mig 20261124190000, operator 2026-11-24 "make an axs one that allows for 200 events") is the last source
+    assert pp.SOURCES == ("sitickets", *jc.SITES, "axs") and len(jc.SITES) == 8
+    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx", "axs"):
         for url in (EVENTS, LISTINGS):
             db = FakeDB(rows=[])
             r = _client(db).get(url, headers=H, params={"source": source})
@@ -495,3 +496,15 @@ def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
         assert jc.NOT_AN_EVENT.search(name), name
     for name in ("Timberwolves vs. Nets", "Season Opener: NC Courage vs. Washington Spirit", "Sounders vs. Timbers 3-14-27"):
         assert not jc.NOT_AN_EVENT.search(name), name
+
+
+def test_the_axs_watch_is_the_primary_feed_pinned_to_source_axs():
+    # operator 2026-11-24: "add to API out to crm as new call" — /axs/watch and /axs/watch/listings, mig 20261124190000
+    for url in ("/api/v1/subs/axs/watch", "/api/v1/subs/axs/watch/listings"):
+        assert _client(FakeDB(rows=[])).get(url).status_code == 401
+        db = FakeDB(rows=[])
+        r = _client(db).get(url, headers=H, params={"source": "timberwolves", "limit": "5"})   # another source is not honoured
+        assert r.status_code == 200 and r.json()["count"] == 0, url
+        calls = db.queries[0].calls
+        assert ("eq", "source", "axs") in calls and ("eq", "source", "timberwolves") not in calls, (url, calls)
+        assert ("range", 0, 4) in calls
