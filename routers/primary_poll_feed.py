@@ -10,8 +10,9 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc
-                                 (a team's own ticket site has no events until it lists single games)
+        ?source=sitickets|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc|axs
+                                 (a team's own ticket site has no events until it lists single games; `axs` is the
+                                 watched list of AXS-sold events read through TicketsData, mig 20261124190000)
         &date_from=2026-11-23&date_to=2027-05-01
         &format=json|csv         (default json)
         &limit=1000&offset=0     (limit max 5000)
@@ -45,7 +46,7 @@ from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-SOURCES = ("sitickets", *jump_client.SITES)       # SI Tickets, then every team site on the Jump platform
+SOURCES = ("sitickets", *jump_client.SITES, "axs")   # SI Tickets, every team site on the Jump platform, the AXS watch
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",

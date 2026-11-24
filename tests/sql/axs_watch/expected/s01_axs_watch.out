@@ -1,0 +1,220 @@
+--- A. the rules: an excluded entry never, a sports event only for a major-league team
+              title              | category | ok 
+---------------------------------+----------+----
+ Lakers vs. Denver               | Sports   | t
+ Vegas Vanguards vs. Boston      | Sports   | f
+ UFC 330                         | Sports   | f
+ Premium Parking - Lakers        | Sports   | f
+ Minnesota Timberwolves vs. Utah | Sports   | f
+ Big Concert                     | Music    | t
+ Lynx vs. Aces                   | Sports   | f
+ VIP Pass - Festival             | Music    | f
+ Passenger                       | Music    | t
+ 2027 Season Tickets             | Sports   | f
+
+--- B. a dry run reports; the fill retires the passed and the vanished, then fills Big Arena to 3 and Small Hall to 1 by date
+                                dry_run                                
+-----------------------------------------------------------------------
+ {"added": 4, "apply": false, "short": [], "retired": 2, "watched": 4}
+
+                                 fill                                 
+----------------------------------------------------------------------
+ {"added": 4, "apply": true, "short": [], "retired": 2, "watched": 4}
+
+ id |              name               | days_out |  at   | venue_name |  tevo  |   method   | announced | poll_status | in_run 
+----+---------------------------------+----------+-------+------------+--------+------------+-----------+-------------+--------
+ 21 | Small Hall Show                 |        2 | 19:00 | Small Hall |      - | -          | t         | pending     | t
+ 11 | Lakers vs. Denver               |        3 | 19:30 | Big Arena  | 900011 | axs_export | t         | pending     | t
+ 14 | Big Concert                     |        6 | 20:00 | Big Arena  | 900014 | axs_export | t         | pending     | t
+ 18 | Disney On Ice presents Jump In! |       20 | 11:00 | Big Arena  |      - | -          | t         | pending     | t
+
+ action | id |   venue    |                       note                       
+--------+----+------------+--------------------------------------------------
+ add    | 11 | Big Arena  | 2026-11-27T19:30 Lakers vs. Denver
+ add    | 14 | Big Arena  | 2026-11-30T20:00 Big Concert
+ add    | 18 | Big Arena  | 2026-12-14T11:00 Disney On Ice presents Jump In!
+ add    | 21 | Small Hall | 2026-11-26T19:00 Small Hall Show
+ retire | 41 | Big Arena  | passed
+ retire | 99 | Big Arena  | not_in_export
+
+ source | events | has_run 
+--------+--------+---------
+ axs    |      4 | t
+
+ bot_chat_posts 
+----------------
+              0
+
+--- C. a second fill changes nothing
+                              fill_again                              
+----------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [], "retired": 0, "watched": 4}
+
+--- D. the tick: no pool reading and nothing recorded leaves the whole pool; with the pool at 0 nothing fires
+                                       budget_empty                                       
+------------------------------------------------------------------------------------------
+ {"enabled": true, "daily_cap": 0, "in_flight": 0, "fired_today": 0, "pool_remaining": 0}
+
+                                        tick_no_budget                                         
+-----------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "settled": 0, "in_flight": 0, "fired_today": 0, "upstream_errors": 0}
+
+ requests_sent 
+---------------
+             0
+
+--- E. with a pool, the tick fires the due events, most overdue first, never more than max_in_flight (2); the request names the page and the platform
+                                          tick_fires                                           
+-----------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 2, "settled": 0, "in_flight": 2, "fired_today": 2, "upstream_errors": 0}
+
+ id |              url              | platform |                  event_url                   | has_login | login_from_vault | timeout_ms 
+----+-------------------------------+----------+----------------------------------------------+-----------+------------------+------------
+  1 | https://ticketsdata.com/fetch | axs      | https://www.axs.com/events/21/show-tickets   | t         | t                |     100000
+  2 | https://ticketsdata.com/fetch | axs      | https://www.axs.com/events/11/lakers-tickets | t         | t                |     100000
+
+ request_id | axs_event_id | pending 
+------------+--------------+---------
+          1 | 21           | t
+          2 | 11           | t
+
+                                           tick_full                                           
+-----------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "settled": 0, "in_flight": 2, "fired_today": 2, "upstream_errors": 0}
+
+--- F. the answers land: seats in blocks, a resale seat, a GA level by amount; an expired event is a failed poll; the credit is logged
+                                tick_settles                                 
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 2, "settled": 2, "in_flight": 2, "upstream_errors": 0}
+
+ request_id | id | status_code | outcome | response_s | listings | quota_remaining |               error               
+------------+----+-------------+---------+------------+----------+-----------------+-----------------------------------
+          1 | 21 |         200 | ok      |       41.2 |        6 |           99998 | -
+          2 | 11 |         200 | expired |          - |        - |           99997 | expired: the event is over on AXS
+          3 | 14 |           - | -       |          - |        - |               - | -
+          4 | 18 |           - | -       |          - |        - |               - | -
+
+ id | poll_status |            poll_error             | listing_count | offer_id | order_min | order_max | total_available | price_min | price_max | median_price | listed_quantity | every_min | next_in_future 
+----+-------------+-----------------------------------+---------------+----------+-----------+-----------+-----------------+-----------+-----------+--------------+-----------------+-----------+----------------
+ 11 | failed      | expired: the event is over on AXS |             0 | -        |         - |         - |               - |         - |         - |            - |               - |        30 | t
+ 21 | ok          | -                                 |             6 | 555      |         1 |         8 |              47 |     40.00 |    125.00 |        77.75 |              47 |        60 | t
+
+ market  |    section    | row | seat_low | seat_high |      seats      | qty | max | price  | fee |    area    | ticket_type | ada | ga | obstructed 
+---------+---------------+-----+----------+-----------+-----------------+-----+-----+--------+-----+------------+-------------+-----+----+------------
+ primary | 101           | A   | 1        | 3         | ["1", "2", "3"] |   3 |   8 | 125.00 |   - | Lower Bowl | STANDARD    | f   | f  | f
+ primary | 101           | A   | 5        | 5         | ["5"]           |   1 |   8 | 125.00 |   - | Lower Bowl | STANDARD    | f   | f  | f
+ primary | 101           | A   | 6        | 6         | ["6"]           |   1 |   8 |  60.00 |   - | Lower Bowl | STANDARD    | f   | f  | f
+ resale  | 101           | B   | 7        | 7         | ["7"]           |   1 |   2 |  95.50 |   - | -          | STANDARD    | f   | f  | f
+ primary | 305           | K   | 12       | 12        | ["12"]          |   1 |   8 |  60.00 |   - | Upper Bowl | ADA         | t   | f  | f
+ primary | Standing Room | -   | -        | -         | -               |  40 |   8 |  40.00 |   - | -          | GA          | -   | t  | f
+
+ platform | endpoint | status_code | quota_remaining | event_id | credits 
+----------+----------+-------------+-----------------+----------+---------
+ AXS      | /fetch   |         200 |           99998 |        - |       1
+ AXS      | /fetch   |         200 |           99997 |   900011 |       1
+
+ fired_today | in_flight 
+-------------+-----------
+ 4           | 2
+
+--- G. the feed serves the read event with its listings and withholds the failed one with the reason
+ event_id |              name               | listings_available | listing_count | listings_withheld | poll_every_minutes | tevo_event_id 
+----------+---------------------------------+--------------------+---------------+-------------------+--------------------+---------------
+ 11       | Lakers vs. Denver               | f                  |             - | poll_failed       |                 30 |        900011
+ 14       | Big Concert                     | f                  |             - | not_polled        |                  - |        900014
+ 18       | Disney On Ice presents Jump In! | f                  |             - | not_polled        |                  - |             -
+ 21       | Small Hall Show                 | t                  |             6 | -                 |                 60 |             -
+
+ listings_in_feed | cheapest 
+------------------+----------
+                6 |    40.00
+
+--- H. the two events not yet read were fired as soon as the settled ones freed their slots; a request that never answers is lost after stale_after and the poll fails
+                                           tick_next                                           
+-----------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "settled": 0, "in_flight": 2, "fired_today": 4, "upstream_errors": 0}
+
+ request_id | id 
+------------+----
+          3 | 14
+          4 | 18
+
+                                       tick_lost_and_503                                       
+-----------------------------------------------------------------------------------------------
+ {"lost": 1, "fired": 0, "settled": 1, "in_flight": 0, "fired_today": 4, "upstream_errors": 2}
+
+ request_id | id | status_code |    outcome     |             error              
+------------+----+-------------+----------------+--------------------------------
+          3 | 14 |           - | lost           | no response within stale_after
+          4 | 18 |         503 | upstream_error | HTTP 503 from TicketsData
+
+ id | poll_status |             poll_error             | listing_count 
+----+-------------+------------------------------------+---------------
+ 11 | failed      | expired: the event is over on AXS  |             0
+ 14 | failed      | lost: no response from TicketsData |             0
+ 18 | failed      | HTTP 503 from TicketsData          |             0
+ 21 | ok          | -                                  |             6
+
+--- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight
+                                          tick_slowed                                          
+-----------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "fired_today": 6, "upstream_errors": 3}
+
+ now_in_flight 
+---------------
+             1
+
+--- J. over the day's cap (pinned at 5, 5 fired today) only the hot events (30 minutes or faster) are read, and only up to the overrun
+                                        budget_pinned                                         
+----------------------------------------------------------------------------------------------
+ {"enabled": true, "daily_cap": 5, "in_flight": 0, "fired_today": 5, "pool_remaining": 99998}
+
+                                                  tick_capped                                                  
+---------------------------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "daily_cap": 5, "in_flight": 1, "fired_today": 6, "upstream_errors": 3}
+
+ id 
+----
+ 21
+
+                                            tick_capped_no_overrun                                             
+---------------------------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "settled": 0, "daily_cap": 5, "in_flight": 0, "fired_today": 5, "upstream_errors": 3}
+
+--- K. paused: the tick still settles but fires nothing
+                      tick_paused                      
+-------------------------------------------------------
+ {"lost": 0, "fired": 0, "paused": true, "settled": 0}
+
+--- L. three reads in a row saying AXS does not sell it retire the event; the venue refills from the next by date
+                          fill_after_not_axs                          
+----------------------------------------------------------------------
+ {"added": 1, "apply": true, "short": [], "retired": 1, "watched": 4}
+
+ id |              name               | days_out 
+----+---------------------------------+----------
+ 21 | Small Hall Show                 |        2
+ 11 | Lakers vs. Denver               |        3
+ 18 | Disney On Ice presents Jump In! |       20
+ 19 | Later Concert                   |       40
+
+ action | id |        note        
+--------+----+--------------------
+ retire | 14 | not_axs_or_expired
+ retire | 41 | passed
+ retire | 99 | not_in_export
+
+--- M. the crons
+       jobname        |  schedule  |                                         command                                          
+----------------------+------------+------------------------------------------------------------------------------------------
+ axs_watch_fill_daily | 20 3 * * * | BEGIN; SET LOCAL statement_timeout = '120s'; SELECT public.axs_watch_fill(true); COMMIT;
+ axs_watch_tick_1m    | * * * * *  | BEGIN; SET LOCAL statement_timeout = '50s'; SELECT public.axs_watch_tick(); COMMIT;
+
+--- N. privileges: service_role only
+      proname      | anon | service 
+-------------------+------+---------
+ axs_watch_budget  | f    | t
+ axs_watch_fill    | f    | t
+ axs_watch_parse   | f    | t
+ axs_watch_rule_ok | f    | t
+ axs_watch_tick    | f    | t
