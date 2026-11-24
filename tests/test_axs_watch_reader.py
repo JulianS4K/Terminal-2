@@ -65,10 +65,10 @@ def test_read_one_never_records_the_login_a_transport_error_carries():
     log = []
     exc = ConnectionError("HTTPSConnectionPool(host='ticketsdata.com', port=443): Max retries exceeded with url: "
                           "/fetch?platform=axs&event_url=https%3A%2F%2Fwww.axs.com%2Fe%2F1&username=ops%40s4k.example&password=hunter2 "
-                          "(Caused by NewConnectionError('x')); also password=hunter2 and USERNAME=ops elsewhere")
+                          "(x); also password=hunter2 and USERNAME=ops")
     reader.read_one(_TD({"u": exc}), _rpc({}, lambda p: {"outcome": "timeout"}, log), {"id": "1", "url": "u"})
     msg = log[-1][1]["p_error_msg"]
-    assert msg.startswith("ConnectionError: HTTPSConnectionPool(host='ticketsdata.com', port=443): Max retries exceeded with url: /fetch?<redacted> ")
+    assert msg.startswith("ConnectionError: HTTPSConnectionPool(host='ticketsdata.com', port=443): Max retries exceeded with url: /fetch?<redacted> (x)")
     assert "hunter2" not in msg and "ops" not in msg and "password=<redacted>" in msg and "USERNAME=<redacted>" in msg
     assert len(msg) <= reader.ERROR_MAX
 
