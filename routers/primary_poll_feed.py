@@ -21,7 +21,10 @@ Both take:
                               &mapped=true|false          matched to an EVO event or not
 /primary/listings also takes  &event_id=2297105  &tevo_event_id=3584741  &market=primary|resale  &section=126
 
-Every row carries `tevo_event_id`, the EVO event our mapper matched (null until it has).
+Every row carries `tevo_event_id`, the EVO event our mapper matched (null until it has). Every event row
+also carries the same event's id on each marketplace (routers/feed_xmap.py; operator 2026-11-22: "include the
+cross maps in all event mapping you push out, marketplace id", and 2026-11-24 on the AXS watch: "integrate
+them into the out api"): an AXS event is looked up by its AXS id, any other by its EVO event.
 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
@@ -42,6 +45,7 @@ import re
 from typing import Any
 
 import jump_client
+from routers import feed_xmap
 from routers.mlb_feed import _bool, _csv, _date, _err, _paging
 from routers.tm_feed import _words
 
@@ -61,6 +65,9 @@ LISTING_COLUMNS = ("source", "event_id", "event_name", "tevo_event_id", "event_d
                    "max_per_order", "order_min", "order_max", "price", "fee", "all_in_price", "price_includes_tax",
                    "currency", "ticket_type", "delivery", "ada", "aisle", "general_admission", "as_of", "tax", "order_fee",
                    "price_estimated")
+# the same event's id on the other marketplaces, on every event row; `tevo_event_id` is the row's own
+MARKET_IDS = feed_xmap.columns("xmap_tevo_event_id")
+AXS = "axs"
 _TOKEN = re.compile(r"^[A-Za-z0-9 ._:=/+-]{1,160}$")
 
 
@@ -98,11 +105,23 @@ def _filtered(sel: Any, f: dict) -> Any:
     return sel
 
 
-def _page(sel: Any, f: dict, columns: tuple, key: str, filename: str, order: tuple) -> Any:
+def _market_ids(db: Any, rows: list) -> list:
+    """The page's event rows with MARKET_IDS added, in the same order. An AXS watch event is paired by its
+    own AXS id (`event_id`), so it has ids before our mapper finds its EVO event; a box office we read
+    ourselves has no id the hub knows, so its events are paired by their EVO event."""
+    ours = iter(feed_xmap.add(db, [r for r in rows if r.get("source") == AXS], AXS, "event_id", MARKET_IDS))
+    rest = iter(feed_xmap.add(db, [r for r in rows if r.get("source") != AXS], "tevo", "tevo_event_id", MARKET_IDS))
+    return [next(ours if r.get("source") == AXS else rest) for r in rows]
+
+
+def _page(sel: Any, f: dict, columns: tuple, key: str, filename: str, order: tuple, db: Any = None) -> Any:
+    """One page of a view. With `db`, the rows are events and gain the marketplace ids."""
     try:
         for column in order:
             sel = sel.order(column)
         rows = sel.range(f["offset"], f["offset"] + f["limit"] - 1).execute().data or []
+        if db is not None:
+            rows, columns = _market_ids(db, rows), columns + MARKET_IDS
     except Exception as exc:  # noqa: BLE001 - surfaced as a 502 with the class only
         return _err(502, "upstream_error", type(exc).__name__)
     if f["fmt"] == "csv":
@@ -129,7 +148,7 @@ def events_response(db: Any, params: Any) -> Any:
     for word in words:
         sel = sel.ilike(SEARCH_COLUMN, f"%{word}%")
     return _page(sel, f, EVENT_COLUMNS, "events", "primary_events.csv",
-                 ("event_date", "start_local_time", "source", "event_id"))
+                 ("event_date", "start_local_time", "source", "event_id"), db=db)
 
 
 def listings_response(db: Any, params: Any) -> Any:
