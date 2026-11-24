@@ -20,6 +20,7 @@ from fastapi import FastAPI  # noqa: E402
 import jump_client as jc  # noqa: E402
 import sitickets_client as si  # noqa: E402
 from core import primary_poll_sync as sync  # noqa: E402
+from routers import feed_xmap  # noqa: E402
 from routers import primary_poll_feed as pp  # noqa: E402
 from routers import subs_api as s  # noqa: E402
 from routers.mcp_api import hash_key  # noqa: E402
@@ -380,9 +381,10 @@ class _Query:
 
 
 class FakeDB:
-    def __init__(self, rows=None, find=True, table_exc=None):
+    def __init__(self, rows=None, find=True, table_exc=None, xmap=(), xmap_exc=None):
         self.rows, self.find, self.table_exc = rows, find, table_exc
         self.queries, self.tables = [], []
+        self.xmap, self.xmap_exc, self.xmap_calls = list(xmap), xmap_exc, []
 
     def rpc(self, name, args):
         if name == "mcp_verify_key":
@@ -390,6 +392,11 @@ class FakeDB:
             return _Data([{"id": 7, "label": "crm", "tier": "external"}] if ok else [])
         if name == "sub_finder_access":
             return _Data({"find": self.find})
+        if name == feed_xmap.RPC:
+            self.xmap_calls.append((args["p_source"], args["p_ids"]))
+            if self.xmap_exc:
+                raise self.xmap_exc
+            return _Data([d for d in self.xmap if d["source_id"] in args["p_ids"]])
         return _Data(None)
 
     def table(self, name):
@@ -417,7 +424,9 @@ def test_both_routes_need_a_key_that_may_find_subs():
 def test_events_are_every_polled_event_with_whether_listings_can_be_sent():
     db = FakeDB(rows=[EVENT_ROW])
     r = _client(db).get(EVENTS, headers=H)
-    assert r.status_code == 200 and r.json() == {"count": 1, "offset": 0, "next_offset": None, "events": [EVENT_ROW]}
+    assert r.status_code == 200 and r.json() == {"count": 1, "offset": 0, "next_offset": None, "events": [
+        {**EVENT_ROW, **dict.fromkeys(pp.MARKET_IDS)}]}                     # no EVO match yet: no pairing to read
+    assert db.xmap_calls == []
     calls = db.queries[0].calls
     assert db.tables == [pp.EVENTS_VIEW] and calls[0] == ("select", ",".join(pp.EVENT_COLUMNS))
     assert [c[1] for c in calls if c[0] == "order"] == ["event_date", "start_local_time", "source", "event_id"]
@@ -440,6 +449,46 @@ def test_events_are_every_polled_event_with_whether_listings_can_be_sent():
         db = FakeDB(rows=[EVENT_ROW])
         _client(db).get(EVENTS, headers=H, params={"mapped": mapped})
         assert [c for c in db.queries[0].calls if c[0] in ("not", "is_")] == expected
+
+
+def test_every_event_carries_its_id_on_each_marketplace():
+    # operator 2026-11-22: "include the cross maps in all event mapping you push out, marketplace id";
+    # 2026-11-24, on the AXS watch: "integrate them into the out api"
+    assert pp.MARKET_IDS == ("ticketmaster_event_id", "seatgeek_event_id", "stubhub_event_id", "vivid_event_id",
+                             "tickpick_event_id", "gotickets_event_id", "axs_event_id", "aq_short_event_id")
+    assert not set(pp.MARKET_IDS) & set(pp.EVENT_COLUMNS)
+    rows = [{"source": "axs", "event_id": "1457748", "name": "LA Kings vs Vegas Golden Knights", "tevo_event_id": None},
+            {"source": "timberwolves", "event_id": "1729", "name": "Timberwolves vs. Nets", "tevo_event_id": 3466081},
+            {"source": "axs", "event_id": "1500001", "name": "Unpaired", "tevo_event_id": 3441460},
+            {"source": "sitickets", "event_id": "2297105", "name": "Not matched yet", "tevo_event_id": None}]
+    xmap = [{"source_id": "1457748", "axs_event_id": "1457748", "tickpick_event_id": 8139585, "seatgeek_event_id": 18376713,
+             "xmap_tevo_event_id": 3441459},
+            {"source_id": "3466081", "stubhub_event_id": 161350087, "aq_short_event_id": "SYS-1"}]
+    db = FakeDB(rows=rows, xmap=xmap)
+    events = _client(db).get(EVENTS, headers=H).json()["events"]
+    # an AXS event is asked by its AXS id, with or without an EVO match; any other by its EVO event
+    assert db.xmap_calls == [("axs", ["1457748", "1500001"]), ("tevo", ["3466081"])]
+    assert [(e["source"], e["event_id"]) for e in events] == [(r["source"], r["event_id"]) for r in rows]   # same order
+    assert all(set(pp.MARKET_IDS) <= set(e) and "xmap_tevo_event_id" not in e for e in events)
+    assert (events[0]["tickpick_event_id"], events[0]["seatgeek_event_id"], events[0]["axs_event_id"]) == (
+        8139585, 18376713, "1457748") and events[0]["stubhub_event_id"] is None
+    assert (events[1]["stubhub_event_id"], events[1]["aq_short_event_id"]) == (161350087, "SYS-1")
+    assert all(events[i][c] is None for i in (2, 3) for c in pp.MARKET_IDS)          # no pairing held: nulls
+    # the AXS watch is the same feed, so it carries them too; the listings calls do not
+    db = FakeDB(rows=rows[:1], xmap=xmap)
+    watched = _client(db).get("/api/v1/subs/axs/watch", headers=H).json()["events"][0]
+    assert watched["tickpick_event_id"] == 8139585 and db.xmap_calls == [("axs", ["1457748"])]
+    for url in (LISTINGS, "/api/v1/subs/axs/watch/listings"):
+        db = FakeDB(rows=[LISTING_ROW], xmap=xmap)
+        assert _client(db).get(url, headers=H).json()["listings"] == [LISTING_ROW] and db.xmap_calls == []
+    # CSV: the ids are the last columns
+    r = _client(FakeDB(rows=rows, xmap=xmap)).get(EVENTS, headers=H, params={"format": "csv"})
+    assert r.text.splitlines()[0] == ",".join(pp.EVENT_COLUMNS + pp.MARKET_IDS)
+    # the pairing read failing twice is a 502, as a failed page read is
+    db = FakeDB(rows=rows, xmap_exc=RuntimeError("slow"))
+    r = _client(db).get(EVENTS, headers=H)
+    assert r.status_code == 502 and r.json() == {"error": "upstream_error", "detail": "RuntimeError"}
+    assert db.xmap_calls == [("axs", ["1457748", "1500001"])] * 2                    # asked once more, then given up
 
 
 def test_listings_can_be_narrowed_to_an_event_a_market_and_a_section():
