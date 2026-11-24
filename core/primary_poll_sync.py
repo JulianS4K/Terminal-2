@@ -2,7 +2,7 @@
 (operator 2026-11-23: "we're gonna push the list of events and their respective listings out, if
 poller fails to run for an event, do not send listing information").
 
-One run, per source (sitickets, timberwolves):
+One run, per source (sitickets, timberwolves, ims):
   1. read the source's list of events. If that fails, `primary_poll_source_failed()` marks every
      upcoming event of the source failed and deletes its listings.
   2. ask `primary_poll_due()` which of the listed events are due: each event has its own cadence,
@@ -21,8 +21,8 @@ The feed (routers/primary_poll_feed.py) sends listings only for an event whose l
 within the feed's age limit (35 minutes after a good read, or until 20 minutes after the event's next slot,
 whichever is later: migs 20261123190030, 20261123194030), so a run that never happens withholds them too. Mig 20261123171030.
 
-This module makes no upstream call itself (RULE 2): the GETs are in sitickets_client.py and
-jump_client.py.
+This module makes no upstream call itself (RULE 2): the GETs are in sitickets_client.py,
+jump_client.py and ims_client.py.
 """
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def poll_source(rpc: Rpc, source: str, list_events: Callable[[], list], read_lis
     return done
 
 
-SOURCES = ("sitickets", "timberwolves")
+SOURCES = ("sitickets", "timberwolves", "ims")
 
 
 def sources_from(text: str | None) -> tuple[str, ...]:
@@ -96,12 +96,16 @@ def sources_from(text: str | None) -> tuple[str, ...]:
     return names
 
 
-def run(rpc: Rpc, sitickets: Any, jump: Any, sources: tuple[str, ...] = SOURCES) -> dict:
-    """One run over the sources asked for; returns what it did, per source. Each source has ONE
-    poller: where the browser worker (core/primary_poll_browser.py) reads the Timberwolves, this
-    worker must be given `sitickets` only, or the two would overwrite each other every cycle."""
+def run(rpc: Rpc, sitickets: Any, jump: Any, sources: tuple[str, ...] | None = None, ims: Any = None) -> dict:
+    """One run over the sources asked for (all the ones it was given a client for, when none is named);
+    returns what it did, per source. Each source has ONE poller: where the browser worker
+    (core/primary_poll_browser.py) reads the Timberwolves, this worker must not be given `timberwolves`,
+    or the two would overwrite each other every cycle. `ims` is the Indy 500's section prices (operator
+    2026-11-24: "build the indy 500 section price poller"): one event, read from two public pages."""
     readers = {
         "sitickets": (sitickets.events, sitickets.listings),
         "timberwolves": (lambda: jump.events("timberwolves"), lambda event: jump.listings("timberwolves", event)),
     }
-    return {source: poll_source(rpc, source, *readers[source]) for source in sources}
+    if ims is not None:
+        readers["ims"] = (ims.events, ims.listings)
+    return {source: poll_source(rpc, source, *readers[source]) for source in sources or tuple(readers)}
