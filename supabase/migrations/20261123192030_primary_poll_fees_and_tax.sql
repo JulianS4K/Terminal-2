@@ -1,4 +1,5 @@
 -- Migration 20261123192030 · level:data-collection · lane:A1 (data plane; routed to this session by the operator) + D0 (the feed's listings view) · writes:primary_poll_listing(+tax,+order_fee,+price_estimated),primary_poll_ingest()(replaced),v_primary_poll_listings_feed(replaced, three columns added at the end) · reads:primary_poll_event,primary_poll_source,primary_poll_config · pre:20261123190030
+-- Already applied to prod · via MCP 2026-11-24 (operator: "retry the migrations now, I'm at the screen"); re-apply is a no-op.
 --
 -- THE BOX-OFFICE FEED: ONE MEANING FOR PRICE, AND FEES AND TAX AS THEIR OWN FIELDS.
 -- Operator 2026-11-23: "check if it returns fees and taxes for both", then "derive it, 20% fee holds, build
