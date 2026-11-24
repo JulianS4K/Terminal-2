@@ -89,7 +89,7 @@
 
  request_id | id | status_code | outcome | response_s | listings | quota_remaining |               error               
 ------------+----+-------------+---------+------------+----------+-----------------+-----------------------------------
-          1 | 21 |         200 | ok      |       41.2 |        8 |           99998 | -
+          1 | 21 |         200 | ok      |       41.2 |        7 |           99998 | -
           2 | 11 |         200 | expired |          - |        - |           99997 | expired: the event is over on AXS
           3 | 14 |           - | -       |          - |        - |               - | -
           4 | 18 |           - | -       |          - |        - |               - | -
@@ -97,7 +97,7 @@
  id | poll_status |            poll_error             | listing_count | offer_id | order_min | order_max | total_available | price_min | price_max | median_price | listed_quantity | every_min | next_in_future 
 ----+-------------+-----------------------------------+---------------+----------+-----------+-----------+-----------------+-----------+-----------+--------------+-----------------+-----------+----------------
  11 | failed      | expired: the event is over on AXS |             0 | -        |         - |         - |               - |         - |         - |            - |               - |        30 | t
- 21 | ok          | -                                 |             7 | 555      |         1 |         8 |              51 |        40 |       366 |       117.50 |              50 |        60 | t
+ 21 | ok          | -                                 |             6 | 555      |         1 |         8 |              49 |        40 |       125 |        91.50 |              48 |        60 | t
 
  market  |    section    | row | seat_low | seat_high |      seats      | qty | allowed | price |  fee  | all_in | tax |    area    | ticket_type | ada | ga | obstructed 
 ---------+---------------+-----+----------+-----------+-----------------+-----+---------+-------+-------+--------+-----+------------+-------------+-----+----+------------
@@ -107,7 +107,6 @@
  resale  | 101           | B   | 7        | 7         | ["7"]           |   1 | [1]     |  95.5 | 24.35 | 119.85 |   0 | Lower Bowl | FLASHSEATS  | f   | f  | t
  primary | 103           | C   | 1        | 2         | ["1", "2"]      |   2 | -       |   110 |   7.5 |  117.5 |   0 | Lower Bowl | STANDARD    | f   | f  | f
  primary | 305           | K   | 12       | 12        | ["12"]          |   1 | -       |    60 |   5.5 |   65.5 |   0 | Upper Bowl | ADA         | t   | f  | f
- resale  | PR04          | 9   | 1        | 2         | ["1", "2"]      |   2 | -       |   366 | 93.33 | 459.33 |   0 | Admissions | FLASHSEATS  | f   | f  | f
  primary | Standing Room | -   | -        | -         | -               |  40 | -       |    40 |     4 |     44 |   0 | -          | GA          | f   | t  | f
 
  platform | endpoint | status_code | quota_remaining | event_id | credits 
@@ -125,11 +124,11 @@
  11       | Lakers vs. Denver               | f                  |             - | poll_failed       |                 30 |        900011
  14       | Big Concert                     | f                  |             - | not_polled        |                  - |        900014
  18       | Disney On Ice presents Jump In! | f                  |             - | not_polled        |                  - |             -
- 21       | Small Hall Show                 | t                  |             7 | -                 |                 60 |             -
+ 21       | Small Hall Show                 | t                  |             6 | -                 |                 60 |             -
 
  listings_in_feed | cheapest 
 ------------------+----------
-                7 |       40
+               10 |       40
 
 --- H. the two events not yet read were fired as soon as the settled ones freed their slots; a request that never answers is lost after stale_after and the poll fails
                                            tick_next                                           
@@ -155,7 +154,7 @@
  11 | failed      | expired: the event is over on AXS  |             0
  14 | failed      | lost: no response from TicketsData |             0
  18 | failed      | HTTP 503 from TicketsData          |             0
- 21 | ok          | -                                  |             7
+ 21 | ok          | -                                  |             6
 
 --- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight
                                           tick_slowed                                          

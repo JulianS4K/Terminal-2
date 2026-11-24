@@ -138,12 +138,17 @@ BEGIN
   END IF;
 
   -- 8. the box offices we read ourselves (GET /primary/events, /primary/listings), where they are
-  --    installed: one check a box office that has ever been read. A worker closes a pull at every wake
-  --    (10 minutes), so the age of the last one says whether the reader is alive; the events say whether
-  --    the site still answers. A box office with nothing on sale is off.
+  --    installed: one check a box office that has ever been read. Whether the reader is alive is the age of
+  --    its last activity: the last pull a worker closed (SI Tickets, the team sites: every 10 minutes) or the
+  --    last read tried of any of its events, whichever is newer (the AXS watch is driven from the database and
+  --    closes a pull once a night, but tries events every minute; mig 20261124204030). The events say whether
+  --    the site still answers: a few failing out of many do not lower the status (more than 5% of a box
+  --    office of 50 events or more; any at a smaller one). A box office with nothing on sale is off.
   IF to_regclass('public.primary_poll_source') IS NOT NULL AND to_regclass('public.v_primary_poll_events_feed') IS NOT NULL THEN
     FOR v_box IN EXECUTE $q$
-      SELECT s.source, s.finished_at,
+      SELECT s.source,
+             greatest(s.finished_at, (SELECT max(t.poll_attempt_at) FROM public.primary_poll_event t
+                                       WHERE t.source = s.source)) AS active_at,
              count(v.event_id) FILTER (WHERE v.listings_withheld IS DISTINCT FROM 'event_started') AS events,
              count(v.event_id) FILTER (WHERE v.listings_available) AS served,
              count(v.event_id) FILTER (WHERE v.listings_withheld IN ('poll_failed', 'poll_stale', 'not_polled')
@@ -156,11 +161,11 @@ BEGIN
        GROUP BY s.source, s.finished_at
        ORDER BY s.source$q$
     LOOP
-      v_age := round(extract(epoch FROM v_now - v_box.finished_at));
+      v_age := round(extract(epoch FROM v_now - v_box.active_at));
       v_st := CASE WHEN v_box.events = 0 THEN 'off'
                    WHEN v_box.served = 0 THEN 'down'
                    WHEN public.sub_finder_health_grade(v_age, 1500, 3600) <> 'ok' THEN public.sub_finder_health_grade(v_age, 1500, 3600)
-                   WHEN v_box.failing > 0 THEN 'degraded'
+                   WHEN v_box.failing > CASE WHEN v_box.events >= 50 THEN floor(v_box.events * 0.05) ELSE 0 END THEN 'degraded'
                    ELSE 'ok' END;
       v_checks := v_checks || jsonb_build_object(
         'name', 'box_office_' || v_box.source,
@@ -168,9 +173,9 @@ BEGIN
         'status', v_st,
         'detail', CASE WHEN v_st = 'off' THEN 'this box office has no event on sale'
                        WHEN v_box.served = 0 THEN 'no event of this box office could be read: no listings are being sent'
-                       WHEN v_st = 'degraded' AND v_box.failing > 0 THEN 'some events could not be read at their last try: their listings are not being sent'
+                       WHEN v_st = 'degraded' AND public.sub_finder_health_grade(v_age, 1500, 3600) = 'ok' THEN 'some events could not be read at their last try: their listings are not being sent'
                        WHEN v_st <> 'ok' THEN 'the box office has not been read lately' END,
-        'last_at', v_box.finished_at, 'age_seconds', v_age, 'ok_within_seconds', 1500, 'down_after_seconds', 3600,
+        'last_at', v_box.active_at, 'age_seconds', v_age, 'ok_within_seconds', 1500, 'down_after_seconds', 3600,
         -- events not yet started; the ones whose listings are being sent; the ones that stopped being
         -- readable; the ones that never were (a series or a package with no listing page)
         'events', v_box.events, 'events_with_listings', v_box.served, 'events_failing', v_box.failing,

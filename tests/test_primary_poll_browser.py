@@ -57,6 +57,11 @@ def test_listings_carry_seats_the_quantities_allowed_and_the_orders_limit():
     assert third["market"] is None and third["seats"] is None and third["qty"] is None and third["price"] is None
     assert third["max_per_order"] is None and third["seat_low"] is None and third["obstructed"] is False
     assert b.parse_listings(INVENTORY)[0]["max_per_order"] == 14            # no order limit known
+    # the limit is a quantity the block really sells: 7 seats sold as 1-5 or all 7 give 5 under a limit
+    # of 6, and a block sold only whole and over the limit gives none
+    odd = {"data": {"getBlocks": {"blocks": [dict(BLOCK, quantities=[1, 2, 3, 4, 5, 7]), dict(BLOCK, quantities=[8])]}}}
+    assert [row["max_per_order"] for row in b.parse_listings(odd, order_max=6)] == [5, None]
+    assert [row["max_per_order"] for row in b.parse_listings(odd)] == [7, 8]
     for bad in (None, {}, {"data": None}, {"errors": [{"message": "no"}]}, {"data": {"getBlocks": {"blocks": None}}}):
         with pytest.raises(b.BrowserPollError):
             b.parse_listings(bad)
