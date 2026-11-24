@@ -1,7 +1,7 @@
 // Supabase Edge Function: collect-listings (v12)
 //
 // v12 (2026-11-17): after each EVO response, hand the ids of EVERY ticket group in it to
-//      listing_overlap_evo_seen() (mig 20261117030000). listings_snapshots only gets the groups
+//      listing_overlap_evo_seen() (mig 20261124120000). listings_snapshots only gets the groups
 //      that changed, so this is how the EVO / GoTickets overlap matcher knows which groups are
 //      still listed. Best effort: a failure is logged and never fails the poll. Nothing else changes.
 //

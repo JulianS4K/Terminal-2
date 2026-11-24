@@ -1,7 +1,7 @@
--- Migration 20261117030000 · level:data-collection · lane:A1 (data plane — cross-source listings) · writes:listing_overlap_config(new),listing_overlap_label(new),listing_overlap_event(new),listing_overlap_evo_live(new),listing_overlap_evo_poll(new),v_listing_overlap_event(new),listing_overlap_*()(new),cron:listing_overlap_tick_30s(new) · reads:listings_snapshots,gotickets_listings_snapshots,gotickets_event,event_metrics,evo_listings_poll_state,gt_listings_poll_state,events,collector_cadence
+-- Migration 20261124120000 · level:data-collection · lane:A1 (data plane — cross-source listings) · writes:listing_overlap_config(new),listing_overlap_label(new),listing_overlap_event(new),listing_overlap_evo_live(new),listing_overlap_evo_poll(new),v_listing_overlap_event(new),listing_overlap_*()(new),cron:listing_overlap_tick_30s(new) · reads:listings_snapshots,gotickets_listings_snapshots,gotickets_event,event_metrics,evo_listings_poll_state,gt_listings_poll_state,events,collector_cadence
 --
 -- ============================================================================
--- Migration 20261117030000 — label every EVO and GoTickets listing as on both
+-- Migration 20261124120000 — label every EVO and GoTickets listing as on both
 --   markets or on one only, as each listings poll lands
 --
 -- Lane:     A1 (data plane — cross-source listings)
@@ -14,6 +14,9 @@
 --           (seat_section_norm). The exact EVO book needs the collect-listings edge
 --           function that calls listing_overlap_evo_seen(); until that is deployed the
 --           matcher runs on the change-only firehose and says so (evo_exact = false).
+--
+-- Prefix note: authored 2026-11-17 as 20261117030000; renumbered 20261124120000 before it was
+-- applied anywhere, because 20261117030000_mapping_program_batch2 took that slot on main.
 --
 -- Operator 2026-11-17: "look at the listings we get from Evo and gotix, and figure out
 -- what's in both and what's exists in only one and label them" … "Expand coverage to
@@ -124,7 +127,7 @@ CREATE TABLE IF NOT EXISTS public.listing_overlap_config (
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE public.listing_overlap_config IS
-  'One row. enabled = the kill switch for listing_overlap_tick(); price_center / price_band = the GoTickets all-in to EVO retail price ratio a pair must fall in (log scale); tick_* = work per 30-second tick (mig 20261117030000).';
+  'One row. enabled = the kill switch for listing_overlap_tick(); price_center / price_band = the GoTickets all-in to EVO retail price ratio a pair must fall in (log scale); tick_* = work per 30-second tick (mig 20261124120000).';
 INSERT INTO public.listing_overlap_config (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS public.listing_overlap_label (
@@ -141,7 +144,7 @@ CREATE TABLE IF NOT EXISTS public.listing_overlap_label (
   PRIMARY KEY (tevo_event_id, source, listing_id)
 );
 COMMENT ON TABLE public.listing_overlap_label IS
-  'Current label of every listing in the EVO and GoTickets books of a polled event: both (paired with counterpart_id on the other market), evo_only / gt_only, or unclear (same section, row and quantity on the other market at a price outside the band). source evo: listing_id = tevo_ticket_group_id; source gt: listing_id = gt_listing_id. price_ratio = GoTickets all-in / EVO retail. Rewritten only when a label changes; a listing that leaves its book loses its row. Written by listing_overlap_match_event() only (mig 20261117030000).';
+  'Current label of every listing in the EVO and GoTickets books of a polled event: both (paired with counterpart_id on the other market), evo_only / gt_only, or unclear (same section, row and quantity on the other market at a price outside the band). source evo: listing_id = tevo_ticket_group_id; source gt: listing_id = gt_listing_id. price_ratio = GoTickets all-in / EVO retail. Rewritten only when a label changes; a listing that leaves its book loses its row. Written by listing_overlap_match_event() only (mig 20261124120000).';
 
 CREATE TABLE IF NOT EXISTS public.listing_overlap_event (
   tevo_event_id  bigint      PRIMARY KEY,
@@ -163,7 +166,7 @@ CREATE TABLE IF NOT EXISTS public.listing_overlap_event (
 );
 CREATE INDEX IF NOT EXISTS listing_overlap_event_matched_idx ON public.listing_overlap_event (matched_at);
 COMMENT ON TABLE public.listing_overlap_event IS
-  'One row per event the overlap matcher has seen: the EVO and GoTickets captures it last matched (evo_cap, gt_cap), the counts, and status — ok, or stale_evo / stale_gt when one book was too old to match against (labels removed). evo_exact = the EVO book came from the live id set of that very capture; false = rebuilt from the change-only firehose, where a group delisted in the last hour still counts (mig 20261117030000).';
+  'One row per event the overlap matcher has seen: the EVO and GoTickets captures it last matched (evo_cap, gt_cap), the counts, and status — ok, or stale_evo / stale_gt when one book was too old to match against (labels removed). evo_exact = the EVO book came from the live id set of that very capture; false = rebuilt from the change-only firehose, where a group delisted in the last hour still counts (mig 20261124120000).';
 
 CREATE TABLE IF NOT EXISTS public.listing_overlap_evo_live (
   event_id              bigint      NOT NULL,
@@ -172,7 +175,7 @@ CREATE TABLE IF NOT EXISTS public.listing_overlap_evo_live (
   PRIMARY KEY (event_id, tevo_ticket_group_id)
 );
 COMMENT ON TABLE public.listing_overlap_evo_live IS
-  'The ticket groups in the latest EVO response of an event, kept by listing_overlap_evo_seen(): a row is inserted when a group first appears and deleted when a response no longer carries it, so writes follow arrivals and departures only. The capture it describes is in listing_overlap_evo_poll (mig 20261117030000).';
+  'The ticket groups in the latest EVO response of an event, kept by listing_overlap_evo_seen(): a row is inserted when a group first appears and deleted when a response no longer carries it, so writes follow arrivals and departures only. The capture it describes is in listing_overlap_evo_poll (mig 20261124120000).';
 
 CREATE TABLE IF NOT EXISTS public.listing_overlap_evo_poll (
   event_id     bigint      PRIMARY KEY,
@@ -181,7 +184,7 @@ CREATE TABLE IF NOT EXISTS public.listing_overlap_evo_poll (
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE public.listing_overlap_evo_poll IS
-  'The EVO capture listing_overlap_evo_live describes, per event. The matcher treats the live set as exact only when captured_at equals the capture it is matching (mig 20261117030000).';
+  'The EVO capture listing_overlap_evo_live describes, per event. The matcher treats the live set as exact only when captured_at equals the capture it is matching (mig 20261124120000).';
 
 ALTER TABLE public.listing_overlap_config   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.listing_overlap_label    ENABLE ROW LEVEL SECURITY;
@@ -705,7 +708,7 @@ SELECT st.tevo_event_id, e.name, e.venue_name, e.occurs_at_local, st.status, st.
   FROM public.listing_overlap_event st
   LEFT JOIN public.events e ON e.id = st.tevo_event_id;
 COMMENT ON VIEW public.v_listing_overlap_event IS
-  'One row per event the EVO / GoTickets overlap matcher has seen: listings per market, pairs on both, one-market and unclear counts, share of each book that is on the other market, the captures matched and the status (mig 20261117030000).';
+  'One row per event the EVO / GoTickets overlap matcher has seen: listings per market, pairs on both, one-market and unclear counts, share of each book that is on the other market, the captures matched and the status (mig 20261124120000).';
 REVOKE ALL ON public.v_listing_overlap_event FROM anon, authenticated;
 
 -- ---------------------------------------------------------------------------
