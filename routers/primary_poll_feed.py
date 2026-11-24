@@ -10,7 +10,7 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc
+        ?source=sitickets|ims|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc
                                  (a team's own ticket site has no events until it lists single games)
         &date_from=2026-11-23&date_to=2027-05-01
         &format=json|csv         (default json)
@@ -21,6 +21,11 @@ Both take:
 /primary/listings also takes  &event_id=2297105  &tevo_event_id=3584741  &market=primary|resale  &section=126
 
 Every row carries `tevo_event_id`, the EVO event our mapper matched (null until it has).
+
+`ims` is the Indy 500 at Indianapolis Motor Speedway (operator 2026-11-24). Its rows are SECTION PRICES from
+the speedway's public price list, not seat blocks: one row a seating area on sale (two, lowest and highest,
+where the list gives a range) plus general admission, with no quantity, row or seats, and the listed price
+only (fee, tax and all-in are empty). A sold-out area has no row. ims_client.py.
 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
@@ -46,7 +51,8 @@ from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-SOURCES = ("sitickets", *jump_client.SITES)       # SI Tickets, then every team site on the Jump platform
+# SI Tickets, the Indy 500 section prices, then every team site on the Jump platform
+SOURCES = ("sitickets", "ims", *jump_client.SITES)
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",
