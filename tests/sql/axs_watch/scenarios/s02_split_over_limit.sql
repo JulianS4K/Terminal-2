@@ -26,6 +26,9 @@ SELECT c.label, string_agg(x.quantity || coalesce(' [' || x.seat_low || '-' || x
                (7, '1-4 and 6, limit 4',    '["1","2","3","4","6"]'::jsonb, 5, 4),
                (8, '1-5 and 9-10, limit 4', '["1","2","3","4","5","9","10"]'::jsonb, 7, 4),
                (9, 'unordered 9,7,8,1,2, limit 2', '["9","7","8","1","2"]'::jsonb, 5, 2),
+               (13, 'all odd 1-17 (one side of a theatre), limit 4', '["1","3","5","7","9","11","13","15","17"]'::jsonb, 9, 4),
+               (14, 'all even 2-8 and 20-22, limit 2', '["2","4","6","8","20","22"]'::jsonb, 6, 2),
+               (15, 'odd and even with a hole: 1,2,3,5,6, limit 2', '["1","2","3","5","6"]'::jsonb, 5, 2),
                (10, 'general admission 11, limit 10', NULL::jsonb, 11, 10),
                (11, 'seats not numbers (A-E), limit 4', '["A","B","C","D","E"]'::jsonb, 5, 4),
                (12, 'fewer seat numbers than tickets, limit 2', '["1","2"]'::jsonb, 5, 2)) c(n, label, seats, qty, lim)

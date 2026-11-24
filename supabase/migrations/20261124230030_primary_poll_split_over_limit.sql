@@ -17,7 +17,9 @@
 -- THE SPLIT (primary_poll_pieces), for a listing over its limit:
 --   seats that are numbered are first cut where the numbers break, so every listing sent is seats that sit
 --   together (rule 2 of the test: every SI Tickets block over its limit, and a quarter of the AXS ones, were a
---   row's seats with gaps; SI's own limit turned out to be the longest run of adjoining seats in the row), then
+--   row's seats with gaps; SI's own limit turned out to be the longest run of adjoining seats in the row). Where
+--   a block's seats are all odd or all even, neighbours are 2 apart: the Greek Theatre numbers one side odd and
+--   the other even, and 454 of its blocks would otherwise have gone out as single seats. Then
 --   each run longer than the limit is cut into sets of the limit, the last set holding what is left: 7 seats
 --   with a limit of 4 are a listing of 4 and a listing of 3;
 --   no single seat is left behind: a box office will not sell seats that leave one on its own, so where what is
@@ -48,7 +50,8 @@
 --
 -- Tested on the live listings before it was written (2026-11-24, read-only, before the no-single rule): 13,068
 -- seated listings over their limit became 37,319, every ticket accounted for (SI Tickets 527 -> 1,246;
--- Timberwolves 1,667 -> 4,256; AXS 10,874 -> 31,817).
+-- Timberwolves 1,667 -> 4,256; AXS 10,874 -> 31,817). The finished rules were run over the live listings again
+-- before the apply, which is where the odd-and-even numbering was found.
 --
 -- rollback: UPDATE primary_poll_config SET split_over_limit = false (the feed is as before, plus three null
 --           columns). To remove: re-apply primary_poll_ingest() from 20261124203030 and
@@ -112,9 +115,12 @@ AS $function$
       FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p_seats) = 'array' THEN p_seats ELSE '[]'::jsonb END) t(seat)),
   ok AS (           -- usable: one a ticket, every one a number, none twice
     SELECT (count(*) = p_quantity AND count(s.n) = p_quantity AND count(DISTINCT s.n) = p_quantity) AS seated FROM s),
+  by AS (           -- neighbours are 2 apart where the block's seats are all odd or all even (a theatre that
+                    -- numbers one side odd and the other even), else 1 apart
+    SELECT CASE WHEN count(DISTINCT s.n % 2) = 1 AND count(*) > 1 THEN 2 ELSE 1 END AS step FROM s, ok WHERE ok.seated),
   run AS (          -- seats that sit together: the numbers without a break
     SELECT min(x.n) AS lo, count(*)::integer AS len
-      FROM (SELECT s.n, s.n - row_number() OVER (ORDER BY s.n) AS g FROM s, ok WHERE ok.seated) x
+      FROM (SELECT s.n, s.n / by.step - row_number() OVER (ORDER BY s.n) AS g FROM s, ok, by WHERE ok.seated) x
      GROUP BY x.g),
   cut AS (          -- how many sets a run makes: one fewer where the last would be a single seat
     SELECT run.lo, run.len,
@@ -122,17 +128,18 @@ AS $function$
              - CASE WHEN p_limit > 1 AND run.len > p_limit AND run.len % p_limit = 1 THEN 1 ELSE 0 END AS sets
       FROM run),
   piece AS (        -- every set is the limit; the last holds what is left, which may be one over it
-    SELECT (cut.lo + (k - 1) * p_limit)::bigint AS ord,
-           CASE WHEN k = cut.sets THEN cut.len - (k - 1) * p_limit ELSE p_limit END AS size, true AS seated
-      FROM cut, generate_series(1, cut.sets) k
+    SELECT (cut.lo + (k - 1) * p_limit * by.step)::bigint AS ord,
+           CASE WHEN k = cut.sets THEN cut.len - (k - 1) * p_limit ELSE p_limit END AS size, true AS seated, by.step
+      FROM cut, by, generate_series(1, cut.sets) k
     UNION ALL       -- no usable seat numbers: by count alone
-    SELECT k::bigint, least(p_limit, p_quantity - (k - 1) * p_limit), false
+    SELECT k::bigint, least(p_limit, p_quantity - (k - 1) * p_limit), false, 1
       FROM ok, generate_series(1, (p_quantity + p_limit - 1) / p_limit) k
      WHERE NOT ok.seated)
   SELECT row_number() OVER (ORDER BY piece.ord)::integer, (count(*) OVER ())::integer, piece.size,
-         CASE WHEN piece.seated THEN (SELECT jsonb_agg(v::text ORDER BY v) FROM generate_series(piece.ord, piece.ord + piece.size - 1) v) END,
+         CASE WHEN piece.seated THEN (SELECT jsonb_agg(v::text ORDER BY v)
+                                        FROM generate_series(piece.ord, piece.ord + (piece.size - 1) * piece.step, piece.step) v) END,
          CASE WHEN piece.seated THEN piece.ord::text END,
-         CASE WHEN piece.seated THEN (piece.ord + piece.size - 1)::text END
+         CASE WHEN piece.seated THEN (piece.ord + (piece.size - 1) * piece.step)::text END
     FROM piece
    WHERE p_limit > 0
 $function$;

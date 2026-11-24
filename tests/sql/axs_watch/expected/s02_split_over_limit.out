@@ -9,20 +9,23 @@
  nothing known                           |           -
 
 --- B. the pieces: cut at the gaps, then by the limit; a seat that would be left alone stays with the set before it
-                  label                   |           sent_as           
-------------------------------------------+-----------------------------
- 5 together, limit 4                      | 5 [1-5]
- 7 together, limit 4                      | 4 [1-4] + 3 [5-7]
- 8 together, limit 4                      | 4 [1-4] + 4 [5-8]
- 9 together, limit 4                      | 4 [1-4] + 5 [5-9]
- 3 together, limit 2                      | 3 [1-3]
- 3 together, limit 1                      | 1 [1-1] + 1 [2-2] + 1 [3-3]
- 1-4 and 6, limit 4                       | 4 [1-4] + 1 [6-6]
- 1-5 and 9-10, limit 4                    | 5 [1-5] + 2 [9-10]
- unordered 9,7,8,1,2, limit 2             | 2 [1-2] + 3 [7-9]
- general admission 11, limit 10           | 10 + 1
- seats not numbers (A-E), limit 4         | 4 + 1
- fewer seat numbers than tickets, limit 2 | 2 + 2 + 1
+                     label                     |            sent_as            
+-----------------------------------------------+-------------------------------
+ 5 together, limit 4                           | 5 [1-5]
+ 7 together, limit 4                           | 4 [1-4] + 3 [5-7]
+ 8 together, limit 4                           | 4 [1-4] + 4 [5-8]
+ 9 together, limit 4                           | 4 [1-4] + 5 [5-9]
+ 3 together, limit 2                           | 3 [1-3]
+ 3 together, limit 1                           | 1 [1-1] + 1 [2-2] + 1 [3-3]
+ 1-4 and 6, limit 4                            | 4 [1-4] + 1 [6-6]
+ 1-5 and 9-10, limit 4                         | 5 [1-5] + 2 [9-10]
+ unordered 9,7,8,1,2, limit 2                  | 2 [1-2] + 3 [7-9]
+ general admission 11, limit 10                | 10 + 1
+ seats not numbers (A-E), limit 4              | 4 + 1
+ fewer seat numbers than tickets, limit 2      | 2 + 2 + 1
+ all odd 1-17 (one side of a theatre), limit 4 | 4 [1-7] + 5 [9-17]
+ all even 2-8 and 20-22, limit 2               | 2 [2-4] + 2 [6-8] + 2 [20-22]
+ odd and even with a hole: 1,2,3,5,6, limit 2  | 3 [1-3] + 2 [5-6]
 
  pieces | tickets | smallest | largest 
 --------+---------+----------+---------
@@ -106,8 +109,8 @@
  thirteen:2 | 7        | 13        |        7 |             6 | thirteen
 
 --- G. service only
-psql:s02_split_over_limit.sql:85: ERROR:  permission denied for function primary_poll_split_event
-psql:s02_split_over_limit.sql:86: ERROR:  permission denied for table primary_poll_listing_piece
+psql:s02_split_over_limit.sql:88: ERROR:  permission denied for function primary_poll_split_event
+psql:s02_split_over_limit.sql:89: ERROR:  permission denied for table primary_poll_listing_piece
  service_can_split | service_can_read | anon_can_read 
 -------------------+------------------+---------------
  t                 | t                | f
