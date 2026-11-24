@@ -11,7 +11,7 @@ DELETE FROM public.axs_watch_venue;
 DELETE FROM public.axs_watch_audit;
 INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, enabled) VALUES
   (1, 'Big Arena', 3, true), (2, 'Small Hall', 1, true), (3, 'Closed Venue', 5, false);
-UPDATE public.axs_watch_config SET max_in_flight = 2, reserve_credits = 0, target_events = 10, watch_from = current_date + 2;   -- the list starts two days out
+UPDATE public.axs_watch_config SET max_in_flight = 2, fires_per_tick = 2, reserve_credits = 0, target_events = 10, watch_from = current_date + 2;   -- the list starts two days out; two fires a tick so the slots fill in one tick
 
 -- the export: what AXS lists at the two venues
 INSERT INTO public.axs_export_event (axs_event_id, type, ticketer, axs_ticketed, event_title, major_category, venue_id, venue_name, venue_city, venue_state,
@@ -133,6 +133,15 @@ UPDATE public.axs_watch_config SET hot_overrun_pct = 0;
 DELETE FROM public.axs_watch_poll WHERE checked_at IS NULL;
 SELECT (public.axs_watch_tick()) - 'pool_remaining' AS tick_capped_no_overrun;
 UPDATE public.axs_watch_config SET daily_cap_override = NULL;
+
+\echo '--- J2. one fire a tick (the default): with two slots free only one request goes out, the next tick sends the second'
+UPDATE public.axs_watch_config SET fires_per_tick = 1, daily_cap_override = NULL, upstream_errors_max = 99;
+DELETE FROM public.axs_watch_poll WHERE checked_at IS NULL;
+UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 minute' WHERE source = 'axs';
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_one;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_two;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_full_again;
+UPDATE public.axs_watch_config SET fires_per_tick = 2;
 
 \echo '--- K. paused: the tick still settles but fires nothing'
 UPDATE public.axs_watch_config SET enabled = false;

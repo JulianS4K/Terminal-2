@@ -182,6 +182,19 @@
 ---------------------------------------------------------------------------------------------------------------
  {"lost": 0, "fired": 0, "settled": 0, "daily_cap": 5, "in_flight": 0, "fired_today": 5, "upstream_errors": 3}
 
+--- J2. one fire a tick (the default): with two slots free only one request goes out, the next tick sends the second
+                                  tick_one                                   
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "upstream_errors": 3}
+
+                                  tick_two                                   
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "in_flight": 2, "upstream_errors": 3}
+
+                               tick_full_again                               
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "settled": 0, "in_flight": 2, "upstream_errors": 3}
+
 --- K. paused: the tick still settles but fires nothing
                       tick_paused                      
 -------------------------------------------------------
@@ -209,7 +222,7 @@
        jobname        |  schedule  |                                         command                                          
 ----------------------+------------+------------------------------------------------------------------------------------------
  axs_watch_fill_daily | 20 3 * * * | BEGIN; SET LOCAL statement_timeout = '120s'; SELECT public.axs_watch_fill(true); COMMIT;
- axs_watch_tick_1m    | * * * * *  | BEGIN; SET LOCAL statement_timeout = '50s'; SELECT public.axs_watch_tick(); COMMIT;
+ axs_watch_tick_1m    | 15 seconds | BEGIN; SET LOCAL statement_timeout = '12s'; SELECT public.axs_watch_tick(); COMMIT;
 
 --- N. privileges: service_role only
       proname      | anon | service 
