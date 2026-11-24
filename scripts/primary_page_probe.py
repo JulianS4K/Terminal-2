@@ -16,6 +16,13 @@ receives it prints the host, the path, the status, the type and the size, and fo
 names of its top-level fields: enough to tell where a listing would come from, never the content.
 
 One JSON line a URL on stdout (the service's log).
+
+RESULT, 2026-11-24 01:57 UTC, one run from Render (Oregon), the worker's image: mlb.tickets.com refused
+all three URLs, its robots.txt included, with net::ERR_HTTP2_PROTOCOL_ERROR: the connection is reset
+before any answer, the same as from a session's network. That is a refusal at the site's edge, not a
+page we could read around, so no reader is built for it and the look is not repeated with other
+settings. MLB's own inventory needs another route: the vendor feed for the Ticketmaster clubs, a
+person's own browser (the extension collectors), or an agreement with the seller.
 """
 from __future__ import annotations
 
