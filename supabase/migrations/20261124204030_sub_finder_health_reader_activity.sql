@@ -1,4 +1,5 @@
 -- Migration 20261124204030 · level:secondary-sales · lane:D0 · writes:sub_finder_health()(replaced) · reads:primary_poll_source,primary_poll_event,v_primary_poll_events_feed (where they exist) · pre:20261124043030,20261124190000
+-- Already applied to prod · via MCP 2026-11-24 (operator: "apply"); re-apply is a no-op.
 --
 -- THE HEALTH CHECK JUDGES A BOX OFFICE BY ITS READER'S LAST ACTIVITY, NOT ONLY BY ITS LAST CLOSED PULL.
 -- Found 2026-11-24 20:11 UTC, 27 minutes after the AXS watch started (mig 20261124190000): GET /health read

@@ -1,4 +1,5 @@
 -- Migration 20261124203030 · level:data-collection · lane:A1 · writes:primary_poll_listings_snapshots(new),primary_poll_event_metrics(new),primary_poll_section_metrics(new),primary_poll_event_daily(new),primary_poll_config(+keep_history,+history_skip_listings),primary_poll_keep_history()(new),primary_poll_ingest()(replaced),retention_policy(+3 rows) · reads:primary_poll_listing,primary_poll_event · pre:20261123194030,20260705153000
+-- Already applied to prod · via MCP 2026-11-24 (operator: "apply"); re-apply is a no-op.
 --
 -- THE BOX-OFFICE POLL KEEPS ITS HISTORY, ON THE SAME LADDER AS EVO AND GOTICKETS.
 -- Operator 2026-11-24: "Look at the retention systems of both Evo and gotickets and copy".
