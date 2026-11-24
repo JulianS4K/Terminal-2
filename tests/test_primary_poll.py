@@ -86,13 +86,27 @@ def test_sitickets_listings_carry_seats_quantities_limits_and_prices():
                      "tax": 5.44, "all_in": 90.31, "order_fee": 0.3, "price_includes_tax": False,
                      "price_estimated": False,
                      "ticket_type": "Sideline A / Upper Center Mid-Single-MP", "delivery": "E-Ticket",
-                     "ada": False, "obstructed": False, "aisle": None, "ga": None}
+                     "ada": False, "obstructed": False, "aisle": None, "ga": False}
     assert second["id"] == "9" and second["seats"] is None and second["max_per_order"] is None
     assert second["section"] is None and second["all_in"] is None
     # price + fee + tax is the all-in price; the fee is the one in the total, not the listing's own 2.68
     assert round(first["price"] + first["fee"] + first["tax"], 2) == first["all_in"]
     # a ticket type the page gives no all-in breakdown for: the listing's own fee, and no tax or total
     assert (second["fee"], second["tax"], second["order_fee"], second["price"]) == (None, None, None, 40.1)
+
+
+def test_a_sitickets_general_admission_block_is_flagged_and_its_order_limit_is_the_largest_quantity_sold():
+    # HSBC SVNS, 2026-11-24: one block of 13,014 with "GA" for a row and no seats. The page flags it (`iga`),
+    # lets a buyer take 1 to 10 and still gives `tmc` 1, which we were sending as the most an order may take
+    ga = {"ti": "bm7vvi_GA_1787851599655_81.5_std_full", "tus": "General Admission", "tur": "GA", "tls": None,
+          "ths": None, "tsi": [], "tq": 13014, "tsp": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "tmc": 1, "tp": 81.5,
+          "iga": True, "tf": "E-Ticket", "tps": [{"n": "General Admission"}]}
+    no_choice = {"ti": "x", "tq": 3, "tsp": [], "tmc": 3, "tp": 10}      # no quantities listed: the page's own limit
+    block, other = si.parse_listings({"ticketData": {"ticketingGroups": [ga, no_choice]}})
+    assert block["ga"] is True and block["max_per_order"] == 10 and block["qty"] == 13014
+    assert (block["section"], block["row"], block["seat_low"], block["seat_high"], block["seats"]) == (
+        "General Admission", "GA", None, None, None)
+    assert other["ga"] is False and other["max_per_order"] == 3
     with_fee = si.parse_listings({"ticketData": {"ticketingGroups": [{"ti": 1, "tp": 10, "tpf": 0.5}]}})[0]
     assert with_fee["fee"] == 0.5 and with_fee["all_in"] is None
     for props in ({"ticketGroupsError": "boom"}, {"ticketData": []}, {"ticketData": {"ticketingGroups": None}}, {}):
