@@ -13,11 +13,13 @@
 --
 --   axs_watch_venue   the venues watched and how many of their events each may hold (the quota). Seeded with the
 --                     ten venues of the operator's list and today's split (55 Crypto.com Arena, 40 Toyota Center,
---                     35 T-Mobile Arena, 25 Red Rocks, 14 RodeoHouston, 10 PeoplesBank Arena, 7 MGM Grand Garden,
---                     6 Target Center, 6 Greek Theatre, 2 Soldier Field = 200).
+--                     35 T-Mobile Arena, 28 Red Rocks, 14 RodeoHouston, 10 PeoplesBank Arena, 7 MGM Grand Garden,
+--                     6 Target Center, 6 Greek Theatre, 2 Soldier Field; 200 eligible from 2026-12-01: T-Mobile has 34 and
+--                     MGM 5, so Red Rocks takes the 3).
 --   axs_watch_fill()  nightly (and on apply): retires watched events that have passed, left AXS or stopped being
 --                     AXS-sold, then refills each venue to its quota from the AXS export (axs_export_event), soonest
---                     first: live, upcoming, AXS-sold (`axs_ticketed`: AXS itself or an AXS-powered team shop such as
+--                     first from axs_watch_config.watch_from (2026-12-01; operator 2026-11-24: "remake the list and start with
+--                     events 12/1 and beyond"): live, upcoming, AXS-sold (`axs_ticketed`: AXS itself or an AXS-powered team shop such as
 --                     the Rockets' `nba` ticketer), with a page URL, and passing the rules: never a parking, suite,
 --                     package, pass, season, membership or deposit entry, never the Timberwolves or Lynx (the browser
 --                     worker reads those), and a sports event only when it names a major-league team
@@ -65,6 +67,7 @@ CREATE TABLE IF NOT EXISTS public.axs_watch_config (
   id                   boolean PRIMARY KEY DEFAULT true CHECK (id),       -- one row
   enabled              boolean NOT NULL DEFAULT true,
   target_events        integer NOT NULL DEFAULT 200 CHECK (target_events >= 0),       -- the list's size; venue quotas fill it
+  watch_from           date NOT NULL DEFAULT '2026-12-01',                             -- no event before this local date (operator 2026-11-24: "start with events 12/1 and beyond")
   monthly_credits      integer NOT NULL DEFAULT 250000 CHECK (monthly_credits > 0),   -- the TicketsData pool: the ceiling
   reserve_credits      integer NOT NULL DEFAULT 5000 CHECK (reserve_credits >= 0),    -- kept for the export sync and manual reads
   cycle_reset_day      smallint NOT NULL DEFAULT 18 CHECK (cycle_reset_day BETWEEN 1 AND 28),   -- the pool refilled on 2026-11-18
@@ -96,7 +99,7 @@ INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, note) VALUE
   (101242, 'Crypto.com Arena',              55, 'operator list 2026-11-24: Lakers, Kings, concerts, family shows'),
   (101329, 'Toyota Center',                 40, 'operator list 2026-11-24: Rockets (AXS-powered nba shop) + concerts'),
   (101949, 'T-Mobile Arena',                35, 'operator list 2026-11-24: Golden Knights + concerts'),
-  (101164, 'Red Rocks Amphitheatre',        25, 'operator list 2026-11-24: concerts'),
+  (101164, 'Red Rocks Amphitheatre',        28, 'operator list 2026-11-24: concerts; 25 + the 3 T-Mobile Arena and MGM Grand Garden cannot fill from 2026-12-01'),
   (126512, 'RODEOHOUSTON - Reliant Stadium', 14, 'operator list 2026-11-24: the 2027 rodeo concerts'),
   (101620, 'PeoplesBank Arena',             10, 'operator list 2026-11-24: concerts + family shows (no AHL)'),
   (101076, 'MGM Grand Garden Arena',         7, 'operator list 2026-11-24: concerts'),
@@ -205,7 +208,8 @@ BEGIN
   END IF;
 
   -- 2. refill each venue to its quota, soonest first, within the list's size
-  FOR v IN SELECT * FROM public.axs_watch_venue WHERE enabled ORDER BY quota DESC, axs_venue_id LOOP
+  -- smallest quota first: when the list's size caps the total, the biggest venue gives, not the operator's two Soldier Field picks
+  FOR v IN SELECT * FROM public.axs_watch_venue WHERE enabled ORDER BY quota, axs_venue_id LOOP
     SELECT count(*) INTO v_have
       FROM public.primary_poll_event t JOIN public.axs_export_event e ON e.axs_event_id::text = t.source_event_id
      WHERE t.source = 'axs' AND e.venue_id = v.axs_venue_id
@@ -223,6 +227,7 @@ BEGIN
      WHERE e.venue_id = v.axs_venue_id
        AND e.gone_at IS NULL AND e.removed_utc IS NULL AND coalesce(e.axs_ticketed, false)
        AND e.event_date_utc > now() AND e.event_url IS NOT NULL
+       AND e.event_date_local ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(e.event_date_local, 10)::date >= v_cfg.watch_from
        AND public.axs_watch_rule_ok(e.major_category, e.event_title)
        AND NOT EXISTS (SELECT 1 FROM public.primary_poll_event t WHERE t.source = 'axs' AND t.source_event_id = e.axs_event_id::text
                           AND NOT EXISTS (SELECT 1 FROM _aw_retire r WHERE r.source_event_id = t.source_event_id))

@@ -11,7 +11,7 @@ DELETE FROM public.axs_watch_venue;
 DELETE FROM public.axs_watch_audit;
 INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, enabled) VALUES
   (1, 'Big Arena', 3, true), (2, 'Small Hall', 1, true), (3, 'Closed Venue', 5, false);
-UPDATE public.axs_watch_config SET max_in_flight = 2, reserve_credits = 0, target_events = 10;
+UPDATE public.axs_watch_config SET max_in_flight = 2, reserve_credits = 0, target_events = 10, watch_from = current_date + 2;   -- the list starts two days out
 
 -- the export: what AXS lists at the two venues
 INSERT INTO public.axs_export_event (axs_event_id, type, ticketer, axs_ticketed, event_title, major_category, venue_id, venue_name, venue_city, venue_state,
@@ -28,6 +28,7 @@ INSERT INTO public.axs_export_event (axs_event_id, type, ticketer, axs_ticketed,
   (20, 'axs_primary',    'axs',  true,  'Premium Parking - Lakers',     'Sports',       1, 'Big Arena', 'Los Angeles', 'CA', to_char(now() + interval '3 days', 'YYYY-MM-DD') || 'T17:00:00', now() + interval '3 days',  'America/Los_Angeles', 'https://www.axs.com/events/20/parking-tickets', NULL, NULL),
   (21, 'axs_primary',    'axs',  true,  'Small Hall Show',              'Music',        2, 'Small Hall', 'Denver', 'CO', to_char(now() + interval '2 days', 'YYYY-MM-DD') || 'T19:00:00', now() + interval '2 days',  'America/Denver', 'https://www.axs.com/events/21/show-tickets', NULL, NULL),
   (22, 'axs_primary',    'axs',  true,  'Second Small Hall Show',       'Music',        2, 'Small Hall', 'Denver', 'CO', to_char(now() + interval '12 days', 'YYYY-MM-DD') || 'T19:00:00', now() + interval '12 days', 'America/Denver', 'https://www.axs.com/events/22/show2-tickets', NULL, NULL),
+  (23, 'axs_primary',    'axs',  true,  'Tomorrow Small Hall Show',     'Music',        2, 'Small Hall', 'Denver', 'CO', to_char(now() + interval '1 day', 'YYYY-MM-DD') || 'T19:00:00', now() + interval '1 day',  'America/Denver', 'https://www.axs.com/events/23/show3-tickets', NULL, NULL),
   (31, 'axs_primary',    'axs',  true,  'Closed Venue Show',            'Music',        3, 'Closed Venue', 'Austin', 'TX', to_char(now() + interval '2 days', 'YYYY-MM-DD') || 'T19:00:00', now() + interval '2 days',  'America/Chicago', 'https://www.axs.com/events/31/closed-tickets', NULL, NULL),
   (41, 'axs_primary',    'axs',  true,  'Yesterday Concert',            'Music',        1, 'Big Arena', 'Los Angeles', 'CA', to_char(now() - interval '1 day', 'YYYY-MM-DD') || 'T20:00:00', now() - interval '1 day',  'America/Los_Angeles', 'https://www.axs.com/events/41/yesterday-tickets', NULL, NULL);
 -- two events already watched: one has passed, one the export no longer knows
@@ -41,7 +42,7 @@ SELECT t AS title, c AS category, public.axs_watch_rule_ok(c, t) AS ok
                ('Minnesota Timberwolves vs. Utah', 'Sports'), ('Big Concert', 'Music'), ('Lynx vs. Aces', 'Sports'), ('VIP Pass - Festival', 'Music'),
                ('Passenger', 'Music'), ('2027 Season Tickets', 'Sports')) v(t, c);
 
-\echo '--- B. a dry run reports; the fill retires the passed and the vanished, then fills Big Arena to 3 and Small Hall to 1 by date'
+\echo '--- B. a dry run reports; the fill retires the passed and the vanished, then fills Big Arena to 3 and Small Hall to 1 by date, from watch_from (tomorrow''s Small Hall show is before it)'
 SELECT (public.axs_watch_fill(false)) - 'run' AS dry_run;
 SELECT (public.axs_watch_fill(true)) - 'run' AS fill;
 SELECT source_event_id AS id, name, event_date - current_date AS days_out, to_char(start_local_time, 'HH24:MI') AS at, venue_name, tevo_event_id AS tevo,
