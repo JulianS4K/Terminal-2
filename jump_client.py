@@ -65,6 +65,10 @@ _assert_readonly_method = build_readonly_guard(
 #   through into api". Each home page answered 200 to this client that day and listed no single game:
 #   NC Courage (NWSL) only its 2027 season; Denver Summit (NWSL), North Carolina FC (USL), and the three
 #   that sell on Jump from 2027, Seattle Sounders (MLS), Seattle Reign and Boston Legacy (NWSL), nothing.
+#   NOT HERE YET: Aberdeen FC (operator 2026-11-24, "Add aberdeen too"). The club moves to Jump for the
+#   2027/28 season and has no Jump site yet: tickets.afc.co.uk is its current ticketer's site, behind a
+#   CAPTCHA, and is not read. When its Jump site exists, add it here; its prices are in pounds, and
+#   primary_poll_event.currency is 'USD' for every row today, so the ingest must learn the currency first.
 SITES = {
     "timberwolves": "https://tickets.timberwolves.com",
     "lynx": "https://tickets.lynxbasketball.com",
