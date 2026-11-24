@@ -8,7 +8,7 @@ two kinds of page and nothing else:
   listings(event)      an event page: every seat block on sale, with section, row, seats, the
                        quantities a buyer may take, and per ticket the price before fees and tax,
                        the fee, the tax and the all-in price (price + fee + tax), plus the fee
-                       charged once an order
+                       charged once an order. A general admission block has no seats and is flagged
 
 Operator 2026-11-23: "poll all the games for si ... every 10 mins", "for si only red bull stadium",
 "remove membership and season listings". No key, no login, no cookie. Nothing is ever written to
@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 
 import requests
@@ -46,6 +48,10 @@ _assert_readonly_method = build_readonly_guard(
 
 BASE = "https://www.sitickets.com"
 VENUE_SLUG = "sports-illustrated-stadium"
+# the venue's time zone: SI writes an event's start in the venue's local time, so this is what turns it into
+# a moment. The poll needs the moment: an event that has started is no longer read (operator 2026-11-24:
+# "fix the game day wart, end it at tipoff"; mig 20261124041030). A venue not listed gets no start time.
+VENUE_TIMEZONES = {"sports-illustrated-stadium": "America/New_York"}
 USER_AGENT = "S4K-primary-poll/1.0"
 TIMEOUT_S = 30
 SLUG_OK = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -85,10 +91,13 @@ def parse_events(props: dict, venue_slug: str = VENUE_SLUG) -> list[dict]:
         # SI writes the venue's local time with a Z; it is not UTC (the page shows the same hour)
         local = _LOCAL.match(ev.get("occurs_at") or "")
         slug = ev.get("event_slug") or ""
+        zone = VENUE_TIMEZONES.get(venue_slug)
+        start = (datetime.fromisoformat(f"{local.group(1)}T{local.group(2)}").replace(tzinfo=ZoneInfo(zone))
+                 .astimezone(timezone.utc).isoformat() if local and zone else None)
         out.append({
             "id": str(ev["event_id"]), "name": name,
             "local_date": local.group(1) if local else None, "local_time": local.group(2) if local else None,
-            "start_utc": None, "timezone": None,
+            "start_utc": start, "timezone": zone if start else None,
             "venue": ev.get("venue_name") or venue.get("name"), "city": ev.get("venue_city") or venue.get("city"),
             "state": ev.get("venue_state") or venue.get("state"),
             "url": f"{BASE}/event/{quote(slug)}" if slug else None,
@@ -125,11 +134,15 @@ def parse_listings(props: dict) -> list[dict]:
             "seat_low": _text(g.get("tls")), "seat_high": _text(g.get("ths")),
             "seats": [s.rsplit(":", 1)[-1] for s in g.get("tsi") or [] if isinstance(s, str)] or None,
             "qty": g.get("tq"), "allowed_quantities": splits,
-            "max_per_order": g.get("tmc") or (max(splits) if splits else None),
+            # the most one order may take is the largest quantity the page lets a buyer pick. The page's own
+            # `tmc` agrees with it on every seated block and reads 1 on a general admission block that sells
+            # 1 to 10 (HSBC SVNS, 2026-11-24), so it is only the fallback
+            "max_per_order": max(splits) if splits else g.get("tmc"),
             "price": g.get("tp"), "fee": fee, "tax": tax, "all_in": paid, "order_fee": order_fee,
             "price_includes_tax": False, "price_estimated": False,
             "ticket_type": kind.get("n"), "delivery": g.get("tf"),
-            "ada": bool(g.get("ia")), "obstructed": False, "aisle": None, "ga": None,
+            # general admission (`iga`): one block with no row or seats ("GA" in place of the row)
+            "ada": bool(g.get("ia")), "obstructed": False, "aisle": None, "ga": bool(g.get("iga")),
         })
     return out
 

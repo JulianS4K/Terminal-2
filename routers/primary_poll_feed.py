@@ -30,7 +30,8 @@ every 10 minutes on the day of the event; every 30 minutes up to 2 days away (5 
 or for a dear or heavily listed one further off; every hour for the rest (`poll_every_minutes`). Each read falls on
 a random 10-minute slot inside that interval, redrawn every cycle (`next_poll_at`; mig 20261123194030). Listings
 are served for 35 minutes after a good read, or until 20 minutes after the next slot, whichever is later. An event whose poll failed, has not run, or is older than its limit is still in /primary/events,
-with listings_available = false and listings_withheld = poll_failed | not_polled | poll_stale; it has
+with listings_available = false and listings_withheld = poll_failed | not_polled | poll_stale; so is an event
+that has started (event_started: we stop reading it at its start time, mig 20261124041030). Such an event has
 no row in /primary/listings. Listings flagged as an obstructed view are never sent. The views are mig
 20261123171030. This module only answers the query: it reads our own tables and makes no upstream
 call (RULE 2).
