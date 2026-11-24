@@ -23,6 +23,7 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-24** New: `GET /axs/watch` and `GET /axs/watch/listings`: the AXS watch as its own call, the 200 upcoming events AXS sells at ten venues and their listings, refilled nightly as events pass (section 6k). The same rows as `/primary/events?source=axs` and `/primary/listings?source=axs`.
 - **2026-11-24** New: `axs` is a source of `GET /primary/events` and `GET /primary/listings`: 200 upcoming events AXS sells at ten venues, with their listings (section 6k). The list refills itself nightly as events pass.
 - **2026-11-24** New: six more team box offices are sources of `GET /primary/events` and `GET /primary/listings`: `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders` and `northcarolinafc`. None has single matches on sale yet, so they return no rows today; their matches appear by themselves when they go on sale (section 6k).
 - **2026-11-23** Changed: box-office events are now read on their own cadence, not all every 30 minutes, and at a random 10-minute slot inside it. `GET /primary/events` gains `poll_every_minutes` (10 on the day of the event, 30 up to 2 days away or 5 for a Friday, Saturday or Sunday event, 60 otherwise), `next_poll_at` (the slot drawn for the next read), `median_price` and `listed_quantity`. Listings stay available between reads; `as_of` on a listing and `listings_as_of` on an event say how old they are (section 6k).
@@ -1002,6 +1003,8 @@ Season packages, memberships and deposits are left out. For `axs`, parking, suit
 ```
 GET /primary/events?source=sitickets&date_from=2027-02-01&available=true
 GET /primary/listings?source=sitickets&event_id=2297105
+GET /axs/watch?available=true                      the AXS watch on its own: /primary/events pinned to source axs
+GET /axs/watch/listings?event_id=1457748           its listings: /primary/listings pinned to source axs
 ```
 
 **`GET /primary/events`** takes `source`, `date_from`, `date_to`, `q` (every word must be in the name, venue or city), `available=true|false`, `mapped=true|false`, `format=json|csv`, `limit` (max 5000) and `offset`.
