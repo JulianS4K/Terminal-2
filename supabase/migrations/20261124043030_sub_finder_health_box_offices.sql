@@ -1,4 +1,5 @@
 -- Migration 20261124043030 · level:secondary-sales · lane:D0 · writes:sub_finder_health()(replaced) · reads:primary_poll_source,primary_poll_event,v_primary_poll_events_feed (where they exist) · pre:20261116210000,20261124041030
+-- Already applied to prod · via MCP 2026-11-24 (operator: "add health of both sources to the api out health section"); re-apply is a no-op.
 --
 -- THE HEALTH CHECK ALSO SAYS HOW THE BOX OFFICES WE READ ARE DOING.
 -- Operator 2026-11-24: "add health of both sources to the api out health section".
