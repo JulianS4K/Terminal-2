@@ -2262,10 +2262,11 @@ async def _start_tm_feed_sync():  # pragma: no cover - startup hook; loop covere
 # reads SI Tickets' events at Sports Illustrated Stadium and the Timberwolves' games (GET only:
 # sitickets_client.py, jump_client.py) and sends each event with its listings, or with the reason
 # its poll failed, to primary_poll_ingest. core/primary_poll_sync.py, mig 20261123171030.
-# Every 30 minutes since the operator's "reduce polling to 30 mins" (2026-11-23); the feed's age limit follows it
-# (primary_poll_config.listing_max_age, mig 20261123190030).
+# It wakes every 10 minutes (one slot) and reads only the events whose slot has come: each event has its own
+# cadence, 10 minutes to one hour, and a random slot inside it (operator 2026-11-23: "Redraw every cycle, just
+# poll the data. For events day of draw every 10 mins"; mig 20261123194030). The feed's age limit follows the event.
 # ---------------------------------------------------------------------------
-_PRIMARY_POLL_INTERVAL_S = float(os.environ.get("PRIMARY_POLL_INTERVAL_SECONDS", "1800"))
+_PRIMARY_POLL_INTERVAL_S = float(os.environ.get("PRIMARY_POLL_INTERVAL_SECONDS", "600"))
 _primary_poll_last: dict = {"at": None, "result": None, "error": None}
 
 

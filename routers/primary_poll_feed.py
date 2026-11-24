@@ -10,7 +10,8 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|timberwolves|lynx     (lynx has no events until the WNBA schedule is released)
+        ?source=sitickets|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc
+                                 (a team's own ticket site has no events until it lists single games)
         &date_from=2026-11-23&date_to=2027-05-01
         &format=json|csv         (default json)
         &limit=1000&offset=0     (limit max 5000)
@@ -23,8 +24,11 @@ Every row carries `tevo_event_id`, the EVO event our mapper matched (null until 
 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
-completed pull. The poll runs every 30 minutes and the age limit is 35 (primary_poll_config.listing_max_age, mig 20261123190030).
-An event whose poll failed, has not run, or is older than the age limit is still in /primary/events,
+completed pull. Each event is read on its own cadence, by its date, its median price and the tickets listed:
+every 10 minutes on the day of the event; every 30 minutes up to 2 days away (5 for a Friday, Saturday or Sunday event),
+or for a dear or heavily listed one further off; every hour for the rest (`poll_every_minutes`). Each read falls on
+a random 10-minute slot inside that interval, redrawn every cycle (`next_poll_at`; mig 20261123194030). Listings
+are served for 35 minutes after a good read, or until 20 minutes after the next slot, whichever is later. An event whose poll failed, has not run, or is older than its limit is still in /primary/events,
 with listings_available = false and listings_withheld = poll_failed | not_polled | poll_stale; it has
 no row in /primary/listings. Listings flagged as an obstructed view are never sent. The views are mig
 20261123171030. This module only answers the query: it reads our own tables and makes no upstream
@@ -35,23 +39,26 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import jump_client
 from routers.mlb_feed import _bool, _csv, _date, _err, _paging
 from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-SOURCES = ("sitickets", "timberwolves", "lynx")
+SOURCES = ("sitickets", *jump_client.SITES)       # SI Tickets, then every team site on the Jump platform
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",
                  "venue_name", "venue_city", "venue_state", "ticket_url", "offer_id", "order_min", "order_max",
                  "total_available", "price_min", "price_max", "currency", "listings_available", "listing_count",
                  "listings_as_of", "listings_withheld", "tevo_event_id", "tevo_match_method", "terminal_path",
-                 "last_poll_at", "first_seen_at", "last_seen_at")
+                 "last_poll_at", "first_seen_at", "last_seen_at", "median_price", "poll_every_minutes", "next_poll_at",
+                 "listed_quantity")
 LISTING_COLUMNS = ("source", "event_id", "event_name", "tevo_event_id", "event_date", "start_local_time", "listing_id", "market",
                    "area", "section", "seat_row", "seat_low", "seat_high", "seats", "quantity", "allowed_quantities",
                    "max_per_order", "order_min", "order_max", "price", "fee", "all_in_price", "price_includes_tax",
-                   "currency", "ticket_type", "delivery", "ada", "aisle", "general_admission", "as_of")
+                   "currency", "ticket_type", "delivery", "ada", "aisle", "general_admission", "as_of", "tax", "order_fee",
+                   "price_estimated")
 _TOKEN = re.compile(r"^[A-Za-z0-9 ._:=/+-]{1,160}$")
 
 

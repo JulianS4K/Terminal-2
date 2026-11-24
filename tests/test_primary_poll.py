@@ -55,7 +55,8 @@ SI_GROUP = {"ti": "a5j504_alas4e_1746207051860_82.03_std_full", "tus": "128", "t
             "tps": [{"n": "Sideline A / Upper Center Mid-Single-MP", "p": 84.71}]}
 SI_EVENT = {"ticketGroupsError": None,
             "ticketData": {"ticketingGroups": [SI_GROUP, {"ti": 9, "tq": 2, "tsp": [], "tp": 40.1}],
-                           "allInPrices": {"FOX2F9": {"allIn": 90.31}}}}
+                           "allInPrices": {"FOX2F9": {"allIn": 90.31, "tax": 5.44, "convenienceFee": 0,
+                                                      "processingFee": 2.84, "processingFeeFlat": 0.3}}}}
 
 
 def test_sitickets_events_are_the_box_office_ones_without_packages_and_memberships():
@@ -75,12 +76,19 @@ def test_sitickets_listings_carry_seats_quantities_limits_and_prices():
     first, second = si.parse_listings(SI_EVENT)
     assert first == {"id": SI_GROUP["ti"], "market": "primary", "area": None, "section": "128", "row": "4",
                      "seat_low": "9", "seat_high": "24", "seats": ["9", "21"], "qty": 5,
-                     "allowed_quantities": [1, 2, 3, 4], "max_per_order": 4, "price": 82.03, "fee": 2.68,
-                     "all_in": 90.31, "price_includes_tax": False,
+                     "allowed_quantities": [1, 2, 3, 4], "max_per_order": 4, "price": 82.03, "fee": 2.84,
+                     "tax": 5.44, "all_in": 90.31, "order_fee": 0.3, "price_includes_tax": False,
+                     "price_estimated": False,
                      "ticket_type": "Sideline A / Upper Center Mid-Single-MP", "delivery": "E-Ticket",
                      "ada": False, "obstructed": False, "aisle": None, "ga": None}
     assert second["id"] == "9" and second["seats"] is None and second["max_per_order"] is None
     assert second["section"] is None and second["all_in"] is None
+    # price + fee + tax is the all-in price; the fee is the one in the total, not the listing's own 2.68
+    assert round(first["price"] + first["fee"] + first["tax"], 2) == first["all_in"]
+    # a ticket type the page gives no all-in breakdown for: the listing's own fee, and no tax or total
+    assert (second["fee"], second["tax"], second["order_fee"], second["price"]) == (None, None, None, 40.1)
+    with_fee = si.parse_listings({"ticketData": {"ticketingGroups": [{"ti": 1, "tp": 10, "tpf": 0.5}]}})[0]
+    assert with_fee["fee"] == 0.5 and with_fee["all_in"] is None
     for props in ({"ticketGroupsError": "boom"}, {"ticketData": []}, {"ticketData": {"ticketingGroups": None}}, {}):
         with pytest.raises(si.SiTicketsError):
             si.parse_listings(props)
@@ -157,7 +165,10 @@ def test_jump_events_come_from_the_home_page_with_each_games_public_offer():
                     {"__typename": "Offer", "id": "7575", "qtyMax": "$9"},                   # a short copy, seen after
                     {"__typename": "Offer", "name": "an offer with no id"}]},
         {"events": [later, pointed, nowhere,
-                    {"__typename": "Event", "id": "9", "name": "no offer", "eventStart": "2026-12-01T00:00:00.000Z"}]},
+                    {"__typename": "Event", "id": "9", "name": "no offer", "eventStart": "2026-12-01T00:00:00.000Z"},
+                    # a season on sale is not a game (operator: "remove membership and season listings")
+                    {**JUMP_EVENT, "id": "77", "name": "2027 NC Courage Season "},
+                    {**JUMP_EVENT, "id": "78", "name": "Half-Season Membership"}]},
         'zz:{"__typename":"Event","id":"cut off')
     events = jc.parse_events(jc.page_data(html), "timberwolves")
     assert [e["id"] for e in events] == ["1729", "1720", "1740"]                    # soonest first
@@ -234,10 +245,11 @@ def test_a_run_sends_each_event_with_its_listings_or_with_why_its_poll_failed():
                         listings={"1": [{"id": "x"}, {"id": "y"}], "2": si.SiTicketsError("HTTP 503 for /event/b"),
                                   "3": [{"id": "z"}]})
     out = sync.run(rpc, sitickets, _Source(list_exc=jc.JumpError("HTTP 403 for /")))
-    assert out["sitickets"] == {"events": 3, "ok": 1, "failed": 1, "listings": 2, "not_stored": 1}
+    assert out["sitickets"] == {"events": 3, "ok": 1, "failed": 1, "listings": 2, "not_stored": 1, "skipped": 0}
     # the event list could not be read: every event of that source is marked failed in one call
     assert out["timberwolves"] == {"events": 0, "ok": 0, "failed": 0, "listings": 0,
                                    "list_error": "JumpError: HTTP 403 for /", "marked_failed": 4}
+    calls = [c for c in calls if c[0] != "primary_poll_due"]       # asked first; this rpc cannot say, so all are read
     assert [c[0] for c in calls] == ["primary_poll_ingest"] * 3 + ["primary_poll_run_done",
                                                                      "primary_poll_source_failed"]
     # the run is closed with every event the source listed, so the feeds serve this pull and no older one
@@ -251,15 +263,50 @@ def test_a_run_sends_each_event_with_its_listings_or_with_why_its_poll_failed():
     assert calls[4][1] == {"p_source": "timberwolves", "p_error": "JumpError: HTTP 403 for /"}   # and no run closed
 
 
+def test_only_the_events_that_are_due_are_read_and_the_pull_still_lists_them_all():
+    calls = []
+
+    def rpc(name, params):
+        calls.append((name, params))
+        if name == "primary_poll_due":
+            return ["2"]                         # the database says which are due: by date, median price and tickets listed
+        return None
+
+    events = [{"id": 1, "name": "Far off"}, {"id": 2, "name": "Tonight"}, {"id": 3, "name": "Next month"}]
+    read = []
+
+    def listings(event):
+        read.append(event["id"])
+        return [{"id": "x"}]
+
+    out = sync.poll_source(rpc, "timberwolves", lambda: events, listings)
+    assert out == {"events": 3, "ok": 1, "failed": 0, "listings": 1, "not_stored": 0, "skipped": 2} and read == [2]
+    assert calls[0] == ("primary_poll_due", {"p_source": "timberwolves", "p_event_ids": ["1", "2", "3"]})
+    assert [c[0] for c in calls] == ["primary_poll_due", "primary_poll_ingest", "primary_poll_run_done"]
+    assert calls[2][1]["p_event_ids"] == ["1", "2", "3"]          # the skipped events are still in the pull
+    # nothing due: nothing is read, and the pull is still closed
+    calls.clear(), read.clear()
+    out = sync.poll_source(lambda name, params: [] if name == "primary_poll_due" else calls.append(name),
+                           "timberwolves", lambda: events, listings)
+    assert out["skipped"] == 3 and read == [] and calls == ["primary_poll_run_done"]
+    # the database cannot say what is due: everything is read
+    def down(name, params):
+        if name == "primary_poll_due":
+            raise RuntimeError("db blip")
+
+    read.clear()
+    assert sync.poll_source(down, "timberwolves", lambda: events, listings)["ok"] == 3 and read == [1, 2, 3]
+
+
 def test_a_run_that_cannot_be_closed_says_so_and_goes_on_to_the_next_source():
     def rpc(name, params):
         if name == "primary_poll_run_done" and params["p_source"] == "sitickets":
             raise RuntimeError("db blip")
 
     out = sync.run(rpc, _Source(events=[{"id": "1", "name": "A"}], listings={"1": []}), _Source())
-    assert out["sitickets"] == {"events": 1, "ok": 1, "failed": 0, "listings": 0, "not_stored": 0,
+    assert out["sitickets"] == {"events": 1, "ok": 1, "failed": 0, "listings": 0, "not_stored": 0, "skipped": 0,
                                 "run_not_closed": "RuntimeError: db blip"}
-    assert out["timberwolves"] == {"events": 0, "ok": 0, "failed": 0, "listings": 0, "not_stored": 0}
+    assert out["timberwolves"] == {"events": 0, "ok": 0, "failed": 0, "listings": 0, "not_stored": 0, "skipped": 0}
 
 
 def test_a_run_over_the_real_clients_never_has_timberwolves_listings(monkeypatch):
@@ -267,7 +314,7 @@ def test_a_run_over_the_real_clients_never_has_timberwolves_listings(monkeypatch
     monkeypatch.setattr(jc, "events", lambda org: [{"id": "1729", "name": "Timberwolves vs. Nets"}])
     sent = []
     out = sync.run(lambda name, params: sent.append(params), si, jc)
-    assert out["timberwolves"] == {"events": 1, "ok": 0, "failed": 1, "listings": 0, "not_stored": 0}
+    assert out["timberwolves"] == {"events": 1, "ok": 0, "failed": 1, "listings": 0, "not_stored": 0, "skipped": 0}
     game = next(p for p in sent if p.get("p_source") == "timberwolves" and "p_events" in p)["p_events"][0]
     assert game["ok"] is False and game["listings"] == [] and game["error"].startswith("JumpInventoryNotEnabled")
 
@@ -356,6 +403,7 @@ def test_events_are_every_polled_event_with_whether_listings_can_be_sent():
     assert [c[1] for c in calls if c[0] == "order"] == ["event_date", "start_local_time", "source", "event_id"]
     assert ("range", 0, 999) in calls and not any(c[0] in ("eq", "gte", "lte", "ilike", "is_") for c in calls)
     assert "tevo_event_id" in pp.EVENT_COLUMNS and "tevo_event_id" in pp.LISTING_COLUMNS    # the EVO event, on every row
+    assert pp.EVENT_COLUMNS[-4:] == ("median_price", "poll_every_minutes", "next_poll_at", "listed_quantity")  # its own cadence
     assert pp.SEARCH_COLUMN not in pp.EVENT_COLUMNS and "poll_error" not in pp.EVENT_COLUMNS
     db = FakeDB(rows=[EVENT_ROW, EVENT_ROW])
     r = _client(db).get(EVENTS, headers=H, params={
@@ -383,6 +431,9 @@ def test_listings_can_be_narrowed_to_an_event_a_market_and_a_section():
     assert [c[1] for c in calls if c[0] == "order"] == ["event_date", "source", "event_id", "price", "listing_id"]
     assert not any(c[0] == "eq" for c in calls)
     assert "obstructed" not in pp.LISTING_COLUMNS                 # an obstructed-view listing is never sent
+    for column in ("price", "fee", "tax", "all_in_price", "order_fee", "price_estimated"):
+        assert column in pp.LISTING_COLUMNS
+    assert pp.LISTING_COLUMNS[-3:] == ("tax", "order_fee", "price_estimated")   # the view gained them at its end
     db = FakeDB(rows=None)
     r = _client(db).get(LISTINGS, headers=H, params={"source": "timberwolves", "event_id": "1729",
                                                     "tevo_event_id": "3466081", "market": "Resale", "section": "218"})
@@ -408,3 +459,19 @@ def test_csv_bad_parameters_and_a_database_error():
     for url in (EVENTS, LISTINGS):
         r = _client(FakeDB(table_exc=RuntimeError("down"))).get(url, headers=H)
         assert r.status_code == 502 and r.json() == {"error": "upstream_error", "detail": "RuntimeError"}
+
+
+def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
+    # operator 2026-11-24: "Add all those jump teams to the catalogue scanner and push through into api"
+    assert pp.SOURCES == ("sitickets", *jc.SITES) and len(jc.SITES) == 8
+    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx"):
+        for url in (EVENTS, LISTINGS):
+            db = FakeDB(rows=[])
+            r = _client(db).get(url, headers=H, params={"source": source})
+            assert r.status_code == 200 and ("eq", "source", source) in db.queries[0].calls, (url, source)
+    # a season, a membership, a plan or a deposit is not a game; a game named for the season's opener is
+    for name in ("2027 NC Courage Season", "2027 Full Season - Online", "Half-Season Membership", "Season Ticket Deposit",
+                 "10-Game Plan"):
+        assert jc.NOT_AN_EVENT.search(name), name
+    for name in ("Timberwolves vs. Nets", "Season Opener: NC Courage vs. Washington Spirit", "Sounders vs. Timbers 3-14-27"):
+        assert not jc.NOT_AN_EVENT.search(name), name
