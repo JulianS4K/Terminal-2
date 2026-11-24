@@ -20,7 +20,7 @@ INSERT INTO n2s_crm_direct_log (fetched_at, status, ms, items, upserted) VALUES 
 INSERT INTO s4kcs_orders (last_seen_at) VALUES (now() - interval '8 minutes');
 INSERT INTO account_balance_run (taken_at, evo_http, evo_rows, gt_http, gt_rows) VALUES (now() - interval '50 minutes', 200, 3, 200, 2);
 SELECT h();
-SELECT r::text ~ '(sub_finder_|n2s_crm|s4kcs|manual_sub|account_balance|mlb_ticket)' AS names_a_table, r ? 'checked_at', jsonb_object_keys(r->'statuses') FROM sub_finder_health(7) r;
+SELECT r::text ~ '(sub_finder_|n2s_crm|s4kcs|manual_sub|account_balance|mlb_ticket|primary_poll)' AS names_a_table, r ? 'checked_at', jsonb_object_keys(r->'statuses') FROM sub_finder_health(7) r;
 
 \echo C the CRM feed: a failed try after a good read keeps the good read and shows the failure; late is degraded, very late is down
 INSERT INTO n2s_crm_direct_log (fetched_at, status, error) VALUES (now() - interval '5 seconds', 401, 'unauthorized');
@@ -102,3 +102,45 @@ SELECT r->>'status', e->>'status' FROM sub_finder_health(7) r, jsonb_array_eleme
 SELECT sub_finder_health(99);
 SELECT has_function_privilege('anon', 'public.sub_finder_health(bigint)', 'EXECUTE'), has_function_privilege('authenticated', 'public.sub_finder_health(bigint)', 'EXECUTE');
 SELECT sub_finder_health_grade(NULL, 10, 20), sub_finder_health_grade(10, 10, 20), sub_finder_health_grade(20, 10, 20), sub_finder_health_grade(21, 10, 20);
+
+\echo J the box offices we read: no check until their tables exist; then one a box office, ok while it is read and its events are sent
+SELECT count(*) FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' LIKE 'box_office_%';
+DROP VIEW public.v_mlb_schedule_feed; DROP TABLE public.mlb_ticket_sync;          -- so the overall status below is the box offices' doing
+-- stand-ins for the box-office poll's tables and its events feed (migs 20261123171030 and later)
+CREATE TABLE public.primary_poll_source (source text PRIMARY KEY, finished_at timestamptz);
+CREATE TABLE public.primary_poll_event (source text, source_event_id text, poll_ok_at timestamptz);
+CREATE TABLE public.v_primary_poll_events_feed (source text, event_id text, listings_available boolean, listings_withheld text);
+CREATE FUNCTION box(p_source text, p_id text, p_available boolean, p_why text, p_ok_at timestamptz) RETURNS void LANGUAGE sql AS $$
+  INSERT INTO primary_poll_event VALUES (p_source, p_id, p_ok_at);
+  INSERT INTO v_primary_poll_events_feed VALUES (p_source, p_id, p_available, p_why) $$;
+INSERT INTO primary_poll_source VALUES ('sitickets', now() - interval '3 minutes'), ('timberwolves', now() - interval '4 minutes'),
+                                       ('lynx', now() - interval '200 days');
+-- SI Tickets: three matches sent and two series that never had a listing page. The Timberwolves: two games sent
+-- and one that has started. The Lynx: read once, nothing on sale.
+SELECT count(*) AS events_set_up FROM (VALUES
+       (box('sitickets', 'm1', true, NULL, now())), (box('sitickets', 'm2', true, NULL, now())), (box('sitickets', 'm3', true, NULL, now())),
+       (box('sitickets', 's1', false, 'poll_failed', NULL)), (box('sitickets', 's2', false, 'poll_failed', NULL)),
+       (box('timberwolves', 'g1', true, NULL, now())), (box('timberwolves', 'g2', true, NULL, now())),
+       (box('timberwolves', 'g0', false, 'event_started', now() - interval '3 hours'))) x;
+CREATE FUNCTION bo() RETURNS SETOF text LANGUAGE sql AS $$
+  SELECT 'overall ' || (r->>'status') FROM sub_finder_health(7) r
+  UNION ALL
+  SELECT * FROM (SELECT (e->>'name') || ' ' || (e->>'status') || ' ' || (e - 'what' - 'last_at' - 'age_seconds' - 'name' - 'status')::text
+                   FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') WITH ORDINALITY x(e, o)
+                  WHERE e->>'name' LIKE 'box_office_%' ORDER BY o) y $$;
+SELECT bo();
+SELECT r::text ~ 'primary_poll' AS names_a_table, (e->>'age_seconds')::int BETWEEN 170 AND 190 AS age_is_the_last_pull, e->>'what'
+  FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_sitickets';
+
+\echo K a game that used to be readable fails: degraded, and it says so; no game readable at all: down, and so is the overall status
+UPDATE v_primary_poll_events_feed SET listings_available = false, listings_withheld = 'poll_failed' WHERE event_id = 'g2';
+SELECT bo();
+UPDATE v_primary_poll_events_feed SET listings_available = false, listings_withheld = 'poll_stale' WHERE event_id = 'g1';
+SELECT bo();
+UPDATE v_primary_poll_events_feed SET listings_available = true, listings_withheld = NULL WHERE event_id IN ('g1', 'g2');
+
+\echo L the reader itself late: degraded after 25 minutes without a pull, down after an hour
+UPDATE primary_poll_source SET finished_at = now() - interval '30 minutes' WHERE source = 'timberwolves';
+SELECT e->>'status', e->>'detail' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_timberwolves';
+UPDATE primary_poll_source SET finished_at = now() - interval '2 hours' WHERE source = 'timberwolves';
+SELECT r->>'status', e->>'status', e->>'detail' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_timberwolves';

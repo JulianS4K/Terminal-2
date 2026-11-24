@@ -65,3 +65,23 @@ I a key that may not look up subs is refused; nobody but the service role may ca
 {"error": "forbidden", "detail": "the sub finder is not enabled for this key"}
 f|f
 down|ok|degraded|down
+J the box offices we read: no check until their tables exist; then one a box office, ok while it is read and its events are sent
+0
+8
+overall ok
+box_office_lynx off {"detail": "this box office has no event on sale", "events": 0, "events_failing": 0, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 0, "events_never_readable": 0}
+box_office_sitickets ok {"events": 5, "events_failing": 0, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 3, "events_never_readable": 2}
+box_office_timberwolves ok {"events": 2, "events_failing": 0, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 2, "events_never_readable": 0}
+f|t|the sitickets box office, read by S4K (GET /primary/events and /primary/listings, source=sitickets)
+K a game that used to be readable fails: degraded, and it says so; no game readable at all: down, and so is the overall status
+overall degraded
+box_office_lynx off {"detail": "this box office has no event on sale", "events": 0, "events_failing": 0, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 0, "events_never_readable": 0}
+box_office_sitickets ok {"events": 5, "events_failing": 0, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 3, "events_never_readable": 2}
+box_office_timberwolves degraded {"detail": "some events could not be read at their last try: their listings are not being sent", "events": 2, "events_failing": 1, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 1, "events_never_readable": 0}
+overall down
+box_office_lynx off {"detail": "this box office has no event on sale", "events": 0, "events_failing": 0, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 0, "events_never_readable": 0}
+box_office_sitickets ok {"events": 5, "events_failing": 0, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 3, "events_never_readable": 2}
+box_office_timberwolves down {"detail": "no event of this box office could be read: no listings are being sent", "events": 2, "events_failing": 2, "ok_within_seconds": 1500, "down_after_seconds": 3600, "events_with_listings": 0, "events_never_readable": 0}
+L the reader itself late: degraded after 25 minutes without a pull, down after an hour
+degraded|the box office has not been read lately
+down|down|the box office has not been read lately
