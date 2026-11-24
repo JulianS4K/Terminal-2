@@ -1,0 +1,45 @@
+before: rows=8 policy_parked=true rebuild_cron=1 new_is_partitioned=true day_partitions=0
+init -> evidence rows=0
+after init: day_partitions=23 (cutoff day .. today + 7)
+evidence -> copy rows=2
+evidence in DEFAULT: 201,201
+copy -> index_pk rows=3
+index_pk -> index_captured rows=0
+index_captured -> index_event_time rows=0
+index_event_time -> finish rows=0
+cutoff is 15 days ago; window_from is 30 min ago; evidence_rows=2 copied_rows=3
+finish -> analyze rows=2
+analyze -> done rows=0
+again: done
+live: 201,201,301,302,303,401,501
+old:  101,201,201,202,301,302,303,401,501,601
+DEFAULT partition: 201,201
+new table gone: true; live is partitioned: true; day_partitions=23
+state: phase=done evidence_rows=2 copied_rows=5 ticks=8 swapped=true done=true error=-
+live indexes: gotickets_listings_snapshots_pkey,idx_gt_ls_captured,idx_gt_ls_event_time
+old indexes:  gotickets_listings_snapshots_old_pkey,idx_gt_ls_captured_old,idx_gt_ls_event_time_old
+pk: gotickets_listings_snapshots_pkey PRIMARY KEY (gt_event_id, captured_at, gt_listing_id)
+every partition has 3 indexes: true
+partition options: autovacuum_vacuum_scale_factor=0.02,autovacuum_vacuum_insert_scale_factor=0.05,autovacuum_analyze_scale_factor=0.02
+grants: service_role insert=true coworker_readonly select=true analyst_ro select=true anon select=false authenticated select=false
+partitions closed: anon_can_select_any=false authenticated_can_select_any=false rls_on_all=true n=24
+coworker_readonly via parent: rows=7
+psql:s01_rebuild.sql:106: NOTICE:  coworker_readonly direct partition read: denied
+comment mentions rebuild: true; old comment: true
+policy: enabled=false parked=false error=- clean_runs=0 notes_rebuilt=true notes_parked=true
+crons: gt_snapshots_partition_hourly [7 * * * *]
+view: phase=done rebuild_cron=false partition_cron=true day_partitions=23 old_size_known=true new_size_known=false
+after a drain: live=8 old=10 DEFAULT=2
+partition tick: created=0 dropped=0 deleted=0
+stray in DEFAULT: 201,201,801
+ensured: true
+after ensure: DEFAULT=201,201 day_partitions=24 row in its day=1
+partition tick: created=0 dropped=14 deleted=1
+after the drop: live=201,201,302,303,401,501,701,801 DEFAULT=201,201,303 day_partitions=10
+run log: rows=14 deleted=1 kept_noted=1
+policy after: last_deleted=1 total_deleted=1 swept=true
+partition tick: created=0 dropped=0 deleted=0
+psql:s01_rebuild.sql:147: NOTICE:  drop while not done: guard refused
+old still there before the drop migration: true
+psql:../../../../supabase/migrations/20261122030100_gt_snapshots_drop_old.sql:27: NOTICE:  gt_snapshots_drop_old: dropped public.gotickets_listings_snapshots_old
+old after the drop migration: false; live rows=8
