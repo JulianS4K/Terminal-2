@@ -1,4 +1,5 @@
 -- Migration 20261124230030 · level:data-collection · lane:A1 (box-office collector) + D0 (the feed's view) · writes:primary_poll_config(+split_over_limit),primary_poll_listing(+order_limit),primary_poll_listing_piece(new),primary_poll_limit()(new),primary_poll_pieces()(new),primary_poll_split_event()(new),primary_poll_ingest()(replaced),v_primary_poll_listings_feed(replaced: listings over their limit are sent as their pieces; +split_of,+split_part,+split_parts) · reads:primary_poll_event,primary_poll_source · pre:20261124041030,20261124203030
+-- Already applied to prod · via MCP 2026-11-24 (operator: "when done test what we're pushing out against the new fixes and then apply and merge and send to main"); re-apply is a no-op.
 --
 -- A LISTING THAT HOLDS MORE TICKETS THAN ONE ORDER MAY TAKE IS SENT AS SEVERAL LISTINGS.
 -- Operator 2026-11-24: "when a listing goes over qty limit make the next set a seperate listing in API to
