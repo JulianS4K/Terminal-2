@@ -1,4 +1,5 @@
 -- Migration 20261124041030 · level:data-collection · lane:A1 (data plane; routed to this session by the operator) + D0 (the feed's views) · writes:primary_poll_config(+no_start_ends_after),primary_poll_ended()(new),primary_poll_due()(replaced),v_primary_poll_events_feed(replaced, same columns),v_primary_poll_listings_feed(replaced, same columns) · reads:primary_poll_event,primary_poll_listing,primary_poll_source · pre:20261123194030
+-- Already applied to prod · via MCP 2026-11-24 (operator: "fix the game day wart, end it at tipoff"); re-apply is a no-op.
 --
 -- THE BOX-OFFICE POLL: AN EVENT IS OVER FOR US WHEN IT STARTS.
 -- Operator 2026-11-24: "fix the game day wart, end it at tipoff".
