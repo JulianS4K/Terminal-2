@@ -11,7 +11,7 @@ DELETE FROM public.axs_watch_venue;
 DELETE FROM public.axs_watch_audit;
 INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, enabled) VALUES
   (1, 'Big Arena', 3, true), (2, 'Small Hall', 1, true), (3, 'Closed Venue', 5, false);
-UPDATE public.axs_watch_config SET max_in_flight = 2, reserve_credits = 0, target_events = 10, watch_from = current_date + 2;   -- the list starts two days out
+UPDATE public.axs_watch_config SET max_in_flight = 2, fires_per_tick = 2, reserve_credits = 0, target_events = 10, watch_from = current_date + 2;   -- the list starts two days out; two fires a tick so the slots fill in one tick
 
 -- the export: what AXS lists at the two venues
 INSERT INTO public.axs_export_event (axs_event_id, type, ticketer, axs_ticketed, event_title, major_category, venue_id, venue_name, venue_city, venue_state,
@@ -70,7 +70,7 @@ SELECT s.id, s.url, s.params->>'platform' AS platform, s.params->>'event_url' AS
 SELECT request_id, axs_event_id, checked_at IS NULL AS pending FROM public.axs_watch_poll ORDER BY request_id;
 SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' AS tick_full;
 
-\echo '--- F. the answers land: the listings TicketsData sends (seat blocks, an ADA seat, a GA amount, a resale block with its fee); a sold block and a parking offer are left out; the obstructed one is kept but not sent; an expired event is a failed poll; the credit is logged'
+\echo '--- F. the answers land: the listings TicketsData sends (seat blocks, an ADA seat, a GA amount, a resale block with its fee); a sold block, a parking offer and a pass add-on are left out, a CA-OPEN block is kept; the obstructed one is kept but not sent; an expired event is a failed poll; the credit is logged'
 INSERT INTO net._http_response (id, status_code, content) VALUES
   (1, 200, $j${"quota_remaining": 99998, "body": {"status": "ok", "exit_code": 0, "elapsed_seconds": 41.2,
      "event": {"title": "Lakers vs. Denver", "starts_local": "2026-12-23 19:30:00"},
@@ -85,6 +85,8 @@ INSERT INTO net._http_response (id, status_code, content) VALUES
        {"kind": "primary", "section": "305", "row": "K", "seats": ["12"], "quantity": 1, "seat_type": "ADA", "status": "Available", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Upper - Wheelchair", "neighborhood": "Upper Bowl", "general_admission": false, "pricing": {"face": 60, "fees_total": 5.5, "tax": 0, "all_in": 65.5}},
        {"kind": "primary", "section": "Standing Room", "row": null, "seats": null, "quantity": 40, "seat_type": "GA", "status": "Available", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Standing Room", "general_admission": true, "pricing": {"face": 40, "fees_total": 4, "tax": 0, "all_in": 44}},
        {"kind": "primary", "section": "Lot W", "row": null, "seats": null, "quantity": 29, "seat_type": "PARKING", "status": "Available", "offer_id": "556", "offer_name": "LOT W $40 or LOT 4 $35 Parking", "offer_type": "Parking", "pricing": {"face": 40, "all_in": 40}},
+       {"kind": "primary", "section": "Experience", "row": null, "seats": null, "quantity": 50, "seat_type": "STANDARD", "status": "CA-OPEN", "offer_id": "557", "offer_name": "Magical Pass", "offer_type": "Single", "pricing": {"face": 30, "all_in": 36}},
+       {"kind": "primary", "section": "103", "row": "C", "seats": ["1", "2"], "quantity": 2, "seat_type": "STANDARD", "status": "CA-OPEN", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Lower", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 110, "fees_total": 7.5, "tax": 0, "all_in": 117.5}},
        {"kind": "primary", "section": "102", "row": "B", "seats": ["9", "10"], "quantity": 2, "seat_type": "STANDARD", "status": "Sold", "offer_id": "555", "offer_name": "Lakers vs. Denver", "offer_type": "Single", "price_level": "Lower", "pricing": {"face": 125, "all_in": 132.94}},
        {"kind": "resale", "section": "101", "row": "B", "seats": ["7"], "quantity": 1, "seat_type": "FLASHSEATS", "offer_id": "777", "offer_type": "FLASHSEATS", "price_level": "Lower - Limited view", "neighborhood": "Lower Bowl", "original_price": 95.5, "purchasable_quantities": [1], "seller_notes": null, "pricing": {"face": 95.5, "connection_fee": 24.35, "all_in": 119.85, "tax": 0}}]}}$j$),
   (2, 200, $j${"quota_remaining": 99997, "body": {"status": "expired", "message": "Event has passed"}}$j$);
@@ -131,6 +133,15 @@ UPDATE public.axs_watch_config SET hot_overrun_pct = 0;
 DELETE FROM public.axs_watch_poll WHERE checked_at IS NULL;
 SELECT (public.axs_watch_tick()) - 'pool_remaining' AS tick_capped_no_overrun;
 UPDATE public.axs_watch_config SET daily_cap_override = NULL;
+
+\echo '--- J2. one fire a tick (the default): with two slots free only one request goes out, the next tick sends the second'
+UPDATE public.axs_watch_config SET fires_per_tick = 1, daily_cap_override = NULL, upstream_errors_max = 99;
+DELETE FROM public.axs_watch_poll WHERE checked_at IS NULL;
+UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 minute' WHERE source = 'axs';
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_one;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_two;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_full_again;
+UPDATE public.axs_watch_config SET fires_per_tick = 2;
 
 \echo '--- K. paused: the tick still settles but fires nothing'
 UPDATE public.axs_watch_config SET enabled = false;

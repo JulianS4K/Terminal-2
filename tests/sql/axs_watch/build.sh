@@ -25,4 +25,6 @@ stub_00_base.sql
 20261123194030_primary_poll_cadence.sql
 20261124190000_axs_watch.sql
 20261124200000_axs_watch_listings_parse.sql
+20261124210000_axs_watch_listing_status.sql
+20261124220000_axs_watch_spaced_fires.sql
 STEPS

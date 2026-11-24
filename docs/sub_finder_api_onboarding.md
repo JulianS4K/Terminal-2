@@ -24,6 +24,7 @@ A ping once a day, or at your service's start, is enough.
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
 - **2026-11-24** Changed on `GET /health`: `box_office_axs` joins the box-office checks (the AXS watch). A box office is now judged by its reader's last activity, the last pull closed or the last read tried of any of its events, so a source read from our database no longer shows `degraded` between its nightly list refreshes. And a box office of 50 events or more reads `degraded` only when more than 5% of its events failed at their last try; a smaller one, as before, when any does.
+- **2026-11-24** New: every event of `GET /axs/watch` and `GET /primary/events` carries the same event's id on each marketplace: `ticketmaster_event_id`, `seatgeek_event_id`, `stubhub_event_id`, `vivid_event_id`, `tickpick_event_id`, `gotickets_event_id`, `axs_event_id` and `aq_short_event_id`, as the other event feeds do (section 6j). An AXS watch event is paired by its AXS id, so it can have ids before it has an EVO match. `GET /axs/watch/listings` and `GET /primary/listings` are unchanged: join them to their event by `source` and `event_id`.
 - **2026-11-24** New: `GET /axs/watch` and `GET /axs/watch/listings`: the AXS watch as its own call, the 200 upcoming events AXS sells at ten venues and their listings, refilled nightly as events pass (section 6k). The same rows as `/primary/events?source=axs` and `/primary/listings?source=axs`.
 - **2026-11-24** New: `axs` is a source of `GET /primary/events` and `GET /primary/listings`: 200 upcoming events AXS sells at ten venues, with their listings (section 6k). The list refills itself nightly as events pass.
 - **2026-11-24** Fixed on `GET /primary/listings` for `sitickets`: a general admission block (the HSBC SVNS ones) now carries `general_admission: true`; it has `GA` for a row and no seat numbers, which is how it is sold. `max_per_order` on those blocks is now the largest quantity one order may take (10); it read 1. Seated blocks are unchanged, and now say `general_admission: false`.
@@ -971,24 +972,25 @@ One row per upcoming event where SeatGeek is the primary ticketer, for example D
 
 ## 6j. The same event on every marketplace
 
-Every event row of `/tm/events`, `/axs/events`, `/seatgeek/events` and `/mlb/events` carries the id we hold for the same event on each other site, so you do not have to join the feeds yourself. A null means we hold no pairing with that site, not that the site does not list the event.
+Every event row of `/tm/events`, `/axs/events`, `/seatgeek/events`, `/mlb/events`, `/axs/watch` and `/primary/events` carries the id we hold for the same event on each other site, so you do not have to join the feeds yourself. A null means we hold no pairing with that site, not that the site does not list the event.
 
 | Field | The event's id on |
 |---|---|
-| `xmap_tevo_event_id` | EVO (Ticket Evolution): the feed's own match (`tevo_event_id`), else the one our cross-map holds. `tevo_event_id` itself is unchanged, and so is what `mapped=` filters on |
+| `xmap_tevo_event_id` | EVO (Ticket Evolution): the feed's own match (`tevo_event_id`), else the one our cross-map holds. `tevo_event_id` itself is unchanged, and so is what `mapped=` filters on. Not on `/mlb/events`, `/axs/watch` or `/primary/events`, whose `tevo_event_id` is the only EVO id we hold for the row |
 | `ticketmaster_event_id` | Ticketmaster: the event Ticketmaster itself sells before a resale page (not on `/tm/events`, where it is `tm_event_id`) |
 | `seatgeek_event_id` | SeatGeek (not on `/seatgeek/events`, where it is `sg_event_id`) |
 | `stubhub_event_id` | StubHub |
 | `vivid_event_id` | Vivid Seats |
 | `tickpick_event_id` | TickPick |
 | `gotickets_event_id` | GoTickets |
-| `axs_event_id` | AXS, as text (on `/axs/events` it is the row's own id, a number) |
+| `axs_event_id` | AXS, as text (on `/axs/events` it is the row's own id, a number; on `/axs/watch` it repeats the row's `event_id`) |
 | `aq_short_event_id` | Automatiq |
 
 - **Where they come from.** Our hub of traded events first, then our cross-map of every site's catalogue, then (Vivid Seats and TickPick) that site's own catalogue. `GET /tm/markets` reads the same sources in the same order, so the two agree for an event both list.
 - **An event with no EVO match can still be paired.** The cross-map pairs some Ticketmaster, AXS and SeatGeek events with other sites before our matcher finds the EVO event; those rows have a null `tevo_event_id` and ids here.
 - **`/mlb/schedule` already carried** `sg_event_id`, `sh_event_id`, `vivid_event_id`, `tm_event_id`, `gotickets_event_id` and `aq_short_event_id` under those names; it gains `tickpick_event_id` and `axs_event_id`.
 - **`since` does not see a new pairing by itself.** `changed_at` moves when the event or its EVO match changes. To pick up pairings added later, read the page again.
+- **`/axs/watch` and `/primary/events`.** An AXS watch event (`source` `axs`) is looked up by its AXS id, so it is paired as `/axs/events` pairs it. An event of a box office we read ourselves (`sitickets`, `timberwolves` and the other team sites) is looked up by its EVO event, so it has ids only once `tevo_event_id` is filled. The listings calls carry no marketplace ids: join a listing to its event by `source` and `event_id`.
 - In CSV the fields are the last columns.
 
 ## 6k. Box offices we poll ourselves: events and listings
@@ -1030,6 +1032,7 @@ GET /axs/watch/listings?event_id=1457748           its listings: /primary/listin
 | `listed_quantity` | The tickets listed, added up over the same listings. 0 when nothing is listed; null when the listings carry no quantity |
 | `poll_every_minutes` | How often this event's listings are read. By date: the day of the event 10; up to 2 days away, or a Friday, Saturday or Sunday event up to 5 days away, 30; further 60 (the longest). Then, except on the day of the event, by `median_price` (150 or more is one step faster, under 50 one step slower) and by `listed_quantity` (2,000 or more is one step faster, under 250 one step slower). The two add up, stay between 30 and 60, and together never slow an event by more than one step |
 | `next_poll_at` | The slot drawn for this event's next read. Time is cut into windows as long as the event's interval and each window into 10-minute slots; the event is read once a window, at a slot drawn at random, redrawn every cycle. So two reads of an hourly event are 10 to 110 minutes apart, an hour on average |
+| `ticketmaster_event_id`, `seatgeek_event_id`, `stubhub_event_id`, `vivid_event_id`, `tickpick_event_id`, `gotickets_event_id`, `axs_event_id`, `aq_short_event_id` | The same event's id on each marketplace (section 6j). Null where we hold no pairing with that site. In CSV they are the last columns |
 
 **`GET /primary/listings`** takes `source`, `event_id`, `tevo_event_id`, `market=primary|resale`, `section`, `date_from`, `date_to`, `format`, `limit` and `offset`. Rows come cheapest first within an event.
 

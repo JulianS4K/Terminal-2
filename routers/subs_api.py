@@ -678,7 +678,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         """Every upcoming event of the box offices we poll ourselves (SI Tickets at Sports Illustrated
         Stadium, the Timberwolves' own site), with whether its listings can be sent right now and, if
         not, why (operator 2026-11-23: "push the list of events and their respective listings out";
-        mig 20261123171030). Same keys as /mlb/schedule. Reads our own tables only."""
+        mig 20261123171030), and the event's id on every marketplace (routers/feed_xmap.py). Same keys as
+        /mlb/schedule. Reads our own tables only."""
         denied = _mlb_reader(request, "primary_events")
         return denied or primary_events_response(get_db(), request.query_params)
 
@@ -701,7 +702,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         upcoming events AXS sells at the watched venues, read through TicketsData on the box-office cadence and
         refilled nightly as events pass, with whether each one's listings can be sent right now. This is
         /primary/events pinned to source `axs`; every other filter (`q`, `available`, `mapped`, dates, paging,
-        `format`) works the same. Same keys as /mlb/schedule. Reads our own tables only."""
+        `format`) works the same. Each event carries its id on every marketplace (routers/feed_xmap.py), read by
+        its AXS id. Same keys as /mlb/schedule. Reads our own tables only."""
         denied = _mlb_reader(request, "axs_watch_events")
         return denied or primary_events_response(get_db(), _pinned(request.query_params, source="axs"))
 
