@@ -2198,6 +2198,115 @@ def gt_sub_offer_status(_=Depends(require_auth)):
     return {"enabled": os.environ.get("GT_SUB_OFFER_LIVE") == "1", **_gt_sub_offer_last}
 
 
+# ---------------------------------------------------------------------------
+# Ticketmaster Discovery Feed sync (operator 2026-11-22: "Redesign tm polling using this new data so
+# we don't waste tokens"). Off unless TM_FEED_SYNC_LIVE=1 on this service. Each run asks the database
+# which feed file is new (tm_feed_check: one call to Ticketmaster, made in SQL), downloads it from
+# S3 with tm_feed_client.py (GET only, no key) and sends its rows to tm_feed_load. Most runs find
+# nothing new: the files are rebuilt about once a day. core/tm_feed_sync.py, mig 20261122030530.
+# ---------------------------------------------------------------------------
+_TM_FEED_SYNC_INTERVAL_S = float(os.environ.get("TM_FEED_SYNC_INTERVAL_SECONDS", "10800"))
+_tm_feed_sync_last: dict = {"at": None, "result": None, "error": None}
+
+
+async def _tm_feed_sync_tick():
+    import tempfile
+
+    import tm_feed_client
+    from core import n2s_autobuy_live, tm_feed_sync
+
+    def _call():
+        db = require_sb()
+
+        def _rpc(name, params):
+            return db.rpc(name, params).execute().data
+        again = n2s_autobuy_live.retrying(_rpc)
+
+        def rpc(name, params):
+            # a batch sent twice changes nothing, so a dropped connection is retried; the check is
+            # not: it calls Ticketmaster and takes the lease, and must not run twice
+            return (_rpc if name == "tm_feed_check" else again)(name, params)
+        with tempfile.TemporaryDirectory() as workdir:
+            return tm_feed_sync.run(rpc, tm_feed_client, workdir)
+
+    out = await asyncio.to_thread(_call)
+    _tm_feed_sync_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    if out.get("action") != "idle":
+        _log.warning("tm_feed_sync: %s", out)
+    return out
+
+
+async def _tm_feed_sync_loop():
+    if os.environ.get("TM_FEED_SYNC_LIVE") != "1" or sb is None or SANDBOX:
+        _log.info("tm_feed_sync: disabled (TM_FEED_SYNC_LIVE != 1, no DB, or sandbox)")
+        return
+    _log.warning("tm_feed_sync: started (every %ss)", _TM_FEED_SYNC_INTERVAL_S)
+    while True:
+        try:
+            await _tm_feed_sync_tick()
+        except Exception as e:  # never let the loop die; a file's lease runs out and the next run takes it again
+            _tm_feed_sync_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("tm_feed_sync: run failed: %s", e)
+        await asyncio.sleep(_TM_FEED_SYNC_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_tm_feed_sync():  # pragma: no cover - startup hook; loop covered via _tm_feed_sync_loop
+    asyncio.create_task(_tm_feed_sync_loop())
+
+
+# ---------------------------------------------------------------------------
+# Primary box-office poll (operator 2026-11-23: "poll all the games for si and timberwolves every 10
+# mins", "push the list of events and their respective listings out, if poller fails to run for an
+# event, do not send listing information"). Off unless PRIMARY_POLL_LIVE=1 on this service. Each run
+# reads SI Tickets' events at Sports Illustrated Stadium and the Timberwolves' games (GET only:
+# sitickets_client.py, jump_client.py) and sends each event with its listings, or with the reason
+# its poll failed, to primary_poll_ingest. core/primary_poll_sync.py, mig 20261123171030.
+# It wakes every 10 minutes (one slot) and reads only the events whose slot has come: each event has its own
+# cadence, 10 minutes to one hour, and a random slot inside it (operator 2026-11-23: "Redraw every cycle, just
+# poll the data. For events day of draw every 10 mins"; mig 20261123194030). The feed's age limit follows the event.
+# ---------------------------------------------------------------------------
+_PRIMARY_POLL_INTERVAL_S = float(os.environ.get("PRIMARY_POLL_INTERVAL_SECONDS", "600"))
+_primary_poll_last: dict = {"at": None, "result": None, "error": None}
+
+
+async def _primary_poll_tick():
+    import jump_client
+    import sitickets_client
+    from core import n2s_autobuy_live, primary_poll_sync
+
+    def _call():
+        db = require_sb()
+        # an event sent twice is stored once (its listings are replaced), so a dropped connection is retried
+        rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
+        # PRIMARY_POLL_SOURCES=sitickets where the browser worker reads the Timberwolves (one poller a source)
+        sources = primary_poll_sync.sources_from(os.environ.get("PRIMARY_POLL_SOURCES"))
+        return primary_poll_sync.run(rpc, sitickets_client, jump_client, sources)
+
+    out = await asyncio.to_thread(_call)
+    _primary_poll_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    return out
+
+
+async def _primary_poll_loop():
+    if os.environ.get("PRIMARY_POLL_LIVE") != "1" or sb is None or SANDBOX:
+        _log.info("primary_poll: disabled (PRIMARY_POLL_LIVE != 1, no DB, or sandbox)")
+        return
+    _log.warning("primary_poll: started (every %ss)", _PRIMARY_POLL_INTERVAL_S)
+    while True:
+        try:
+            await _primary_poll_tick()
+        except Exception as e:  # never let the loop die; a missed run withholds the listings by their age
+            _primary_poll_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("primary_poll: run failed: %s", e)
+        await asyncio.sleep(_PRIMARY_POLL_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_primary_poll():  # pragma: no cover - startup hook; loop covered via _primary_poll_loop
+    asyncio.create_task(_primary_poll_loop())
+
+
 @app.get("/api/admin/manual-sub-buy/status")
 def manual_sub_buy_status(_=Depends(require_auth)):
     """Last manual sub buy tick (auth-gated)."""

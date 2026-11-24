@@ -1,0 +1,101 @@
+A the plan: three segments x 13 weeks; nothing called yet
+39
+39|39|seg:Arts & Theatre:<this week>|200
+f
+B a tick of two calls: the two pages of the Sports week land five events (one a parking product); the query is complete; the budget counts 2
+{"burst": false, "calls": 2, "errors": 0, "events": 5, "landed": 2, "matched": 4, "refused": 0, "budget_today": {"cap": 100, "calls": 2, "refused": 0, "tm_limit": 5000, "burst_calls": 0, "tm_reset_at": "2026-11-19T06:25:48.383+00:00", "tm_available": 4998}}
+3B006511E92086|Billy Joel|6|20:00:00|onsale|KovZpZA7AAEA|Music|f|Billy Joel|1|604|venue_time_name
+G5diZ_o6tFFbU|New York Knicks vs. Boston Celtics|3|19:30:00|onsale|KovZpZA7AAEA|Sports|f|New York Knicks|Boston Celtics|1|601|venue_date_name
+G5diZ_o6tFFbV|Brooklyn Nets vs. Orlando Magic|4|19:30:00|onsale|KovZpZAEkn6A|Sports|f|Brooklyn Nets|Orlando Magic|1|606|venue_date_name
+G5diZ_o6tFFbW|New York Knicks vs. Miami Heat|5|19:30:00|onsale|KovZpZA7AAEA|Sports|f|New York Knicks|Miami Heat|1|602|venue_date_name
+G5diZ_o6tFFbX|Knicks Parking: Miami Heat|5|19:30:00|onsale|KovZpZA7AAEA|Miscellaneous|t||1||
+seg:Sports:<this week>|0|2|5|t
+t|2|0|100|0|4998|5000|2026-11-19 06:25:48.383
+B1 GET only, size 200, and the key in the request but nowhere stored
+GET|2|t|t|t
+0
+C the xrefs and the match: MSG and Barclays Ctr (ctr reads as center) by name; two TEvo performers called Billy Joel: the attraction stays unpaired; Knicks games by venue + date + name with the Heat game told from its parking; Billy Joel: two shows that day, the 20:00 one by the hour
+KovZpZA7AAEA|Madison Square Garden|1000|norm_city
+KovZpZAEkn6A|Barclays Ctr|1001|norm_city
+K8vZ9171o70|Brooklyn Nets||
+K8vZ9171oC0|Boston Celtics|52|name
+K8vZ9171oE7|Miami Heat||
+K8vZ9171oZ0|New York Knicks|51|name
+K8vZ9171ok7|Orlando Magic||
+K8vZ917Gku7|Billy Joel||
+3B006511E92086|Billy Joel|Billy Joel|venue_time_name
+G5diZ_o6tFFbU|New York Knicks vs. Boston Celtics|Boston Celtics at New York Knicks|venue_date_name
+G5diZ_o6tFFbV|Brooklyn Nets vs. Orlando Magic|Orlando Magic at Brooklyn Nets|venue_date_name
+G5diZ_o6tFFbW|New York Knicks vs. Miami Heat|Miami Heat at New York Knicks|venue_date_name
+G5diZ_o6tFFbX|Knicks Parking: Miami Heat||
+attraction_xref|2
+call|2
+match|4
+venue_xref|2
+D the budget: at 100 the call is refused, counted, audited; nothing is fetched
+{"burst": false, "calls": 0, "errors": 0, "events": 0, "landed": 0, "refused": 1, "budget_today": {"cap": 100, "calls": 100, "refused": 1, "tm_limit": 5000, "burst_calls": 0, "tm_reset_at": "2026-11-19T06:25:48.383+00:00", "tm_available": 4998}}
+100|1
+2
+D1 a cap raised by data stays at 100
+f
+D2 no key: nothing is called
+{"error": "no usable key"}
+2
+E who may run what; the cron
+f|t|f
+tm_discovery_burst_1min|* 5,6 * * *|f|t
+tm_discovery_tick_hourly|27 * * * *|t|f
+F the one-time burst (mig 20261118001000): the row waits for its window; in it, a probe reads what Ticketmaster says is left; armed above min_available; the state plan exists; the spend is capped per minute and never touches the drip budget
+1|4000|150|f|f|2026-11-19 05:25:00|2026-11-19 06:24:30
+waiting
+{"asked": 150, "burst": true, "calls": 150, "state": "spending", "errors": 0, "events": 375, "landed": 150, "matched": 0, "refused": 0, "minutes_left": 1}
+t|4099|f|1|150|375
+1|150|0|3949
+2067|1989|39|9
+151|t|t|0
+F1 the reserve: with Ticketmaster reporting 12 left, one call goes (its answer says 10 left) and the next is refused
+{"asked": 7, "burst": true, "calls": 1, "state": "spending", "errors": 0, "events": 3, "landed": 1, "matched": 0, "refused": 1, "minutes_left": 1}
+1|151|1|10
+F2 the window closes: the row is done and the cron is gone; a later run says done
+{"state": "closed"}
+t|window closed|t
+tm_discovery_tick_hourly
+done
+F3 a window that finds too few left never arms
+{"state": "not armed", "available": 3000, "min_available": 4000}
+t|not armed: Ticketmaster reports 3000 left, the rule needs more than 4000
+burst|3
+refused|3
+F4 the key is still nowhere stored
+0
+G seller and channel from the link (migs 20261118003000, 20261122040000): the box office and its partners are primary; a Ticketmaster resale page (/event/Z7r9j...), a resale host or a resale link is secondary; travel and VIP packages are packages; a doubleclick wrapper is unwrapped; no link is unknown
+https://www.ticketmaster.com/10-years-tour-minneapolis-12-11-2026/event/060064B5363DCB87|ticketmaster|primary
+https://www.ticketmaster.ca/curling-saint-john-03-30-2027/event/31006556D8A3D650|ticketmaster|primary
+https://am.ticketmaster.com/asmgkingston/buy/ism/MjZMRlJJ|ticketmaster|primary
+https://www.universe.com/events/reserved-luxury-seating-tickets-7NV451?ref=ticketmaster|universe|primary
+https://www.ticketweb.ca/event/anna-von-hausswolff-tickets/14564433|ticketweb|primary
+https://on.fgtix.com/trk/3riK|frontgate|primary
+https://www.etix.com/ticket/p/32619116/brandy-clark-asheville|etix|primary
+https://www.axs.com/events/1123852/sabaton-tickets|axs|primary
+https://hyveetix.evenue.net/events/AXW?RSRC=WEB_PR|evenue|primary
+https://www.drphillipscenter.org/show/lewis-black-rc67|drphillipscenter.org|primary
+https://seatgeek.com/harry-styles-tickets/glendale-2027-04-03/concert/18577793|seatgeek|secondary
+https://www.ticketmaster.com/some-event/resale/event/0A0055|ticketmaster|secondary
+https://www.ticketmaster.ca/event/Z7r9jZ1A7-VG7|ticketmaster_resale|secondary
+https://www.ticketmaster.com/event/Z7r9jZ1Advv4g|ticketmaster_resale|secondary
+https://travel.ticketmaster.com/en-US/event/127560094/pf?_uid=abc|ticketmaster_travel|package
+https://www.vipnation.com/tour_date/syd-dallas-tx-11-20-2026|vipnation|package
+https://ad.doubleclick.net/ddm/clk/638366664;445198581;c;dc_transparent=1;?https://travel.ticketmaster.com/en-US/package-forward/86358015?_uid=53|ticketmaster_travel|package
+https://ad.doubleclick.net/ddm/clk/1;2;c;?https://www.ticketmaster.com/x/event/0B00|ticketmaster|primary
+||unknown
+G1 the event rows carry both, kept by the database; the views show them
+3B006511E92086|ticketmaster|primary
+G5diZ_o6tFFbU|ticketmaster|primary
+G5diZ_o6tFFbV|ticketmaster|primary
+primary|ticketmaster|5
+5
+f|t
+G2 a Ticketmaster resale page lands as secondary; the channel view counts it apart
+Z7r9jZ1A7-VG7|ticketmaster_resale|secondary
+primary|ticketmaster|5
+secondary|ticketmaster_resale|1

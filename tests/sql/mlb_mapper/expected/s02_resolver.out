@@ -49,3 +49,9 @@ F the title rule
 t|f|f|t
 G who may run what; the key of the link table
 f|t|BEGIN; SET LOCAL statement_timeout = '180s'; SELECT public.mlb_ticket_map(true); COMMIT;|PRIMARY KEY (entity, schedule_id)
+H the internal key in the resolver (mig 20261117171000): a SeatGeek id no mapper matched sits in a spine cluster another source tied to EVO 751 -> identity_spine; an ESPN game matched by espn_ticket_match -> identity_espn_game; the key-first form carries both; an unknown id answers nothing
+751|identity_spine
+751|identity_espn_game
+1|751|identity_spine
+1|751|identity_spine
+0

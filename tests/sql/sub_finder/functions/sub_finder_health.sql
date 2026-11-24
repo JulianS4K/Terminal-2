@@ -20,6 +20,7 @@ DECLARE
   v_ms     integer;
   v_items  integer;
   v_live   boolean;
+  v_box    record;
 BEGIN
   IF NOT coalesce((a->>'find')::boolean, false) THEN
     RETURN jsonb_build_object('error', 'forbidden', 'detail', 'the sub finder is not enabled for this key');
@@ -134,6 +135,47 @@ BEGIN
       'detail', CASE WHEN NOT v_live THEN 'the schedule is being collected and is not served yet' END,
       'last_at', v_at, 'age_seconds', v_age, 'ok_within_seconds', 93600, 'down_after_seconds', 259200,
       'clubs_failing', v_n);
+  END IF;
+
+  -- 8. the box offices we read ourselves (GET /primary/events, /primary/listings), where they are
+  --    installed: one check a box office that has ever been read. A worker closes a pull at every wake
+  --    (10 minutes), so the age of the last one says whether the reader is alive; the events say whether
+  --    the site still answers. A box office with nothing on sale is off.
+  IF to_regclass('public.primary_poll_source') IS NOT NULL AND to_regclass('public.v_primary_poll_events_feed') IS NOT NULL THEN
+    FOR v_box IN EXECUTE $q$
+      SELECT s.source, s.finished_at,
+             count(v.event_id) FILTER (WHERE v.listings_withheld IS DISTINCT FROM 'event_started') AS events,
+             count(v.event_id) FILTER (WHERE v.listings_available) AS served,
+             count(v.event_id) FILTER (WHERE v.listings_withheld IN ('poll_failed', 'poll_stale', 'not_polled')
+                                         AND e.poll_ok_at IS NOT NULL) AS failing,
+             count(v.event_id) FILTER (WHERE v.listings_withheld IN ('poll_failed', 'poll_stale', 'not_polled')
+                                         AND e.poll_ok_at IS NULL) AS unreadable
+        FROM public.primary_poll_source s
+        LEFT JOIN public.v_primary_poll_events_feed v ON v.source = s.source
+        LEFT JOIN public.primary_poll_event e ON e.source = v.source AND e.source_event_id = v.event_id
+       GROUP BY s.source, s.finished_at
+       ORDER BY s.source$q$
+    LOOP
+      v_age := round(extract(epoch FROM v_now - v_box.finished_at));
+      v_st := CASE WHEN v_box.events = 0 THEN 'off'
+                   WHEN v_box.served = 0 THEN 'down'
+                   WHEN public.sub_finder_health_grade(v_age, 1500, 3600) <> 'ok' THEN public.sub_finder_health_grade(v_age, 1500, 3600)
+                   WHEN v_box.failing > 0 THEN 'degraded'
+                   ELSE 'ok' END;
+      v_checks := v_checks || jsonb_build_object(
+        'name', 'box_office_' || v_box.source,
+        'what', 'the ' || v_box.source || ' box office, read by S4K (GET /primary/events and /primary/listings, source=' || v_box.source || ')',
+        'status', v_st,
+        'detail', CASE WHEN v_st = 'off' THEN 'this box office has no event on sale'
+                       WHEN v_box.served = 0 THEN 'no event of this box office could be read: no listings are being sent'
+                       WHEN v_st = 'degraded' AND v_box.failing > 0 THEN 'some events could not be read at their last try: their listings are not being sent'
+                       WHEN v_st <> 'ok' THEN 'the box office has not been read lately' END,
+        'last_at', v_box.finished_at, 'age_seconds', v_age, 'ok_within_seconds', 1500, 'down_after_seconds', 3600,
+        -- events not yet started; the ones whose listings are being sent; the ones that stopped being
+        -- readable; the ones that never were (a series or a package with no listing page)
+        'events', v_box.events, 'events_with_listings', v_box.served, 'events_failing', v_box.failing,
+        'events_never_readable', v_box.unreadable);
+    END LOOP;
   END IF;
 
   RETURN jsonb_build_object(

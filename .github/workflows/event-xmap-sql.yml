@@ -1,0 +1,50 @@
+name: Event spine SQL scenarios
+
+# Runs the TickPick catalogue collector + mapper's SQL scenario tests (tests/sql/event_xmap) against
+# a throwaway Postgres: small stand-ins + the real migration, then each scenario's output is compared with
+# its expected file. Blocking — a migration that changes the behaviour updates the expected output in the
+# same PR (tests/sql/event_xmap/run.sh --update).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**event_xmap**"
+      - "tests/sql/event_xmap/**"
+      - ".github/workflows/event-xmap-sql.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**event_xmap**"
+      - "tests/sql/event_xmap/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  event-xmap-sql:
+    name: Event spine SQL scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run scenarios
+        run: bash tests/sql/event_xmap/run.sh
