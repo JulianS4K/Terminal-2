@@ -2259,10 +2259,9 @@ async def _start_tm_feed_sync():  # pragma: no cover - startup hook; loop covere
 # Primary box-office poll (operator 2026-11-23: "poll all the games for si and timberwolves every 10
 # mins", "push the list of events and their respective listings out, if poller fails to run for an
 # event, do not send listing information"). Off unless PRIMARY_POLL_LIVE=1 on this service. Each run
-# reads SI Tickets' events at Sports Illustrated Stadium, the Timberwolves' games and the Indy 500's
-# section prices (GET only: sitickets_client.py, jump_client.py, ims_client.py) and sends each event
-# with its listings, or with the reason its poll failed, to primary_poll_ingest.
-# core/primary_poll_sync.py, mig 20261123171030.
+# reads SI Tickets' events at Sports Illustrated Stadium and the Timberwolves' games (GET only:
+# sitickets_client.py, jump_client.py) and sends each event with its listings, or with the reason
+# its poll failed, to primary_poll_ingest. core/primary_poll_sync.py, mig 20261123171030.
 # It wakes every 10 minutes (one slot) and reads only the events whose slot has come: each event has its own
 # cadence, 10 minutes to one hour, and a random slot inside it (operator 2026-11-23: "Redraw every cycle, just
 # poll the data. For events day of draw every 10 mins"; mig 20261123194030). The feed's age limit follows the event.
@@ -2272,7 +2271,6 @@ _primary_poll_last: dict = {"at": None, "result": None, "error": None}
 
 
 async def _primary_poll_tick():
-    import ims_client
     import jump_client
     import sitickets_client
     from core import n2s_autobuy_live, primary_poll_sync
@@ -2281,9 +2279,9 @@ async def _primary_poll_tick():
         db = require_sb()
         # an event sent twice is stored once (its listings are replaced), so a dropped connection is retried
         rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
-        # PRIMARY_POLL_SOURCES=sitickets,ims where the browser worker reads the Timberwolves (one poller a source)
+        # PRIMARY_POLL_SOURCES=sitickets where the browser worker reads the Timberwolves (one poller a source)
         sources = primary_poll_sync.sources_from(os.environ.get("PRIMARY_POLL_SOURCES"))
-        return primary_poll_sync.run(rpc, sitickets_client, jump_client, sources, ims_client)
+        return primary_poll_sync.run(rpc, sitickets_client, jump_client, sources)
 
     out = await asyncio.to_thread(_call)
     _primary_poll_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)

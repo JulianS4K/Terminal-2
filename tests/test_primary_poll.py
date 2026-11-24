@@ -483,7 +483,7 @@ def test_csv_bad_parameters_and_a_database_error():
 
 def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
     # operator 2026-11-24: "Add all those jump teams to the catalogue scanner and push through into api"
-    assert pp.SOURCES == ("sitickets", "ims", *jc.SITES) and len(jc.SITES) == 8
+    assert pp.SOURCES == ("sitickets", *jc.SITES) and len(jc.SITES) == 8
     for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx"):
         for url in (EVENTS, LISTINGS):
             db = FakeDB(rows=[])
