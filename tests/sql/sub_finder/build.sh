@@ -77,4 +77,5 @@ stub_97_n2s_enqueue.sql
 20261121060000_n2s_autobuy_monthly_cap.sql
 20261121063000_n2s_autobuy_approval_lead.sql
 20261124043030_sub_finder_health_box_offices.sql
+20261124204030_sub_finder_health_reader_activity.sql
 STEPS

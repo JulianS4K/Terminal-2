@@ -23,6 +23,12 @@ A ping once a day, or at your service's start, is enough.
 
 What you need to know or do, newest first. `GET /ping` returns the ten newest of these under `news`.
 
+- **2026-11-24** Changed on `GET /primary/listings` and `GET /axs/watch/listings`: a listing holding more tickets than one order may take is now sent as several listings, each one a set an order can buy (section 6k). A piece's `listing_id` is the box office's id with `-1`, `-2` and so on after it; no field is added. Seats are cut where the numbers break, then by the limit, and no single seat is left behind: where one would be, the last set is one over the limit. General admission is cut by count. `max_per_order` is now filled for `axs` too and is never above the limit.
+- **2026-11-24** Changed on `GET /health`: `box_office_axs` joins the box-office checks (the AXS watch). A box office is now judged by its reader's last activity, the last pull closed or the last read tried of any of its events, so a source read from our database no longer shows `degraded` between its nightly list refreshes. And a box office of 50 events or more reads `degraded` only when more than 5% of its events failed at their last try; a smaller one, as before, when any does.
+- **2026-11-24** New: every event of `GET /axs/watch` and `GET /primary/events` carries the same event's id on each marketplace: `ticketmaster_event_id`, `seatgeek_event_id`, `stubhub_event_id`, `vivid_event_id`, `tickpick_event_id`, `gotickets_event_id`, `axs_event_id` and `aq_short_event_id`, as the other event feeds do (section 6j). An AXS watch event is paired by its AXS id, so it can have ids before it has an EVO match. `GET /axs/watch/listings` and `GET /primary/listings` are unchanged: join them to their event by `source` and `event_id`.
+- **2026-11-24** New: `GET /axs/watch` and `GET /axs/watch/listings`: the AXS watch as its own call, the 200 upcoming events AXS sells at ten venues and their listings, refilled nightly as events pass (section 6k). The same rows as `/primary/events?source=axs` and `/primary/listings?source=axs`.
+- **2026-11-24** New: `axs` is a source of `GET /primary/events` and `GET /primary/listings`: 200 upcoming events AXS sells at ten venues, with their listings (section 6k). The list refills itself nightly as events pass.
+- **2026-11-24** Fixed on `GET /primary/listings` for `sitickets`: a general admission block (the HSBC SVNS ones) now carries `general_admission: true`; it has `GA` for a row and no seat numbers, which is how it is sold. `max_per_order` on those blocks is now the largest quantity one order may take (10); it read 1. Seated blocks are unchanged, and now say `general_admission: false`.
 - **2026-11-24** New: `GET /health` reports each box office we read: `box_office_sitickets` and `box_office_timberwolves`, with how many events are being sent and how many could not be read. A box office that stops answering us reads `degraded` or `down` there, and counts in the overall `status` (section 2).
 - **2026-11-24** Changed: a box-office event's listings stop at its start time. From tip-off, `GET /primary/events` shows it with `listings_available: false` and `listings_withheld: "event_started"`, and it has no rows in `GET /primary/listings`. Red Bull New York and the other Sports Illustrated Stadium events now carry `start_utc` and `timezone` too.
 - **2026-11-24** New: six more team box offices are sources of `GET /primary/events` and `GET /primary/listings`: `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders` and `northcarolinafc`. None has single matches on sale yet, so they return no rows today; their matches appear by themselves when they go on sale (section 6k).
@@ -352,7 +358,7 @@ The overall `status` is the worst of the checks that are not `off`. A field that
 | `offers` | GoTickets offers: `offers_waiting`, and `offers_to_check` for one that was sent with its outcome not known yet (`degraded`). `buy_after_accept` says whether we buy the seats when the customer accepts | 10 minutes | 1 hour |
 | `balances` | the hourly read behind `GET /balances` | 2 hours | 6 hours |
 | `mlb_schedule` | the MLB schedule reader, once that feed exists; `off` until it is served | 26 hours | 3 days |
-| `box_office_sitickets`, `box_office_timberwolves` | the box offices behind `GET /primary/events` and `/primary/listings` (section 6k), one check each; another appears by itself when another team's site starts listing games. `last_at` is the reader's last completed pull (it wakes every 10 minutes). `events` are the ones not yet started, `events_with_listings` the ones we are sending listings for, `events_failing` the ones that were readable and could not be read at the last try (`degraded`), `events_never_readable` a series or package with no listing page (it does not lower the status). `down` when no event of the box office can be read at all: a site refusing us shows here. `off` when the box office has nothing on sale | 25 minutes | 1 hour |
+| `box_office_sitickets`, `box_office_timberwolves` | the box offices behind `GET /primary/events` and `/primary/listings` (section 6k), one check each; another appears by itself when another team's site starts listing games. `last_at` is the reader's last activity: the last pull it closed (SI Tickets and the team sites, every 10 minutes) or the last read it tried of any event (the AXS watch, every minute), whichever is newer. `events` are the ones not yet started, `events_with_listings` the ones we are sending listings for, `events_failing` the ones that were readable and could not be read at the last try (`degraded` when any does, or at a box office of 50 events or more when more than 5% do), `events_never_readable` a series or package with no listing page (it does not lower the status). `down` when no event of the box office can be read at all: a site refusing us shows here. `off` when the box office has nothing on sale | 25 minutes | 1 hour |
 
 Poll it once a minute at most. If `crm_feed` is not `ok` while your own API is up, tell S4K: a label you set will not reach us until it is. If `buying` is `down`, a buy call is still accepted and waits; nothing is bought until S4K has cleared it.
 
@@ -967,24 +973,25 @@ One row per upcoming event where SeatGeek is the primary ticketer, for example D
 
 ## 6j. The same event on every marketplace
 
-Every event row of `/tm/events`, `/axs/events`, `/seatgeek/events` and `/mlb/events` carries the id we hold for the same event on each other site, so you do not have to join the feeds yourself. A null means we hold no pairing with that site, not that the site does not list the event.
+Every event row of `/tm/events`, `/axs/events`, `/seatgeek/events`, `/mlb/events`, `/axs/watch` and `/primary/events` carries the id we hold for the same event on each other site, so you do not have to join the feeds yourself. A null means we hold no pairing with that site, not that the site does not list the event.
 
 | Field | The event's id on |
 |---|---|
-| `xmap_tevo_event_id` | EVO (Ticket Evolution): the feed's own match (`tevo_event_id`), else the one our cross-map holds. `tevo_event_id` itself is unchanged, and so is what `mapped=` filters on |
+| `xmap_tevo_event_id` | EVO (Ticket Evolution): the feed's own match (`tevo_event_id`), else the one our cross-map holds. `tevo_event_id` itself is unchanged, and so is what `mapped=` filters on. Not on `/mlb/events`, `/axs/watch` or `/primary/events`, whose `tevo_event_id` is the only EVO id we hold for the row |
 | `ticketmaster_event_id` | Ticketmaster: the event Ticketmaster itself sells before a resale page (not on `/tm/events`, where it is `tm_event_id`) |
 | `seatgeek_event_id` | SeatGeek (not on `/seatgeek/events`, where it is `sg_event_id`) |
 | `stubhub_event_id` | StubHub |
 | `vivid_event_id` | Vivid Seats |
 | `tickpick_event_id` | TickPick |
 | `gotickets_event_id` | GoTickets |
-| `axs_event_id` | AXS, as text (on `/axs/events` it is the row's own id, a number) |
+| `axs_event_id` | AXS, as text (on `/axs/events` it is the row's own id, a number; on `/axs/watch` it repeats the row's `event_id`) |
 | `aq_short_event_id` | Automatiq |
 
 - **Where they come from.** Our hub of traded events first, then our cross-map of every site's catalogue, then (Vivid Seats and TickPick) that site's own catalogue. `GET /tm/markets` reads the same sources in the same order, so the two agree for an event both list.
 - **An event with no EVO match can still be paired.** The cross-map pairs some Ticketmaster, AXS and SeatGeek events with other sites before our matcher finds the EVO event; those rows have a null `tevo_event_id` and ids here.
 - **`/mlb/schedule` already carried** `sg_event_id`, `sh_event_id`, `vivid_event_id`, `tm_event_id`, `gotickets_event_id` and `aq_short_event_id` under those names; it gains `tickpick_event_id` and `axs_event_id`.
 - **`since` does not see a new pairing by itself.** `changed_at` moves when the event or its EVO match changes. To pick up pairings added later, read the page again.
+- **`/axs/watch` and `/primary/events`.** An AXS watch event (`source` `axs`) is looked up by its AXS id, so it is paired as `/axs/events` pairs it. An event of a box office we read ourselves (`sitickets`, `timberwolves` and the other team sites) is looked up by its EVO event, so it has ids only once `tevo_event_id` is filled. The listings calls carry no marketplace ids: join a listing to its event by `source` and `event_id`.
 - In CSV the fields are the last columns.
 
 ## 6k. Box offices we poll ourselves: events and listings
@@ -997,12 +1004,15 @@ Two box offices are read by us directly and served as two feeds. Each event is r
 | `timberwolves` | The Minnesota Timberwolves' own ticket site: every home game at Target Center | Yes, with seats available and the price range | Yes: the team's own seats (`primary`) and seats resold on the site (`resale`) |
 | `lynx` | The Minnesota Lynx's own ticket site, on the same platform: home games at Target Center | None until the WNBA schedule is released; they then appear by themselves | As for `timberwolves`, once there are games |
 | `nccourage`, `denversummit`, `reign`, `bostonlegacy`, `sounders`, `northcarolinafc` | The own ticket sites of NC Courage, Denver Summit, Seattle Reign and Boston Legacy (NWSL), Seattle Sounders (MLS) and North Carolina FC (USL), all on the same platform as `timberwolves` | None yet: no single matches were on sale on 2026-11-24 (Sounders, Reign and Boston Legacy sell there from the 2027 season). Matches appear by themselves when they go on sale; seasons, memberships and plans are left out | As for `timberwolves`, once there are matches |
+| `axs` | The AXS watch: a list of 200 upcoming events that AXS itself sells (or an AXS-powered team shop such as the Rockets' `nba` store) at ten venues — Crypto.com Arena, Toyota Center, T-Mobile Arena, Red Rocks, RodeoHouston, PeoplesBank Arena, MGM Grand Garden Arena, Target Center (concerts only), Greek Theatre, Soldier Field — refilled nightly as events pass; sports only for major-league teams (Lakers, Kings, Rockets, Golden Knights) | Yes, with the price range, seats available and the order limits; `tevo_event_id` from the AXS export's own match | Yes: AXS's own seats (`primary`) and AXS Official Resale (`resale`), each listing a block of adjoining seats with its seat numbers, or a general-admission level with its amount. Prices are the AXS base price (the facility fee included, the service fee not: `fee` is null). Read through TicketsData, about 40 seconds a read, so a listing is 10 to 60 minutes old (`poll_every_minutes`) |
 
-Season packages, memberships and deposits are left out.
+Season packages, memberships and deposits are left out. For `axs`, parking, suites, packages and passes too, and the Timberwolves and Lynx, which `timberwolves` and `lynx` carry.
 
 ```
 GET /primary/events?source=sitickets&date_from=2027-02-01&available=true
 GET /primary/listings?source=sitickets&event_id=2297105
+GET /axs/watch?available=true                      the AXS watch on its own: /primary/events pinned to source axs
+GET /axs/watch/listings?event_id=1457748           its listings: /primary/listings pinned to source axs
 ```
 
 **`GET /primary/events`** takes `source`, `date_from`, `date_to`, `q` (every word must be in the name, venue or city), `available=true|false`, `mapped=true|false`, `format=json|csv`, `limit` (max 5000) and `offset`.
@@ -1023,16 +1033,17 @@ GET /primary/listings?source=sitickets&event_id=2297105
 | `listed_quantity` | The tickets listed, added up over the same listings. 0 when nothing is listed; null when the listings carry no quantity |
 | `poll_every_minutes` | How often this event's listings are read. By date: the day of the event 10; up to 2 days away, or a Friday, Saturday or Sunday event up to 5 days away, 30; further 60 (the longest). Then, except on the day of the event, by `median_price` (150 or more is one step faster, under 50 one step slower) and by `listed_quantity` (2,000 or more is one step faster, under 250 one step slower). The two add up, stay between 30 and 60, and together never slow an event by more than one step |
 | `next_poll_at` | The slot drawn for this event's next read. Time is cut into windows as long as the event's interval and each window into 10-minute slots; the event is read once a window, at a slot drawn at random, redrawn every cycle. So two reads of an hourly event are 10 to 110 minutes apart, an hour on average |
+| `ticketmaster_event_id`, `seatgeek_event_id`, `stubhub_event_id`, `vivid_event_id`, `tickpick_event_id`, `gotickets_event_id`, `axs_event_id`, `aq_short_event_id` | The same event's id on each marketplace (section 6j). Null where we hold no pairing with that site. In CSV they are the last columns |
 
 **`GET /primary/listings`** takes `source`, `event_id`, `tevo_event_id`, `market=primary|resale`, `section`, `date_from`, `date_to`, `format`, `limit` and `offset`. Rows come cheapest first within an event.
 
 | Field | Meaning |
 |---|---|
 | `source`, `event_id`, `event_name`, `tevo_event_id`, `event_date`, `start_local_time` | The event, and the EVO event it matched (null until matched) |
-| `listing_id` | The box office's id for this block of seats; it stays the same from one read to the next |
+| `listing_id` | The box office's id for this block of seats; it stays the same from one read to the next. A block sent as several listings has `-1`, `-2` and so on after it, one for each piece |
 | `market` | `primary`: the box office's own seats. `resale`: resold on the same site |
-| `area`, `section`, `seat_row`, `seat_low`, `seat_high`, `seats` | Where the seats are. `seats` lists every seat number |
-| `quantity`, `allowed_quantities`, `max_per_order` | Seats in the block, the quantities a buyer may take from it, and the most one order may take |
+| `area`, `section`, `seat_row`, `seat_low`, `seat_high`, `seats` | Where the seats are. `seats` lists every seat number. A general admission block has no seats: `seat_low`, `seat_high` and `seats` are null and `general_admission` is true (`sitickets`: `seat_row` reads `GA`) |
+| `quantity`, `allowed_quantities`, `max_per_order` | Seats in the listing, the quantities a buyer may take from it, and the most one order may take of it: the largest quantity the box office sells within its order limit. Null where no limit is known |
 | `order_min`, `order_max` | The event's own order limits, where the box office gives them |
 | `price`, `fee`, `tax`, `all_in_price`, `currency` | Per ticket, for every source: `price` is before fees and tax, and `price` + `fee` + `tax` = `all_in_price`, what the buyer pays |
 | `order_fee` | A fee charged once an order, not per ticket (`sitickets`: 0.30). Null where there is none |
@@ -1045,7 +1056,8 @@ GET /primary/listings?source=sitickets&event_id=2297105
 - **Listings are sent for 35 minutes after a good read, or until 20 minutes after the event's next slot (`next_poll_at`), whichever is later.** So an event read every hour keeps its listings between reads, and `as_of` on each listing says how old they are. A failed read deletes the event's listings on our side, so nothing old is sent. The event stays in `/primary/events` with `listings_available: false`.
 - **An empty `/primary/listings` for an event does not mean it is sold out.** Check `listings_available` on the event first.
 - **Obstructed-view listings are never sent.**
-- **Timberwolves prices are split from the total.** The site shows one all-in figure a ticket: to the cent for the team's own seats, to the dollar for resale. We split it into `price`, `fee` (20% of the price) and `tax` (12.025% of the price) and set `price_estimated: true`; `all_in_price` is the site's own figure. `max_per_order` is never above the game's `order_max`. On the event, `price_min` and `price_max` are all-in figures.
+- **A block over the order limit is sent as several listings.** The limit is the event's `order_max` (the Timberwolves' 6, an AXS event's 4 to 14) or, for `sitickets`, the block's own figure, and never more than the largest quantity the block sells: a Timberwolves block of 7 sold as 1 to 5 or all 7 has a limit of 5. Seats are first cut where the seat numbers break, so every listing is seats that sit together (where a block's seats are all odd or all even, as at the Greek Theatre, neighbours are two apart: 1, 3, 5, 7 sit together); then each run longer than the limit is cut into sets of the limit, the last set holding what is left (7 seats, limit 4: a listing of 4 and a listing of 3). No single seat is left behind, because a box office will not sell seats that strand one: where one seat would be left, it stays with the set before it, which is then one over the limit (9 seats, limit 4: a listing of 4 and a listing of 5; 5 seats, limit 4: one listing of 5). That listing's `max_per_order` is still the limit. General admission is cut by count alone (`seats` null), and its last piece can be a single ticket. A block that sells only whole and is over the limit is sent as it is, with `max_per_order` null. A piece is marked by its `listing_id` alone: the box office's id, a hyphen and the piece's number (`-1`, `-2`, in seat order). `listing_count` on the event still counts the box office's blocks. A piece's id holds while its block does not change at the box office.
+- **Timberwolves prices are split from the total.** The site shows one all-in figure a ticket: to the cent for the team's own seats, to the dollar for resale. We split it into `price`, `fee` (20% of the price) and `tax` (12.025% of the price) and set `price_estimated: true`; `all_in_price` is the site's own figure. On the event, `price_min` and `price_max` are all-in figures.
 - **Listings of every team site but `timberwolves` will carry `all_in_price` only** until that team's fee and tax are confirmed: `price`, `fee` and `tax` are null there.
 - **Timberwolves listings come from a separate worker.** Until it is switched on, every Timberwolves event has `listings_withheld: poll_failed`.
 - **`tevo_event_id` is filled by our event mapper**, not by the poll, so a newly listed event has a null until the mapper's next pass. Use `mapped=false` to see the ones still open.

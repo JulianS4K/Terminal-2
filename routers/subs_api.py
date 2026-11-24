@@ -37,6 +37,8 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/seatgeek/events?q=&since=               the events SeatGeek tickets as the primary seller (routers/primary_feed.py)
   GET  /api/v1/subs/primary/events?source=&available=       the events of the box offices we poll ourselves, with whether listings can be sent (routers/primary_poll_feed.py)
   GET  /api/v1/subs/primary/listings?source=&event_id=      their listings, only for events polled successfully within the age limit, 35 minutes (routers/primary_poll_feed.py)
+  GET  /api/v1/subs/axs/watch?available=&q=                 the AXS watch: the 200 upcoming AXS-sold events read through TicketsData (/primary/events pinned to source axs)
+  GET  /api/v1/subs/axs/watch/listings?event_id=            their listings (/primary/listings pinned to source axs)
   GET  /api/v1/subs/gates                                   our six matching gates and the words a label can carry, from the guide's section 8
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
@@ -676,7 +678,8 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         """Every upcoming event of the box offices we poll ourselves (SI Tickets at Sports Illustrated
         Stadium, the Timberwolves' own site), with whether its listings can be sent right now and, if
         not, why (operator 2026-11-23: "push the list of events and their respective listings out";
-        mig 20261123171030). Same keys as /mlb/schedule. Reads our own tables only."""
+        mig 20261123171030), and the event's id on every marketplace (routers/feed_xmap.py). Same keys as
+        /mlb/schedule. Reads our own tables only."""
         denied = _mlb_reader(request, "primary_events")
         return denied or primary_events_response(get_db(), request.query_params)
 
@@ -688,6 +691,30 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         information"), and never an obstructed-view listing. Same keys as /mlb/schedule."""
         denied = _mlb_reader(request, "primary_listings")
         return denied or primary_listings_response(get_db(), request.query_params)
+
+    def _pinned(params, **fixed):
+        """The query, with some parameters fixed: a route that is another route narrowed to one source."""
+        return {**dict(params), **fixed}
+
+    @router.get("/axs/watch")
+    def axs_watch_events(request: Request):
+        """The AXS watch (mig 20261124190000; operator 2026-11-24: "add to API out to crm as new call"): the 200
+        upcoming events AXS sells at the watched venues, read through TicketsData on the box-office cadence and
+        refilled nightly as events pass, with whether each one's listings can be sent right now. This is
+        /primary/events pinned to source `axs`; every other filter (`q`, `available`, `mapped`, dates, paging,
+        `format`) works the same. Each event carries its id on every marketplace (routers/feed_xmap.py), read by
+        its AXS id. Same keys as /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "axs_watch_events")
+        return denied or primary_events_response(get_db(), _pinned(request.query_params, source="axs"))
+
+    @router.get("/axs/watch/listings")
+    def axs_watch_listings(request: Request):
+        """The watched AXS events' listings: AXS's own seats (`primary`) and AXS Official Resale (`resale`), each a
+        block of adjoining seats with its seat numbers, or a general-admission level with its amount, at the AXS
+        base price. Only for an event whose last read succeeded within the age limit. This is /primary/listings
+        pinned to source `axs`. Same keys as /mlb/schedule."""
+        denied = _mlb_reader(request, "axs_watch_listings")
+        return denied or primary_listings_response(get_db(), _pinned(request.query_params, source="axs"))
 
     @router.get("/gates")
     def gates(request: Request):

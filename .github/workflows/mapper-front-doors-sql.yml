@@ -1,0 +1,50 @@
+name: Mapper front doors SQL scenarios
+
+# Runs the mapper front doors + mapper sync SQL scenario tests (tests/sql/mapper_front_doors) against
+# a throwaway Postgres: small stand-ins + the real migration, then each scenario's output is compared with
+# its expected file. Blocking — a migration that changes the behaviour updates the expected output in the
+# same PR (tests/sql/mapper_front_doors/run.sh --update).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**mapper_front_doors**"
+      - "tests/sql/mapper_front_doors/**"
+      - ".github/workflows/mapper-front-doors-sql.yml"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**mapper_front_doors**"
+      - "tests/sql/mapper_front_doors/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mapper-front-doors-sql:
+    name: Mapper front doors SQL scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run scenarios
+        run: bash tests/sql/mapper_front_doors/run.sh

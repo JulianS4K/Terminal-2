@@ -8,7 +8,7 @@ two kinds of page and nothing else:
   listings(event)      an event page: every seat block on sale, with section, row, seats, the
                        quantities a buyer may take, and per ticket the price before fees and tax,
                        the fee, the tax and the all-in price (price + fee + tax), plus the fee
-                       charged once an order
+                       charged once an order. A general admission block has no seats and is flagged
 
 Operator 2026-11-23: "poll all the games for si ... every 10 mins", "for si only red bull stadium",
 "remove membership and season listings". No key, no login, no cookie. Nothing is ever written to
@@ -134,11 +134,15 @@ def parse_listings(props: dict) -> list[dict]:
             "seat_low": _text(g.get("tls")), "seat_high": _text(g.get("ths")),
             "seats": [s.rsplit(":", 1)[-1] for s in g.get("tsi") or [] if isinstance(s, str)] or None,
             "qty": g.get("tq"), "allowed_quantities": splits,
-            "max_per_order": g.get("tmc") or (max(splits) if splits else None),
+            # the most one order may take is the largest quantity the page lets a buyer pick. The page's own
+            # `tmc` agrees with it on every seated block and reads 1 on a general admission block that sells
+            # 1 to 10 (HSBC SVNS, 2026-11-24), so it is only the fallback
+            "max_per_order": max(splits) if splits else g.get("tmc"),
             "price": g.get("tp"), "fee": fee, "tax": tax, "all_in": paid, "order_fee": order_fee,
             "price_includes_tax": False, "price_estimated": False,
             "ticket_type": kind.get("n"), "delivery": g.get("tf"),
-            "ada": bool(g.get("ia")), "obstructed": False, "aisle": None, "ga": None,
+            # general admission (`iga`): one block with no row or seats ("GA" in place of the row)
+            "ada": bool(g.get("ia")), "obstructed": False, "aisle": None, "ga": bool(g.get("iga")),
         })
     return out
 

@@ -129,9 +129,11 @@ def parse_listings(inventory: Any, order_max: int | None = None, rates: tuple[fl
         where = block.get("location") or {}
         seats = [str(seat) for seat in where.get("seats") or []]
         allowed = block.get("quantities") or []
-        most = max(allowed) if allowed else None
-        if most is not None and order_max:
-            most = min(most, order_max)
+        # the most one order can take: the largest quantity the block sells that the order limit allows.
+        # A block of 7 sold as 1-5 or all 7, with 6 an order, gives 5; one sold only whole and over the
+        # limit gives none (mig 20261124230030 works out the same figure for the split).
+        within = [n for n in allowed if not order_max or n <= order_max]
+        most = max(within) if within else None
         paid = all_in_price(block, price_type)
         price, fee, tax = split_all_in(paid, rates) if rates and paid is not None else (None, None, None)
         out.append({
