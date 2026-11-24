@@ -344,7 +344,7 @@ def test_the_lynx_are_read_like_the_timberwolves_once_they_list_games():
 
 
 def test_each_worker_polls_only_the_sources_it_is_given(monkeypatch):
-    assert sync.sources_from(None) == sync.sources_from("") == ("sitickets", "timberwolves")
+    assert sync.sources_from(None) == sync.sources_from("") == ("sitickets", "timberwolves", "ims")
     assert sync.sources_from(" SITickets ,") == ("sitickets",)
     with pytest.raises(ValueError, match="stubhub"):
         sync.sources_from("sitickets,stubhub")
