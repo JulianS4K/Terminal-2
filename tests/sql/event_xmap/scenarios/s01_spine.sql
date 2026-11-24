@@ -207,3 +207,23 @@ SELECT event_key_lookup_primary('testbox', '1006') = (SELECT xmap_id FROM event_
        event_key_lookup('primary', (SELECT pp_seq FROM primary_poll_event WHERE source_event_id = '1001')) = (SELECT xmap_id FROM event_xmap WHERE tevo_event_id = 901) AS key_by_seq;
 SELECT source, in_spine FROM v_event_xmap_coverage WHERE source = 'primary';
 SELECT jobname, schedule FROM cron.job WHERE jobname = 'primary_poll_map_hourly';
+
+\echo M a member whose spine row is outside the window (mig 20261124010000): a TM show at Barclays Center sat on a day before the window with a Vivid sibling; TM reschedules it to day 21, where a Vivid + TickPick cluster of the show already exists. The pass used to break on the one-row-per-source-id key; now the id leaves the old row (audited day_moved) and joins the cluster of the new day; the old row keeps its Vivid member
+INSERT INTO tickpick_catalog_venue (tp_venue_id, name, city, state, country, tevo_venue_id, method) VALUES (19, 'Barclays Center', 'Brooklyn', 'NY', 'US', 600, 'name_state');
+INSERT INTO tm_discovery_event (tm_event_id, name, local_date, local_time, date_tbd, time_tba, status_code, tm_venue_id, venue_name, venue_city, venue_state, venue_country, attraction_names, is_product, tevo_event_id) VALUES
+  ('Z7r9jZ1TEST1', 'CupcakKe (Ages 16 & Over)', d(-10), '20:00', false, false, 'onsale', 'KovZpZAEkn6A', 'Barclays Center', 'Brooklyn', 'NY', 'US', ARRAY['CupcakKe'], false, NULL);
+INSERT INTO vivid_catalog_event (vivid_event_id, name, event_local, event_date, vivid_venue_id, venue_country, performers) VALUES
+  (2302, 'CupcakKe', ts_(-10, '20:00'), d(-10), 78, 'US', '["CupcakKe"]'),
+  (2303, 'CupcakKe', ts_(21, '20:00'), d(21), 78, 'US', '["CupcakKe"]');
+INSERT INTO tickpick_catalog_event (tp_event_id, name, status, event_local, event_date, date_confirmed, tp_venue_id, venue_country, performers, tevo_event_id) VALUES
+  (1013, 'CupcakKe', 'active', ts_(21, '20:00'), d(21), true, 19, 'US', '[{"name":"CupcakKe"}]', NULL);
+-- the past cluster, as an earlier pass left it: TM + Vivid on day -10, no EVO listing
+INSERT INTO event_xmap (venue_key, local_day, tevo_venue_id, venue_name, name, start_local, seed_source, tm_event_seq, vivid_event_id, methods)
+  VALUES ('tv:600', d(-10), 600, 'Barclays Center', 'CupcakKe (Ages 16 & Over)', ts_(-10, '20:00')::timestamp, 'tm', (SELECT tm_seq FROM tm_discovery_event WHERE tm_event_id = 'Z7r9jZ1TEST1'), 2302, '{"tm": "tm", "vivid": "name"}');
+SELECT (event_xmap_tick(45, true))->'seeded_by_source' AS day21_cluster_forms;
+UPDATE tm_discovery_event SET local_date = d(21), status_code = 'rescheduled' WHERE tm_event_id = 'Z7r9jZ1TEST1';
+SELECT (event_xmap_tick(45, true) - 'run_id' - 'ms' - 'window')->'detached' AS detached;
+SELECT local_day - current_date AS day, tm_event_seq IS NOT NULL AS has_tm, vivid_event_id, tp_event_id, sources FROM event_xmap WHERE vivid_event_id IN (2302, 2303) ORDER BY local_day;
+SELECT a.action, a.source, a.note, x.local_day - current_date AS day FROM event_xmap_audit a JOIN event_xmap x ON x.xmap_id = a.xmap_id
+ WHERE a.source = 'tm' AND a.source_id = (SELECT tm_seq FROM tm_discovery_event WHERE tm_event_id = 'Z7r9jZ1TEST1') ORDER BY a.id;
+SELECT event_key_lookup_tm('Z7r9jZ1TEST1') = event_key_lookup('vivid', 2303) AS key_follows_the_show;

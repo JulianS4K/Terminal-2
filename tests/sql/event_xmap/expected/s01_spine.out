@@ -123,3 +123,11 @@ t||99006|2|1006|Test Home Team vs. Nobody|testbox
 t|t
 primary|4
 primary_poll_map_hourly|44 * * * *
+M a member whose spine row is outside the window (mig 20261124010000): a TM show at Barclays Center sat on a day before the window with a Vivid sibling; TM reschedules it to day 21, where a Vivid + TickPick cluster of the show already exists. The pass used to break on the one-row-per-source-id key; now the id leaves the old row (audited day_moved) and joins the cluster of the new day; the old row keeps its Vivid member
+{"tickpick": 1}
+1
+-10|f|2302||1
+21|t|2303|1013|3
+detach|tm|day_moved|-10
+attach|tm|name|21
+t

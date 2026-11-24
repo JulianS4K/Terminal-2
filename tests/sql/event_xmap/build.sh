@@ -26,4 +26,5 @@ stub_00_base.sql
 20261117190000_tm_in_spine.sql
 20261123180000_venue_primary_box_office.sql
 20261123190000_primary_poll_in_mapper.sql
+20261124010000_event_xmap_detach_outside_window.sql
 STEPS
