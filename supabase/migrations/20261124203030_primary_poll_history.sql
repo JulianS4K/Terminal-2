@@ -1,4 +1,4 @@
--- Migration 20261124160030 · level:data-collection · lane:A1 · writes:primary_poll_listings_snapshots(new),primary_poll_event_metrics(new),primary_poll_section_metrics(new),primary_poll_event_daily(new),primary_poll_config(+keep_history),primary_poll_keep_history()(new),primary_poll_ingest()(replaced),retention_policy(+3 rows) · reads:primary_poll_listing,primary_poll_event · pre:20261123194030,20260705153000
+-- Migration 20261124203030 · level:data-collection · lane:A1 · writes:primary_poll_listings_snapshots(new),primary_poll_event_metrics(new),primary_poll_section_metrics(new),primary_poll_event_daily(new),primary_poll_config(+keep_history,+history_skip_listings),primary_poll_keep_history()(new),primary_poll_ingest()(replaced),retention_policy(+3 rows) · reads:primary_poll_listing,primary_poll_event · pre:20261123194030,20260705153000
 --
 -- THE BOX-OFFICE POLL KEEPS ITS HISTORY, ON THE SAME LADDER AS EVO AND GOTICKETS.
 -- Operator 2026-11-24: "Look at the retention systems of both Evo and gotickets and copy".
@@ -24,15 +24,22 @@
 -- Keeping the history never costs the feed a read: if it fails, the read is stored all the same and the
 -- failure is a warning in the database log.
 --
--- SIZE. 2026-11-24: 15,738 listings over 39 events, read 24 to 48 times a day: about 590,000 listing rows a
--- day, so about 9 million rows at the 15-day limit; the metrics are about 1,400 and 50,000 rows a day.
+-- SIZE. 2026-11-24, SI Tickets and the Timberwolves: 15,738 listings over 39 events, read 24 to 48 times a day:
+-- about 590,000 listing rows a day, 9 million at the 15-day limit; their metrics are about 1,400 and 50,000 rows
+-- a day. The AXS watch (mig 20261124190000, live the same evening: 200 events read through this same ingest)
+-- adds more than both: its first 27 events on sale carried 10,285 listings, so with some 120 of the 200 on
+-- sale it is about 1.2 million listing rows a day, 18 million at the limit. Together about 27 million rows:
+-- small beside gotickets_listings_snapshots (316 million), but the operator's call; hence the second switch.
 --
 -- The figures are over the listings the feed sends (obstructed-view ones are counted apart), with a ticket
 -- priced at what the buyer pays (all_in_price, or price where a source gives no total): the same basis as
 -- primary_poll_event.median_price, which price_median equals.
 --
--- SWITCH. primary_poll_config.keep_history (true): false stops the writing; the three policy rows'
--- `enabled` is the sweep's own switch, as for every table in retention_policy. No cron is added or changed.
+-- SWITCHES. primary_poll_config.keep_history (true): false stops all the writing. history_skip_listings
+-- (empty): the sources named there keep their figures (per read, per section, per day) and not their raw
+-- listings: UPDATE primary_poll_config SET history_skip_listings = '{axs}' takes the AXS watch's 1.2 million
+-- rows a day out and keeps its history of counts and prices. The three policy rows' `enabled` is the sweep's
+-- own switch, as for every table in retention_policy. No cron is added or changed.
 --
 -- rollback: re-apply primary_poll_ingest() from 20261123194030; DELETE the three retention_policy rows;
 --           DROP FUNCTION primary_poll_keep_history(text, text); DROP the four tables;
@@ -40,7 +47,10 @@
 
 ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS keep_history boolean NOT NULL DEFAULT true;
 COMMENT ON COLUMN public.primary_poll_config.keep_history IS
-  'true: every good read is copied to primary_poll_listings_snapshots and its figures to the metrics tables (mig 20261124160030)';
+  'true: every good read is copied to primary_poll_listings_snapshots and its figures to the metrics tables (mig 20261124203030)';
+ALTER TABLE public.primary_poll_config ADD COLUMN IF NOT EXISTS history_skip_listings text[] NOT NULL DEFAULT '{}';
+COMMENT ON COLUMN public.primary_poll_config.history_skip_listings IS
+  'sources whose raw listings are not copied to primary_poll_listings_snapshots; their figures are still kept (mig 20261124203030)';
 
 -- the whole book at every good read: the rows of one (source, source_event_id, captured_at) are that book
 CREATE TABLE IF NOT EXISTS public.primary_poll_listings_snapshots (
@@ -163,6 +173,7 @@ AS $function$
 DECLARE
   v_at   timestamptz := now();             -- the read's own time: primary_poll_event.poll_ok_at
   v_tevo bigint;
+  v_skip text[];
   m      public.primary_poll_event_metrics%ROWTYPE;
 BEGIN
   IF current_user NOT IN ('service_role', 'postgres', 'supabase_admin') THEN
@@ -171,6 +182,7 @@ BEGIN
   IF NOT coalesce((SELECT c.keep_history FROM public.primary_poll_config c), false) THEN
     RETURN;
   END IF;
+  SELECT c.history_skip_listings INTO v_skip FROM public.primary_poll_config c;
   SELECT t.tevo_event_id INTO v_tevo
     FROM public.primary_poll_event t WHERE t.source = p_source AND t.source_event_id = p_event_id;
 
@@ -182,6 +194,7 @@ BEGIN
          l.price_estimated, l.ticket_type, l.general_admission, l.obstructed, l.ada
     FROM public.primary_poll_listing l
    WHERE l.source = p_source AND l.source_event_id = p_event_id
+     AND NOT (p_source = ANY (coalesce(v_skip, '{}')))
   ON CONFLICT DO NOTHING;
 
   SELECT p_source, p_event_id, v_at, v_tevo,
@@ -310,7 +323,7 @@ BEGIN
              listed_quantity = v_qty, poll_interval = v_every,
              next_poll_at = public.primary_poll_next(v_every, t.next_poll_at)
        WHERE t.source = p_source AND t.source_event_id = v_id;
-      -- the book as read, its figures and the day's row are kept (mig 20261124160030). The history never costs
+      -- the book as read, its figures and the day's row are kept (mig 20261124203030). The history never costs
       -- the feed a read: if keeping it fails, the read stands and the failure is a warning in the database log.
       BEGIN
         PERFORM public.primary_poll_keep_history(p_source, v_id);
@@ -342,12 +355,13 @@ INSERT INTO public.retention_policy (table_name, ts_column, keep_days, enabled, 
 VALUES
   ('primary_poll_listings_snapshots', 'captured_at', 15, true, 50000, 30, 25,
    'Box-office poll, every listing of every good read - 15d, mirroring listings_snapshots / gotickets_listings_snapshots '
-   '(mig 20261124160030, operator 2026-11-24: "Look at the retention systems of both Evo and gotickets and copy"). '
-   'About 590k rows a day at seed time. Writing stops with primary_poll_config.keep_history = false.'),
+   '(mig 20261124203030, operator 2026-11-24: "Look at the retention systems of both Evo and gotickets and copy"). '
+   'About 590k rows a day for SI Tickets and the Timberwolves at seed time, and about 1.2M more for the AXS watch; '
+   'primary_poll_config.history_skip_listings names sources to leave out, keep_history = false stops all writing.'),
   ('primary_poll_section_metrics', 'captured_at', 60, true, 50000, 20, 45,
-   'Box-office poll, per section and market per read - 60d, mirroring section_metrics (mig 20261124160030).'),
+   'Box-office poll, per section and market per read - 60d, mirroring section_metrics (mig 20261124203030).'),
   ('primary_poll_event_metrics', 'captured_at', 120, true, 20000, 15, 55,
-   'Box-office poll, per event per read - 120d, mirroring event_metrics (mig 20261124160030). The day''s last read '
+   'Box-office poll, per event per read - 120d, mirroring event_metrics (mig 20261124203030). The day''s last read '
    'is kept forever in primary_poll_event_daily.')
 ON CONFLICT (table_name) DO NOTHING;
 

@@ -108,10 +108,10 @@ SELECT count(*) FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e
 DROP VIEW public.v_mlb_schedule_feed; DROP TABLE public.mlb_ticket_sync;          -- so the overall status below is the box offices' doing
 -- stand-ins for the box-office poll's tables and its events feed (migs 20261123171030 and later)
 CREATE TABLE public.primary_poll_source (source text PRIMARY KEY, finished_at timestamptz);
-CREATE TABLE public.primary_poll_event (source text, source_event_id text, poll_ok_at timestamptz);
+CREATE TABLE public.primary_poll_event (source text, source_event_id text, poll_ok_at timestamptz, poll_attempt_at timestamptz);
 CREATE TABLE public.v_primary_poll_events_feed (source text, event_id text, listings_available boolean, listings_withheld text);
 CREATE FUNCTION box(p_source text, p_id text, p_available boolean, p_why text, p_ok_at timestamptz) RETURNS void LANGUAGE sql AS $$
-  INSERT INTO primary_poll_event VALUES (p_source, p_id, p_ok_at);
+  INSERT INTO primary_poll_event VALUES (p_source, p_id, p_ok_at, NULL);
   INSERT INTO v_primary_poll_events_feed VALUES (p_source, p_id, p_available, p_why) $$;
 INSERT INTO primary_poll_source VALUES ('sitickets', now() - interval '3 minutes'), ('timberwolves', now() - interval '4 minutes'),
                                        ('lynx', now() - interval '200 days');
@@ -144,3 +144,23 @@ UPDATE primary_poll_source SET finished_at = now() - interval '30 minutes' WHERE
 SELECT e->>'status', e->>'detail' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_timberwolves';
 UPDATE primary_poll_source SET finished_at = now() - interval '2 hours' WHERE source = 'timberwolves';
 SELECT r->>'status', e->>'status', e->>'detail' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_timberwolves';
+
+\echo M a box office read from the database closes a pull once a night: it is judged by the last read tried of its events
+INSERT INTO primary_poll_source VALUES ('axs', now() - interval '20 hours');
+SELECT count(*) AS events_set_up FROM (SELECT box('axs', 'a' || n, true, NULL, now()) FROM generate_series(1, 100) n) x;
+SELECT e->>'status', e->>'detail' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_axs';
+UPDATE primary_poll_event SET poll_attempt_at = now() - interval '2 minutes' WHERE source = 'axs' AND source_event_id = 'a7';
+SELECT e->>'status', (e->>'age_seconds')::int BETWEEN 110 AND 130 AS age_is_the_last_read_tried FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_axs';
+UPDATE primary_poll_event SET poll_attempt_at = now() - interval '40 minutes' WHERE source = 'axs' AND source_event_id = 'a7';
+SELECT e->>'status', e->>'detail' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_axs';
+UPDATE primary_poll_event SET poll_attempt_at = now() WHERE source = 'axs' AND source_event_id = 'a7';
+
+\echo N a few events failing out of many do not lower the status: 5 of 100 is ok, 6 is degraded; at a small box office one is enough
+UPDATE v_primary_poll_events_feed SET listings_available = false, listings_withheld = 'poll_failed' WHERE source = 'axs' AND event_id IN ('a1', 'a2', 'a3', 'a4', 'a5');
+SELECT e->>'status', e->'events_failing', e->'events_with_listings' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_axs';
+UPDATE v_primary_poll_events_feed SET listings_available = false, listings_withheld = 'poll_failed' WHERE source = 'axs' AND event_id = 'a6';
+SELECT e->>'status', e->'events_failing', e->>'detail' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_axs';
+UPDATE primary_poll_source SET finished_at = now() WHERE source = 'timberwolves';
+UPDATE v_primary_poll_events_feed SET listings_available = false, listings_withheld = 'poll_failed' WHERE event_id = 'g2';
+SELECT e->>'status', e->'events_failing' FROM sub_finder_health(7) r, jsonb_array_elements(r->'checks') e WHERE e->>'name' = 'box_office_timberwolves';
+

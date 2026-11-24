@@ -85,3 +85,12 @@ box_office_timberwolves down {"detail": "no event of this box office could be re
 L the reader itself late: degraded after 25 minutes without a pull, down after an hour
 degraded|the box office has not been read lately
 down|down|the box office has not been read lately
+M a box office read from the database closes a pull once a night: it is judged by the last read tried of its events
+100
+down|the box office has not been read lately
+ok|t
+degraded|the box office has not been read lately
+N a few events failing out of many do not lower the status: 5 of 100 is ok, 6 is degraded; at a small box office one is enough
+ok|5|95
+degraded|6|some events could not be read at their last try: their listings are not being sent
+degraded|1
