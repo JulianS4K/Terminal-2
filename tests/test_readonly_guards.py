@@ -308,10 +308,11 @@ def test_tm_feed_assert_readonly_raises_on_anything_but_get():
     _assert_readonly_method("get")
 
 
-# ---------- sitickets_client / jump_client ----------
+# ---------- sitickets_client / jump_client / ims_client ----------
 
 @pytest.mark.parametrize("module,error", [("sitickets_client", "SiTicketsReadOnlyError"),
-                                          ("jump_client", "JumpReadOnlyError")])
+                                          ("jump_client", "JumpReadOnlyError"),
+                                          ("ims_client", "ImsReadOnlyError")])
 def test_primary_poll_clients_assert_readonly_raises_on_anything_but_get(module, error):
     import importlib
     client = importlib.import_module(module)
