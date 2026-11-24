@@ -134,8 +134,7 @@ t
 N the nightly in chunks (mig 20261124040000): tick(days, apply, from_days) runs a window that starts after the hourly; the working set carries a two-day margin, so a member whose source sits a day past a window edge is not read as gone
 N1 the hourly (-1..45): the TickPick row is dated day 46 and day 80 is further out, so neither EVO 406 nor the day-80 pair has a cluster yet
 {}|0
-N2 chunk one (46..110): the TickPick row brings EVO 406 in as a cluster onpsql:s01_spine.sql:245: error: unterminated quoted string
-
+N2 chunk one (46..110): the TickPick row brings EVO 406 in as a cluster on the EVO day, 45, a day before the chunk; the day-80 pair seeds; the window is recorded
 t|1|{"tm": 1}|0
 45|1014|406|2
 80|t|2304|2

@@ -242,7 +242,7 @@ INSERT INTO vivid_catalog_event (vivid_event_id, name, event_local, event_date, 
 \echo N1 the hourly (-1..45): the TickPick row is dated day 46 and day 80 is further out, so neither EVO 406 nor the day-80 pair has a cluster yet
 SELECT (event_xmap_tick(45, true))->'seeded_by_source' AS hourly_seeds, (SELECT count(*) FROM event_xmap WHERE local_day = d(80)) AS day80_rows;
 SELECT local_day - current_date AS day, tp_event_id, tevo_event_id, sources FROM event_xmap WHERE tevo_event_id = 406;
-\echo N2 chunk one (46..110): the TickPick row brings EVO 406 in as a cluster on EVO's own day 45 (a day before the chunk); the day-80 pair seeds; the window is recorded
+\echo N2 chunk one (46..110): the TickPick row brings EVO 406 in as a cluster on the EVO day, 45, a day before the chunk; the day-80 pair seeds; the window is recorded
 WITH r AS (SELECT event_xmap_tick(110, true, 46) - 'run_id' - 'ms' AS j)
 SELECT j->'window' = jsonb_build_array(d(46), d(110)) AS window_ok, j->'rows_by_source'->'tm' AS tm_rows, j->'seeded_by_source' AS seeded, j->'detached' AS detached FROM r;
 SELECT local_day - current_date AS day, tp_event_id, tevo_event_id, sources FROM event_xmap WHERE tevo_event_id = 406;
