@@ -6,7 +6,9 @@ two kinds of page and nothing else:
 
   events(venue_slug)   the venue page: the events SI sells there as the box office
   listings(event)      an event page: every seat block on sale, with section, row, seats, the
-                       quantities a buyer may take, price, fee and the all-in price
+                       quantities a buyer may take, and per ticket the price before fees and tax,
+                       the fee, the tax and the all-in price (price + fee + tax), plus the fee
+                       charged once an order
 
 Operator 2026-11-23: "poll all the games for si ... every 10 mins", "for si only red bull stadium",
 "remove membership and season listings". No key, no login, no cookie. Nothing is ever written to
@@ -108,8 +110,15 @@ def parse_listings(props: dict) -> list[dict]:
     out = []
     for g in data["ticketingGroups"]:
         kind = (g.get("tps") or [{}])[0]
-        total = all_in.get(g.get("tti")) or {}
+        total = all_in.get(g.get("tti"))
         splits = g.get("tsp") or []
+        if isinstance(total, dict):
+            # the page's own all-in breakdown for this ticket type: price + fee + tax = all-in, per ticket.
+            # Its fee (2.84 on an 82.03 ticket) is the one in the total; the listing's own figure (2.68) is not.
+            fee = round((total.get("processingFee") or 0) + (total.get("convenienceFee") or 0), 2)
+            tax, paid, order_fee = total.get("tax"), total.get("allIn"), total.get("processingFeeFlat")
+        else:
+            fee, tax, paid, order_fee = g.get("tpf"), None, None, None
         out.append({
             "id": str(g["ti"]), "market": "primary", "area": None,
             "section": _text(g.get("tus")), "row": _text(g.get("tur")),
@@ -117,7 +126,8 @@ def parse_listings(props: dict) -> list[dict]:
             "seats": [s.rsplit(":", 1)[-1] for s in g.get("tsi") or [] if isinstance(s, str)] or None,
             "qty": g.get("tq"), "allowed_quantities": splits,
             "max_per_order": g.get("tmc") or (max(splits) if splits else None),
-            "price": g.get("tp"), "fee": g.get("tpf"), "all_in": total.get("allIn"), "price_includes_tax": False,
+            "price": g.get("tp"), "fee": fee, "tax": tax, "all_in": paid, "order_fee": order_fee,
+            "price_includes_tax": False, "price_estimated": False,
             "ticket_type": kind.get("n"), "delivery": g.get("tf"),
             "ada": bool(g.get("ia")), "obstructed": False, "aisle": None, "ga": None,
         })
