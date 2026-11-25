@@ -35,7 +35,7 @@
  add    | 14 | Big Arena  | DATE 20:00 Big Concert
  add    | 18 | Big Arena  | DATE 11:00 Disney On Ice presents Jump In!
  add    | 21 | Small Hall | DATE 19:00 Small Hall Show
- retire | 41 | Big Arena  | passed
+ retire | 41 | Big Arena  | starts_soon
  retire | 99 | Big Arena  | not_in_export
 
  source | events | has_run 
@@ -130,7 +130,7 @@
 
  listings_in_feed | cheapest 
 ------------------+----------
-               11 |       40
+               10 |       40
 
 --- H. the two events not yet read were fired as soon as the settled ones freed their slots; a request that never answers is lost after stale_after and the poll fails
                                            tick_next                                           
@@ -217,7 +217,7 @@
  action | id |        note        
 --------+----+--------------------
  retire | 14 | not_axs_or_expired
- retire | 41 | passed
+ retire | 41 | starts_soon
  retire | 99 | not_in_export
 
 --- M. the crons

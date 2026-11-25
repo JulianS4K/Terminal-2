@@ -1,0 +1,29 @@
+--- A. the override list as seeded
+ venue_id |  venue_name   | forced_type |  set_by  
+----------+---------------+-------------+----------
+   101329 | Toyota Center | axs_primary | operator
+
+--- B. an insert carrying another brand is relabelled when AXS sells it, and left alone when it does not
+ axs_event_id |    venue_name    |   ticketer   | axs_ticketed |      type      
+--------------+------------------+--------------+--------------+----------------
+          701 | Toyota Center    | nba          | t            | axs_primary
+          702 | Toyota Center    | toyotacenter | t            | axs_primary
+          703 | Toyota Center    | ticketmaster | f            | other_ticketer
+          704 | Crypto.com Arena | nba          | t            | other_ticketer
+
+--- C. an export pass that re-sends the original type does not undo it (the UPDATE path)
+ axs_event_id |   ticketer   | axs_ticketed |      type      
+--------------+--------------+--------------+----------------
+          701 | nba          | t            | axs_primary
+          702 | toyotacenter | t            | axs_primary
+          703 | ticketmaster | f            | other_ticketer
+
+--- D. an event that stops being AXS-sold keeps the type the feed gives it
+ axs_event_id | axs_ticketed |      type      
+--------------+--------------+----------------
+          701 | f            | other_ticketer
+
+--- E. a venue not on the override list is never touched
+ axs_event_id |    venue_name    |      type      
+--------------+------------------+----------------
+          704 | Crypto.com Arena | other_ticketer

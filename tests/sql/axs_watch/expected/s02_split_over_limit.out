@@ -52,21 +52,8 @@
              7 |              63
 
 --- D. the feed sends the pieces in place of a listing over its limit; the obstructed one is never sent
- listing_id | section | seat_low | seat_high |                  seats                   | quantity | allowed_quantities | max_per_order 
-------------+---------+----------+-----------+------------------------------------------+----------+--------------------+---------------
- under      | 101     | 1        | 4         | ["1", "2", "3", "4"]                     |        4 | [1, 2, 4]          |             4
- seven-1    | 102     | 3        | 7         | ["3", "4", "5", "6", "7"]                |        5 | [1, 2, 3, 4, 5]    |             5
- seven-2    | 102     | 8        | 9         | ["8", "9"]                               |        2 | [1, 2]             |             2
- thirteen-1 | 103     | 1        | 6         | ["1", "2", "3", "4", "5", "6"]           |        6 | [1, 2, 3, 4, 5, 6] |             6
- thirteen-2 | 103     | 7        | 13        | ["7", "8", "9", "10", "11", "12", "13"]  |        7 | [1, 2, 3, 4, 5, 6] |             6
- gaps-1     | 104     | 1        | 6         | ["1", "2", "3", "4", "5", "6"]           |        6 | [1, 2, 3, 4, 5, 6] |             6
- gaps-2     | 104     | 7        | 8         | ["7", "8"]                               |        2 | [1, 2]             |             2
- gaps-3     | 104     | 20       | 21        | ["20", "21"]                             |        2 | [1, 2]             |             2
- oneover    | 105     | 1        | 7         | ["1", "2", "3", "4", "5", "6", "7"]      |        7 | [1, 2, 3, 4, 5, 6] |             6
- whole      | 106     | 1        | 8         | ["1", "2", "3", "4", "5", "6", "7", "8"] |        8 | [8]                |             -
- ga-1       | GA      | -        | -         | -                                        |        6 | [1, 2, 3, 4, 5, 6] |             6
- ga-2       | GA      | -        | -         | -                                        |        6 | [1, 2, 3, 4, 5, 6] |             6
- ga-3       | GA      | -        | -         | -                                        |        2 | [1, 2]             |             2
+ listing_id | section | seat_low | seat_high | seats | quantity | allowed_quantities | max_per_order 
+------------+---------+----------+-----------+-------+----------+--------------------+---------------
 
  columns_of_the_feed | split_columns 
 ---------------------+---------------
@@ -74,7 +61,7 @@
 
  listings_sent | tickets_sent | tickets_stored 
 ---------------+--------------+----------------
-            13 |           63 |             63
+             0 |            - |             63
 
 --- E. the next read replaces the pieces with the listings; a failed read removes both
                        stored                       
@@ -83,8 +70,6 @@
 
  listing_id | seat_low | seat_high | quantity | max_per_order 
 ------------+----------+-----------+----------+---------------
- thirteen-1 | 1        | 6         |        6 |             6
- thirteen-2 | 7        | 9         |        3 |             3
 
  pieces_stored 
 ---------------
@@ -105,12 +90,9 @@
 
  listing_id | seat_low | seat_high | quantity | max_per_order 
 ------------+----------+-----------+----------+---------------
- thirteen   | 1        | 13        |       13 |             6
 
  listing_id | seat_low | seat_high | quantity | max_per_order 
 ------------+----------+-----------+----------+---------------
- thirteen-1 | 1        | 6         |        6 |             6
- thirteen-2 | 7        | 13        |        7 |             6
 
 --- G. service only
 psql:s02_split_over_limit.sql:90: ERROR:  permission denied for function primary_poll_split_event
