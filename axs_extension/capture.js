@@ -8,13 +8,16 @@ const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
 const MAX_ANSWERS = 150;
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const WRITE_PATH = /cart|basket|checkout|order|purchase|reserv|\bhold|\block|payment|transaction|claim/i;
-// the waiting room: AXS puts busy on-sales behind a queue; the reader does not wait in it
+// Queue-it: AXS sends nearly every visit through it (TicketsData: queue_it true, rt=Safetynet), and an ordinary
+// visit passes straight back to the seat page. Only a stay there is the waiting room, which the reader does not wait in.
 const QUEUE_HOST = /(^|\.)queue-it\.net$|(^|\.)queue\./i;
+// the purchase flow's own hosts (the event page links to the shop, which lands on the seat page)
+const FLOW_HOST = /^(tix|shop)\./i;
 
 const watched = new Map();   // tabId -> state of the read in that tab
 
 function watchTab(tabId) {
-  const st = { captures: [], cancelled: [], mainStatus: null, mainUrl: null, mainServer: null, queue: false,
+  const st = { captures: [], cancelled: [], mainStatus: null, mainUrl: null, mainServer: null, queueSince: null, inFlow: false,
                contentTypes: new Map(), bytes: 0, lastAnswerAt: Date.now() };
   watched.set(tabId, st);
   return st;
@@ -22,6 +25,13 @@ function watchTab(tabId) {
 
 function unwatchTab(tabId) {
   watched.delete(tabId);
+}
+
+function noteMainFrame(st, url) {
+  const host = new URL(url).hostname;
+  if (QUEUE_HOST.test(host)) st.queueSince = st.queueSince || Date.now();
+  else st.queueSince = null;
+  if (FLOW_HOST.test(host)) st.inFlow = true;
 }
 
 function looksJson(text) {
@@ -35,7 +45,7 @@ function keepAnswer(st, url, status, text) {
   try { json = JSON.parse(text); } catch (_) { return; }
   const shape = shapeOf(json);
   // answers with none of the shapes we read are dropped, so a page's analytics and config never leave the browser
-  if (!shape.offers && !shape.prices && !shape.onsale && !hasEventShape(json)) return;
+  if (!shape.offers && !shape.offersAnswered && !shape.prices && !shape.onsale && !hasEventShape(json)) return;
   st.captures.push({ url: url.slice(0, 500), status, json, shape });
   st.lastAnswerAt = Date.now();
 }
@@ -55,7 +65,7 @@ browser.webRequest.onBeforeRequest.addListener(details => {
     return { cancel: true };
   }
   if (details.type === "main_frame") {
-    if (QUEUE_HOST.test(new URL(details.url).hostname)) st.queue = true;
+    noteMainFrame(st, details.url);
     return {};
   }
   if (details.type !== "xmlhttprequest") return {};
@@ -98,6 +108,6 @@ browser.webRequest.onHeadersReceived.addListener(details => {
     st.mainUrl = details.url;
     const server = header("server");
     st.mainServer = server ? server.value : null;
-    if (QUEUE_HOST.test(new URL(details.url).hostname)) st.queue = true;
+    noteMainFrame(st, details.url);
   }
 }, { urls: ["<all_urls>"] }, ["responseHeaders"]);

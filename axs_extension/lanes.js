@@ -8,7 +8,11 @@ const LANE_PREFIX = "AXS reader ";
 const LANE_COLORS = ["blue", "turquoise", "green", "yellow", "orange", "red", "pink", "purple"];
 const BLOCKED_TITLE = /AXS Access Info|Just a moment|Attention Required|Access denied/i;
 const POLL_MS = 500;
-const NO_INVENTORY_AFTER_LOAD_MS = 12000;   // a loaded page with no answer we read after this long has none to give
+// TicketsData's timings on AXS (axs_event_snapshots): the seat page lands in 12-15 s and its inventory takes ~28 s more,
+// ~45 s a read. So once the purchase flow has started the reader waits to the page timeout; only the event page itself
+// (no flow, no "Buy Tickets" link, or a page that says why) is given up on early.
+const NO_INVENTORY_AFTER_LOAD_MS = 12000;
+const QUEUE_WAIT_MS = 20000;               // still on Queue-it after this long: the waiting room is up
 
 let readerWindowId = null;
 
@@ -77,20 +81,20 @@ async function readEvent(cfg, cookieStoreId, event) {
       const now = Date.now();
       let info;
       try { info = await browser.tabs.get(tab.id); } catch (_) { out.outcome = "error"; out.error = "the tab was closed"; break; }
-      if (st.queue) { out.outcome = "queue"; break; }
+      if (st.queueSince && now - st.queueSince > QUEUE_WAIT_MS) { out.outcome = "queue"; break; }
       if ([403, 429, 503].includes(st.mainStatus) || BLOCKED_TITLE.test(info.title || "")) {
         out.outcome = "blocked"; out.http_status = st.mainStatus || 403;
         out.error = `${info.title || "blocked"} (${st.mainServer || "?"})`; break;
       }
       if (st.mainStatus === 404 || st.mainStatus === 410) { out.http_status = st.mainStatus; break; }
       const inv = inventoryIn(st.captures);
-      if ((inv.complete || (inv.prices && loadedAt)) && now - st.lastAnswerAt >= cfg.settleMs) break;
+      if (inv.complete && now - st.lastAnswerAt >= cfg.settleMs) break;
       if (info.status === "complete" && loadedAt === null) loadedAt = now;
-      if (loadedAt !== null && !inv.offers && !inv.prices) {
+      if (loadedAt !== null && !st.inFlow && !inv.flow && !inv.offers && !inv.prices && !st.queueSince) {
         if (!followed && cfg.followBuyLink && now - loadedAt > 4000) {
           const href = await inTab(tab.id, BUY_LINK_JS);
           followed = true;
-          if (href) { loadedAt = null; await browser.tabs.update(tab.id, { url: href }); continue; }
+          if (href) { loadedAt = null; st.inFlow = true; await browser.tabs.update(tab.id, { url: href }); continue; }
         }
         if (now - loadedAt > NO_INVENTORY_AFTER_LOAD_MS) break;   // the page has nothing we read; the server says why
       }

@@ -46,7 +46,7 @@ SELECT (public.axs_watch_record_ext('41', 200, '{}'::jsonb, false, NULL, '2026-0
   FROM public.axs_watch_poll GROUP BY 1;
 SELECT public.axs_watch_record_ext('42', 403, NULL, false, NULL, NULL) - 'request_id' AS blocked;
 
-\echo '--- E. the pace counts the lanes: two lanes at a 14.2 s settle read every 7.6 s'
+\echo '--- E. the pace counts the lanes: four lanes at a 14.2 s settle read every 3.8 s, held to the 4 s spacing'
 UPDATE public.axs_watch_poll SET fired_at = checked_at - interval '14.2 seconds';   -- the scenario's reads took 14.2 s each
 SELECT p->'reader' AS reader, p->'lanes' AS lanes, p->'spacing_s' AS spacing_s, p->'s_per_read' AS s_per_read, p->'reads_per_hour' AS reads_per_hour,
        p->'demand_per_hour' ? '20 min' AS offers_20_min

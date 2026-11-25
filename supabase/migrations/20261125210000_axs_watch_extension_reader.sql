@@ -20,10 +20,12 @@
 --                             false. p_via names who answered in the error texts ('TicketsData' unless given).
 --   axs_watch_record_ext()    one read by the extension: settled with no charge, written to axs_watch_poll with reader
 --                             'extension'; a repeat of the same (event, fired_at) returns the first record.
---   axs_watch_pace()          the extension reads ext_lanes events at once (one container each), ext_spacing_ms apart
+--   axs_watch_pace()          the extension reads ext_lanes events at once (4, one container each), ext_spacing_ms apart
 --                             at the least, so a read costs (settle + 1 s) / ext_lanes; rungs of 20, 30 and 45 minutes
 --                             are offered beside the hour-and-up ones. pace_min_every (1 hour) still bounds the pick, so
---                             nothing changes for TicketsData: lower it when the extension reads.
+--                             nothing changes for TicketsData: lower it when the extension reads. A read by a browser
+--                             takes ~45 s (TicketsData's own AXS reads: 12-15 s to the seat page through Queue-it, ~28 s
+--                             more for the inventory), so 4 lanes make ~300 reads an hour: the 305-event watch hourly.
 --
 -- Switch: UPDATE public.axs_watch_config SET reader = 'extension', pace_min_every = interval '20 minutes' WHERE id;
 -- Back:   UPDATE public.axs_watch_config SET reader = 'worker', pace_min_every = interval '1 hour' WHERE id;
@@ -35,7 +37,7 @@ ALTER TABLE public.axs_watch_config DROP CONSTRAINT IF EXISTS axs_watch_config_r
 ALTER TABLE public.axs_watch_config ADD CONSTRAINT axs_watch_config_reader_check CHECK (reader IN ('db', 'worker', 'extension'));
 ALTER TABLE public.axs_watch_poll DROP CONSTRAINT IF EXISTS axs_watch_poll_reader_check;
 ALTER TABLE public.axs_watch_poll ADD CONSTRAINT axs_watch_poll_reader_check CHECK (reader IN ('db', 'worker', 'extension'));
-ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_lanes smallint NOT NULL DEFAULT 2 CHECK (ext_lanes BETWEEN 1 AND 8);
+ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_lanes smallint NOT NULL DEFAULT 4 CHECK (ext_lanes BETWEEN 1 AND 8);
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_spacing_ms integer NOT NULL DEFAULT 4000 CHECK (ext_spacing_ms BETWEEN 1000 AND 60000);
 COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261125210000)';
 COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261125210000)';
@@ -278,8 +280,10 @@ AS $function$
            FROM cfg),
   pace AS (SELECT m.n, m.settle_p50, m.settle_p90, m.response_p50, sp.spacing_s, sp.lanes,
                   -- a read takes its settle plus a second of overhead, shared by the lanes reading at once, never less
-                  -- than the spacing; unmeasured: assume 10 s
-                  greatest((coalesce(m.settle_p50, 9.0) + 1.0) / sp.lanes, sp.spacing_s) AS s_per_read
+                  -- than the spacing; unmeasured: assume 10 s, or 46 s for the extension (TicketsData's own AXS browser
+                  -- reads, axs_event_snapshots: ~12-15 s to the seat page, ~28 s more for the inventory)
+                  greatest((coalesce(m.settle_p50, CASE WHEN (SELECT reader FROM cfg) = 'extension' THEN 45.0 ELSE 9.0 END) + 1.0) / sp.lanes,
+                           sp.spacing_s) AS s_per_read
              FROM m, sp),
   cap AS (SELECT pace.*, floor(3600.0 / pace.s_per_read) AS reads_per_hour,
                  floor(3600.0 / pace.s_per_read * cfg.pace_target_pct / 100.0) AS usable_per_hour,

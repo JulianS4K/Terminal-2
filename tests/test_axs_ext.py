@@ -14,7 +14,7 @@ from core import axs_ext_doc  # noqa: E402
 
 # the shapes AXS's own seat page receives, as TicketsData's v2 envelope carried them (mig 20260727120000)
 OFFER_SEARCH = {"offers": [
-    {"offerID": "700", "offerName": "Public Onsale", "minQuantity": 1, "maxQuantity": 8, "items": [
+    {"offerID": "700", "items": [
         {"offerID": "700", "priceLevelID": "1", "sectionLabel": "101", "rowLabel": "A", "number": "3", "seatType": "STANDARD",
          "statusCodeLabel": "Available", "neighborhoodLabel": "Lower Bowl"},
         {"offerID": "700", "priceLevelID": "1", "sectionLabel": "101", "rowLabel": "A", "number": "1", "seatType": "STANDARD",
@@ -31,9 +31,10 @@ OFFER_SEARCH = {"offers": [
          "priceCodeLabel": "Limited View"},
     ]},
 ]}
-PRICE_BOOK = {"inventory": [{"offerPrices": [
-    {"offerID": "700", "offerType": "Single", "zonePrices": [{"priceLevels": [
-        {"priceLevelID": "1", "priceLevelLabel": "Lower", "prices": [{"base": 8000, "fees": [{"amount": 1200}, {"amount": 50}]}]},
+PRICE_BOOK = {"inventory": [{"fees": [{"id": "9", "applicationMethod": "PerItem", "components": [
+        {"amount": 1200, "calculationMethod": "Fixed"}, {"amount": 50, "calculationMethod": "Fixed"}]}], "offerPrices": [
+    {"offerID": "700", "offerName": "Public Onsale", "offerType": "Single", "min": 1, "max": 8, "fees": [{"id": "9"}], "zonePrices": [{"priceLevels": [
+        {"priceLevelID": "1", "label": "Lower", "prices": [{"base": 8000}]},
         {"priceLevelID": "2", "priceLevelLabel": "GA Floor", "prices": [{"base": 6550}]},
     ]}]},
     {"offerID": "9001", "offerType": "Marketplace Resale", "zonePrices": [{"priceLevels": [
@@ -70,24 +71,24 @@ def test_seats_are_runs_and_prices_come_from_the_price_book():
     by = {(l["section"], l.get("row"), tuple(l.get("seats") or [])): l for l in body["listings"]}
     run = by[("101", "A", ("1", "2", "3"))]
     assert run["quantity"] == 3 and run["kind"] == "primary" and run["price_level"] == "Lower"
-    assert run["pricing"] == {"face": 80.0, "fees_total": 12.5, "all_in": 92.5}
+    assert run["pricing"] == {"face": 80.0, "fees_total": 12.5, "tax": 0, "all_in": 92.5}
     assert run["neighborhood"] == "Lower Bowl" and run["offer_name"] == "Public Onsale"
     assert by[("101", "A", ("7",))]["quantity"] == 1                       # a gap breaks the run
     ga = by[("FLOOR", None, ())]
     assert ga["general_admission"] is True and ga["quantity"] == 2 and "seats" not in ga
-    assert ga["pricing"] == {"face": 65.5}
+    assert ga["pricing"] == {"face": 65.5, "fees_total": 12.5, "tax": 0, "all_in": 78.0}
     resale = by[("102", "B", ("7",))]
     assert resale["kind"] == "resale" and resale["price_code"] == "Limited View" and resale["pricing"]["face"] == 95.5
     assert body["listings_summary"]["seats"] == 7
 
 
 def test_a_ga_event_without_seat_items_reads_the_price_levels():
-    book = {"offerPrices": [{"offerID": "800", "zonePrices": [{"zoneLabel": "General Admission", "priceLevels": [
+    book = {"offerPrices": [{"offerID": "800", "zonePrices": [{"priceLevels": [
         {"priceLevelID": "5", "priceLevelLabel": "GA", "availability": {"amount": 4}, "prices": [{"base": 8000}]},
         {"priceLevelID": "6", "priceLevelLabel": "GA Late", "availability": 0, "prices": [{"base": 9000}]}]}]}]}
     body = axs_ext_doc.build_body(_capture(captures=[{"url": "u", "status": 200, "json": book}]))
     assert body["status"] == "ok"
-    assert body["listings"] == [{"kind": "primary", "section": "General Admission", "general_admission": True, "offer_id": "800",
+    assert body["listings"] == [{"kind": "primary", "section": "GA", "general_admission": True, "offer_id": "800",
                                  "price_level": "GA", "quantity": 4, "pricing": {"face": 80.0}}]
 
 
@@ -187,3 +188,58 @@ def test_ping_reports_the_switches():
     sb = _Sb(tables={"axs_watch_config": [{"enabled": True, "reader": "extension", "ext_lanes": 2, "ext_spacing_ms": 4000}]})
     r = _client(sb).get("/api/axs/ext/ping", headers=H)
     assert r.json() == {"ok": True, "enabled": True, "reader": "extension", "ext_lanes": 2, "ext_spacing_ms": 4000}
+
+
+# ---- what TicketsData's own AXS reads taught (axs_event_snapshots 5760, LCD Soundsystem, Knockdown Center, a GA event) ----
+# The answers as AXS sent them: inventory_v4 (fee definitions + price book) and an empty offer_search. TicketsData priced
+# the $80 ticket at 21.29 in fees, 101.29 all in, 4 available, 1 to 4 an order.
+LCD_INVENTORY_V4 = {"currency": "USD", "taxes": [], "fees": [
+    {"id": "44177171", "applicationMethod": "PerItem", "components": [
+        {"amount": 122, "calculationMethod": "Fixed"}, {"amount": 5, "calculationMethod": "Fixed"},
+        {"amount": 23, "calculationMethod": "Fixed"}]},
+    {"id": "47817737", "applicationMethod": "PerItem", "components": [
+        {"amount": 150, "calculationMethod": "Fixed"},
+        {"rate": 0, "roundOff": 0, "calculationMethod": "Lookup", "lookupRanges": [
+            {"start": 76, "end": 78, "amount": 54}, {"start": 78, "end": 80, "amount": 54}, {"start": 80, "end": 83, "amount": 49},
+            {"start": 490, "end": 0, "amount": 111}]},
+        {"rate": 0, "roundOff": 0, "calculationMethod": "Lookup", "lookupRanges": [
+            {"start": 76, "end": 78, "amount": 1532}, {"start": 78, "end": 80, "amount": 1528}, {"start": 80, "end": 83, "amount": 1404}]},
+        {"rate": 3.09, "roundOff": 0.01, "calculationMethod": "Percentage"}]}],
+    "offerPrices": [{"max": 4, "min": 1, "increment": 1, "offerID": "47818673", "offerName": "LCD Soundsystem", "offerType": "Single",
+                     "fees": [{"id": "44177171", "assignments": [{"assignment": "Offer", "associatedWith": "47818673"}]},
+                              {"id": "47817737", "assignments": [{"assignment": "Offer", "associatedWith": "47818673"}]}],
+                     "zonePrices": [{"zoneID": 1, "isSoldOut": False, "priceLevels": [
+                         {"label": "General Admission", "priceLevelID": "3612", "availability": {"amount": 4, "sections": []},
+                          "prices": [{"base": 8000, "priceTypeID": "45492"}]}]}]}]}
+LCD_START_FLOW = {"offerID": "47818673", "onSaleStatus": {"onSaleNow": True, "onSaleDate": "2026-10-09 14:00:00 +0000"},
+                  "deliveryMethods": [{"id": "3862", "label": "AXS Mobile ID - Free (Recommended)", "offerIDs": ["47818673"]}]}
+
+
+def test_fees_are_computed_as_ticketsdata_computed_them():
+    body = axs_ext_doc.build_body(_capture(captures=[{"url": "a", "status": 200, "json": LCD_START_FLOW},
+                                                     {"url": "b", "status": 200, "json": LCD_INVENTORY_V4},
+                                                     {"url": "c", "status": 200, "json": {"offers": []}}]))
+    assert body["status"] == "ok" and body["onsale"]["offer_id"] == "47818673"
+    assert body["groups"] == [{"offer_id": "47818673", "ticket_qty": {"min": 1, "max": 4}}]
+    assert body["listings"] == [{"kind": "primary", "section": "General Admission", "general_admission": True,
+                                 "offer_id": "47818673", "offer_name": "LCD Soundsystem", "price_level": "General Admission",
+                                 "quantity": 4, "pricing": {"face": 80.0, "fees_total": 21.29, "tax": 0, "all_in": 101.29}}]
+
+
+def test_lookup_ranges_take_the_upper_bound_and_an_open_end():
+    comp = LCD_INVENTORY_V4["fees"][1]["components"][1]
+    assert axs_ext_doc._fee_for(comp, 80.0) == 0.54 and axs_ext_doc._fee_for(comp, 80.01) == 0.49
+    assert axs_ext_doc._fee_for(comp, 900.0) == 1.11
+
+
+def test_accessible_seats_and_non_transferable_offers_are_marked_for_the_database():
+    offers = {"offers": [{"offerID": "5", "items": [
+        {"offerID": 5, "priceLevelID": "1", "sectionLabel": "101", "rowLabel": "W", "number": "1", "seatType": "STANDARD",
+         "disabilityTypes": ["Wheelchair"]}]}]}
+    book = {"offerPrices": [{"offerID": "5", "zonePrices": [{"priceLevels": [{"priceLevelID": "1", "prices": [{"base": 5000}]}]}]}]}
+    flow = {"onSaleStatus": {"onSaleNow": True},
+            "deliveryMethods": [{"label": "AXS Mobile ID - Free (Non-Transferable)", "offerIDs": ["5"]}]}
+    body = axs_ext_doc.build_body(_capture(captures=[{"url": "a", "status": 200, "json": j} for j in (offers, book, flow)]))
+    (seat,) = body["listings"]
+    assert seat["seat_type"] == "ACCESSIBLE"
+    assert seat["seller_notes"] == "Delivery: AXS Mobile ID - Free (Non-Transferable)"
