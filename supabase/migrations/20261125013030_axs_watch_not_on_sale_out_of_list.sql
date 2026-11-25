@@ -1,4 +1,5 @@
 -- Migration 20261125013030 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(+not_on_sale_recheck,+onsale_delay),axs_watch_not_on_sale()(new),axs_watch_upcoming_sale()(new),axs_watch_fill()(replaced: an upcoming sale is retired and not picked),primary_poll_event(AXS rows: retired by the fill),axs_watch_audit(rows) · reads:axs_watch_poll,axs_export_event · pre:20261124190000 (the fill this re-creates),20261125010000
+-- Already applied to prod · via MCP 2026-11-25 (operator: "Exclude upcoming sales from 200.list", "Check on sale date and add to queue 3 days after those dates hit"); the fill was then run once: 16 retired (14 RodeoHouston, a Kings game, a Greek Theatre show), 1 added, 178 watched. Re-apply is a no-op.
 --
 -- AN EVENT THAT IS NOT ON SALE YET HAS NO PLACE IN THE LIST OF 200.
 -- Operator 2026-11-25: "Exclude upcoming sales from 200.list"; "Look at the axs discovery feed itself"; "Check on
