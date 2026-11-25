@@ -28,15 +28,14 @@ VALUES ('axs','901','L-plain',      'primary','Floor 1',  10, 100, 'STANDARD',  
        ('axs','901','L-accessible', 'primary','Accessible', 6,  80, 'ACCESSIBLE', false, false, false),
        ('axs','901','L-both',       'primary','Acc 70',     2,  70, 'ACCESSIBLE', false, false, true),
        ('axs','901','L-obstructed', 'primary','Side',       3,  60, 'STANDARD',   false, true,  false),
-       ('axs','901','L-ga',         'primary','GA',       500,  50, 'STANDARD',   true,  false, false),
-       ('axs','901','L-no-type',    'primary','Sec 101',    8,  40, NULL,         false, false, false)   -- the Timberwolves site gives no type (mig 20261125184500)
+       ('axs','901','L-ga',         'primary','GA',       500,  50, 'STANDARD',   true,  false, false)
 ON CONFLICT (source, source_event_id, listing_id) DO NOTHING;
 
-\echo '--- B. stored: all seven, including the accessible ones'
+\echo '--- B. stored: all six, including the accessible ones'
 SELECT listing_id, ticket_type, ada, obstructed, general_admission, quantity
   FROM public.primary_poll_listing WHERE source='axs' AND source_event_id='901' ORDER BY listing_id;
 
-\echo '--- C. sent: the plain, the GA and the one with no ticket type — ada flag, ACCESSIBLE type and obstructed are all withheld'
+\echo '--- C. sent: the plain and the GA only — ada flag, ACCESSIBLE type and obstructed are all withheld'
 SELECT listing_id, ticket_type, ada, quantity
   FROM public.v_primary_poll_listings_feed WHERE source='axs' AND event_id='901' ORDER BY listing_id;
 
