@@ -33,7 +33,7 @@ SELECT c.n, c.outcome, c.error, c.status, public.axs_watch_not_on_sale(c.outcome
 DELETE FROM public.axs_watch_venue;
 DELETE FROM public.axs_watch_audit;
 INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, enabled) VALUES (1, 'Big Arena', 6, true);
-UPDATE public.axs_watch_config SET target_events = 10, watch_from = current_date + 1;
+UPDATE public.axs_watch_config SET target_events = 10, watch_from = current_date + 1, backfill = false;   -- the venue's own places only (the backfill is s06)
 INSERT INTO public.axs_export_event (axs_event_id, type, ticketer, axs_ticketed, status, event_title, major_category, venue_id, venue_name, venue_city, venue_state,
                                      event_date_local, event_date_utc, event_timezone, event_url, onsale_utc)
 SELECT v.id, 'axs_primary', 'axs', true, v.status, v.title, 'Music', 1, 'Big Arena', 'Los Angeles', 'CA',

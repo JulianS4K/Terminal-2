@@ -11,7 +11,7 @@ DELETE FROM public.axs_watch_venue;
 DELETE FROM public.axs_watch_audit;
 INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, enabled) VALUES
   (1, 'Big Arena', 3, true), (2, 'Small Hall', 1, true), (3, 'Closed Venue', 5, false);
-UPDATE public.axs_watch_config SET max_in_flight = 2, fires_per_tick = 2, reserve_credits = 0, target_events = 10, watch_from = current_date + 2;   -- the list starts two days out; two fires a tick so the slots fill in one tick
+UPDATE public.axs_watch_config SET max_in_flight = 2, fires_per_tick = 2, reserve_credits = 0, target_events = 10, watch_from = current_date + 2, backfill = false;   -- the list starts two days out; two fires a tick so the slots fill in one tick
 
 -- the export: what AXS lists at the two venues
 INSERT INTO public.axs_export_event (axs_event_id, type, ticketer, axs_ticketed, event_title, major_category, venue_id, venue_name, venue_city, venue_state,
