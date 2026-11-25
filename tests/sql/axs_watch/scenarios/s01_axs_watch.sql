@@ -48,7 +48,8 @@ SELECT (public.axs_watch_fill(true)) - 'run' AS fill;
 SELECT source_event_id AS id, name, event_date - current_date AS days_out, to_char(start_local_time, 'HH24:MI') AS at, venue_name, tevo_event_id AS tevo,
        tevo_match_method AS method, announced_at IS NOT NULL AS announced, poll_status, last_run IS NOT NULL AS in_run
   FROM public.primary_poll_event WHERE source = 'axs' ORDER BY event_date, source_event_id;
-SELECT action, axs_event_id AS id, venue, note FROM public.axs_watch_audit ORDER BY id;
+-- the note starts with the event's date, which moves with the day the test runs: only its time and name are compared
+SELECT action, axs_event_id AS id, venue, regexp_replace(note, '^[0-9]{4}-[0-9]{2}-[0-9]{2}T', 'DATE ') AS note FROM public.axs_watch_audit ORDER BY id;
 SELECT source, events, current_run IS NOT NULL AS has_run FROM public.primary_poll_source WHERE source = 'axs';
 SELECT count(*) AS bot_chat_posts FROM public.bot_chat_posts;
 

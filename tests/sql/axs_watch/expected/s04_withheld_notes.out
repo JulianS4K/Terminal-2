@@ -1,0 +1,31 @@
+--- A. the parse: a non-transferable offer is left out; a limited, side, partial or obstructed view is marked, in whichever label says so; an unobstructed one is not
+               note_case                | market  | qty | obstructed 
+----------------------------------------+---------+-----+------------
+ 01 plain                               | primary | 2   | f
+ 05 price code limited view             | resale  | 2   | t
+ 06 price code side view                | resale  | 1   | t
+ 07 price level limited view            | resale  | 1   | t
+ 08 offer obstructed view               | primary | 1   | t
+ 09 status partial view                 | primary | 1   | t
+ 10 seller says obstruction             | resale  | 1   | t
+ 11 seller says unobstructed            | resale  | 1   | f
+ 12 seller says great view, behind goal | resale  | 1   | f
+ 13 vip package                         | primary | 2   | f
+ 15 resale in a premium section         | resale  | 2   | f
+
+--- B. the rows already stored: an event's last good read is parsed again; the non-transferable listing is removed, the limited-view one marked, the counts recomputed
+ event | section | row | market  | qty | obstructed 
+-------+---------+-----+---------+-----+------------
+ 501   | 1       | 10  | primary |   2 | f
+ 501   | 2       | C   | resale  |   1 | t
+ 502   | 1       | 3   | primary |   2 | f
+
+ event | listing_count | listed_quantity | total_available | median_price | price_min | price_max 
+-------+---------------+-----------------+-----------------+--------------+-----------+-----------
+ 501   |             1 |               2 |               3 |        60.00 |        40 |        50
+ 502   |             1 |               2 |               - |            - |         - |         -
+
+ event_id | section | row | qty 
+----------+---------+-----+-----
+ 501      | 1       | 10  |   2
+ 502      | 1       | 3   |   2
