@@ -3,32 +3,43 @@
 ----------+------------------
  f        | t
 
---- B. stored: all six, including the accessible ones
-  listing_id  | ticket_type | ada | obstructed | general_admission | quantity 
---------------+-------------+-----+------------+-------------------+----------
- L-accessible | ACCESSIBLE  | f   | f          | f                 |        6
- L-ada-flag   | STANDARD    | t   | f          | f                 |        4
- L-both       | ACCESSIBLE  | t   | f          | f                 |        2
- L-ga         | STANDARD    | f   | f          | t                 |      500
- L-obstructed | STANDARD    | f   | t          | f                 |        3
- L-plain      | STANDARD    | f   | f          | f                 |       10
+--- B. stored: all eight, including the accessible ones and the two with no ticket_type
+  listing_id   | ticket_type | ada | obstructed | general_admission | quantity 
+---------------+-------------+-----+------------+-------------------+----------
+ L-accessible  | ACCESSIBLE  | f   | f          | f                 |        6
+ L-ada-flag    | STANDARD    | t   | f          | f                 |        4
+ L-both        | ACCESSIBLE  | t   | f          | f                 |        2
+ L-ga          | STANDARD    | f   | f          | t                 |      500
+ L-no-type     | -           | f   | f          | f                 |        5
+ L-no-type-ada | -           | t   | f          | f                 |        2
+ L-obstructed  | STANDARD    | f   | t          | f                 |        3
+ L-plain       | STANDARD    | f   | f          | f                 |       10
 
---- C. sent: the plain and the GA only — ada flag, ACCESSIBLE type and obstructed are all withheld
+--- C. sent: the plain, the GA and the one with no ticket_type — ada flag, ACCESSIBLE type and obstructed are withheld
  listing_id | ticket_type | ada | quantity 
 ------------+-------------+-----+----------
  L-ga       | STANDARD    | f   |      500
+ L-no-type  | -           | f   |        5
  L-plain    | STANDARD    | f   |       10
 
 --- D. send_ada = true puts the accessible ones back (obstructed stays withheld)
-  listing_id  | ticket_type | ada 
---------------+-------------+-----
- L-accessible | ACCESSIBLE  | f
- L-ada-flag   | STANDARD    | t
- L-both       | ACCESSIBLE  | t
- L-ga         | STANDARD    | f
- L-plain      | STANDARD    | f
+  listing_id   | ticket_type | ada 
+---------------+-------------+-----
+ L-accessible  | ACCESSIBLE  | f
+ L-ada-flag    | STANDARD    | t
+ L-both        | ACCESSIBLE  | t
+ L-ga          | STANDARD    | f
+ L-no-type     | -           | f
+ L-no-type-ada | -           | t
+ L-plain       | STANDARD    | f
 
 --- E. and off again
  sent_rows 
 -----------
-         2
+         3
+
+--- F. a source that never sets ticket_type still has a feed (the Timberwolves case, mig 20261125200000)
+ listing_id | ticket_type | ada | quantity 
+------------+-------------+-----+----------
+ T-1        | -           | f   |        2
+ T-2        | -           | f   |        4

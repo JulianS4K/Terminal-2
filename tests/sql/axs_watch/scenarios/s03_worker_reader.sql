@@ -4,6 +4,10 @@
 -- the ledger row), holds the worker while the upstream fails, and lets it go on when a read works again.
 -- An event that was read gets a random slot inside its interval (mig 20261123194030), which the due check's slack
 -- may reach: the scenario parks such an event a day ahead before asking what is due.
+-- Event 33 is the hot-cadence one (section E). It is dated TOMORROW, not today, on purpose: axs_watch_next stops
+-- handing out an event inside axs_watch_config.stop_before_start of its start (6 hours, mig 20261125150000), and with
+-- start_utc unset the start falls back to (event_date + 1) midnight. Dated today it therefore vanished from the batch
+-- from 18:00 UTC each day, so the expected output only matched before then.
 \set QUIET on
 \pset footer off
 \pset null '-'
@@ -13,7 +17,7 @@ SET client_min_messages = warning;
 INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date, start_local_time, venue_name, venue_city, venue_state, ticket_url, poll_status, next_poll_at, poll_interval)
 VALUES ('axs', '31', 'Small Hall Show',  current_date + 20, '19:30', 'Small Hall', 'Austin', 'TX', 'https://www.axs.com/events/31', 'pending', now() - interval '3 hours', interval '1 hour'),
        ('axs', '32', 'Big Arena Show',   current_date + 30, '20:00', 'Big Arena',  'Austin', 'TX', 'https://www.axs.com/events/32', 'pending', now() - interval '2 hours', interval '1 hour'),
-       ('axs', '33', 'Tonight''s Show',  current_date,      '20:00', 'Big Arena',  'Austin', 'TX', 'https://www.axs.com/events/33', 'pending', now() - interval '1 hour',  interval '10 minutes'),
+       ('axs', '33', 'Tomorrow''s Show', current_date + 1,  '20:00', 'Big Arena',  'Austin', 'TX', 'https://www.axs.com/events/33', 'pending', now() - interval '1 hour',  interval '10 minutes'),
        ('axs', '34', 'No Page Yet',      current_date + 40, '20:00', 'Big Arena',  'Austin', 'TX', NULL,                            'pending', now() - interval '4 hours', interval '1 hour');
 INSERT INTO public.ticketsdata_credit_usage (credits, platform, endpoint, status_code, quota_remaining) VALUES (1, 'AXS', '/events?mode=all', 200, 100000);
 
@@ -35,12 +39,12 @@ SELECT jsonb_array_length((public.axs_watch_next(2))->'events') AS batch_of_two,
 \echo '--- C. a read recorded: TicketsData''s JSON as the worker got it; the listings stored (the AXS Premium block not), the credit logged with the pool, the ledger row marked worker'
 SELECT public.axs_watch_record('33', 200, $j${"status": "ok", "response_s": 7.9, "quota_remaining": 99990, "body": {
     "status": "ok", "exit_code": 0, "elapsed_seconds": 7.9,
-    "event": {"id": "33", "title": "Tonight's Show"},
+    "event": {"id": "33", "title": "Tomorrow's Show"},
     "onsale": {"offer_id": "900", "status": {"onSaleNow": true}},
     "groups": [{"label": "Public", "offer_id": 900, "seat_type": "STANDARD", "ticket_qty": {"min": 1, "max": 8}}],
     "listings": [
-      {"kind": "primary", "section": "101", "row": "A", "seats": ["1", "2"], "quantity": 2, "seat_type": "STANDARD", "status": "Available", "offer_id": "900", "offer_name": "Tonight's Show", "price_level": "Lower", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 80, "fees_total": 12, "tax": 0, "all_in": 92}},
-      {"kind": "primary", "section": "PR04", "row": "3", "seats": ["1", "2"], "quantity": 2, "seat_type": "PREMIUM", "status": "AXS Premium POSTED AXS", "offer_id": "901", "offer_name": "Tonight's Show AXS Premium", "pricing": {"face": 134.5, "fees_total": 24.2, "tax": 0, "all_in": 158.7}},
+      {"kind": "primary", "section": "101", "row": "A", "seats": ["1", "2"], "quantity": 2, "seat_type": "STANDARD", "status": "Available", "offer_id": "900", "offer_name": "Tomorrow's Show", "price_level": "Lower", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 80, "fees_total": 12, "tax": 0, "all_in": 92}},
+      {"kind": "primary", "section": "PR04", "row": "3", "seats": ["1", "2"], "quantity": 2, "seat_type": "PREMIUM", "status": "AXS Premium POSTED AXS", "offer_id": "901", "offer_name": "Tomorrow's Show AXS Premium", "pricing": {"face": 134.5, "fees_total": 24.2, "tax": 0, "all_in": 158.7}},
       {"kind": "resale", "section": "102", "row": "B", "seats": ["7"], "quantity": 1, "seat_type": "FLASHSEATS", "offer_id": "9000000000000001", "pricing": {"face": 95.5, "connection_fee": 24.35, "tax": 0, "all_in": 119.85}}
     ]}}$j$::jsonb) - 'request_id' AS recorded;
 SELECT request_id, axs_event_id AS id, reader, status_code, outcome, response_s, listings, quota_remaining, error, checked_at IS NOT NULL AS settled
