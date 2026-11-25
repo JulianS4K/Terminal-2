@@ -1,12 +1,19 @@
--- An event that is not on sale yet has no place in the list (mig 20261125013030): the fill retires a watched event
--- whose last read said so, does not pick one for not_on_sale_recheck after such a read, nor one the export dates
--- on sale later under a Coming Soon label; a sold-out show stays; after the recheck time the event is tried again.
+-- An event that is not on sale yet has no place in the list (mig 20261125013030): the fill does not pick, and
+-- retires, an event the discovery feed marks as an upcoming sale (Coming Soon with no on-sale date or one still
+-- ahead); it retires a watched event whose last read said not on sale and does not pick one for not_on_sale_recheck
+-- after such a read; a sold-out show stays; after the recheck time the event is tried again.
 \set QUIET on
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
 
-\echo '--- A. what says an event is not on sale: the read''s answer; "no tickets available" only under a Coming Soon label'
+\echo '--- A0. the discovery feed: Coming Soon with no on-sale date or one still ahead is an upcoming sale; with a date already passed the label is stale'
+SELECT c.n, c.status, c.onsale, public.axs_watch_upcoming_sale(c.status, CASE c.onsale WHEN 'ahead' THEN now() + interval '5 days' WHEN 'passed' THEN now() - interval '5 days' END) AS upcoming_sale
+  FROM (VALUES (1, 'Coming Soon', 'none'), (2, 'Coming Soon', 'ahead'), (3, 'Coming Soon', 'passed'), (4, 'Buy Tickets', 'passed'),
+               (5, 'Buy Presale', 'ahead'), (6, 'Sold Out', 'none'), (7, NULL, 'ahead'), (8, NULL, 'none')) c(n, status, onsale)
+ ORDER BY c.n;
+
+\echo '--- A. what a read says: the answer itself; "no tickets available" only under a Coming Soon label'
 SELECT c.n, c.outcome, c.error, c.status, public.axs_watch_not_on_sale(c.outcome, c.error, c.status) AS not_on_sale
   FROM (VALUES (1, 'unparsed', 'Tickets for this event are not currently on sale.', 'Coming Soon'),
                (2, 'unparsed', 'Tickets for this event are not on sale yet.', 'Buy Tickets'),
@@ -29,17 +36,25 @@ SELECT v.id, 'axs_primary', 'axs', true, v.status, v.title, 'Music', 1, 'Big Are
        to_char(now() + v.days * interval '1 day', 'YYYY-MM-DD') || 'T20:00:00', now() + v.days * interval '1 day', 'America/Los_Angeles',
        'https://www.axs.com/events/' || v.id || '/tickets', v.onsale
   FROM (VALUES (101, 'On Sale Show',                 'Buy Tickets', 10, NULL::timestamptz),
-               (102, 'Read Says Not On Sale',        'Coming Soon', 11, NULL),
-               (103, 'Coming Soon But Has Tickets',  'Coming Soon', 12, NULL),
+               (102, 'Read Says Not On Sale',        'Coming Soon', 11, now() - interval '9 days'),
+               (103, 'Coming Soon But Has Tickets',  'Coming Soon', 12, now() - interval '9 days'),
                (104, 'Sold Out Show',                'Buy Tickets', 13, NULL),
-               (105, 'No Tickets Under Coming Soon', 'Coming Soon', 14, NULL),
+               (105, 'No Tickets Under Coming Soon', 'Coming Soon', 14, now() - interval '9 days'),
                (106, 'On Sale Next Month',           'Coming Soon', 15, now() + interval '30 days'),
                (107, 'Presale Open, Sale Later',     'Buy Presale', 16, now() + interval '5 days'),
                (108, 'Next In Line',                 'Buy Tickets', 17, NULL),
-               (109, 'Not On Sale A Week Ago',       'Coming Soon', 18, NULL),
-               (110, 'Further Out',                  'Buy Tickets', 40, NULL)) v(id, title, status, days, onsale);
+               (109, 'Not On Sale A Week Ago',       'Coming Soon', 18, now() - interval '9 days'),
+               (110, 'Further Out',                  'Buy Tickets', 40, NULL),
+               (111, 'Coming Soon, No Date',         'Coming Soon',  9, NULL),
+               (112, 'Watched, Then Dated Later',    'Coming Soon', 19, now() + interval '10 days'),
+               (113, 'Dated Later But Has Tickets',  'Coming Soon', 20, now() + interval '10 days')) v(id, title, status, days, onsale);
+-- two events already on the list from before the rule: neither has been read without tickets, one has tickets
+INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date, venue_name, ticket_url, announced_at) VALUES
+  ('axs', '112', 'Watched, Then Dated Later',   current_date + 19, 'Big Arena', 'https://www.axs.com/events/112/tickets', now()),
+  ('axs', '113', 'Dated Later But Has Tickets', current_date + 20, 'Big Arena', 'https://www.axs.com/events/113/tickets', now());
+UPDATE public.primary_poll_event SET poll_status = 'ok', poll_ok_at = now(), listing_count = 30 WHERE source = 'axs' AND source_event_id = '113';
 
-\echo '--- B. the first fill: six places, soonest first; the event the export dates on sale next month is passed over, the presale one is not'
+\echo '--- B. the first fill: six places, soonest first; the feed''s upcoming sales (no date, or a date ahead) are passed over and the watched one is retired; the one with tickets and the presale stay'
 SELECT (public.axs_watch_fill(true)) - 'run' AS first_fill;
 SELECT source_event_id AS id, name FROM public.primary_poll_event WHERE source = 'axs' ORDER BY event_date, source_event_id;
 

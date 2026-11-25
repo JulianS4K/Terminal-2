@@ -1,4 +1,16 @@
---- A. what says an event is not on sale: the read's answer; "no tickets available" only under a Coming Soon label
+--- A0. the discovery feed: Coming Soon with no on-sale date or one still ahead is an upcoming sale; with a date already passed the label is stale
+ n |   status    | onsale | upcoming_sale 
+---+-------------+--------+---------------
+ 1 | Coming Soon | none   | t
+ 2 | Coming Soon | ahead  | t
+ 3 | Coming Soon | passed | f
+ 4 | Buy Tickets | passed | f
+ 5 | Buy Presale | ahead  | f
+ 6 | Sold Out    | none   | f
+ 7 | -           | ahead  | t
+ 8 | -           | none   | f
+
+--- A. what a read says: the answer itself; "no tickets available" only under a Coming Soon label
  n |    outcome     |                       error                        |   status    | not_on_sale 
 ---+----------------+----------------------------------------------------+-------------+-------------
  1 | unparsed       | Tickets for this event are not currently on sale.  | Coming Soon | t
@@ -10,10 +22,10 @@
  7 | upstream_error | HTTP 429 from TicketsData                          | Coming Soon | f
  8 | -              | -                                                  | -           | f
 
---- B. the first fill: six places, soonest first; the event the export dates on sale next month is passed over, the presale one is not
+--- B. the first fill: six places, soonest first; the feed's upcoming sales (no date, or a date ahead) are passed over and the watched one is retired; the one with tickets and the presale stay
                               first_fill                              
 ----------------------------------------------------------------------
- {"added": 6, "apply": true, "short": [], "retired": 0, "watched": 6}
+ {"added": 5, "apply": true, "short": [], "retired": 1, "watched": 6}
 
  id  |             name             
 -----+------------------------------
@@ -22,7 +34,7 @@
  103 | Coming Soon But Has Tickets
  104 | Sold Out Show
  105 | No Tickets Under Coming Soon
- 107 | Presale Open, Sale Later
+ 113 | Dated Later But Has Tickets
 
 --- C. the reads come in; the next fill retires the two that are not on sale and gives their places to the next events, not to the one read as not on sale two days ago
                                 dry_run                                
@@ -40,12 +52,12 @@
  104 | Sold Out Show
  107 | Presale Open, Sale Later
  108 | Next In Line
- 110 | Further Out
+ 113 | Dated Later But Has Tickets
 
- action | id  |          note           
---------+-----+-------------------------
+ action | id  |                note                 
+--------+-----+-------------------------------------
+ add    | 107 | DATE 20:00 Presale Open, Sale Later
  add    | 108 | DATE 20:00 Next In Line
- add    | 110 | DATE 20:00 Further Out
  retire | 102 | not_on_sale
  retire | 105 | not_on_sale
 
@@ -67,15 +79,15 @@
  107 | Presale Open, Sale Later
  108 | Next In Line
  109 | Not On Sale A Week Ago
- 110 | Further Out
+ 113 | Dated Later But Has Tickets
 
 --- F. a shorter recheck time lets the others back sooner; never under a day
  added 
 -------
- 1
+ 2
 
  id  
 -----
  102
 
-psql:s05_not_on_sale.sql:81: WARNING:  a recheck time of 2 hours is refused
+psql:s05_not_on_sale.sql:96: WARNING:  a recheck time of 2 hours is refused
