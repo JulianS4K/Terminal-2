@@ -22,7 +22,7 @@
 
                                                                                                                                            next_all                                                                                                                                           
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 75}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "spacing_ms": 3000, "upstream_errors": 1}
+ {"events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 45}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "spacing_ms": 3000, "upstream_errors": 1}
 
  batch_of_two | first | second 
 --------------+-------+--------
@@ -58,7 +58,7 @@
 --- D. the read event is no longer due; a transport failure and refusals are failed polls; after three the worker is held, and let go once a read works
                                                                 next_after_read                                                                 
 ------------------------------------------------------------------------------------------------------------------------------------------------
- [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 75}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}]
+ [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 45}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}]
 
                                                                     timed_out                                                                    
 -------------------------------------------------------------------------------------------------------------------------------------------------
@@ -87,7 +87,7 @@
 
                               next_released                              
 -------------------------------------------------------------------------
- [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 75}]
+ [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 90}]
 
 --- E. over the day's cap (pinned at 6; 6 reads today) only an event on a hot cadence is handed out, and only up to the overrun
                                                                          next_capped                                                                          
