@@ -436,6 +436,14 @@ deployed. `'own'` undoes it at once.
   placed (`n2s_autobuy_exec` with `buy_order_id`) is a sync feed in the sub finder API,
   `GET /api/v1/subs/autobuys` (`sub_finder_autobuys`, keys in `sub_finder_config.autobuys_key_ids`).
   Fields and statuses: `docs/sub_finder_api_onboarding.md` §6c.
+- **Confirmed buys pushed to the CRM webhook** (mig `20261120171030`, operator 2026-11-20: "push it
+  upon confirmation"). When a live row reaches phase `accepted`, `n2s_autobuy_crm_push()` POSTs the
+  same JSON as one `/autobuys` item (with `bought_order_number` and `buy_ref`), plus
+  `event: "n2s.autobuy_confirmed"`, `exec_id` and `attempt`, to the cover webhook
+  (`N2S_COVER_WEBHOOK_URL`, Bearer `N2S_COVER_WEBHOOK_TOKEN`; unset URL = nothing sent). It runs
+  first thing in `n2s_autobuy_outcome_tick()` (cron `n2s_autobuy_outcome_1min`). Outbox
+  `n2s_autobuy_crm_push`: one row per exec, at most 3 sends 5 minutes apart while no 2xx answer
+  comes back; the receiver dedupes on `exec_id`. Listing-source hosts are refused at run time (RULE 2).
 - **`v_n2s_orders`** joins items + queue and computes `has_cover` / `no_cover_reason`;
   `/api/broker/n2s-covers` serves it to `static/terminal/subs.html`.
 - **`n2s_gt_order_dryrun`** (stage 5) is served by `/api/broker/n2s-gt-dryrun` to the
@@ -489,7 +497,21 @@ deployed. `'own'` undoes it at once.
   that would otherwise go through but would cross it is blocked and **all buying auto-stops**
   (`project_stopped`, with `project_stopped_reason`), as does reaching the cap exactly; while
   stopped every buy is blocked `stopped_pending_review` until the operator runs
-  `n2s_autobuy_resume([new_cap])`. Shadow and a future live mode count separately. A live row
+  `n2s_autobuy_resume([new_cap])`. **The project cap is one cap per calendar month for EVO and
+  GoTickets together** (operator 2026-11-21: "5000 a month", "auto resets monthly", "add go tickets
+  to the $5000 month limiter but separate daily and per order limiters"; mig `20261121060000`):
+  every EVO and GoTickets buy created this month (America/New_York) counts against
+  `project_cap_usd` ($5,000, then $10,000 the same day: "Remove lifetime cap for both and change
+  to 10k", then **$4,000**: "Actually set per month to $4000, remove buy count limit"), whichever
+  market the new cover is on; `gt_project_cap_usd` is no
+  longer read. A stop the cap made in an earlier month (`project_stopped` or `gt_project_stopped`,
+  by its reason text) is lifted by the first would-buy of the new month; any other stop stays.
+  Per-order and daily caps stay per market: for EVO and for GoTickets each, $2,000 per order and
+  $2,500 per day (set 2026-11-21). A cover over `approval_over_usd` ($1,000) waits for approval only
+  when its event starts within `approval_free_lead` (24 hours) of queueing (operator 2026-11-21:
+  "Remove approval for anything over 24 hours away"; mig `20261121063000`); `n2s_autobuy_job_json`
+  hands the worker an `approval_over_usd` of 1000000000 for the rows that need none. Neither market has a run or buys-per-day limit (`live_runs_allowed`,
+  `gt_live_runs_allowed` and `max_buys_per_day` 1000000; GoTickets' one test run lifted the same day). Shadow and a future live mode count separately. A live row
   that stopped before anything was bought (phase `stopped`, no purchase id) counts toward none of
   the caps, buy counts or "already bought" checks (mig `20261116180000`; before it, exec 8's
   unsent $449.68 blocked the next cover over the daily and project caps). EVO buys come

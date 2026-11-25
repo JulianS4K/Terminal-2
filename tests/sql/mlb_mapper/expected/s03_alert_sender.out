@@ -1,0 +1,22 @@
+MLB alerts go out under their own sender, to their own list, whateverpsql:s03_alert_sender.sql:1: error: unterminated quoted string
+
+             alert_email_from              |  alert_email_to   
+-------------------------------------------+-------------------
+ MLB ticket alerts <onboarding@resend.dev> | a@x.test,b@x.test
+(1 row)
+
+ ?column? 
+----------
+ sent: 1
+(1 row)
+
+                  sender                   | recipient |        subject        
+-------------------------------------------+-----------+-----------------------
+ MLB ticket alerts <onboarding@resend.dev> | a@x.test  | MLB tickets: 1 update
+ MLB ticket alerts <onboarding@resend.dev> | b@x.test  | MLB tickets: 1 update
+(2 rows)
+
+     ?column?      
+-------------------
+ still to alert: 0
+(1 row)
