@@ -48,7 +48,10 @@ SELECT (public.axs_watch_fill(true)) - 'run' AS fill;
 SELECT source_event_id AS id, name, event_date - current_date AS days_out, to_char(start_local_time, 'HH24:MI') AS at, venue_name, tevo_event_id AS tevo,
        tevo_match_method AS method, announced_at IS NOT NULL AS announced, poll_status, last_run IS NOT NULL AS in_run
   FROM public.primary_poll_event WHERE source = 'axs' ORDER BY event_date, source_event_id;
-SELECT action, axs_event_id AS id, venue, note FROM public.axs_watch_audit ORDER BY id;
+-- the note names the event's local date; printed as days from today so the expected output does not change with the day
+SELECT action, axs_event_id AS id, venue,
+       CASE WHEN note ~ '^\d{4}-\d{2}-\d{2}T' THEN 'D+' || (substr(note, 1, 10)::date - current_date) || substr(note, 11) ELSE note END AS note
+  FROM public.axs_watch_audit ORDER BY id;
 SELECT source, events, current_run IS NOT NULL AS has_run FROM public.primary_poll_source WHERE source = 'axs';
 SELECT count(*) AS bot_chat_posts FROM public.bot_chat_posts;
 
@@ -159,7 +162,9 @@ INSERT INTO public.axs_watch_poll (request_id, axs_event_id, fired_at, checked_a
   (903, '14', now() - interval '1 minute',  now() - interval '1 minute',  'not_axs');
 SELECT (public.axs_watch_fill(true)) - 'run' AS fill_after_not_axs;
 SELECT source_event_id AS id, name, event_date - current_date AS days_out FROM public.primary_poll_event WHERE source = 'axs' ORDER BY event_date, source_event_id;
-SELECT action, axs_event_id AS id, note FROM public.axs_watch_audit WHERE action = 'retire' ORDER BY id;
+SELECT action, axs_event_id AS id,
+       CASE WHEN note ~ '^\d{4}-\d{2}-\d{2}T' THEN 'D+' || (substr(note, 1, 10)::date - current_date) || substr(note, 11) ELSE note END AS note
+  FROM public.axs_watch_audit WHERE action = 'retire' ORDER BY id;
 
 \echo '--- M. the crons'
 SELECT jobname, schedule, command FROM cron.job WHERE jobname LIKE 'axs_watch%' ORDER BY jobname;
