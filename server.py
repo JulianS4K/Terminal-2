@@ -2307,6 +2307,61 @@ async def _start_primary_poll():  # pragma: no cover - startup hook; loop covere
     asyncio.create_task(_primary_poll_loop())
 
 
+# ---------------------------------------------------------------------------
+# AXS watch, worker-side reader (operator 2026-11-24: "build the worker-side reader"). Off unless
+# AXS_WATCH_READER_LIVE=1 on this service. The database chooses the reads (axs_watch_next) and settles them
+# (axs_watch_record); this loop makes the GETs through TicketsData, one at a time, 3 s apart, so no two reach
+# TicketsData together and none waits in pg_net's queue. core/axs_watch_reader.py, mig 20261125000000. The
+# database hands out nothing while axs_watch_config.reader = 'db', so the loop idles until it is switched.
+# ---------------------------------------------------------------------------
+_AXS_WATCH_READER_INTERVAL_S = float(os.environ.get("AXS_WATCH_READER_INTERVAL_SECONDS", "15"))
+_axs_watch_reader_last: dict = {"at": None, "result": None, "error": None}
+_axs_watch_reader_client: dict = {"td": None}        # one TicketsData client a process (the login read from Vault once)
+
+
+async def _axs_watch_reader_tick():
+    from core import axs_watch_reader, n2s_autobuy_live
+    from ticketsdata_client import TicketsDataClient
+
+    def _call():
+        db = require_sb()
+        if _axs_watch_reader_client["td"] is None:
+            _axs_watch_reader_client["td"] = TicketsDataClient.from_vault(db, timeout=120)   # an AXS read is a browser run: p99 84 s
+        rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
+        return axs_watch_reader.run(_axs_watch_reader_client["td"], rpc, idle_s=_AXS_WATCH_READER_INTERVAL_S)
+
+    out = await asyncio.to_thread(_call)
+    _axs_watch_reader_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    return out
+
+
+async def _axs_watch_reader_loop():
+    if os.environ.get("AXS_WATCH_READER_LIVE") != "1" or sb is None or SANDBOX:
+        _log.info("axs_watch_reader: disabled (AXS_WATCH_READER_LIVE != 1, no DB, or sandbox)")
+        return
+    _log.warning("axs_watch_reader: started (idle every %ss)", _AXS_WATCH_READER_INTERVAL_S)
+    while True:
+        pause = _AXS_WATCH_READER_INTERVAL_S
+        try:
+            out = await _axs_watch_reader_tick()
+            pause = float(out.get("pause_s") or 0.0)       # 0 when there was work: the next batch follows at once
+        except Exception as e:  # never let the loop die; a missed batch leaves the events due for the next
+            _axs_watch_reader_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
+            _log.warning("axs_watch_reader: batch failed: %s", e)
+        await asyncio.sleep(pause)
+
+
+@app.on_event("startup")
+async def _start_axs_watch_reader():  # pragma: no cover - startup hook; loop covered via _axs_watch_reader_loop
+    asyncio.create_task(_axs_watch_reader_loop())
+
+
+@app.get("/api/admin/axs-watch-reader/status")
+def axs_watch_reader_status(_=Depends(require_auth)):
+    """Last batch of the AXS watch's worker-side reader (auth-gated)."""
+    return {"enabled": os.environ.get("AXS_WATCH_READER_LIVE") == "1", **_axs_watch_reader_last}
+
+
 @app.get("/api/admin/manual-sub-buy/status")
 def manual_sub_buy_status(_=Depends(require_auth)):
     """Last manual sub buy tick (auth-gated)."""
