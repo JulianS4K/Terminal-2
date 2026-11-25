@@ -48,19 +48,42 @@
 -- upcoming-sale exclusion and onsale_delay. An event leaves the list at the
 -- 03:20Z fill as before.
 --
--- ── It fits, but with little room ──────────────────────────────────────────
--- 305 watched events at one read an hour is 305 reads/h, against usable_per_hour
--- 314 (reads_per_hour 419 at pace_target_pct 75). That is 97% of the usable rate,
--- so the ladder has about 9 reads/h of slack: each event that comes inside 36 h
--- adds one read an hour, so from about the 9th near event the reads begin to slip
--- past their slot. Today 0 of the 305 are inside 36 h, so there is no 30-minute
--- tier yet; it appears as the list ages. pace_target_pct (75) is the lever if the
--- slack runs out — raising it to 90 gives 377/h — and that is a reader-headroom
--- decision, not a credit one.
+-- ── SIZED FROM MEASURED THROUGHPUT, NOT FROM THE CREDIT BUDGET ────────────
+-- The reader is sequential by UPSTREAM RULE, not by choice: TicketsData refuses a
+-- second AXS request inside three seconds ("Please wait at least 3 seconds between
+-- AXS requests"), which is why core/axs_watch_reader.py reads one at a time. So the
+-- ceiling is 3600 / (seconds per read), and nothing we configure raises it.
 --
--- Credits: 305 x 24 = 7,320 reads a day plus about 52 for the catalogue feed,
--- against a daily_cap of 10,310 derived from the 250,000-credit cycle. Fits with
--- 29% to spare, and the spend becomes predictable rather than ladder-dependent.
+-- Twelve complete hours to 2026-11-25 20:00Z: 207 reads in the worst hour, 339 on
+-- average, 409 at best; 10.6 s per read implied, settle avg 8.2 s. Against that:
+--   305 events hourly   = 305/h  =  90% of an average hour, 147% of the worst
+--   305 events / 75 min = 244/h  =  72% of an average hour
+-- Hourly was measured and rejected for that reason: at 90% the slack is 34 reads an
+-- hour, so a four-minute restart strands about 20 events and takes ~35 minutes to
+-- clear, and there were 14 restarts on 2026-11-25. base_every is therefore 75
+-- minutes (operator chose it over 90 after being shown both): 95 reads an hour of
+-- slack, a four-minute outage clearing in about 13 minutes, 19 reads per event a day.
+-- It still goes underwater in the very worst hour observed; that is the restarts,
+-- and no cadence can fix them.
+--
+-- Credits are NOT the constraint: 244 x 24 = 5,856 reads a day against a daily_cap
+-- of 10,310 from the 250,000-credit cycle. 43% spare.
+--
+-- ── EVEN PHASE: THE WHOLE INTERVAL IS USED, NOT SIX MARKS IN IT ────────────
+-- primary_poll_next() puts an event on the next interval boundary plus a RANDOM
+-- multiple of primary_poll_config.slot (10 minutes) — six marks an hour. 305 events
+-- over six marks is about 51 landing together, 9 minutes of work arriving at once,
+-- and random assignment clumps some marks past 65 while others sit light. That is
+-- what makes a slow read hurt: it collides with a burst instead of eating slack.
+--
+-- Each event now has a STABLE PHASE inside the interval, from its own id:
+--   phase   = hashtext(event_id) & 2147483647, modulo the interval in seconds
+--   next    = the next instant t with t = phase (mod interval) and t > now()
+-- 305 phases spread over 4,500 s is one read due every 14.8 s against a 10.6 s
+-- service time. The queue is smooth, every event gets exactly its interval to
+-- breathe, and the phase is fixed so a late read RESYNCS to its slot rather than
+-- drifting: an event read 30 minutes late comes due 45 minutes later, not 75. After
+-- an outage the list returns to its own spacing instead of bunching at now+interval.
 --
 -- ── ONE COUPLING TO KNOW ABOUT: hot_every MUST STAY EQUAL TO near_every ────
 -- axs_watch_next() has a separate rule for when the day's cap is already spent:
@@ -84,7 +107,7 @@
 BEGIN;
 
 ALTER TABLE public.axs_watch_config
-  ADD COLUMN IF NOT EXISTS base_every  interval NOT NULL DEFAULT interval '1 hour',
+  ADD COLUMN IF NOT EXISTS base_every  interval NOT NULL DEFAULT interval '75 minutes',
   ADD COLUMN IF NOT EXISTS near_every  interval NOT NULL DEFAULT interval '30 minutes',
   ADD COLUMN IF NOT EXISTS near_within interval NOT NULL DEFAULT interval '36 hours';
 
@@ -102,7 +125,7 @@ AS $function$
 DECLARE
   v_cfg public.axs_watch_config%ROWTYPE;
   t record; body jsonb; parsed jsonb; v_ok boolean; v_outcome text; v_error text; v_tevo bigint;
-  v_every interval;
+  v_every interval; v_sec bigint; v_phase bigint; v_next numeric;
 BEGIN
   SELECT * INTO v_cfg FROM public.axs_watch_config;
   body := p_content->'body';
@@ -146,9 +169,14 @@ BEGIN
                  THEN v_cfg.near_every
                  ELSE v_cfg.base_every
                END;
+    v_sec   := greatest(extract(epoch FROM v_every)::bigint, 1);
+    v_phase := (hashtext(p_event_id)::bigint & 2147483647) % v_sec;
+    -- the next instant congruent to this event's own phase, strictly after now
+    v_next  := floor((extract(epoch FROM now()) - v_phase) / v_sec) * v_sec + v_phase;
+    IF v_next <= extract(epoch FROM now()) THEN v_next := v_next + v_sec; END IF;
     UPDATE public.primary_poll_event e
        SET poll_interval = v_every,
-           next_poll_at  = public.primary_poll_next(v_every, e.next_poll_at)
+           next_poll_at  = to_timestamp(v_next)
      WHERE e.source = 'axs' AND e.source_event_id = p_event_id;
 
     -- An event that says it is not on sale keeps its own, slower rule and so wins over the two

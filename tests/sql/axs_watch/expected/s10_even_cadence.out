@@ -1,16 +1,16 @@
 --- A. the cadence config
  base_every | near_every | near_within | not_on_sale_every 
 ------------+------------+-------------+-------------------
- 01:00:00   | 00:30:00   | 36:00:00    | 06:00:00
+ 01:15:00   | 00:30:00   | 36:00:00    | 06:00:00
 
---- B. a good read of the far-out event puts it on base_every (1 hour), not the ladder's 6 hours
+--- B. a good read of the far-out event puts it on base_every (75 min), not the ladder's 6 hours
                                                   far_out_read                                                  
 ----------------------------------------------------------------------------------------------------------------
  {"error": null, "outcome": "ok", "event_id": "C1", "listings": 1, "response_s": 5.0, "quota_remaining": 99990}
 
  id | poll_interval | next_in_future 
 ----+---------------+----------------
- C1 | 01:00:00      | t
+ C1 | 01:15:00      | t
 
 --- C. the event inside 36 hours gets near_every (30 minutes)
                                                    near_read                                                    
@@ -43,6 +43,12 @@
 ----+---------------
  C1 | 02:00:00
  C2 | 00:15:00
+
+--- E2. the phase is stable and inside the interval: two reads of one event land on the same mark
+ id | on_its_own_phase | in_future | within_one_interval 
+----+------------------+-----------+---------------------
+ C1 | t                | t         | t
+ C2 | t                | t         | t
 
 --- F. the daily limit is the Eastern day, and comes from the cycle, not a flat 7,500
  cycle_credits | reserve | cap_is_cycle_paced | credits_eastern_day | daily_ok 

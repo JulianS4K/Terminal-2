@@ -1,6 +1,7 @@
 -- One cadence for every watched event (mig 20261125204500, operator "event at 1 hour cadance until
--- event is 36 hours away then it drops to every 30 mins"), and the daily limit on the Eastern day
--- taken from the 250k cycle (mig 20261125205000, operator "Limit resets midnight est").
+-- event is 36 hours away then it drops to every 30 mins", then 75 minutes for the base rung after
+-- being shown that 305 hourly is 90% of an average hour's measured throughput), and the daily limit
+-- on the Eastern day taken from the 250k cycle (mig 20261125205000, operator "Limit resets midnight est").
 -- The interval is SET, not floored: the ingest writes the ladder's value from date / price / quantity
 -- first, and the settle replaces it, so a cheap far-out event and a dear near one read alike.
 \set QUIET on
@@ -25,7 +26,7 @@ VALUES ('axs','C1','Far Out Show',  (now() + interval '90 days')::date, now() + 
         'https://www.axs.com/events/C3', 'pending', now() - interval '1 hour', interval '6 hours', 'run-cad')
 ON CONFLICT (source, source_event_id) DO NOTHING;
 
-\echo '--- B. a good read of the far-out event puts it on base_every (1 hour), not the ladder''s 6 hours'
+\echo '--- B. a good read of the far-out event puts it on base_every (75 min), not the ladder''s 6 hours'
 SELECT public.axs_watch_record('C1', 200, $j${"status": "ok", "response_s": 5.0, "quota_remaining": 99990, "body": {
   "status": "ok", "exit_code": 0, "elapsed_seconds": 5.0,
   "event": {"id": "C1", "title": "Far Out Show"},
@@ -60,6 +61,17 @@ SELECT public.axs_watch_record('C2', 200, $j${"status": "ok", "response_s": 5.0,
 SELECT source_event_id AS id, poll_interval FROM public.primary_poll_event
  WHERE source='axs' AND source_event_id IN ('C1','C2') ORDER BY 1;
 UPDATE public.axs_watch_config SET base_every = interval '1 hour', near_every = interval '30 minutes';
+
+\echo '--- E2. the phase is stable and inside the interval: two reads of one event land on the same mark'
+-- next_poll_at is the next instant congruent to the event's own phase, so a read at any time puts it
+-- back on ITS slot. Asserted as the offset within the interval, which is fixed, rather than as a
+-- timestamp, which is not.
+SELECT source_event_id AS id,
+       (extract(epoch FROM next_poll_at)::bigint % extract(epoch FROM poll_interval)::bigint)
+         = ((hashtext(source_event_id)::bigint & 2147483647) % extract(epoch FROM poll_interval)::bigint) AS on_its_own_phase,
+       next_poll_at > now() AS in_future,
+       next_poll_at <= now() + poll_interval AS within_one_interval
+  FROM public.primary_poll_event WHERE source='axs' AND source_event_id IN ('C1','C2') ORDER BY 1;
 
 \echo '--- F. the daily limit is the Eastern day, and comes from the cycle, not a flat 7,500'
 -- daily_cap itself is NOT printed: it is floor((pool - reserve) / days_left) and days_left shrinks
