@@ -97,7 +97,8 @@ def test_run_reads_the_batch_spaced_apart_and_counts_what_the_database_made_of_e
     assert out == {"asked": 3, "ok": 2, "failed": 1, "listings": 5, "reason": None, "hold_s": None,
                    "daily_cap": 10180, "fired_today": 12, "pause_s": 0.0}
     assert slept == [2.0, 2.0]                              # 3 s between the starts of two reads, a second of it spent reading
-    assert log[0] == ("axs_watch_next", {"p_limit": 20})
+    assert log[0] == ("axs_watch_next", {"p_limit": 20, "p_worker": reader.WORKER_ID})
+    assert reader.WORKER_ID.endswith(":%d" % __import__("os").getpid()) and ":" in reader.WORKER_ID
     assert [p["p_event_id"] for n, p in log if n == "axs_watch_record"] == ["21", "22", "23"]
 
 
@@ -109,10 +110,10 @@ def test_run_does_not_sleep_when_the_read_outlasted_the_spacing_and_takes_the_sp
         return {"outcome": "ok", "listings": 1}
 
     asked = {"events": [{"id": "1", "url": "a"}, {"id": "2", "url": "a"}], "spacing_ms": 3000}
-    out = reader.run(_TD({"a": BODY}), _rpc(asked, recorded, log), spacing_s=1.5, batch=5,
+    out = reader.run(_TD({"a": BODY}), _rpc(asked, recorded, log), spacing_s=1.5, batch=5, worker="web-1:7",
                      sleep=lambda s: slept.append(s), clock=lambda: now["t"])
     assert slept == [] and out["ok"] == 2 and out["listings"] == 2
-    assert log[0] == ("axs_watch_next", {"p_limit": 5})
+    assert log[0] == ("axs_watch_next", {"p_limit": 5, "p_worker": "web-1:7"})
 
 
 def test_run_idles_when_nothing_is_due_and_holds_while_the_upstream_fails():
@@ -127,3 +128,7 @@ def test_run_idles_when_nothing_is_due_and_holds_while_the_upstream_fails():
 
     out = reader.run(_TD({}), _rpc(None, None, log), sleep=lambda s: None, clock=lambda: 0.0)   # nothing answered at all
     assert out["asked"] == 0 and out["pause_s"] == 15.0
+
+    held = {"events": [], "hold_s": 10, "reason": "another worker holds the lease", "lease_holder": "web-0:3"}
+    out = reader.run(_TD({}), _rpc(held, None, log), sleep=lambda s: None, clock=lambda: 0.0)    # the other instance at a deploy
+    assert out["asked"] == 0 and out["pause_s"] == 10.0 and out["reason"] == "another worker holds the lease"

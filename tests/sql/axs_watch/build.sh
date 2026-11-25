@@ -37,4 +37,6 @@ stub_10_retention.sql
 20261125000000_axs_watch_worker_reader.sql
 20261125010000_axs_watch_pace.sql
 20261125013030_axs_watch_not_on_sale_out_of_list.sql
+20261125020000_axs_watch_worker_lease.sql
+20261125021000_axs_watch_lease_where.sql
 STEPS
