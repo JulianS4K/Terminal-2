@@ -72,6 +72,24 @@ SELECT (public.axs_watch_next(20)) - 'pool_remaining' - 'spacing_ms' AS next_cap
 UPDATE public.axs_watch_config SET hot_overrun_pct = 0;
 SELECT (public.axs_watch_next(20))->'events' AS next_capped_no_overrun;
 
+\echo '--- F2. the lease (mig 20261125020000): the first worker to ask holds it; a second gets a hold while it is live; the first renews it; once it runs out the second takes over; a nameless ask takes none'
+UPDATE public.axs_watch_config SET daily_cap_override = NULL, worker_lease_s = 180;
+UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 hour' WHERE source = 'axs' AND source_event_id IN ('31', '32');
+SELECT jsonb_array_length((public.axs_watch_next(20, 'web-a:1'))->'events') AS a_gets, (public.axs_watch_next(20, 'web-a:1'))->>'lease_s' AS lease_s;
+SELECT (public.axs_watch_next(20, 'web-b:2')) - 'lease_until' AS b_held;
+SELECT worker_id, worker_lease_until > now() + interval '170 seconds' AS renewed FROM public.axs_watch_config;
+UPDATE public.axs_watch_config SET worker_lease_until = now() - interval '1 second';   -- web-a stopped: its lease ran out
+SELECT jsonb_array_length((public.axs_watch_next(20, 'web-b:2'))->'events') AS b_gets_after_expiry;
+SELECT worker_id AS holder_now FROM public.axs_watch_config;
+SELECT jsonb_array_length((public.axs_watch_next(20))->'events') AS nameless_gets;
+SELECT worker_id AS holder_unchanged FROM public.axs_watch_config;
+
+\echo '--- F3. the same read sent twice (a retried record) is recorded once: the second call returns the first row and settles nothing again'
+SELECT (public.axs_watch_record('32', 200, $j${"status": "ok", "quota_remaining": 99980, "body": {"status": "ok", "exit_code": 0, "event": {"id": "32"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "seats": ["1"], "quantity": 1, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb, false, NULL, '2026-01-01 12:00:00+00'))->>'request_id' AS first_id;
+SELECT (public.axs_watch_record('32', 200, $j${"status": "ok", "quota_remaining": 99980, "body": {"status": "ok", "exit_code": 0, "event": {"id": "32"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "seats": ["1"], "quantity": 1, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb, false, NULL, '2026-01-01 12:00:00+00')) - 'response_s' AS repeated;
+SELECT count(*) AS rows_for_that_read FROM public.axs_watch_poll WHERE axs_event_id = '32' AND fired_at = '2026-01-01 12:00:00+00';
+SELECT count(*) AS credits_for_that_read FROM public.ticketsdata_credit_usage WHERE endpoint = '/fetch' AND quota_remaining = 99980;
+
 \echo '--- F. paused: nothing for the worker either; back to the database: the tick fires again'
 UPDATE public.axs_watch_config SET enabled = false, daily_cap_override = NULL;
 SELECT public.axs_watch_next(20) AS next_paused;
