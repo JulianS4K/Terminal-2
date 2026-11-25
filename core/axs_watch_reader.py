@@ -28,7 +28,9 @@ Runs inside the web service (server.py) when AXS_WATCH_READER_LIVE=1:
 """
 from __future__ import annotations
 
+import os
 import re
+import socket
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -38,6 +40,9 @@ ERROR_MAX = 200
 DEFAULT_SPACING_S = 3.0
 DEFAULT_BATCH = 20
 _HTTP_STATUS = re.compile(r"HTTP (\d{3})")
+# this worker's name for the database's lease (mig 20261125020000): one worker reads at a time, so the two
+# instances a deploy runs side by side do not both read (and draw TicketsData's three-second 429)
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 # a transport error names the URL it was sent to, and TicketsData takes the login in the query string: the query is
 # never recorded, and a username= / password= value is masked wherever else it appears
 _QUERY = re.compile(r"\?[^\s)'\"]*")
@@ -67,13 +72,14 @@ def read_one(td: Any, rpc: Rpc, event: dict) -> dict:
 
 
 def run(td: Any, rpc: Rpc, *, spacing_s: float | None = None, batch: int = DEFAULT_BATCH,
-        idle_s: float = 15.0, sleep: Callable[[float], None] = time.sleep,
+        idle_s: float = 15.0, worker: str | None = None, sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic) -> dict:
-    """One batch: ask the database what to read, read each `spacing_s` apart (the database's
-    `spacing_ms` unless given), record each. Returns what was done and `pause_s`, how long the
-    caller should wait before the next batch: the upstream hold, `idle_s` when nothing was due,
-    nothing when there was work (the next batch follows at once)."""
-    asked = rpc("axs_watch_next", {"p_limit": batch}) or {}
+    """One batch: ask the database what to read (naming this worker, so only one reads at a time),
+    read each `spacing_s` apart (the database's `spacing_ms` unless given), record each. Returns what
+    was done and `pause_s`, how long the caller should wait before the next batch: the database's hold
+    (the upstream failing, or another worker's lease), `idle_s` when nothing was due, nothing when
+    there was work (the next batch follows at once)."""
+    asked = rpc("axs_watch_next", {"p_limit": batch, "p_worker": worker or WORKER_ID}) or {}
     events = asked.get("events") or []
     spacing = spacing_s if spacing_s is not None else float(asked.get("spacing_ms") or DEFAULT_SPACING_S * 1000) / 1000.0
     done = {"asked": len(events), "ok": 0, "failed": 0, "listings": 0, "reason": asked.get("reason"),

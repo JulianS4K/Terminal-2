@@ -20,9 +20,9 @@
 ---------------
              1
 
-                                                                                                                                  next_all                                                                                                                                   
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "spacing_ms": 3000, "upstream_errors": 1}
+                                                                                                                                           next_all                                                                                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "spacing_ms": 3000, "upstream_errors": 1}
 
  batch_of_two | first | second 
 --------------+-------+--------
@@ -90,13 +90,59 @@
  [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}]
 
 --- E. over the day's cap (pinned at 6; 6 reads today) only an event on a hot cadence is handed out, and only up to the overrun
-                                                                                                    next_capped                                                                                                     
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"events": [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "daily_cap": 6, "fired_today": 6, "upstream_errors": 4}
+                                                                                                             next_capped                                                                                                             
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"events": [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "daily_cap": 6, "fired_today": 6, "upstream_errors": 4}
 
  next_capped_no_overrun 
 ------------------------
  []
+
+--- F2. the lease (mig 20261125020000): the first worker to ask holds it; a second gets a hold while it is live; the first renews it; once it runs out the second takes over; a nameless ask takes none
+ a_gets | lease_s 
+--------+---------
+      3 | 180
+
+                                               b_held                                                
+-----------------------------------------------------------------------------------------------------
+ {"events": [], "hold_s": 10, "reason": "another worker holds the lease", "lease_holder": "web-a:1"}
+
+ worker_id | renewed 
+-----------+---------
+ web-a:1   | t
+
+ b_gets_after_expiry 
+---------------------
+                   3
+
+ holder_now 
+------------
+ web-b:2
+
+ nameless_gets 
+---------------
+             3
+
+ holder_unchanged 
+------------------
+ web-b:2
+
+--- F3. the same read sent twice (a retried record) is recorded once: the second call returns the first row and settles nothing again
+   first_id    
+---------------
+ 1000000000005
+
+                                                                  repeated                                                                  
+--------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "event_id": "32", "listings": 1, "repeated": true, "request_id": 1000000000005, "quota_remaining": 99980}
+
+ rows_for_that_read 
+--------------------
+                  1
+
+ credits_for_that_read 
+-----------------------
+                     1
 
 --- F. paused: nothing for the worker either; back to the database: the tick fires again
             next_paused             
@@ -110,7 +156,7 @@
  id |           event_url           
 ----+-------------------------------
   1 | https://www.axs.com/events/31
-  2 | https://www.axs.com/events/32
+  2 | https://www.axs.com/events/33
 
 --- G. privileges: service_role only
        proname        | anon_can | service_can 
