@@ -32,6 +32,11 @@
 -- already true of obstructed before this change; making the count match the feed would change a number other
 -- consumers read, so it is left alone and flagged rather than quietly altered.
 --
+-- Applied to prod via MCP 2026-11-25 17:51Z, at the second attempt: the first failed with "Failed to initialise
+-- history table: Connection terminated" during a database outage, and the state was verified clean (no column, view
+-- unchanged) before re-applying. Verified after: send_ada false, 1,499 accessible listings stored, 0 reaching the
+-- feed, which holds 175,161 rows. Cross-lane notice filed to D0 as bot_chat 7534. Re-apply is a no-op.
+--
 -- rollback: UPDATE public.primary_poll_config SET send_ada = true;  (immediate, no re-deploy) or re-create
 --           v_primary_poll_listings_feed from mig 20261124230030 and drop the column.
 
