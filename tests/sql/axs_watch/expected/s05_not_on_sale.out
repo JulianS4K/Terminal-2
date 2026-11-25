@@ -1,0 +1,81 @@
+--- A. what says an event is not on sale: the read's answer; "no tickets available" only under a Coming Soon label
+ n |    outcome     |                       error                        |   status    | not_on_sale 
+---+----------------+----------------------------------------------------+-------------+-------------
+ 1 | unparsed       | Tickets for this event are not currently on sale.  | Coming Soon | t
+ 2 | unparsed       | Tickets for this event are not on sale yet.        | Buy Tickets | t
+ 3 | unparsed       | No tickets are currently available for this event. | Coming Soon | t
+ 4 | unparsed       | No tickets are currently available for this event. | Buy Tickets | f
+ 5 | ok             | -                                                  | Coming Soon | f
+ 6 | empty          | -                                                  | Coming Soon | f
+ 7 | upstream_error | HTTP 429 from TicketsData                          | Coming Soon | f
+ 8 | -              | -                                                  | -           | f
+
+--- B. the first fill: six places, soonest first; the event the export dates on sale next month is passed over, the presale one is not
+                              first_fill                              
+----------------------------------------------------------------------
+ {"added": 6, "apply": true, "short": [], "retired": 0, "watched": 6}
+
+ id  |             name             
+-----+------------------------------
+ 101 | On Sale Show
+ 102 | Read Says Not On Sale
+ 103 | Coming Soon But Has Tickets
+ 104 | Sold Out Show
+ 105 | No Tickets Under Coming Soon
+ 107 | Presale Open, Sale Later
+
+--- C. the reads come in; the next fill retires the two that are not on sale and gives their places to the next events, not to the one read as not on sale two days ago
+                                dry_run                                
+-----------------------------------------------------------------------
+ {"added": 2, "apply": false, "short": [], "retired": 2, "watched": 6}
+
+                             second_fill                              
+----------------------------------------------------------------------
+ {"added": 2, "apply": true, "short": [], "retired": 2, "watched": 6}
+
+ id  |            name             
+-----+-----------------------------
+ 101 | On Sale Show
+ 103 | Coming Soon But Has Tickets
+ 104 | Sold Out Show
+ 107 | Presale Open, Sale Later
+ 108 | Next In Line
+ 110 | Further Out
+
+ action | id  |          note           
+--------+-----+-------------------------
+ add    | 108 | DATE 20:00 Next In Line
+ add    | 110 | DATE 20:00 Further Out
+ retire | 102 | not_on_sale
+ retire | 105 | not_on_sale
+
+--- D. the night after: nothing moves; the retired events are not picked again while their last read is within the recheck time
+                              third_fill                              
+----------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [], "retired": 0, "watched": 6}
+
+--- E. past the recheck time an event is tried once more: the one read as not on sale more than seven days ago comes back when a place opens
+                             fourth_fill                              
+----------------------------------------------------------------------
+ {"added": 1, "apply": true, "short": [], "retired": 0, "watched": 7}
+
+ id  |            name             
+-----+-----------------------------
+ 101 | On Sale Show
+ 103 | Coming Soon But Has Tickets
+ 104 | Sold Out Show
+ 107 | Presale Open, Sale Later
+ 108 | Next In Line
+ 109 | Not On Sale A Week Ago
+ 110 | Further Out
+
+--- F. a shorter recheck time lets the others back sooner; never under a day
+ added 
+-------
+ 1
+
+ id  
+-----
+ 102
+
+psql:s05_not_on_sale.sql:81: WARNING:  a recheck time of 2 hours is refused

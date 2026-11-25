@@ -227,15 +227,16 @@
  axs_watch_tick_1m     | 15 seconds | BEGIN; SET LOCAL statement_timeout = '12s'; SELECT public.axs_watch_tick(); COMMIT;
 
 --- N. privileges: service_role only
-       proname        | anon | service 
-----------------------+------+---------
- axs_watch_budget     | f    | t
- axs_watch_fill       | f    | t
- axs_watch_next       | f    | t
- axs_watch_pace       | f    | t
- axs_watch_pace_apply | f    | t
- axs_watch_parse      | f    | t
- axs_watch_record     | f    | t
- axs_watch_rule_ok    | f    | t
- axs_watch_settle_one | f    | t
- axs_watch_tick       | f    | t
+        proname        | anon | service 
+-----------------------+------+---------
+ axs_watch_budget      | f    | t
+ axs_watch_fill        | f    | t
+ axs_watch_next        | f    | t
+ axs_watch_not_on_sale | f    | t
+ axs_watch_pace        | f    | t
+ axs_watch_pace_apply  | f    | t
+ axs_watch_parse       | f    | t
+ axs_watch_record      | f    | t
+ axs_watch_rule_ok     | f    | t
+ axs_watch_settle_one  | f    | t
+ axs_watch_tick        | f    | t
