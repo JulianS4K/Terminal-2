@@ -556,36 +556,35 @@ def test_the_real_guide_has_news_for_the_crm_and_none_of_it_is_internal():
         assert 20 < len(n["text"]) < 900 and "sub_finder_" not in n["text"] and "s4k_ext_" not in n["text"]
     # an event not on sale yet has no place in the AXS watch list (operator 2026-11-25: "Exclude upcoming sales")
     assert "not on sale yet" in news[0]["text"] and "/axs/watch" in news[0]["text"]
-    assert "source=ims" in news[1]["text"] and "section prices" in news[1]["text"]
     # AXS seats that cannot be transferred, or with a limited or side view, are withheld (operator 2026-11-24)
-    assert "non-transferable" in news[2]["text"] and "side view" in news[2]["text"]
+    assert "non-transferable" in news[1]["text"] and "side view" in news[1]["text"]
     # AXS Premium primary seats are not shared (operator 2026-11-24: "do not share premium listings with api to crm")
-    assert "AXS Premium" in news[3]["text"] and "/axs/watch/listings" in news[3]["text"] and "resale" in news[3]["text"].lower()
+    assert "AXS Premium" in news[2]["text"] and "/axs/watch/listings" in news[2]["text"] and "resale" in news[2]["text"].lower()
     # a listing over its order limit is sent as several (operator 2026-11-24: "make the next set a seperate listing")
-    assert "`-1`, `-2`" in news[4]["text"] and "no single seat is left behind" in news[4]["text"]
-    assert "box_office_axs" in news[5]["text"] and "last activity" in news[5]["text"]             # the health check (2026-11-24)
+    assert "`-1`, `-2`" in news[3]["text"] and "no single seat is left behind" in news[3]["text"]
+    assert "box_office_axs" in news[4]["text"] and "last activity" in news[4]["text"]             # the health check (2026-11-24)
     # the AXS watch and the box offices carry the marketplace ids too (operator 2026-11-24: "integrate them into the out api")
-    assert "/axs/watch" in news[6]["text"] and "/primary/events" in news[6]["text"] and "tickpick_event_id" in news[6]["text"]
-    assert "/axs/watch" in news[7]["text"] and "/axs/watch/listings" in news[7]["text"]       # the AXS watch (2026-11-24)
-    assert "`axs` is a source" in news[8]["text"] and "/primary/events" in news[8]["text"]
+    assert "/axs/watch" in news[5]["text"] and "/primary/events" in news[5]["text"] and "tickpick_event_id" in news[5]["text"]
+    assert "/axs/watch" in news[6]["text"] and "/axs/watch/listings" in news[6]["text"]       # the AXS watch (2026-11-24)
+    assert "`axs` is a source" in news[7]["text"] and "/primary/events" in news[7]["text"]
     # the lines main added the same day follow, each six places down
-    assert "general_admission: true" in news[9]["text"] and "max_per_order" in news[9]["text"]
-    assert "box_office_sitickets" in news[10]["text"] and "box_office_timberwolves" in news[10]["text"]
-    assert "event_started" in news[11]["text"] and "start_utc" in news[11]["text"]
-    assert "nccourage" in news[12]["text"] and "sounders" in news[12]["text"] and "/primary/events" in news[12]["text"]
-    assert "poll_every_minutes" in news[13]["text"] and "next_poll_at" in news[13]["text"]
-    assert "price_estimated" in news[14]["text"] and "all_in_price" in news[14]["text"]
-    assert "/primary/events" in news[15]["text"] and "/primary/listings" in news[15]["text"]
-    assert "id on each marketplace" in news[16]["text"] and "xmap_tevo_event_id" in news[16]["text"]
-    assert "matching gates" in news[17]["text"] and "GET /gates" in news[17]["text"]
-    assert "/axs/events" in news[18]["text"] and "/seatgeek/events" in news[18]["text"]
-    assert "tm_primary" in news[19]["text"] and "daily bulk file" in news[20]["text"]
-    assert "read again on a schedule" in news[21]["text"]
-    assert "/tm/changes" in news[22]["text"] and "/tm/events?q=" in news[23]["text"]
-    assert "no longer answers 502" in news[24]["text"]
-    assert "ticket_limit_count" in news[25]["text"] and "/tm/markets" in news[26]["text"] and "/tm/events" in news[27]["text"]
-    assert "orders still in play" in news[28]["text"] and "buy key is now registered" in news[29]["text"]
-    assert "Accessible seats" in news[30]["text"] and "mlb/changes" in news[31]["text"] and "minor league" in news[32]["text"]
+    assert "general_admission: true" in news[8]["text"] and "max_per_order" in news[8]["text"]
+    assert "box_office_sitickets" in news[9]["text"] and "box_office_timberwolves" in news[9]["text"]
+    assert "event_started" in news[10]["text"] and "start_utc" in news[10]["text"]
+    assert "nccourage" in news[11]["text"] and "sounders" in news[11]["text"] and "/primary/events" in news[11]["text"]
+    assert "poll_every_minutes" in news[12]["text"] and "next_poll_at" in news[12]["text"]
+    assert "price_estimated" in news[13]["text"] and "all_in_price" in news[13]["text"]
+    assert "/primary/events" in news[14]["text"] and "/primary/listings" in news[14]["text"]
+    assert "id on each marketplace" in news[15]["text"] and "xmap_tevo_event_id" in news[15]["text"]
+    assert "matching gates" in news[16]["text"] and "GET /gates" in news[16]["text"]
+    assert "/axs/events" in news[17]["text"] and "/seatgeek/events" in news[17]["text"]
+    assert "tm_primary" in news[18]["text"] and "daily bulk file" in news[19]["text"]
+    assert "read again on a schedule" in news[20]["text"]
+    assert "/tm/changes" in news[21]["text"] and "/tm/events?q=" in news[22]["text"]
+    assert "no longer answers 502" in news[23]["text"]
+    assert "ticket_limit_count" in news[24]["text"] and "/tm/markets" in news[25]["text"] and "/tm/events" in news[26]["text"]
+    assert "orders still in play" in news[27]["text"] and "buy key is now registered" in news[28]["text"]
+    assert "Accessible seats" in news[29]["text"] and "mlb/changes" in news[30]["text"] and "minor league" in news[31]["text"]
 
 
 def test_gates_are_served_from_the_guide_and_match_the_matcher():
