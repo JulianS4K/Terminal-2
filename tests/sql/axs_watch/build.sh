@@ -46,4 +46,6 @@ stub_10_retention.sql
 20261125174500_axs_watch_150000_applied_late.sql
 20261125180000_primary_poll_withhold_ada.sql
 20261125200000_primary_poll_ada_null_ticket_type.sql
+20261125204500_axs_watch_even_cadence.sql
+20261125205000_td_daily_limit_est_and_cycle.sql
 STEPS

@@ -1,0 +1,55 @@
+--- A. the cadence config
+ base_every | near_every | near_within | not_on_sale_every 
+------------+------------+-------------+-------------------
+ 01:00:00   | 00:30:00   | 36:00:00    | 06:00:00
+
+--- B. a good read of the far-out event puts it on base_every (1 hour), not the ladder's 6 hours
+                                                  far_out_read                                                  
+----------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "event_id": "C1", "listings": 1, "response_s": 5.0, "quota_remaining": 99990}
+
+ id | poll_interval | next_in_future 
+----+---------------+----------------
+ C1 | 01:00:00      | t
+
+--- C. the event inside 36 hours gets near_every (30 minutes)
+                                                   near_read                                                    
+----------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "event_id": "C2", "listings": 1, "response_s": 5.0, "quota_remaining": 99989}
+
+ id | poll_interval 
+----+---------------
+ C2 | 00:30:00
+
+--- D. "not on sale" still wins over the cadence: not_on_sale_every, not 1 hour
+                                                                           not_on_sale_read                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": "Tickets are not currently on sale for this event", "outcome": "unparsed", "event_id": "C3", "listings": null, "response_s": 4.0, "quota_remaining": 99988}
+
+ id | poll_interval 
+----+---------------
+ C3 | 06:00:00
+
+--- E. the config drives it: halve both rungs and the next read follows
+                                                   far_out_again                                                   
+-------------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "empty", "event_id": "C1", "listings": 0, "response_s": 5.0, "quota_remaining": 99987}
+
+                                                    near_again                                                     
+-------------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "empty", "event_id": "C2", "listings": 0, "response_s": 5.0, "quota_remaining": 99986}
+
+ id | poll_interval 
+----+---------------
+ C1 | 02:00:00
+ C2 | 00:15:00
+
+--- F. the daily limit is the Eastern day, and comes from the cycle, not a flat 7,500
+ cycle_credits | reserve | cap_is_cycle_paced | credits_eastern_day | daily_ok 
+---------------+---------+--------------------+---------------------+----------
+        250000 |    5000 | t                  |                   5 | t
+
+--- G. the Eastern boundary, not UTC: a charge from 02:00Z today counts yesterday in Eastern
+ eastern_day_unchanged_by_a_02z_charge | utc_day_would_include_it 
+---------------------------------------+--------------------------
+                                     5 |                     1005
