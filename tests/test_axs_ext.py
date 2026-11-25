@@ -243,3 +243,48 @@ def test_accessible_seats_and_non_transferable_offers_are_marked_for_the_databas
     (seat,) = body["listings"]
     assert seat["seat_type"] == "ACCESSIBLE"
     assert seat["seller_notes"] == "Delivery: AXS Mobile ID - Free (Non-Transferable)"
+
+
+def test_odd_answers_and_fee_edges():
+    assert axs_ext_doc._c2d("x") is None and axs_ext_doc._c2d(None) is None
+    # answers that are not objects, and offers nested in lists, are walked without error
+    found = axs_ext_doc.classify([None, "text", [[OFFER_SEARCH]]])
+    assert len(found["offers"]) == 2
+    assert axs_ext_doc._fee_for({"calculationMethod": "Lookup", "lookupRanges": [{"start": 0, "end": 10, "amount": 100}]}, 50.0) == 0.0
+    assert axs_ext_doc._fee_for({"calculationMethod": "Percentage", "rate": 10, "roundOff": 0}, 33.33) == 3.33
+    assert axs_ext_doc._fee_for({"calculationMethod": "Tiered"}, 50.0) == 0.0
+    # an order fee (PerOrder) and a fee id with no definition are not per-ticket fees
+    defs = {"1": {"applicationMethod": "PerOrder", "components": [{"calculationMethod": "Fixed", "amount": 500}]}}
+    assert axs_ext_doc._fees_total("7", 50.0, defs, {"7": ["1", "2"]}) == 0.0
+    assert axs_ext_doc._fees_total("7", None, defs, {"7": ["1"]}) is None
+
+
+def test_a_price_level_without_an_id_or_a_price_and_a_seat_priced_by_its_original_price():
+    book = {"offerPrices": [{"offerID": "5", "zonePrices": [None, {"priceLevels": [
+        {"label": "no id"}, {"priceLevelID": "2", "label": "Unpriced", "prices": [{}]},
+        {"priceLevelID": "3", "prices": [{"base": 1000}]}, {"priceLevelID": "3", "prices": [{"base": 2000}]}]}]}]}
+    offers = {"offers": [{"offerID": "5", "items": [
+        "not a seat",
+        {"offerID": 5, "priceLevelID": "9", "sectionLabel": "S", "rowLabel": "1", "number": "1", "originalPrice": "45.5"},
+        {"offerID": 5, "priceLevelID": "8", "sectionLabel": "S", "rowLabel": "2", "number": "1", "originalPrice": "n/a"},
+        {"offerID": 5, "priceLevelID": "3", "sectionLabel": "T", "rowLabel": "1", "number": "1"}]}]}
+    by = {l["section"] + l["row"]: l for l in axs_ext_doc.build_body(_capture(captures=[
+        {"url": "a", "json": book}, {"url": "b", "json": offers}]))["listings"]}
+    assert by["S1"]["pricing"] == {"face": 45.5} and by["S2"]["pricing"] == {}
+    assert by["T1"]["pricing"] == {"face": 20.0} and "price_level" not in by["T1"]   # the highest base of a level counts
+
+
+def test_delivery_methods_named_by_offer_objects_or_without_labels():
+    notes = axs_ext_doc._delivery_notes([
+        {"label": "Mobile (Non-Transferable)", "offers": [{"offerID": "1"}, {"id": "2"}]},
+        {"offerID": "3"},                                                   # no label: says nothing
+        {"label": "Mobile (Non-Transferable)", "offerId": "4"},
+        {"label": "Mobile Transfer OK", "offer_id": "4"}])
+    assert notes == {"1": "Delivery: Mobile (Non-Transferable)", "2": "Delivery: Mobile (Non-Transferable)"}
+
+
+def test_next_and_record_refuse_bad_input():
+    sb = _Sb(rpc={})
+    assert _client(sb).post("/api/axs/ext/next", json={"worker": "a", "limit": "many"}, headers=H).status_code == 422
+    r = _client(sb).post("/api/axs/ext/record", json={"event_id": "41", "captures": "x"}, headers=H)
+    assert r.status_code == 422 and sb.rpc_calls == []
