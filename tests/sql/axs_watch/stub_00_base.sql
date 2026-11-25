@@ -40,7 +40,7 @@ CREATE TABLE public.axs_export_event (
   axs_event_id bigint PRIMARY KEY, type text, ticketer text, axs_ticketed boolean, status text, event_title text, headliner text,
   performers text[], genre text, major_category text, venue_id bigint, venue_name text, venue_city text, venue_state text,
   event_date_local text, event_date_utc timestamptz, event_timezone text, is_tba boolean, removed_utc timestamptz, event_url text,
-  tevo_event_id bigint, tevo_venue_id bigint, match_method text, matched_at timestamptz,
+  tevo_event_id bigint, tevo_venue_id bigint, match_method text, matched_at timestamptz, onsale_utc timestamptz,
   first_synced_at timestamptz NOT NULL DEFAULT now(), last_synced_at timestamptz NOT NULL DEFAULT now(), gone_at timestamptz);
 -- pg_net: a GET is recorded; the scenario inserts the response
 CREATE SCHEMA IF NOT EXISTS net;
