@@ -7,6 +7,14 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF;
 END $$;
 CREATE SCHEMA IF NOT EXISTS extensions;
+-- Supabase's API role runs with safeupdate (an UPDATE or DELETE without WHERE is refused): the same guard here where the
+-- server ships the extension, so a function reached through the API is tested under it
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'safeupdate') THEN
+    EXECUTE 'CREATE EXTENSION IF NOT EXISTS safeupdate';
+    EXECUTE format('ALTER DATABASE %I SET safeupdate.enabled = 1', current_database());
+  END IF;
+END $$;
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;   -- gen_random_uuid on older servers
 CREATE FUNCTION public.safe_jsonb(p text) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$ BEGIN RETURN p::jsonb; EXCEPTION WHEN OTHERS THEN RETURN NULL; END $$;
 -- the vault helper: the test never sees a real secret
