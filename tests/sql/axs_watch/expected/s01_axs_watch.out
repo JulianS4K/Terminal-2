@@ -28,12 +28,12 @@
  14 | Big Concert                     |        6 | 20:00 | Big Arena  | 900014 | axs_export | t         | pending     | t
  18 | Disney On Ice presents Jump In! |       20 | 11:00 | Big Arena  |      - | -          | t         | pending     | t
 
- action | id |   venue    |                       note                       
---------+----+------------+--------------------------------------------------
- add    | 11 | Big Arena  | 2026-11-27T19:30 Lakers vs. Denver
- add    | 14 | Big Arena  | 2026-11-30T20:00 Big Concert
- add    | 18 | Big Arena  | 2026-12-14T11:00 Disney On Ice presents Jump In!
- add    | 21 | Small Hall | 2026-11-26T19:00 Small Hall Show
+ action | id |   venue    |                    note                    
+--------+----+------------+--------------------------------------------
+ add    | 11 | Big Arena  | DATE 19:30 Lakers vs. Denver
+ add    | 14 | Big Arena  | DATE 20:00 Big Concert
+ add    | 18 | Big Arena  | DATE 11:00 Disney On Ice presents Jump In!
+ add    | 21 | Small Hall | DATE 19:00 Small Hall Show
  retire | 41 | Big Arena  | passed
  retire | 99 | Big Arena  | not_in_export
 
