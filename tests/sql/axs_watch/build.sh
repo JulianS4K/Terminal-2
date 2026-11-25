@@ -45,4 +45,5 @@ stub_10_retention.sql
 20261125173500_axs_watch_horizon_180d.sql
 20261125174500_axs_watch_150000_applied_late.sql
 20261125180000_primary_poll_withhold_ada.sql
+20261125200000_primary_poll_ada_null_ticket_type.sql
 STEPS
