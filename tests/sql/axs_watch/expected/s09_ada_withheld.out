@@ -1,0 +1,34 @@
+--- A. the default
+ send_ada | split_over_limit 
+----------+------------------
+ f        | t
+
+--- B. stored: all six, including the accessible ones
+  listing_id  | ticket_type | ada | obstructed | general_admission | quantity 
+--------------+-------------+-----+------------+-------------------+----------
+ L-accessible | ACCESSIBLE  | f   | f          | f                 |        6
+ L-ada-flag   | STANDARD    | t   | f          | f                 |        4
+ L-both       | ACCESSIBLE  | t   | f          | f                 |        2
+ L-ga         | STANDARD    | f   | f          | t                 |      500
+ L-obstructed | STANDARD    | f   | t          | f                 |        3
+ L-plain      | STANDARD    | f   | f          | f                 |       10
+
+--- C. sent: the plain and the GA only — ada flag, ACCESSIBLE type and obstructed are all withheld
+ listing_id | ticket_type | ada | quantity 
+------------+-------------+-----+----------
+ L-ga       | STANDARD    | f   |      500
+ L-plain    | STANDARD    | f   |       10
+
+--- D. send_ada = true puts the accessible ones back (obstructed stays withheld)
+  listing_id  | ticket_type | ada 
+--------------+-------------+-----
+ L-accessible | ACCESSIBLE  | f
+ L-ada-flag   | STANDARD    | t
+ L-both       | ACCESSIBLE  | t
+ L-ga         | STANDARD    | f
+ L-plain      | STANDARD    | f
+
+--- E. and off again
+ sent_rows 
+-----------
+         2
