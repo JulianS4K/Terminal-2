@@ -1,4 +1,5 @@
 -- Migration 20261125023030 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(+backfill),axs_watch_fill()(replaced: places a venue cannot fill go to the other venues' events, and come back when it can),primary_poll_event(AXS rows: added and retired by the fill),axs_watch_audit(rows) · reads:axs_watch_poll,axs_export_event,axs_watch_venue · pre:20261125013030 (the fill this re-creates)
+-- Already applied to prod · via MCP 2026-11-25 (operator: "Fix media[n] and backfill"); the fill was then run once: 22 backfilled (12 Red Rocks, 6 Toyota Center, 4 PeoplesBank Arena), none retired, 200 watched. Re-apply is a no-op.
 --
 -- THE PLACES A VENUE CANNOT FILL GO TO THE OTHER VENUES' EVENTS.
 -- Operator 2026-11-25: "Fix media[n] and backfill".
