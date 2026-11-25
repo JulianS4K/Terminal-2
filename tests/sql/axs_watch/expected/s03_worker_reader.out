@@ -20,9 +20,9 @@
 ---------------
              1
 
-                                                                                                                                           next_all                                                                                                                                           
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "spacing_ms": 3000, "upstream_errors": 1}
+                                                                                                                                                  next_all                                                                                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"lanes": null, "events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "spacing_ms": 3000, "upstream_errors": 1}
 
  batch_of_two | first | second 
 --------------+-------+--------
@@ -90,9 +90,9 @@
  [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}]
 
 --- E. over the day's cap (pinned at 6; 6 reads today) only an event on a hot cadence is handed out, and only up to the overrun
-                                                                                                             next_capped                                                                                                             
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"events": [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "daily_cap": 6, "fired_today": 6, "upstream_errors": 4}
+                                                                                                                    next_capped                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"lanes": null, "events": [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "daily_cap": 6, "fired_today": 6, "upstream_errors": 4}
 
  next_capped_no_overrun 
 ------------------------

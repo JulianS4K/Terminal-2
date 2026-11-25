@@ -80,9 +80,10 @@ FORBIDDEN_HOSTS = (
     # sandbox.api.; "account.stubhub.com" covers the login host and its sandbox.* twin.
     "stubhub.net",
     "account.stubhub.com",
-    # AXS has order/hold endpoints that must never be touched. All sanctioned
-    # AXS traffic proxies through ticketsdata.com (covered above); a direct
-    # call to axs.com is forbidden outright. Bare "axs.com" substring-matches
+    # AXS has order/hold endpoints that must never be touched. Sanctioned AXS
+    # reads go through ticketsdata.com (covered above) or are the AXS page's own,
+    # in the operator's Firefox (axs_extension/, CLAUDE.md RULE 2, 2026-11-25);
+    # a write to axs.com from our code is forbidden outright. Bare "axs.com" substring-matches
     # www.axs.com / api.axs.com / any future subdomain.
     "axs.com",
     # Paciolan / eVenue primary box-office (live purchase flow with order/hold
