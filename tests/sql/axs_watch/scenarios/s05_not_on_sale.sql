@@ -7,11 +7,15 @@
 \pset null '-'
 SET client_min_messages = warning;
 
-\echo '--- A0. the discovery feed: Coming Soon with no on-sale date or one still ahead is an upcoming sale; with a date already passed the label is stale'
-SELECT c.n, c.status, c.onsale, public.axs_watch_upcoming_sale(c.status, CASE c.onsale WHEN 'ahead' THEN now() + interval '5 days' WHEN 'passed' THEN now() - interval '5 days' END) AS upcoming_sale
-  FROM (VALUES (1, 'Coming Soon', 'none'), (2, 'Coming Soon', 'ahead'), (3, 'Coming Soon', 'passed'), (4, 'Buy Tickets', 'passed'),
-               (5, 'Buy Presale', 'ahead'), (6, 'Sold Out', 'none'), (7, NULL, 'ahead'), (8, NULL, 'none')) c(n, status, onsale)
+\echo '--- A0. the discovery feed: with an on-sale date, an upcoming sale until three days after it, whatever the label; with none, while labelled Coming Soon'
+SELECT c.n, c.status, c.onsale,
+       public.axs_watch_upcoming_sale(c.status, CASE c.onsale WHEN 'in 5 days' THEN now() + interval '5 days' WHEN '1 day ago' THEN now() - interval '1 day'
+                                                              WHEN '4 days ago' THEN now() - interval '4 days' END, interval '3 days') AS upcoming_sale
+  FROM (VALUES (1, 'Coming Soon', 'none'), (2, 'Coming Soon', 'in 5 days'), (3, 'Coming Soon', '1 day ago'), (4, 'Coming Soon', '4 days ago'),
+               (5, 'Buy Tickets', 'none'), (6, 'Buy Tickets', '1 day ago'), (7, 'Buy Tickets', '4 days ago'), (8, 'Buy Presale', 'in 5 days'),
+               (9, 'Sold Out', 'none'), (10, NULL, 'in 5 days'), (11, NULL, 'none')) c(n, status, onsale)
  ORDER BY c.n;
+SELECT public.axs_watch_upcoming_sale('Buy Tickets', now() - interval '1 day', interval '0') AS with_no_delay;
 
 \echo '--- A. what a read says: the answer itself; "no tickets available" only under a Coming Soon label'
 SELECT c.n, c.outcome, c.error, c.status, public.axs_watch_not_on_sale(c.outcome, c.error, c.status) AS not_on_sale
@@ -41,7 +45,7 @@ SELECT v.id, 'axs_primary', 'axs', true, v.status, v.title, 'Music', 1, 'Big Are
                (104, 'Sold Out Show',                'Buy Tickets', 13, NULL),
                (105, 'No Tickets Under Coming Soon', 'Coming Soon', 14, now() - interval '9 days'),
                (106, 'On Sale Next Month',           'Coming Soon', 15, now() + interval '30 days'),
-               (107, 'Presale Open, Sale Later',     'Buy Presale', 16, now() + interval '5 days'),
+               (107, 'On Sale Yesterday',            'Buy Tickets', 16, now() - interval '1 day'),
                (108, 'Next In Line',                 'Buy Tickets', 17, NULL),
                (109, 'Not On Sale A Week Ago',       'Coming Soon', 18, now() - interval '9 days'),
                (110, 'Further Out',                  'Buy Tickets', 40, NULL),
@@ -54,7 +58,7 @@ INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date
   ('axs', '113', 'Dated Later But Has Tickets', current_date + 20, 'Big Arena', 'https://www.axs.com/events/113/tickets', now());
 UPDATE public.primary_poll_event SET poll_status = 'ok', poll_ok_at = now(), listing_count = 30 WHERE source = 'axs' AND source_event_id = '113';
 
-\echo '--- B. the first fill: six places, soonest first; the feed''s upcoming sales (no date, or a date ahead) are passed over and the watched one is retired; the one with tickets and the presale stay'
+\echo '--- B. the first fill: six places, soonest first; the feed''s upcoming sales (Coming Soon with no date, a date ahead, a date yesterday) are passed over and the watched one is retired; the one with tickets stays'
 SELECT (public.axs_watch_fill(true)) - 'run' AS first_fill;
 SELECT source_event_id AS id, name FROM public.primary_poll_event WHERE source = 'axs' ORDER BY event_date, source_event_id;
 
@@ -77,16 +81,27 @@ SELECT action, axs_event_id AS id, regexp_replace(note, '^[0-9]{4}-[0-9]{2}-[0-9
 \echo '--- D. the night after: nothing moves; the retired events are not picked again while their last read is within the recheck time'
 SELECT (public.axs_watch_fill(true)) - 'run' AS third_fill;
 
+\echo '--- D2. three days after its on-sale date the event joins the list; a "not on sale" read made before that date does not hold it back'
+INSERT INTO public.axs_watch_poll (request_id, axs_event_id, fired_at, checked_at, status_code, outcome, error, listings) VALUES
+  (9, '106', now() - interval '5 days', now() - interval '5 days', 200, 'unparsed', 'Tickets for this event are not on sale yet.', 0);
+UPDATE public.axs_export_event SET onsale_utc = now() - interval '2 days' WHERE axs_event_id IN (106, 107);   -- two days into the sale: not yet
+UPDATE public.axs_watch_venue SET quota = 8;
+SELECT (public.axs_watch_fill(true)) -> 'added' AS added_two_days_in;
+UPDATE public.axs_export_event SET onsale_utc = now() - interval '4 days' WHERE axs_event_id IN (106, 107);   -- four days in
+SELECT (public.axs_watch_fill(true)) -> 'added' AS added_four_days_in;
+SELECT source_event_id AS id, name FROM public.primary_poll_event WHERE source = 'axs' AND source_event_id IN ('106', '107') ORDER BY 1;
+UPDATE public.axs_watch_venue SET quota = 6;
+
 \echo '--- E. past the recheck time an event is tried once more: the one read as not on sale more than seven days ago comes back when a place opens'
 UPDATE public.axs_watch_poll SET fired_at = now() - interval '8 days', checked_at = now() - interval '8 days' WHERE axs_event_id = '109';
-UPDATE public.axs_watch_venue SET quota = 7;
+UPDATE public.axs_watch_venue SET quota = 9;
 SELECT (public.axs_watch_fill(true)) - 'run' AS fourth_fill;
 SELECT source_event_id AS id, name FROM public.primary_poll_event WHERE source = 'axs' ORDER BY event_date, source_event_id;
 
 \echo '--- F. a shorter recheck time lets the others back sooner; never under a day'
 UPDATE public.axs_watch_config SET not_on_sale_recheck = interval '1 day';
 UPDATE public.axs_watch_poll SET fired_at = now() - interval '25 hours', checked_at = now() - interval '25 hours' WHERE axs_event_id = '102' AND outcome = 'unparsed';
-UPDATE public.axs_watch_venue SET quota = 8;
+UPDATE public.axs_watch_venue SET quota = 10;
 SELECT (public.axs_watch_fill(true)) -> 'added' AS added;
 SELECT source_event_id AS id FROM public.primary_poll_event WHERE source = 'axs' AND source_event_id IN ('102', '105', '106') ORDER BY 1;
 DO $$ BEGIN

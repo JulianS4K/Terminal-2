@@ -1,14 +1,21 @@
---- A0. the discovery feed: Coming Soon with no on-sale date or one still ahead is an upcoming sale; with a date already passed the label is stale
- n |   status    | onsale | upcoming_sale 
----+-------------+--------+---------------
- 1 | Coming Soon | none   | t
- 2 | Coming Soon | ahead  | t
- 3 | Coming Soon | passed | f
- 4 | Buy Tickets | passed | f
- 5 | Buy Presale | ahead  | f
- 6 | Sold Out    | none   | f
- 7 | -           | ahead  | t
- 8 | -           | none   | f
+--- A0. the discovery feed: with an on-sale date, an upcoming sale until three days after it, whatever the label; with none, while labelled Coming Soon
+ n  |   status    |   onsale   | upcoming_sale 
+----+-------------+------------+---------------
+  1 | Coming Soon | none       | t
+  2 | Coming Soon | in 5 days  | t
+  3 | Coming Soon | 1 day ago  | t
+  4 | Coming Soon | 4 days ago | f
+  5 | Buy Tickets | none       | f
+  6 | Buy Tickets | 1 day ago  | t
+  7 | Buy Tickets | 4 days ago | f
+  8 | Buy Presale | in 5 days  | t
+  9 | Sold Out    | none       | f
+ 10 | -           | in 5 days  | t
+ 11 | -           | none       | f
+
+ with_no_delay 
+---------------
+ f
 
 --- A. what a read says: the answer itself; "no tickets available" only under a Coming Soon label
  n |    outcome     |                       error                        |   status    | not_on_sale 
@@ -22,7 +29,7 @@
  7 | upstream_error | HTTP 429 from TicketsData                          | Coming Soon | f
  8 | -              | -                                                  | -           | f
 
---- B. the first fill: six places, soonest first; the feed's upcoming sales (no date, or a date ahead) are passed over and the watched one is retired; the one with tickets and the presale stay
+--- B. the first fill: six places, soonest first; the feed's upcoming sales (Coming Soon with no date, a date ahead, a date yesterday) are passed over and the watched one is retired; the one with tickets stays
                               first_fill                              
 ----------------------------------------------------------------------
  {"added": 5, "apply": true, "short": [], "retired": 1, "watched": 6}
@@ -50,14 +57,14 @@
  101 | On Sale Show
  103 | Coming Soon But Has Tickets
  104 | Sold Out Show
- 107 | Presale Open, Sale Later
  108 | Next In Line
  113 | Dated Later But Has Tickets
+ 110 | Further Out
 
- action | id  |                note                 
---------+-----+-------------------------------------
- add    | 107 | DATE 20:00 Presale Open, Sale Later
+ action | id  |          note           
+--------+-----+-------------------------
  add    | 108 | DATE 20:00 Next In Line
+ add    | 110 | DATE 20:00 Further Out
  retire | 102 | not_on_sale
  retire | 105 | not_on_sale
 
@@ -66,28 +73,45 @@
 ----------------------------------------------------------------------
  {"added": 0, "apply": true, "short": [], "retired": 0, "watched": 6}
 
+--- D2. three days after its on-sale date the event joins the list; a "not on sale" read made before that date does not hold it back
+ added_two_days_in 
+-------------------
+ 0
+
+ added_four_days_in 
+--------------------
+ 2
+
+ id  |        name        
+-----+--------------------
+ 106 | On Sale Next Month
+ 107 | On Sale Yesterday
+
 --- E. past the recheck time an event is tried once more: the one read as not on sale more than seven days ago comes back when a place opens
                              fourth_fill                              
 ----------------------------------------------------------------------
- {"added": 1, "apply": true, "short": [], "retired": 0, "watched": 7}
+ {"added": 1, "apply": true, "short": [], "retired": 0, "watched": 9}
 
  id  |            name             
 -----+-----------------------------
  101 | On Sale Show
  103 | Coming Soon But Has Tickets
  104 | Sold Out Show
- 107 | Presale Open, Sale Later
+ 106 | On Sale Next Month
+ 107 | On Sale Yesterday
  108 | Next In Line
  109 | Not On Sale A Week Ago
  113 | Dated Later But Has Tickets
+ 110 | Further Out
 
 --- F. a shorter recheck time lets the others back sooner; never under a day
  added 
 -------
- 2
+ 1
 
  id  
 -----
  102
+ 106
 
-psql:s05_not_on_sale.sql:96: WARNING:  a recheck time of 2 hours is refused
+psql:s05_not_on_sale.sql:111: WARNING:  a recheck time of 2 hours is refused

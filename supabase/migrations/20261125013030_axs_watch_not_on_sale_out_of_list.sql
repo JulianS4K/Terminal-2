@@ -1,19 +1,22 @@
--- Migration 20261125013030 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(+not_on_sale_recheck),axs_watch_not_on_sale()(new),axs_watch_upcoming_sale()(new),axs_watch_fill()(replaced: an upcoming sale is retired and not picked),primary_poll_event(AXS rows: retired by the fill),axs_watch_audit(rows) · reads:axs_watch_poll,axs_export_event · pre:20261124190000 (the fill this re-creates),20261125010000
+-- Migration 20261125013030 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(+not_on_sale_recheck,+onsale_delay),axs_watch_not_on_sale()(new),axs_watch_upcoming_sale()(new),axs_watch_fill()(replaced: an upcoming sale is retired and not picked),primary_poll_event(AXS rows: retired by the fill),axs_watch_audit(rows) · reads:axs_watch_poll,axs_export_event · pre:20261124190000 (the fill this re-creates),20261125010000
 --
 -- AN EVENT THAT IS NOT ON SALE YET HAS NO PLACE IN THE LIST OF 200.
--- Operator 2026-11-25: "Exclude upcoming sales from 200.list".
+-- Operator 2026-11-25: "Exclude upcoming sales from 200.list"; "Look at the axs discovery feed itself"; "Check on
+-- sale date and add to queue 3 days after those dates hit".
 --
 -- 15 of the 193 watched events answered "Tickets for this event are not currently on sale" / "not on sale yet" at
 -- every read (the 14 RodeoHouston concerts of March 2027 and a Kings game on sale 2027-01-27). They held 15 places
 -- and were read every 6 hours (mig 20261125010000) to learn nothing.
 --
 -- WHAT SAYS AN EVENT IS NOT ON SALE.
---   THE AXS DISCOVERY FEED (axs_watch_upcoming_sale; operator: "Look at the axs discovery feed itself"). The export
---   labels an event (`status`) and dates its sale (`onsale_utc`, filled for 7,445 of the 7,472 live AXS-sold events).
---   The label alone is wrong: 28 watched events were "Coming Soon" and 12 of them had tickets listed. With the date it
---   is exact on the watched list: "Coming Soon" with no on-sale date or one still ahead, 15 events, all 15 answering
---   not on sale; "Coming Soon" with an on-sale date already passed, 13 events, 12 with tickets (a label the export
---   has not refreshed). So an upcoming sale is: labelled Coming Soon AND (no on-sale date OR the date is ahead).
+--   THE AXS DISCOVERY FEED (axs_watch_upcoming_sale). The export labels an event (`status`) and dates its sale
+--   (`onsale_utc`, filled for 7,445 of the 7,472 live AXS-sold events). The label alone is wrong: 28 watched events
+--   were "Coming Soon" and 12 of them had tickets listed. With the date it is exact on the watched list: "Coming
+--   Soon" with no on-sale date or one still ahead, 15 events, all 15 answering not on sale; "Coming Soon" with an
+--   on-sale date already passed, 13 events, 12 with tickets (a label the export has not refreshed). So:
+--     an event with an on-sale date is an upcoming sale until onsale_delay (3 days) after that date, whatever its
+--     label: it joins the list three days after it goes on sale, once the first rush has settled;
+--     an event with no on-sale date is an upcoming sale while it is labelled Coming Soon.
 --   This costs no read.
 --   THE READ (axs_watch_not_on_sale), for what the feed misses: the read's answer says not on sale ("not currently
 --   on sale", "not on sale yet", "coming soon"), or says no tickets are currently available under a Coming Soon
@@ -21,20 +24,25 @@
 -- THE FILL (nightly, 03:20 UTC):
 --   retires a watched event the feed marks as an upcoming sale, unless its last read found tickets, and one whose
 --   last read says not on sale (audit: retire / not_on_sale);
---   does not pick an event the feed marks as an upcoming sale: it comes into the list by itself once its on-sale
---   date has passed or its label changes;
---   does not pick an event whose last read, within not_on_sale_recheck (7 days), said not on sale. After the 7 days
---   it is picked once more, read, and retired again the next night if it is still not on sale.
+--   does not pick an event the feed marks as an upcoming sale: it comes into the list by itself three days after
+--   its on-sale date, or, with no date, when its label changes;
+--   does not pick an event whose last read, within not_on_sale_recheck (7 days), said not on sale, unless that read
+--   was made before the event's on-sale date. After the 7 days it is picked once more, read, and retired again the
+--   next night if it is still not on sale.
 -- The places freed are refilled only within each venue's quota, as before: RodeoHouston has no event on sale (all 20
 -- of its live events are upcoming sales by the feed), so its 14 places stay empty until its quota is given to
 -- another venue (axs_watch_venue) or its concerts go on sale.
 --
 -- rollback: re-apply axs_watch_fill() from 20261124190000; DROP FUNCTION axs_watch_not_on_sale(text, text, text),
---           axs_watch_upcoming_sale(text, timestamptz);
+--           axs_watch_upcoming_sale(text, timestamptz, interval);
 --           the column can stay. The retired events return at the next fill.
 
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS not_on_sale_recheck interval NOT NULL DEFAULT interval '7 days'
   CHECK (not_on_sale_recheck >= interval '1 day' AND not_on_sale_recheck <= interval '13 days');
+ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS onsale_delay interval NOT NULL DEFAULT interval '3 days'
+  CHECK (onsale_delay >= interval '0' AND onsale_delay <= interval '30 days');
+COMMENT ON COLUMN public.axs_watch_config.onsale_delay IS
+  'how long after its on-sale date an event may join the list (mig 20261125013030; operator: "add to queue 3 days after those dates hit")';
 COMMENT ON COLUMN public.axs_watch_config.not_on_sale_recheck IS
   'how long an event whose last read said "not on sale" is kept off the list before it is tried once more (mig 20261125013030); under the 14 days the poll ledger is kept';
 
@@ -49,19 +57,19 @@ AS $function$
                        OR (p_error ~* 'no tickets are currently available' AND coalesce(p_status, '') ~* 'coming soon')), false)
 $function$;
 
--- Whether the AXS discovery feed marks an event as an upcoming sale: labelled Coming Soon with no on-sale date or
--- one still ahead (an on-sale date ahead with no label at all counts too).
-CREATE OR REPLACE FUNCTION public.axs_watch_upcoming_sale(p_status text, p_onsale timestamptz)
+-- Whether the AXS discovery feed marks an event as an upcoming sale: with an on-sale date, until p_delay after it,
+-- whatever the label; with none, while it is labelled Coming Soon.
+CREATE OR REPLACE FUNCTION public.axs_watch_upcoming_sale(p_status text, p_onsale timestamptz, p_delay interval)
  RETURNS boolean
  LANGUAGE sql
  STABLE PARALLEL SAFE
 AS $function$
-  SELECT CASE WHEN p_status IS NULL THEN coalesce(p_onsale > now(), false)
-              ELSE p_status ~* 'coming soon' AND (p_onsale IS NULL OR p_onsale > now()) END
+  SELECT CASE WHEN p_onsale IS NOT NULL THEN p_onsale > now() - coalesce(p_delay, interval '0')
+              ELSE coalesce(p_status ~* 'coming soon', false) END
 $function$;
 
-REVOKE ALL ON FUNCTION public.axs_watch_not_on_sale(text, text, text), public.axs_watch_upcoming_sale(text, timestamptz) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.axs_watch_not_on_sale(text, text, text), public.axs_watch_upcoming_sale(text, timestamptz) TO service_role;
+REVOKE ALL ON FUNCTION public.axs_watch_not_on_sale(text, text, text), public.axs_watch_upcoming_sale(text, timestamptz, interval) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.axs_watch_not_on_sale(text, text, text), public.axs_watch_upcoming_sale(text, timestamptz, interval) TO service_role;
 
 CREATE OR REPLACE FUNCTION public.axs_watch_fill(p_apply boolean DEFAULT true)
  RETURNS jsonb
@@ -93,19 +101,21 @@ BEGIN
               WHEN NOT coalesce(e.axs_ticketed, false) THEN 'not_axs_sold'
               WHEN coalesce(e.event_date_utc, t.start_utc, (t.event_date + 1)::timestamptz) < now() - interval '6 hours' THEN 'passed'
               WHEN public.axs_watch_not_on_sale(lr.outcome, lr.error, e.status)
-                   OR (public.axs_watch_upcoming_sale(e.status, e.onsale_utc) AND NOT (t.poll_status = 'ok' AND coalesce(t.listing_count, 0) > 0))
+                   OR (public.axs_watch_upcoming_sale(e.status, e.onsale_utc, v_cfg.onsale_delay) AND NOT (t.poll_status = 'ok' AND coalesce(t.listing_count, 0) > 0))
                    THEN 'not_on_sale'
               ELSE 'not_axs_or_expired' END AS why
     FROM public.primary_poll_event t
     LEFT JOIN public.axs_export_event e ON e.axs_event_id::text = t.source_event_id
+    -- the last read; one made before the event's on-sale date says nothing about the sale, and is not counted
     LEFT JOIN LATERAL (SELECT w.outcome, w.error FROM public.axs_watch_poll w
                         WHERE w.axs_event_id = t.source_event_id AND w.checked_at IS NOT NULL
+                          AND (e.onsale_utc IS NULL OR w.checked_at > e.onsale_utc)
                         ORDER BY w.checked_at DESC LIMIT 1) lr ON true
    WHERE t.source = 'axs'
      AND (e.axs_event_id IS NULL OR e.gone_at IS NOT NULL OR e.removed_utc IS NOT NULL OR NOT coalesce(e.axs_ticketed, false)
           OR coalesce(e.event_date_utc, t.start_utc, (t.event_date + 1)::timestamptz) < now() - interval '6 hours'
           OR public.axs_watch_not_on_sale(lr.outcome, lr.error, e.status)
-          OR (public.axs_watch_upcoming_sale(e.status, e.onsale_utc) AND NOT (t.poll_status = 'ok' AND coalesce(t.listing_count, 0) > 0))
+          OR (public.axs_watch_upcoming_sale(e.status, e.onsale_utc, v_cfg.onsale_delay) AND NOT (t.poll_status = 'ok' AND coalesce(t.listing_count, 0) > 0))
           OR (SELECT count(*) = 3 AND bool_and(w.outcome IN ('not_axs', 'expired'))
                 FROM (SELECT w.outcome FROM public.axs_watch_poll w
                        WHERE w.axs_event_id = t.source_event_id AND w.checked_at IS NOT NULL
@@ -148,15 +158,16 @@ BEGIN
        AND NOT EXISTS (SELECT 1 FROM public.primary_poll_event t WHERE t.source = 'axs' AND t.source_event_id = e.axs_event_id::text
                           AND NOT EXISTS (SELECT 1 FROM _aw_retire r WHERE r.source_event_id = t.source_event_id))
        AND NOT EXISTS (SELECT 1 FROM _aw_retire r WHERE r.source_event_id = e.axs_event_id::text)
-       -- not an upcoming sale: the discovery feed marks it as one (Coming Soon with no on-sale date or one still
-       -- ahead), or the event's last read (within not_on_sale_recheck, 7 days) said it is not on sale. After that
-       -- it is tried once more.
-       AND NOT public.axs_watch_upcoming_sale(e.status, e.onsale_utc)
+       -- not an upcoming sale: the discovery feed marks it as one (until onsale_delay after its on-sale date; with
+       -- no date, while labelled Coming Soon), or the event's last read (within not_on_sale_recheck, 7 days, and made
+       -- after its on-sale date, if it has one) said it is not on sale. After that it is tried once more.
+       AND NOT public.axs_watch_upcoming_sale(e.status, e.onsale_utc, v_cfg.onsale_delay)
        AND NOT EXISTS (SELECT 1
                          FROM (SELECT w.outcome, w.error, w.checked_at FROM public.axs_watch_poll w
                                 WHERE w.axs_event_id = e.axs_event_id::text AND w.checked_at IS NOT NULL
                                 ORDER BY w.checked_at DESC LIMIT 1) lr
                         WHERE lr.checked_at > now() - v_cfg.not_on_sale_recheck
+                          AND (e.onsale_utc IS NULL OR lr.checked_at > e.onsale_utc)
                           AND public.axs_watch_not_on_sale(lr.outcome, lr.error, e.status))
        -- not an event TicketsData has said three times (in the 14 days the ledger keeps) that AXS does not sell or that is over
        AND (SELECT count(*) FROM public.axs_watch_poll w WHERE w.axs_event_id = e.axs_event_id::text AND w.outcome IN ('not_axs', 'expired')) < 3
