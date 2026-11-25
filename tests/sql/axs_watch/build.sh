@@ -43,4 +43,5 @@ stub_10_retention.sql
 20261125032000_axs_watch_305_events.sql
 20261125150000_axs_watch_stop_before_start.sql
 20261125173500_axs_watch_horizon_180d.sql
+20261125174500_axs_watch_150000_applied_late.sql
 STEPS
