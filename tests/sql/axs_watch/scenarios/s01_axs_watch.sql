@@ -36,9 +36,9 @@ INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date
   ('axs', '41', 'Yesterday Concert', current_date - 1, 'Big Arena', 'https://www.axs.com/events/41/yesterday-tickets', now()),
   ('axs', '99', 'Vanished Concert', current_date + 3, 'Big Arena', 'https://www.axs.com/events/99/vanished-tickets', now());
 
-\echo '--- A. the rules: an excluded entry never, a sports event only for a major-league team'
+\echo '--- A. the rules: an excluded entry never, a sports event only for a listed team or tour (UFC since 2026-11-25; minor-league hockey never)'
 SELECT t AS title, c AS category, public.axs_watch_rule_ok(c, t) AS ok
-  FROM (VALUES ('Lakers vs. Denver', 'Sports'), ('Vegas Vanguards vs. Boston', 'Sports'), ('UFC 330', 'Sports'), ('Premium Parking - Lakers', 'Sports'),
+  FROM (VALUES ('Lakers vs. Denver', 'Sports'), ('Vegas Vanguards vs. Boston', 'Sports'), ('UFC 330', 'Sports'), ('Ontario Reign vs. Abbotsford Canucks', 'Sports'), ('Premium Parking - Lakers', 'Sports'),
                ('Minnesota Timberwolves vs. Utah', 'Sports'), ('Big Concert', 'Music'), ('Lynx vs. Aces', 'Sports'), ('VIP Pass - Festival', 'Music'),
                ('Passenger', 'Music'), ('2027 Season Tickets', 'Sports')) v(t, c);
 

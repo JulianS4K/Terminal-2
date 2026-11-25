@@ -40,4 +40,5 @@ stub_10_retention.sql
 20261125020000_axs_watch_worker_lease.sql
 20261125021000_axs_watch_lease_where.sql
 20261125023030_axs_watch_backfill.sql
+20261125032000_axs_watch_305_events.sql
 STEPS
