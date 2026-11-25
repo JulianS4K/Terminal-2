@@ -1,0 +1,62 @@
+--- A. a page in flight whose response has not landed yet, within 5 minutes: waits, nothing changes
+               tick               
+----------------------------------
+ {"page": 13, "state": "waiting"}
+
+ page | tries | pending_request_id |   cursor    | run_kind 
+------+-------+--------------------+-------------+----------
+   13 |     0 |               8448 | axs_1550382 | full
+
+--- B. the same page, response gone and older than 5 minutes (the restart case): retries, same cursor
+                     tick                     
+----------------------------------------------
+ {"http": null, "page": 13, "state": "retry"}
+
+    tries incremented, cursor unchanged, a new request fired at the same page:
+ page | tries |   cursor    | run_kind | refired 
+------+-------+-------------+----------+---------
+   13 |     1 | axs_1550382 | full     | t
+
+              url               | cursor_sent 
+--------------------------------+-------------
+ https://ticketsdata.com/events | axs_1550382
+
+--- C. the sixth try on a lost response stops the run and records it as lost
+                        tick                        
+----------------------------------------------------
+ {"http": null, "page": 13, "state": "run_stopped"}
+
+ run_kind | tries | cursor | pending_request_id |               last_error                | full_error_kept 
+----------+-------+--------+--------------------+-----------------------------------------+-----------------
+ -        |     0 | -      |                  - | full run stopped on page 13: http lost  | t
+
+--- D. a 4xx that is not 429 stops the run at once, whatever tries says
+                       tick                        
+---------------------------------------------------
+ {"http": 400, "page": 52, "state": "run_stopped"}
+
+ run_kind | tries |                     last_error                      
+----------+-------+-----------------------------------------------------
+ -        |     0 | full run stopped on page 52: http 400 page too deep
+
+--- E. a 429 is retried rather than stopping the run
+                    tick                     
+---------------------------------------------
+ {"http": 429, "page": 20, "state": "retry"}
+
+ run_kind | tries 
+----------+-------
+ full     |     2
+
+--- F. a 200 page with items lands: rows upserted, cursor advanced, next page fired
+                      tick                      
+------------------------------------------------
+ {"page": 1, "rows": 1, "state": "page_landed"}
+
+ page | pages_in_run | rows_in_run |  cursor  | run_kind 
+------+--------------+-------------+----------+----------
+    2 |            1 |           1 | axs_next | full
+
+ axs_event_id | event_title |   status    
+--------------+-------------+-------------
+          501 | Landed Show | Buy Tickets
