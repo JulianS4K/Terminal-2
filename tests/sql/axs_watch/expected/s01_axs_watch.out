@@ -1,16 +1,17 @@
---- A. the rules: an excluded entry never, a sports event only for a major-league team
-              title              | category | ok 
----------------------------------+----------+----
- Lakers vs. Denver               | Sports   | t
- Vegas Vanguards vs. Boston      | Sports   | f
- UFC 330                         | Sports   | f
- Premium Parking - Lakers        | Sports   | f
- Minnesota Timberwolves vs. Utah | Sports   | f
- Big Concert                     | Music    | t
- Lynx vs. Aces                   | Sports   | f
- VIP Pass - Festival             | Music    | f
- Passenger                       | Music    | t
- 2027 Season Tickets             | Sports   | f
+--- A. the rules: an excluded entry never, a sports event only for a listed team or tour (UFC since 2026-11-25; minor-league hockey never)
+                title                 | category | ok 
+--------------------------------------+----------+----
+ Lakers vs. Denver                    | Sports   | t
+ Vegas Vanguards vs. Boston           | Sports   | f
+ UFC 330                              | Sports   | t
+ Ontario Reign vs. Abbotsford Canucks | Sports   | f
+ Premium Parking - Lakers             | Sports   | f
+ Minnesota Timberwolves vs. Utah      | Sports   | f
+ Big Concert                          | Music    | t
+ Lynx vs. Aces                        | Sports   | f
+ VIP Pass - Festival                  | Music    | f
+ Passenger                            | Music    | t
+ 2027 Season Tickets                  | Sports   | f
 
 --- B. a dry run reports; the fill retires the passed and the vanished, then fills Big Arena to 3 and Small Hall to 1 by date, from watch_from (tomorrow's Small Hall show is before it)
                                 dry_run                                
