@@ -147,10 +147,6 @@ CLIENT_FILES = {
     # cart, hold or order. The Timberwolves' seat inventory needs a POST and is NOT read.
     "sitickets_client.py": frozenset({"GET"}),
     "jump_client.py": frozenset({"GET"}),
-    # Indianapolis Motor Speedway's public price list for the Indy 500 (two HTML pages). Operator
-    # 2026-11-24. GET-only; no cart, hold or order. The seat map's data service refuses a visitor
-    # (401) and is NOT called.
-    "ims_client.py": frozenset({"GET"}),
 }
 
 # Exact path-allowlist literals a write-capable client must declare. Widening either

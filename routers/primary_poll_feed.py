@@ -10,7 +10,7 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|ims|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc|axs
+        ?source=sitickets|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc|axs
                                  (a team's own ticket site has no events until it lists single games; `axs` is the
                                  watched list of AXS-sold events read through TicketsData, mig 20261124190000)
         &date_from=2026-11-23&date_to=2027-05-01
@@ -25,11 +25,6 @@ Every row carries `tevo_event_id`, the EVO event our mapper matched (null until 
 also carries the same event's id on each marketplace (routers/feed_xmap.py; operator 2026-11-22: "include the
 cross maps in all event mapping you push out, marketplace id", and 2026-11-24 on the AXS watch: "integrate
 them into the out api"): an AXS event is looked up by its AXS id, any other by its EVO event.
-
-`ims` is the Indy 500 at Indianapolis Motor Speedway (operator 2026-11-24). Its rows are SECTION PRICES from
-the speedway's public price list, not seat blocks: one row a seating area on sale (two, lowest and highest,
-where the list gives a range) plus general admission, with no quantity, row or seats, and the listed price
-only (fee, tax and all-in are empty). A sold-out area has no row. ims_client.py.
 
 Only the newest pull is served (operator 2026-11-23: "for the api only push out newest pull"): an
 event's listings are replaced on every read, and /primary/events holds the events of the source's last
@@ -66,8 +61,7 @@ from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-# SI Tickets, the Indy 500 section prices, every team site on the Jump platform, the AXS watch
-SOURCES = ("sitickets", "ims", *jump_client.SITES, "axs")
+SOURCES = ("sitickets", *jump_client.SITES, "axs")   # SI Tickets, every team site on the Jump platform, the AXS watch
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",
