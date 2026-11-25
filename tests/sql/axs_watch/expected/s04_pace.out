@@ -1,0 +1,59 @@
+--- A. the measurement: twenty worker reads settling in 7.6 s (TicketsData 6.4 s of it); a read takes 8.6 s, the ladder's demand at each rung
+                                                                                                                                                                                                                               pace                                                                                                                                                                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"events": 7, "reader": "worker", "spacing_s": 3.0000000000000000, "s_per_read": 8.6, "target_pct": 75, "day_of_fits": true, "far_out_days": 14, "settle_p50_s": 7.6, "settle_p90_s": 7.6, "day_of_events": 1, "far_out_every": "02:00:00", "reads_measured": 20, "reads_per_hour": 418, "response_p50_s": 6.4, "demand_per_hour": {"60 min": 14.0, "90 min": 13.0, "120 min": 12.5, "180 min": 12.0, "240 min": 11.8, "360 min": 11.5}, "usable_per_hour": 313}
+
+--- B. applied: at 75% of 418 reads an hour the plain ladder (an hour far out) fits; nothing changes but the record
+                                                                                                                                                                                              applied                                                                                                                                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"note": "20 reads measured: settle 7.6s, response 6.4s, 8.6s a read, 313 usable an hour (75% of 418); ladder demand 14.0 an hour at 01:00:00", "picked": "01:00:00", "reader": "worker", "applied": true, "changed": true, "s_per_read": 8.6, "target_pct": 75, "day_of_fits": true, "far_out_every": "02:00:00", "reads_per_hour": 418, "usable_per_hour": 313, "picked_demand_per_hour": 14.0}
+
+ far_out_every | pace_s_per_read | pace_set |                                                              pace_note                                                              
+---------------+-----------------+----------+-------------------------------------------------------------------------------------------------------------------------------------
+ 01:00:00      |             8.6 | t        | 20 reads measured: settle 7.6s, response 6.4s, 8.6s a read, 313 usable an hour (75% of 418); ladder demand 14.0 an hour at 01:00:00
+
+--- C. a slow reader (40 s a read) at a 10% target: no rung fits, the slowest allowed is taken; at 100% the hour fits again; the day's cap also binds
+                                                                                                                   slow_reader                                                                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"picked": "06:00:00", "reader": "worker", "applied": true, "changed": true, "s_per_read": 41.0, "target_pct": 10, "day_of_fits": true, "far_out_every": "01:00:00", "reads_per_hour": 87, "usable_per_hour": 8, "picked_demand_per_hour": 11.5}
+
+ fast_again | day_of_fits 
+------------+-------------
+ 01:00:00   | true
+
+  capped  | demand 
+----------+--------
+ 06:00:00 | 11.5
+
+ within_max 
+------------
+ 01:00:00
+
+--- D. not on sale: the read is a failed poll, read again in about 6 hours instead of the ladder's rung; a read that finds tickets puts it back
+                                                                               not_on_sale                                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": "Tickets for this event are not currently on sale.", "outcome": "unparsed", "event_id": "47", "listings": null, "response_s": null, "quota_remaining": 99999}
+
+ id | poll_status |                    poll_error                     | poll_interval | next_in_about_6h 
+----+-------------+---------------------------------------------------+---------------+------------------
+ 47 | failed      | Tickets for this event are not currently on sale. | 06:00:00      | t
+
+                                                   on_sale_now                                                   
+-----------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "event_id": "47", "listings": 1, "response_s": null, "quota_remaining": 99998}
+
+ id | poll_status | listing_count | poll_interval 
+----+-------------+---------------+---------------
+ 47 | ok          |             1 | 01:00:00
+
+--- E. the cron and the privileges
+        jobname        |  schedule  
+-----------------------+------------
+ axs_watch_fill_daily  | 20 3 * * *
+ axs_watch_pace_hourly | 7 * * * *
+ axs_watch_tick_1m     | 15 seconds
+
+       proname        | anon_can | service_can 
+----------------------+----------+-------------
+ axs_watch_pace       | f        | t
+ axs_watch_pace_apply | f        | t

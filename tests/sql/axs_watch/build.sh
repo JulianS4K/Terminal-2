@@ -35,4 +35,5 @@ stub_10_retention.sql
 20261124230030_primary_poll_split_over_limit.sql
 20261124233030_axs_watch_withheld_notes.sql
 20261125000000_axs_watch_worker_reader.sql
+20261125010000_axs_watch_pace.sql
 STEPS
