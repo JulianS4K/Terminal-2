@@ -30,10 +30,10 @@
 
  action | id |   venue    |                       note                       
 --------+----+------------+--------------------------------------------------
- add    | 11 | Big Arena  | 2026-11-27T19:30 Lakers vs. Denver
- add    | 14 | Big Arena  | 2026-11-30T20:00 Big Concert
- add    | 18 | Big Arena  | 2026-12-14T11:00 Disney On Ice presents Jump In!
- add    | 21 | Small Hall | 2026-11-26T19:00 Small Hall Show
+ add    | 11 | Big Arena  | 2026-11-28T19:30 Lakers vs. Denver
+ add    | 14 | Big Arena  | 2026-12-01T20:00 Big Concert
+ add    | 18 | Big Arena  | 2026-12-15T11:00 Disney On Ice presents Jump In!
+ add    | 21 | Small Hall | 2026-11-27T19:00 Small Hall Show
  retire | 41 | Big Arena  | passed
  retire | 99 | Big Arena  | not_in_export
 
@@ -220,10 +220,11 @@
  retire | 99 | not_in_export
 
 --- M. the crons
-       jobname        |  schedule  |                                         command                                          
-----------------------+------------+------------------------------------------------------------------------------------------
- axs_watch_fill_daily | 20 3 * * * | BEGIN; SET LOCAL statement_timeout = '120s'; SELECT public.axs_watch_fill(true); COMMIT;
- axs_watch_tick_1m    | 15 seconds | BEGIN; SET LOCAL statement_timeout = '12s'; SELECT public.axs_watch_tick(); COMMIT;
+        jobname        |  schedule  |                                          command                                          
+-----------------------+------------+-------------------------------------------------------------------------------------------
+ axs_watch_fill_daily  | 20 3 * * * | BEGIN; SET LOCAL statement_timeout = '120s'; SELECT public.axs_watch_fill(true); COMMIT;
+ axs_watch_pace_hourly | 7 * * * *  | BEGIN; SET LOCAL statement_timeout = '60s'; SELECT public.axs_watch_pace_apply(); COMMIT;
+ axs_watch_tick_1m     | 15 seconds | BEGIN; SET LOCAL statement_timeout = '12s'; SELECT public.axs_watch_tick(); COMMIT;
 
 --- N. privileges: service_role only
        proname        | anon | service 
@@ -231,6 +232,8 @@
  axs_watch_budget     | f    | t
  axs_watch_fill       | f    | t
  axs_watch_next       | f    | t
+ axs_watch_pace       | f    | t
+ axs_watch_pace_apply | f    | t
  axs_watch_parse      | f    | t
  axs_watch_record     | f    | t
  axs_watch_rule_ok    | f    | t
