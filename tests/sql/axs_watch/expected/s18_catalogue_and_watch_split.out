@@ -1,0 +1,81 @@
+--- A. the flag exists and defaults to true, so no other source changes
+ column_default | is_nullable 
+----------------+-------------
+ true           | NO
+
+ catalogue_reaches_further 
+---------------------------
+ t
+
+--- B. the fill reads target_events (3) and publishes the rest as catalogue-only
+                                   fill                                   
+--------------------------------------------------------------------------
+ {"added": 3, "apply": true, "retired": 0, "watched": 7, "backfilled": 3}
+
+   id    |      name       | watch | venue_name  
+---------+-----------------+-------+-------------
+ 9200001 | Soonest         | t     | Whole House
+ 9200007 | At Rule House   | t     | Rule House
+ 9200002 | Second          | t     | Whole House
+ 9200003 | Third           | f     | Whole House
+ 9200004 | Fourth          | f     | Whole House
+ 9200006 | Not On Sale Yet | f     | Whole House
+ 9200005 | Beyond Horizon  | f     | Whole House
+
+--- C. the API sees ALL of them; only the watched ones can carry listings
+ event_id |      name       | listings_available | listings_withheld 
+----------+-----------------+--------------------+-------------------
+ 9200001  | Soonest         | f                  | not_polled
+ 9200002  | Second          | f                  | not_polled
+ 9200003  | Third           | f                  | not_polled
+ 9200004  | Fourth          | f                  | not_polled
+ 9200005  | Beyond Horizon  | f                  | not_polled
+ 9200006  | Not On Sale Yet | f                  | not_polled
+ 9200007  | At Rule House   | f                  | not_polled
+
+--- D. every selector skips a catalogue row. Without all four it is read anyway,
+       because primary_poll_due counts a NULL next_poll_at as due.
+              due_ids              
+-----------------------------------
+ ["9200001", "9200002", "9200007"]
+
+ worker_batch_size |        batch_ids        | reason 
+-------------------+-------------------------+--------
+                 3 | 9200001,9200002,9200007 | -
+
+ queue_enqueued_with_queue_off 
+-------------------------------
+ 3
+
+--- E. a catalogue row is PROMOTED when the watch set grows (not skipped by DO NOTHING)
+                           fill_with_more_room                            
+--------------------------------------------------------------------------
+ {"added": 2, "apply": true, "retired": 0, "watched": 7, "backfilled": 2}
+
+ watched | catalogue_only 
+---------+----------------
+       5 |              2
+
+--- F. shrinking the list DEMOTES the furthest — it stays in the feed, stops costing
+                              fill_shrunk                               
+------------------------------------------------------------------------
+ {"added": 0, "apply": true, "retired": 3, "watched": 7, "returned": 3}
+
+ watched | catalogue_only | still_in_the_feed 
+---------+----------------+-------------------
+       2 |              5 |                 7
+
+        note        | count 
+--------------------+-------
+ over_target_events |     3
+
+--- G. un-flagging the venue drops its catalogue rows (it is no longer watched whole)
+                            catalogue_after_unflagging                             
+-----------------------------------------------------------------------------------
+ {"watched": 2, "catalogue_only": 0, "catalogue_added": 0, "catalogue_dropped": 5}
+
+--- H. a never-read catalogue row has spent no credit
+ reads_made 
+------------
+          0
+

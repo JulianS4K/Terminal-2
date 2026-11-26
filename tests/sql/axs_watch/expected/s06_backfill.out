@@ -57,8 +57,8 @@
  add    | 21 | Stadium | DATE 20:00 Stadium Show 1
  add    | 22 | Stadium | DATE 20:00 Stadium Show 2
  add    | 23 | Stadium | DATE 20:00 Stadium Show 3
- retire | 14 | Arena   | backfill_returned
- retire | 15 | Arena   | backfill_returned
+ retire | 14 | Arena   | over_target_events
+ retire | 15 | Arena   | over_target_events
 
 --- E. a bigger list borrows again; when the Stadium gains one place of its own, one borrowed place is given back
                                       bigger_list                                      
@@ -88,3 +88,4 @@
  watched | at_the_stadium 
 ---------+----------------
        8 |              4
+

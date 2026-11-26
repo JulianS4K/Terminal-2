@@ -1,0 +1,38 @@
+--- A. the list is 50 rows; only 10 of them are demand
+ rows_on_the_list | watched | catalogue_only 
+------------------+---------+----------------
+               50 |      10 |             40
+
+--- B. the gauge counts the 10, and says so
+                                                  demand                                                   
+-----------------------------------------------------------------------------------------------------------
+ {"events": 10, "cadence_scale": 1.0, "catalogue_only": 40, "demand_per_day": 160, "demand_per_hour": 6.7}
+
+--- C. the arithmetic: 10 events on the 90-minute band, not 50
+ counts_watched_only | reports_the_catalogue | demand_is_exact 
+---------------------+-----------------------+-----------------
+ t                   | t                     | t
+
+--- D. the brake measures the same set, so it cannot act on the catalogue
+ brake_sees | gauge_sees 
+------------+------------
+ 6.7        | 6.7
+
+ brake_and_gauge_agree 
+-----------------------
+ t
+
+--- E. publishing 40 more catalogue rows does not move either one
+ rows_on_the_list 
+------------------
+               90
+
+ still_10_events | still_same_demand 
+-----------------+-------------------
+              10 |               6.7
+
+--- F. promoting one catalogue row DOES move it, by exactly one event
+ now_11_events | demand_after 
+---------------+--------------
+            11 |          7.3
+
