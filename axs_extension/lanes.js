@@ -84,7 +84,10 @@ async function readEvent(cfg, cookieStoreId, event) {
       if (st.queueSince && now - st.queueSince > QUEUE_WAIT_MS) { out.outcome = "queue"; break; }
       if ([403, 429, 503].includes(st.mainStatus) || BLOCKED_TITLE.test(info.title || "")) {
         out.outcome = "blocked"; out.http_status = st.mainStatus || 403;
-        out.error = `${info.title || "blocked"} (${st.mainServer || "?"})`; break;
+        out.error = `${info.title || "blocked"} (${st.mainServer || "?"})`;
+        // AXS's block page names the address it refused and a request id: keep them, they say why
+        out.page_text = await inTab(tab.id, PAGE_TEXT_JS);
+        break;
       }
       if (st.mainStatus === 404 || st.mainStatus === 410) { out.http_status = st.mainStatus; break; }
       const inv = inventoryIn(st.captures);

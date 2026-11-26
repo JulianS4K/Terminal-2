@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "S4K AXS Reader",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reads AXS event pages for the AXS watch, one Firefox container a lane, and sends the seat inventory each page receives to our service. Read-only: no cart, hold or order.",
   "browser_specific_settings": {
     "gecko": {
