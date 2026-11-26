@@ -214,3 +214,14 @@ def test_seconds_until_is_forgiving_about_what_the_database_hands_back():
     assert reader._seconds_until("2026-11-26T03:00:09Z", lambda: base) == 9.0        # trailing Z
     assert reader._seconds_until("2026-11-26T03:00:09", lambda: base) == 9.0         # naive, assumed UTC
     assert reader._seconds_until(base, lambda: base) == 0.0                          # a datetime straight through
+
+
+def test_seconds_until_uses_the_real_clock_when_none_is_injected():
+    """The default clock is the one production runs on: server.py calls run_queue without passing
+    `now`, so the release_at wait is computed against the real wall clock."""
+    from datetime import datetime, timedelta, timezone
+    assert reader._utcnow().tzinfo is timezone.utc
+    assert abs((reader._utcnow() - datetime.now(timezone.utc)).total_seconds()) < 5
+    waited = reader._seconds_until((datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat())
+    assert 25.0 <= waited <= 30.0                      # real clock, slack for the test's own runtime
+    assert reader._seconds_until((datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()) == 0.0
