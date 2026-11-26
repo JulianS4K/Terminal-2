@@ -1,0 +1,84 @@
+--- A. the ledger starts empty, and so does the budget's day
+ poll_rows 
+-----------
+         0
+
+ fired_today | in_flight 
+-------------+-----------
+ 0           | 0
+
+ reads_measured 
+----------------
+ 0
+
+--- B. a read goes all the way through the queue: fill, claim, ack
+             fill             
+------------------------------
+ {"pruned": 0, "enqueued": 4}
+
+ claimed 
+---------
+       4
+
+                                                            ack                                                            
+---------------------------------------------------------------------------------------------------------------------------
+ {"outcome": "ok", "listings": 1, "queue_id": 1, "request_id": 1000000000000, "response_s": 4.5, "quota_remaining": 99000}
+
+--- C. the ack wrote a ledger row, and it carries the CONFIGURED reader, not "queue"
+ axs_event_id | reader | reader_matches_config | status_code | outcome | response_s | listings | quota_remaining | settled | fired_before_checked | has_request_id 
+--------------+--------+-----------------------+-------------+---------+------------+----------+-----------------+---------+----------------------+----------------
+ A1           | worker | t                     |         200 | ok      |        4.5 |        1 |           99000 | t       | t                    | t
+
+--- D. axs_watch_budget now counts it — this is the daily credit cap working
+ fired_today_after 
+-------------------
+ 1
+
+--- E. axs_watch_pace now measures it — this is the brake getting its denominator
+ pace_sees_the_read | usable_is_real 
+--------------------+----------------
+ t                  | t
+
+--- F. acking the same item twice writes ONE row (the FOR UPDATE + resolved_at guard)
+ second_ack 
+------------
+ true
+
+ poll_rows_still 
+-----------------
+               1
+
+--- G. the upstream hold can now see a FAILING queue read
+ acked_with_502 
+----------------
+              3
+
+ upstream_errors_in_ledger 
+---------------------------
+                         3
+
+ claim_now_holds | errors_seen 
+-----------------+-------------
+ 60              | 3
+
+--- H. the due-list path is untouched: axs_watch_record still writes exactly one row
+ before_record 
+---------------
+             4
+
+ record_outcome 
+----------------
+ empty
+
+ after_record 
+--------------
+            5
+
+ rows_for_a5_never_queued 
+--------------------------
+                        1
+
+ settle_times_negative 
+-----------------------
+                     0
+
