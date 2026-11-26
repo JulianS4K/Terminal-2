@@ -63,4 +63,5 @@ stub_10_retention.sql
 20261126124500_queue_ack_writes_a_poll_row.sql
 20261126141500_ga_band_survives_the_ladder.sql
 20261126150000_pin_the_no_tickets_band.sql
+20261126163000_pace_measures_the_read_not_the_wait.sql
 STEPS
