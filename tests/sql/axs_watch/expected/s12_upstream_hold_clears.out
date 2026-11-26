@@ -1,0 +1,44 @@
+--- A. the window, and a quiet upstream: both events are handed out
+ upstream_errors_max | upstream_errors_window 
+---------------------+------------------------
+                   3 | 00:10:00
+
+                                                                   handed_out                                                                   | errors 
+------------------------------------------------------------------------------------------------------------------------------------------------+--------
+ [{"id": "H1", "url": "https://www.axs.com/events/H1", "every_min": 15}, {"id": "H2", "url": "https://www.axs.com/events/H2", "every_min": 30}] | 0
+
+--- B. eight HTTP 502s in a row INSIDE the window: the breaker trips and nothing is handed out
+                                      held                                       
+---------------------------------------------------------------------------------
+ {"events": [], "hold_s": 60, "errors_window": "00:10:00", "upstream_errors": 8}
+
+--- C. the hold does NOT depend on a new read to clear: age those failures past the window and it lifts
+                                                                handed_out_again                                                                | errors_now 
+------------------------------------------------------------------------------------------------------------------------------------------------+------------
+ [{"id": "H1", "url": "https://www.axs.com/events/H1", "every_min": 15}, {"id": "H2", "url": "https://www.axs.com/events/H2", "every_min": 30}] | 0
+
+--- D. a still-broken upstream re-trips it: three fresh failures are enough
+                                   held_again                                    
+---------------------------------------------------------------------------------
+ {"events": [], "hold_s": 60, "errors_window": "00:10:00", "upstream_errors": 3}
+
+--- E. a recovered upstream clears it at once: the newest read inside the window is not a failure
+                                                           handed_out_after_recovery                                                            | errors_still_counted 
+------------------------------------------------------------------------------------------------------------------------------------------------+----------------------
+ [{"id": "H1", "url": "https://www.axs.com/events/H1", "every_min": 15}, {"id": "H2", "url": "https://www.axs.com/events/H2", "every_min": 30}] | 3
+
+--- F. the window is bounded: it cannot be set to nothing, nor to a whole day
+ zero_limit 
+------------
+ []
+
+  tried   | outcome  
+----------+----------
+ 00:00:10 | refused
+ 00:02:00 | accepted
+ 06:00:00 | refused
+
+ left_at  
+----------
+ 00:02:00
+

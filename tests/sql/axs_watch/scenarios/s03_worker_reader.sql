@@ -12,6 +12,7 @@
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
+UPDATE public.axs_watch_config SET keep_regex = NULL;  -- these fixtures are not the operator's three teams (mig 20261125232000)
 
 -- four watched events, all due; the pool has credits
 INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date, start_local_time, venue_name, venue_city, venue_state, ticket_url, poll_status, next_poll_at, poll_interval)
@@ -69,7 +70,7 @@ SELECT public.axs_watch_record('31', 200, $j${"status": "ok", "quota_remaining":
 UPDATE public.primary_poll_event SET next_poll_at = now() + interval '1 day' WHERE source = 'axs' AND source_event_id = '31';   -- parked
 SELECT (public.axs_watch_next(20))->'events' AS next_released;
 
-\echo '--- E. over the day''s cap (pinned at 6; 6 reads today) only an event on a hot cadence is handed out, and only up to the overrun'
+\echo '--- E. over the day''s cap (pinned at 6; 6 reads today) only events on a hot cadence (at or inside hot_every) are handed out, and only up to the overrun'
 UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 hour', poll_interval = interval '10 minutes' WHERE source = 'axs' AND source_event_id = '33';
 UPDATE public.axs_watch_config SET daily_cap_override = 6, hot_overrun_pct = 50;
 SELECT (public.axs_watch_next(20)) - 'pool_remaining' - 'spacing_ms' AS next_capped;

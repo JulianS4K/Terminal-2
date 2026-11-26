@@ -4,6 +4,7 @@
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
+UPDATE public.axs_watch_config SET keep_regex = NULL;  -- these fixtures are not the operator's three teams (mig 20261125232000)
 
 \echo '--- A. the default'
 SELECT watch_until_days, stop_before_start FROM public.axs_watch_config;
