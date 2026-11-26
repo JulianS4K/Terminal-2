@@ -8,6 +8,10 @@
 -----------------------------------------------
  the extension reads (axs_watch_config.reader)
 
+                queue_while_ext                
+-----------------------------------------------
+ the extension reads (axs_watch_config.reader)
+
     events    | spacing_ms | lanes | daily_cap | unmetered 
 --------------+------------+-------+-----------+-----------
  ["41", "42"] | 4000       | 4     | 1000000   | true

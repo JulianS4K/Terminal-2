@@ -1,8 +1,8 @@
--- The extension reader (mig 20261126030000): our own Firefox extension reads the AXS pages, the database chooses and
+-- The extension reader (mig 20261126040000): our own Firefox extension reads the AXS pages, the database chooses and
 -- settles as for the TicketsData worker. With reader = 'extension' only a worker id starting 'ext:' is handed events,
 -- with no TicketsData cap and the extension's spacing and lanes; a read is settled with no credit spent and a ledger row
 -- marked extension; a repeat of the same read returns the first. With reader = 'worker' the extension is handed nothing.
--- (Was s10 on its branch; renumbered after main's s10-s12.)
+-- (Was s10, then s13, on its branch; renumbered after main's scenarios.)
 -- Events are dated days ahead, so stop_before_start (6 hours) never reaches them whatever the hour.
 \set QUIET on
 \pset footer off
@@ -22,6 +22,10 @@ SELECT (public.axs_watch_next(10, 'ext:test'))->>'reason' AS ext_while_worker;
 \echo '--- B. the extension reads: the TicketsData worker is handed nothing; the extension gets the due events, uncapped, with its spacing and lanes'
 UPDATE public.axs_watch_config SET reader = 'extension', worker_id = NULL, worker_lease_until = NULL WHERE id;
 SELECT (public.axs_watch_next(10, 'host:1'))->>'reason' AS worker_while_ext;
+-- nor through the paced queue (mig 20261126030000), which feeds the same worker
+UPDATE public.axs_watch_config SET queue_enabled = true WHERE id;
+SELECT (public.axs_queue_claim('host:1', 10))->>'reason' AS queue_while_ext;
+UPDATE public.axs_watch_config SET queue_enabled = false WHERE id;
 SELECT jsonb_path_query_array(n->'events', '$[*].id') AS events, n->'spacing_ms' AS spacing_ms, n->'lanes' AS lanes,
        n->'daily_cap' AS daily_cap, (public.axs_watch_budget())->'unmetered' AS unmetered
   FROM (SELECT public.axs_watch_next(10, 'ext:test') AS n) x;

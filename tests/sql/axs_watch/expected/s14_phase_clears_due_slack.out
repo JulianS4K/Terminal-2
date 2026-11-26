@@ -1,0 +1,35 @@
+--- A. the setup: the band is 5 min, due_slack is 10 min
+   band   | due_slack 
+----------+-----------
+ 00:05:00 | 00:10:00
+
+--- B. settle all twelve, then assert THE INVARIANT: next_poll_at > now() + due_slack, for every one
+ settled | clear_of_slack | inside_slack_would_loop | every_gap_exceeds_slack | and_none_exceeds_slack_plus_band 
+---------+----------------+-------------------------+-------------------------+----------------------------------
+      12 |             12 |                       0 | t                       | t
+
+--- C. and the behaviour that matters: primary_poll_due hands NONE of them back out
+ due_right_after_settling 
+--------------------------
+                        0
+
+--- D. axs_watch_next therefore hands out nothing either — this is the loop, closed
+ handed_out 
+------------
+ []
+
+--- E. the phase is still honoured: each next_poll_at is congruent to the event's own phase
+ events | phase_aligned 
+--------+---------------
+     12 |            12
+
+--- F. the gap never exceeds due_slack + one band, so freshness is not given away
+ within_slack_plus_one_band 
+----------------------------
+ t
+
+--- G. with the ordinary 60s slack and a 60-minute band, the same invariant holds
+ clear_of_slack | every_gap_exceeds_slack | and_none_exceeds_slack_plus_band | due_now 
+----------------+-------------------------+----------------------------------+---------
+             12 | t                       | t                                |       0
+

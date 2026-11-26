@@ -64,14 +64,21 @@ SELECT count(*) AS listings_sent, sum(quantity) AS tickets_sent,
        (SELECT sum(l.quantity) FROM public.primary_poll_listing l WHERE l.source = 'timberwolves' AND NOT l.obstructed) AS tickets_stored
   FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves';
 
-\echo '--- E. the next read replaces the pieces with the listings; a failed read removes both'
+\echo '--- E. the next read replaces the pieces with the listings; ONE failed read keeps both, a second removes both (mig 20261126013000)'
 SELECT public.primary_poll_ingest('timberwolves', jsonb_build_array(jsonb_build_object(
   'id', 'G1', 'name', 'Home Team vs. Visitors', 'local_date', to_char(current_date + 30, 'YYYY-MM-DD'), 'order_min', 1, 'order_max', 6, 'ok', true,
   'listings', jsonb_build_array(
     jsonb_build_object('id', 'thirteen', 'market', 'primary', 'section', '103', 'row', 'C', 'seats', (SELECT jsonb_agg(v::text) FROM generate_series(1, 9) v), 'qty', 9, 'allowed_quantities', '[1,2,3,4,5,6]'::jsonb, 'max_per_order', 6, 'price', 70))))) AS stored;
 SELECT listing_id, seat_low, seat_high, quantity, max_per_order FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves' ORDER BY listing_id;
 SELECT (SELECT count(*) FROM public.primary_poll_listing_piece) AS pieces_stored;
-SELECT public.primary_poll_ingest('timberwolves', jsonb_build_array(jsonb_build_object('id', 'G1', 'name', 'Home Team vs. Visitors', 'ok', false, 'error', 'no answer'))) AS stored;
+-- one failure keeps the capture: the pieces cascade off the listings, so they stay too
+SELECT public.primary_poll_ingest('timberwolves', jsonb_build_array(jsonb_build_object('id', 'G1', 'name', 'Home Team vs. Visitors', 'ok', false, 'error', 'no answer'))) AS failed_once;
+SELECT (SELECT count(*) FROM public.primary_poll_listing WHERE source = 'timberwolves') AS listings_stored,
+       (SELECT count(*) FROM public.primary_poll_listing_piece) AS pieces_stored,
+       (SELECT failed_reads FROM public.primary_poll_event WHERE source = 'timberwolves' AND source_event_id = 'G1') AS failed_reads,
+       (SELECT count(*) FROM public.v_primary_poll_listings_feed WHERE source = 'timberwolves') AS still_sent;
+-- the second failure back to back discards both
+SELECT public.primary_poll_ingest('timberwolves', jsonb_build_array(jsonb_build_object('id', 'G1', 'name', 'Home Team vs. Visitors', 'ok', false, 'error', 'no answer'))) AS failed_twice;
 SELECT (SELECT count(*) FROM public.primary_poll_listing WHERE source = 'timberwolves') AS listings_stored,
        (SELECT count(*) FROM public.primary_poll_listing_piece) AS pieces_stored;
 

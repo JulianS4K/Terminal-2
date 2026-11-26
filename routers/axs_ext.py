@@ -3,7 +3,7 @@ Firefox, incorporate containers").
 
 AXS's Cloudflare refuses a datacenter address, so the watch's own reader is a Firefox extension (axs_extension/) on an
 ordinary connection. It asks this service what to read and sends back what each AXS page received; the database
-chooses and settles (mig 20261126030000):
+chooses and settles (mig 20261126040000):
 
     POST /api/axs/ext/next     {"worker": "<install id>", "limit": n}   -> axs_watch_next(n, 'ext:<install id>')
     POST /api/axs/ext/record   one capture (core/axs_ext_doc.py)        -> axs_watch_record_ext(...)
