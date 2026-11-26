@@ -1,8 +1,8 @@
--- The extension reader (mig 20261126040000): our own Firefox extension reads the AXS pages, the database chooses and
+-- The extension reader (mig 20261126060000): our own Firefox extension reads the AXS pages, the database chooses and
 -- settles as for the TicketsData worker. With reader = 'extension' only a worker id starting 'ext:' is handed events,
 -- with no TicketsData cap and the extension's spacing and lanes; a read is settled with no credit spent and a ledger row
 -- marked extension; a repeat of the same read returns the first. With reader = 'worker' the extension is handed nothing.
--- (Was s10, then s13, on its branch; renumbered after main's scenarios.)
+-- (Was s10, s13 and s16 on its branch; renumbered after main's scenarios.)
 -- Events are dated days ahead, so stop_before_start (6 hours) never reaches them whatever the hour.
 \set QUIET on
 \pset footer off
@@ -50,3 +50,8 @@ SELECT (public.axs_watch_budget())->'fired_today' AS ticketsdata_fired_today;
 SELECT (public.axs_watch_record_ext('41', 200, '{}'::jsonb, false, NULL, '2026-01-01T00:00:00Z'))->'repeated' AS repeated, count(*) AS ledger_rows
   FROM public.axs_watch_poll GROUP BY 1;
 SELECT public.axs_watch_record_ext('42', 403, NULL, false, NULL, NULL) - 'request_id' AS blocked;
+
+\echo '--- E. the pace counts the lanes (the hourly pacer sets cadence_scale from it): four lanes at a 14.2 s settle read every 3.8 s, held to the 4 s spacing'
+UPDATE public.axs_watch_poll SET fired_at = checked_at - interval '14.2 seconds';   -- the scenario's reads took 14.2 s each
+SELECT p->'reader' AS reader, p->'lanes' AS lanes, p->'spacing_s' AS spacing_s, p->'s_per_read' AS s_per_read, p->'reads_per_hour' AS reads_per_hour
+  FROM (SELECT public.axs_watch_pace() AS p) x;

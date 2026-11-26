@@ -1268,7 +1268,7 @@ app.include_router(build_paciolan_router(get_require_sb=lambda: require_sb, requ
 
 # routers/axs_ext.py — the AXS watch read by our own Firefox extension (axs_extension/), not TicketsData: the
 # extension asks what is due (axs_watch_next) and sends what each AXS page received (axs_watch_record_ext,
-# mig 20261126040000). Shared X-Ingest-Secret (AXS_EXT_INGEST_SECRET), closed while unset. Wired 2026-11-25.
+# mig 20261126060000). Shared X-Ingest-Secret (AXS_EXT_INGEST_SECRET), closed while unset. Wired 2026-11-25.
 from routers.axs_ext import build_axs_ext_router  # noqa: E402
 
 app.include_router(build_axs_ext_router(get_require_sb=lambda: require_sb))

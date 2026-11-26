@@ -77,20 +77,22 @@ capture file shows which answers the page did get, and that's what to send back 
 
 ## Switching the watch over
 
-1. Apply mig `20261126040000_axs_watch_extension_reader.sql`.
+1. Apply mig `20261126060000_axs_watch_extension_reader.sql`.
 2. Set `AXS_EXT_INGEST_SECRET` on the web service. The routes answer 503 while it's unset.
 3. Install the extension, enter the secret and press **Start**. It idles until step 4.
 4. Hand the reading over to the extension:
 
    ```sql
-   UPDATE public.axs_watch_config SET reader = 'extension' WHERE id;
+   UPDATE public.axs_watch_config SET reader = 'extension', cadence_scale_floor = 0.5 WHERE id;
    ```
 
-   Cadence stays the watch's proximity bands (`axs_watch_cadence`). To read more often, lower the multiplier, for
-   example halve every band: `UPDATE public.axs_watch_config SET cadence_scale = 0.5 WHERE id;` (0.25 to 8).
+   Cadence is the watch's proximity bands (`axs_watch_cadence`) times `cadence_scale`. The hourly pacer sets that
+   scale itself from the measured capacity, never below `cadence_scale_floor` (1.0 by default, so never faster than the
+   bands). Lowering the floor to 0.5 lets it read up to twice as often once it has measured the extension's lanes. Don't
+   set `cadence_scale` by hand: the pacer rewrites it every hour.
 
    The TicketsData worker idles from the same moment. To go back:
-   `UPDATE public.axs_watch_config SET reader = 'worker', cadence_scale = 1 WHERE id;`
+   `UPDATE public.axs_watch_config SET reader = 'worker', cadence_scale_floor = 1.0 WHERE id;`
 5. Lanes and spacing: 4 lanes at ~45 s a read make ~300 reads an hour, the 305-event watch about hourly. More (up to
    8) or tighter: `UPDATE public.axs_watch_config SET ext_lanes = 6, ext_spacing_ms = 3000 WHERE id;`.
    The extension picks both up on its next ask.

@@ -50,3 +50,8 @@
                                                                         blocked                                                                        
 -------------------------------------------------------------------------------------------------------------------------------------------------------
  {"error": "HTTP 403 from the AXS page", "outcome": "upstream_error", "event_id": "42", "listings": null, "response_s": null, "quota_remaining": null}
+
+--- E. the pace counts the lanes (the hourly pacer sets cadence_scale from it): four lanes at a 14.2 s settle read every 3.8 s, held to the 4 s spacing
+   reader    | lanes |     spacing_s      | s_per_read | reads_per_hour 
+-------------+-------+--------------------+------------+----------------
+ "extension" | 4     | 4.0000000000000000 | 4.0        | 900

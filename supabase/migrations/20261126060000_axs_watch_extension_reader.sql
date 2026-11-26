@@ -1,4 +1,4 @@
--- Migration 20261126040000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
+-- Migration 20261126060000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(replaced),axs_watch_pace()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261126053000 (the pacer that now reads pace() for cadence_scale),20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
 --
 -- THE AXS WATCH CAN BE READ BY OUR OWN BROWSER EXTENSION, WITHOUT TICKETSDATA.
 -- Operator 2026-11-25: "Look at the axs poller, I want to build our own" ... "So we can poll more events and more
@@ -27,13 +27,20 @@
 --                             least. A browser read of AXS takes ~45 s (TicketsData's own AXS reads: 12-15 s to the seat
 --                             page through Queue-it, ~28 s more for the inventory), so 4 lanes make ~300 reads an hour.
 --
--- Cadence is unchanged: the bands of 20261125214500 / 20261126011500 (axs_watch_cadence) times cadence_scale. To read
--- more often with the extension, lower the scale.
+--   axs_watch_pace()          20261125010000's, counting the extension's capacity: ext_lanes reads at once, ext_spacing_ms
+--                             apart at the least, so a read costs (settle + 1 s) / ext_lanes; 45 s assumed until measured.
+--                             Since 20261126053000 the hourly pacer sets cadence_scale from this function's usable_per_hour,
+--                             so without the lanes it would count the extension at a quarter of its throughput and slow the
+--                             watch for nothing.
 --
--- Switch: UPDATE public.axs_watch_config SET reader = 'extension' WHERE id;   -- then, to read more often, cadence_scale < 1
--- Back:   UPDATE public.axs_watch_config SET reader = 'worker' WHERE id;
+-- Cadence: the bands of 20261125214500 / 20261126011500 (axs_watch_cadence) times cadence_scale, which the hourly pacer
+-- (20261126053000) sets between cadence_scale_floor (1.0) and cadence_scale_max. To let the extension read more often than
+-- the bands, lower the floor; the pacer then lowers the scale itself as far as the measured capacity allows.
+--
+-- Switch: UPDATE public.axs_watch_config SET reader = 'extension', cadence_scale_floor = 0.5 WHERE id;
+-- Back:   UPDATE public.axs_watch_config SET reader = 'worker', cadence_scale_floor = 1.0 WHERE id;
 -- rollback: the switch back, then re-apply axs_watch_budget() from 20261125205000 and axs_watch_next() from
---           20261126004500, and axs_queue_claim() from 20261126030000; DROP FUNCTION axs_watch_record_ext(text, integer, jsonb, boolean, text, timestamptz);
+--           20261126004500, axs_queue_claim() from 20261126030000 and axs_watch_pace() from 20261125010000; DROP FUNCTION axs_watch_record_ext(text, integer, jsonb, boolean, text, timestamptz);
 --           the columns and checks can stay.
 
 ALTER TABLE public.axs_watch_config DROP CONSTRAINT IF EXISTS axs_watch_config_reader_check;
@@ -42,8 +49,8 @@ ALTER TABLE public.axs_watch_poll DROP CONSTRAINT IF EXISTS axs_watch_poll_reade
 ALTER TABLE public.axs_watch_poll ADD CONSTRAINT axs_watch_poll_reader_check CHECK (reader IN ('db', 'worker', 'extension'));
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_lanes smallint NOT NULL DEFAULT 4 CHECK (ext_lanes BETWEEN 1 AND 8);
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_spacing_ms integer NOT NULL DEFAULT 4000 CHECK (ext_spacing_ms BETWEEN 1000 AND 60000);
-COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261126040000)';
-COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261126040000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261126060000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261126060000)';
 
 -- The budget (as 20261125205000): the extension's reads are not TicketsData's and spend nothing.
 CREATE OR REPLACE FUNCTION public.axs_watch_budget()
@@ -70,7 +77,7 @@ AS $function$
   -- the Eastern day, to match td_credits_today() (mig 20261125205000)
   today AS (SELECT count(*) AS fired FROM public.axs_watch_poll w
              WHERE w.fired_at >= date_trunc('day', now() AT TIME ZONE 'America/New_York') AT TIME ZONE 'America/New_York'
-               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261126040000)
+               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261126060000)
   SELECT jsonb_build_object(
            'pool_remaining', pool.remaining, 'pool_read_at', pool.read_at,
            'next_reset', reset.next_reset, 'days_left', greatest(reset.next_reset - current_date, 1),
@@ -104,7 +111,7 @@ BEGIN
   IF v_cfg.reader = 'db' THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the database reads (axs_watch_config.reader)');
   END IF;
-  -- each reader is handed events only while it is the one switched on (mig 20261126040000)
+  -- each reader is handed events only while it is the one switched on (mig 20261126060000)
   IF v_cfg.reader = 'extension' AND NOT v_ext THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
   END IF;
@@ -189,7 +196,7 @@ BEGIN
   IF NOT v_cfg.queue_enabled THEN
     RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the queue is off (axs_watch_config.queue_enabled)');
   END IF;
-  -- the queue feeds the TicketsData worker; while the extension reads it hands out nothing (mig 20261126040000)
+  -- the queue feeds the TicketsData worker; while the extension reads it hands out nothing (mig 20261126060000)
   IF v_cfg.reader = 'extension' THEN
     RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
   END IF;
@@ -264,6 +271,62 @@ BEGIN
                             'depth', public.axs_queue_depth());
 END $function$;
 
+-- The pace (as 20261125010000), with the extension's capacity.
+CREATE OR REPLACE FUNCTION public.axs_watch_pace()
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH cfg AS (SELECT * FROM public.axs_watch_config),
+  reads AS (SELECT extract(epoch FROM p.checked_at - p.fired_at) AS settle_s, p.response_s
+              FROM public.axs_watch_poll p, cfg
+             WHERE p.checked_at IS NOT NULL AND p.reader = cfg.reader
+             ORDER BY p.checked_at DESC LIMIT 300),
+  m AS (SELECT count(*) AS n,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY settle_s) AS settle_p50,
+               percentile_cont(0.9) WITHIN GROUP (ORDER BY settle_s) AS settle_p90,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY response_s) AS response_p50
+          FROM reads),
+  sp AS (SELECT CASE cfg.reader WHEN 'worker' THEN cfg.read_spacing_ms / 1000.0
+                                WHEN 'extension' THEN cfg.ext_spacing_ms / 1000.0
+                                ELSE 15.0 END AS spacing_s,
+                CASE WHEN cfg.reader = 'extension' THEN cfg.ext_lanes ELSE 1 END AS lanes,
+                -- unmeasured: 10 s a read, or 46 s for the extension (a browser read of AXS, TicketsData's own timings)
+                CASE WHEN cfg.reader = 'extension' THEN 45.0 ELSE 9.0 END AS settle_guess
+           FROM cfg),
+  pace AS (SELECT m.n, m.settle_p50, m.settle_p90, m.response_p50, sp.spacing_s, sp.lanes,
+                  -- a read takes its settle plus a second of overhead, shared by the lanes reading at once (the extension's
+                  -- ext_lanes; one otherwise), never less than the spacing
+                  greatest((coalesce(m.settle_p50, sp.settle_guess) + 1.0) / sp.lanes, sp.spacing_s) AS s_per_read
+             FROM m, sp),
+  cap AS (SELECT pace.*, floor(3600.0 / pace.s_per_read) AS reads_per_hour,
+                 floor(3600.0 / pace.s_per_read * cfg.pace_target_pct / 100.0) AS usable_per_hour,
+                 (public.axs_watch_budget()->>'daily_cap')::integer AS daily_cap
+            FROM pace, cfg),
+  ev AS (SELECT e.event_date, public.primary_poll_interval(e.event_date, e.median_price, e.listed_quantity) AS ladder,
+                e.event_date > current_date + coalesce(cfg.far_out_days, 0) AS far_out
+           FROM public.primary_poll_event e, cfg WHERE e.source = 'axs' AND e.ticket_url IS NOT NULL),
+  rungs AS (SELECT r.every, round(sum(3600.0 / extract(epoch FROM CASE WHEN ev.far_out THEN greatest(ev.ladder, r.every) ELSE ev.ladder END))::numeric, 1) AS per_hour
+              FROM (VALUES (interval '1 hour'), (interval '90 minutes'), (interval '2 hours'), (interval '3 hours'), (interval '4 hours'), (interval '6 hours')) r(every)
+              LEFT JOIN ev ON true
+             GROUP BY r.every),
+  day_of AS (SELECT count(*) AS n FROM ev WHERE ev.ladder <= interval '10 minutes')
+  SELECT jsonb_build_object(
+           'reader', cfg.reader, 'reads_measured', cap.n,
+           'settle_p50_s', round(cap.settle_p50::numeric, 1), 'settle_p90_s', round(cap.settle_p90::numeric, 1),
+           'response_p50_s', round(cap.response_p50::numeric, 1), 'spacing_s', cap.spacing_s, 'lanes', cap.lanes,
+           's_per_read', round(cap.s_per_read::numeric, 1),
+           'reads_per_hour', cap.reads_per_hour, 'usable_per_hour', cap.usable_per_hour, 'target_pct', cfg.pace_target_pct,
+           'daily_cap', cap.daily_cap,
+           'events', (SELECT count(*) FROM ev), 'day_of_events', day_of.n,
+           'day_of_fits', day_of.n * cap.s_per_read <= 600 * cfg.pace_target_pct / 100.0,
+           'demand_per_hour', (SELECT jsonb_object_agg((extract(epoch FROM r.every) / 60)::integer || ' min', r.per_hour) FROM rungs r),
+           'far_out_every', cfg.far_out_every::text, 'far_out_days', cfg.far_out_days)
+    FROM cfg, cap, day_of
+$function$;
+
 -- One read by the extension: settled with no credit spent and written to the ledger as the extension's. A repeat of the
 -- same (event, fired_at) — the extension retrying a send whose answer it lost — returns the first record.
 CREATE OR REPLACE FUNCTION public.axs_watch_record_ext(p_event_id text, p_status_code integer, p_content jsonb, p_timed_out boolean DEFAULT false,
@@ -295,8 +358,10 @@ END $function$;
 REVOKE ALL ON FUNCTION public.axs_watch_budget() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.axs_watch_next(integer, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.axs_queue_claim(text, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.axs_watch_pace() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.axs_watch_record_ext(text, integer, jsonb, boolean, text, timestamptz) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.axs_watch_budget() TO service_role;
 GRANT EXECUTE ON FUNCTION public.axs_watch_next(integer, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.axs_queue_claim(text, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.axs_watch_pace() TO service_role;
 GRANT EXECUTE ON FUNCTION public.axs_watch_record_ext(text, integer, jsonb, boolean, text, timestamptz) TO service_role;
