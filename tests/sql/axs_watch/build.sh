@@ -64,4 +64,6 @@ stub_10_retention.sql
 20261126141500_ga_band_survives_the_ladder.sql
 20261126150000_pin_the_no_tickets_band.sql
 20261126163000_pace_measures_the_read_not_the_wait.sql
+20261126183000_never_poll_venue_tours.sql
+20261126190000_fill_reports_the_watched_count.sql
 STEPS

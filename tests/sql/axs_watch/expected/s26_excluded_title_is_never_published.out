@@ -1,0 +1,74 @@
+--- A. the gate: the excluded titles are refused even though the venue is keep_all
+ axs_event_id |                title                 | passes 
+--------------+--------------------------------------+--------
+      9400001 | Arena VIP Tours presented by Someone | f
+      9400002 | Arena VIP Tours presented by Someone | f
+      9400003 | A Real Concert                       | t
+      9400004 | A Real Concert Far Out               | t
+      9400005 | Stadium Parking Pass                 | f
+      9400006 | Ryman Guided Tour                    | f
+      9400007 | Ryman Self-Guided Tour | Santa       | f
+      9400008 | Ryman VIP Tour                       | f
+      9400009 | Ryman Guided Backstage Tour          | f
+      9400010 | Todd Rundgren: DAMNED IF I DO TOUR   | t
+      9400011 | Christmas at the Ryman               | t
+
+--- B. the watch fill takes only the real near event
+                                   fill                                   
+--------------------------------------------------------------------------
+ {"added": 3, "apply": true, "retired": 0, "watched": 4, "backfilled": 3}
+
+ source_event_id |              name              | watch 
+-----------------+--------------------------------+-------
+ 9400003         | A Real Concert                 | t
+ 9400004         | A Real Concert Far Out         | f
+ 9400010         | Todd Rundgren: DAMNED IF I DO  | t
+ 9400011         | Christmas at the Ryman         | t
+
+--- C. the catalogue fill publishes the real far-out one and NEITHER excluded title
+                                     catalogue                                     
+-----------------------------------------------------------------------------------
+ {"watched": 3, "catalogue_only": 1, "catalogue_added": 0, "catalogue_dropped": 0}
+
+ source_event_id |              name              | watch 
+-----------------+--------------------------------+-------
+ 9400003         | A Real Concert                 | t
+ 9400004         | A Real Concert Far Out         | f
+ 9400010         | Todd Rundgren: DAMNED IF I DO  | t
+ 9400011         | Christmas at the Ryman         | t
+
+--- D. so nothing excluded reaches the API feed at all
+ api_events | excluded_in_feed 
+------------+------------------
+          4 |                0
+
+--- E. THE RETIRE PATH: an excluded title already on the list is removed, not stranded.
+---    Both a watched row and a catalogue row are planted, then the fills are re-run.
+ planted_watched | planted_catalogue 
+-----------------+-------------------
+               1 |                 1
+
+                         refill                          
+---------------------------------------------------------
+ {"added": 0, "apply": true, "retired": 1, "watched": 4}
+
+                                    recatalogue                                    
+-----------------------------------------------------------------------------------
+ {"watched": 3, "catalogue_only": 1, "catalogue_added": 0, "catalogue_dropped": 0}
+
+ excluded_rows_left 
+--------------------
+                  0
+
+ excluded_in_feed_now 
+----------------------
+                    0
+
+--- F. and the real events are untouched throughout
+ source_event_id |              name              | watch 
+-----------------+--------------------------------+-------
+ 9400003         | A Real Concert                 | t
+ 9400004         | A Real Concert Far Out         | f
+ 9400010         | Todd Rundgren: DAMNED IF I DO  | t
+ 9400011         | Christmas at the Ryman         | t
+
