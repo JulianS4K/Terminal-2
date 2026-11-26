@@ -73,9 +73,9 @@
                              4
 
 --- G. the demand report: the ladder against measured throughput and the day's cap
-                                              demand_shape                                               
----------------------------------------------------------------------------------------------------------
- {"events": 4, "cadence_scale": 1.0, "catalogue_only": 0, "demand_per_day": 112, "demand_per_hour": 4.7}
+                                                     demand_shape                                                      
+-----------------------------------------------------------------------------------------------------------------------
+ {"events": 4, "ga_slow": 0, "cadence_scale": 1.0, "catalogue_only": 0, "demand_per_day": 112, "demand_per_hour": 4.7}
 
 --- H. the daily limit is the Eastern day and comes from the cycle (mig 20261125205000)
  cycle_credits | cap_is_cycle_paced | daily_ok 
