@@ -85,8 +85,15 @@ SELECT count(*) FILTER (WHERE claimed_at IS NULL) AS back_to_pending,
        max(attempts) AS attempts FROM public.axs_read_queue WHERE resolved_at IS NULL;
 
 \echo '--- K. the hold still applies: three fresh upstream errors and the queue hands out nothing'
+-- These must be the NEWEST reads in the ledger. The hold needs three of the last ten to
+-- have failed upstream AND the newest of them to have failed, so a later success releases
+-- it by design. Until mig 20261126124500 the ack in section H wrote no axs_watch_poll row
+-- and this fixture could backdate its failures 26-28 seconds behind it; now the ack writes
+-- a real 'ok' row at its own now(), which would be newer than a backdated 502 and would
+-- (correctly) release the hold. So the failures are stamped at this statement's now(),
+-- which is after the ack's.
 INSERT INTO public.axs_watch_poll (request_id, axs_event_id, fired_at, checked_at, status_code, outcome, error)
-SELECT 8000+g, 'Q1', now() - make_interval(secs => 30-g), now() - make_interval(secs => 29-g),
+SELECT 8000+g, 'Q1', now() - make_interval(secs => 4-g), now() - make_interval(secs => 3-g),
        502, 'upstream_error', 'HTTP 502 from TicketsData' FROM generate_series(1,3) g;
 SELECT (public.axs_queue_claim('w1')) - 'depth' AS held_by_upstream;
 
