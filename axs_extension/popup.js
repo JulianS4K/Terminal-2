@@ -46,5 +46,29 @@ $("reset").onclick = async () => {
   $("pingOut").textContent = r.ok ? "lane containers reset" : r.error;
 };
 
+$("test").onclick = async () => {
+  $("test").disabled = true; $("download").disabled = true;
+  $("testState").textContent = "reading (about 45 s)…"; $("testState").className = "stat";
+  $("testOut").textContent = "";
+  try {
+    const r = await send({ type: "testRead", url: $("testUrl").value });
+    $("testState").textContent = r.ok ? r.outcome : r.error;
+    $("testState").className = r.ok && r.outcome === "loaded" && (r.seats || r.price_book) ? "ok" : "bad";
+    $("testOut").textContent = JSON.stringify(r, null, 1);
+    $("download").disabled = !r.ok;
+  } finally {
+    $("test").disabled = false;
+  }
+};
+$("download").onclick = async () => {
+  const cap = await send({ type: "lastTest" });
+  if (!cap) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(cap)], { type: "application/json" }));
+  a.download = `axs-capture-${cap.event_id}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+
 refresh();
 setInterval(refresh, 2000);

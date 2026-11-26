@@ -93,6 +93,31 @@ browser.runtime.onMessage.addListener(async msg => {
     case "ping":
       try { return { ok: true, answer: await Api.ping(await loadConfig()) }; }
       catch (e) { return { ok: false, error: String(e.message || e) }; }
+    case "testRead": {
+      // one AXS page read in lane 1's container, kept here: nothing goes to our service or the database. For trying the
+      // reader on a real event before the watch is switched over (README "Test one event").
+      const url = String(msg.url || "").trim();
+      const m = url.match(/^https:\/\/(?:www\.)?[a-z.]+\/events\/(\d+)/i);
+      if (!m) return { ok: false, error: "paste an event link: https://www.<site>/events/<number>/..." };
+      if (S.testing) return { ok: false, error: "a test read is already running" };
+      S.testing = true;
+      try {
+        const cfg = await loadConfig();
+        const [store] = await laneContainers(1);
+        const capture = await readEvent(cfg, store, { id: m[1], url });
+        S.lastTest = capture;
+        note(`test · ${m[1]} · ${capture.outcome} · ${capture.captures.length} answers · ${capture.elapsed_s}s`);
+        const inv = inventoryIn(capture.captures.map(c => ({ shape: shapeOf(c.json) })));
+        return { ok: true, outcome: capture.outcome, error: capture.error, http_status: capture.http_status,
+                 elapsed_s: capture.elapsed_s, answers: capture.captures.length, seats: inv.offers,
+                 price_book: inv.prices, flow: inv.flow, final_url: capture.final_url, cancelled: capture.cancelled,
+                 title: capture.title, page_text: (capture.page_text || "").slice(0, 300) };
+      } finally {
+        S.testing = false;
+      }
+    }
+    case "lastTest":
+      return S.lastTest || null;
     case "resetLanes":
       if (S.busy.size) return { ok: false, error: "wait for the reads in progress to finish (stop first)" };
       await resetLanes();

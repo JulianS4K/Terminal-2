@@ -54,6 +54,27 @@ Then open the toolbar button:
 Leave the reader window open. Firefox slows timers in background tabs, but the reads are network-bound and keep
 going. **Reset lane containers** drops the lanes' cookies; they're made again, empty, on the next read.
 
+## Test one event (before switching anything over)
+
+No migration, secret or server is needed for this.
+
+1. Load the extension (above). Open its page from the toolbar button.
+2. Under **Test one event**, paste a public AXS event link (`https://www.axs.com/events/<id>/...`) and press
+   **Read it**. Lane 1's container opens the page in the reader window. Expect about 45 s.
+3. The result shows the outcome (`loaded`, `blocked`, `queue`, `timeout`), how many answers were kept, whether
+   seats and a price book came in, where the tab ended up, and any write requests the guard cancelled.
+4. Press **Download capture**, then see what our server would store from it:
+
+   ```
+   python scripts/axs_ext_check.py ~/Downloads/axs-capture-<id>.json
+   ```
+
+   It prints every listing with its face, fees and all-in, plus the order limits, and sends nothing anywhere. Fees
+   should match AXS's own checkout figure for the same seat.
+
+Try a reserved-seat event and a GA event. If a read comes back `loaded` with no seats and no price book, the
+capture file shows which answers the page did get, and that's what to send back for a fix.
+
 ## Switching the watch over
 
 1. Apply mig `20261125210000_axs_watch_extension_reader.sql`.
