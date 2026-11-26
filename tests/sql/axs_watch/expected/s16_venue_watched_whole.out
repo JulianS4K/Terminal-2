@@ -1,0 +1,77 @@
+--- A. the flag exists, defaults false, and the operator's venues carry it
+ venues_watched_whole | venues_on_the_title_rule 
+----------------------+--------------------------
+                   30 |                       23
+
+         venue_name         | quota | keep_all 
+----------------------------+-------+----------
+ Dignity Health Sports Park |     0 | t
+ Crypto.com Arena           |     0 | t
+ T-Mobile Arena             |     0 | t
+ Toyota Stadium             |     0 | t
+ Meta APEX                  |     0 | t
+
+--- B. keep_regex is lifted at a whole venue, and still applied at the other
+           title            | at_whole_venue | at_title_rule_venue 
+----------------------------+----------------+---------------------
+ Nickelback                 | t              | f
+ Trans-Siberian Orchestra   | t              | f
+ Houston Rockets vs Someone | t              | t
+
+--- C. the sports allow-list is lifted too — without this, LA Galaxy admits nothing
+                   title                    | at_whole_venue | at_title_rule_venue 
+--------------------------------------------+----------------+---------------------
+ LA Galaxy v. San Jose Earthquakes          | t              | f
+ U.S. Women's National Team vs. Panama      | t              | f
+ 2027 NCAA Men's Basketball - West Regional | t              | f
+ UFC 335                                    | t              | f
+
+--- D. exclude_regex is NEVER lifted: these are not events, flag or no flag
+               title               | at_whole_venue | at_title_rule_venue 
+-----------------------------------+----------------+---------------------
+ Nickelback - Parking              | f              | f
+ 2027 LA Galaxy Sprint Season Pass | f              | f
+ Suite Rental                      | f              | f
+ Olivia Rodrigo                    | f              | f
+
+--- E. the 2-arg form is unchanged: no venue means the regexes govern
+           title            | two_arg | three_arg_null_venue 
+----------------------------+---------+----------------------
+ Nickelback                 | f       | f
+ Houston Rockets vs Someone | t       | t
+
+--- F. the fill admits a whole venue's events and not the other venue's
+                          fill                           
+---------------------------------------------------------
+ {"added": 4, "apply": true, "retired": 0, "watched": 4}
+
+   id    |            name            |     venue_name      
+---------+----------------------------+---------------------
+ 9100001 | Nickelback                 | Whole Venue Arena
+ 9100002 | LA Galaxy v. Austin FC     | Whole Venue Arena
+ 9100005 | Houston Rockets vs Someone | Title Rule Pavilion
+ 9100007 | FC Someone vs Another      | Trusted Stadium
+
+--- G. clearing the flag takes them back off at the next fill (the not_kept arm)
+                  fill_after_unflagging                  
+---------------------------------------------------------
+ {"added": 0, "apply": true, "retired": 2, "watched": 2}
+
+  still_watched  
+-----------------
+ 9100005,9100007
+
+   id    |   note   
+---------+----------
+ 9100001 | not_kept
+ 9100002 | not_kept
+
+--- H. axs_ticketed = false is a hard gate, UNLESS the venue is trusted (FC Dallas)
+ untrusted_non_axs_watched | trusted_non_axs_watched 
+---------------------------+-------------------------
+ f                         | t
+
+ axs_venue_id |   venue_name   | keep_all | trust_axs_sold 
+--------------+----------------+----------+----------------
+       124913 | Toyota Stadium | t        | t
+

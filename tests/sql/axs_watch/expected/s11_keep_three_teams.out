@@ -1,0 +1,113 @@
+--- A. the gate: with no keep_regex every title that passes the other rules is kept
+                    title                    | kept 
+---------------------------------------------+------
+ LA Kings vs Vancouver Canucks               | t
+ Houston Rockets vs. Toronto Raptors         | t
+ Utah Mammoth vs. Vegas Golden Knights       | t
+ UFC 335                                     | t
+ PBR: PENDLETON WHISKY VELOCITY TOUR - 12/19 | t
+
+--- B. with the three teams set, the games are kept and everything else is not — concerts, ice shows, cage fights
+                    title                    | category | kept 
+---------------------------------------------+----------+------
+ LA Kings vs Vancouver Canucks               | Sports   | t
+ Los Angeles Kings vs. Vegas Golden Knights  | Sports   | t
+ Utah Mammoth vs. Vegas Golden Knights       | Sports   | t
+ Houston Rockets vs. Toronto Raptors         | Sports   | t
+ Houston Rockets vs. Sacramento Kings        | Sports   | t
+ UFC 335                                     | Sports   | f
+ PBR: PENDLETON WHISKY VELOCITY TOUR - 12/19 | Sports   | f
+ Disney On Ice presents Jump In!             | Family   | f
+ Trans-Siberian Orchestra                    | Music    | f
+ KPop Demon Hunters                          | Music    | f
+ Nickelback                                  | Music    | f
+ Sacramento Kings vs. Portland Trail Blazers | Sports   | f
+
+--- C. a fill over a mixed arena: only the games take places, however many concerts are on sale first
+                                                                                         fill                                                                                          
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 4, "apply": true, "short": [{"quota": 10, "venue": "Crypto.com Arena", "short_by": 8}, {"quota": 10, "venue": "Toyota Center", "short_by": 8}], "retired": 0, "watched": 4}
+
+ id |                name                 |      venue       
+----+-------------------------------------+------------------
+ 21 | Houston Rockets vs. New York Knicks | Toyota Center
+ 13 | LA Kings vs Minnesota Wild          | Crypto.com Arena
+ 14 | LA Kings vs Utah Mammoth            | Crypto.com Arena
+ 23 | Houston Rockets vs. Milwaukee Bucks | Toyota Center
+
+--- D. an event already on the list that the rule no longer covers is RETIRED, and its stored listings go with it
+ concert_on_the_list 
+---------------------
+                   1
+
+ its_listings 
+--------------
+            1
+
+                                                                                    fill_retires_it                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [{"quota": 10, "venue": "Crypto.com Arena", "short_by": 8}, {"quota": 10, "venue": "Toyota Center", "short_by": 8}], "retired": 1, "watched": 4}
+
+ concert_now 
+-------------
+ retired
+
+ its_listings_after 
+--------------------
+                  0
+
+ action | id |      venue       |   note   
+--------+----+------------------+----------
+ retire | 12 | Crypto.com Arena | not_kept
+
+--- E. the games are untouched by all of that: the list is the games, in date order
+ id |                name                 
+----+-------------------------------------
+ 21 | Houston Rockets vs. New York Knicks
+ 13 | LA Kings vs Minnesota Wild
+ 14 | LA Kings vs Utah Mammoth
+ 23 | Houston Rockets vs. Milwaukee Bucks
+
+--- F. a game added to the export later joins on its own — the rule is a pattern, not a list of ids
+                                                                                fill_adds_the_new_game                                                                                 
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 1, "apply": true, "short": [{"quota": 10, "venue": "Crypto.com Arena", "short_by": 7}, {"quota": 10, "venue": "Toyota Center", "short_by": 8}], "retired": 0, "watched": 5}
+
+ id |                name                 
+----+-------------------------------------
+ 21 | Houston Rockets vs. New York Knicks
+ 13 | LA Kings vs Minnesota Wild
+ 14 | LA Kings vs Utah Mammoth
+ 16 | LA Kings vs Vegas Golden Knights
+ 23 | Houston Rockets vs. Milwaukee Bucks
+
+--- G. "for now": clearing the one column puts the rest of the list back
+                                                                                 fill_without_the_rule                                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 5, "apply": true, "short": [{"quota": 10, "venue": "Crypto.com Arena", "short_by": 4}, {"quota": 10, "venue": "Toyota Center", "short_by": 6}], "retired": 0, "watched": 10}
+
+ watched | games 
+---------+-------
+      10 |     5
+
+--- H. the ladder the operator set (mig 20261126011500): three bands — a week, four months, beyond
+  band   |  max_days  |  every   | sort_order 
+---------+------------+----------+------------
+ d0_7    |          7 | 00:30:00 |          1
+ d7_120  |        120 | 01:00:00 |          2
+ d120_up | 1000000000 | 01:30:00 |          3
+
+ days_out |  every   
+----------+----------
+      1.0 | 00:30:00
+      5.0 | 00:30:00
+     10.0 | 01:00:00
+     20.0 | 01:00:00
+     45.0 | 01:00:00
+     90.0 | 01:00:00
+    150.0 | 01:30:00
+
+--- I. only the week band is at or inside hot_every, so over the cap it is the week's games that are handed out
+ hot_every | bands_hot | bands_total 
+-----------+-----------+-------------
+ 00:30:00  |         1 |           3

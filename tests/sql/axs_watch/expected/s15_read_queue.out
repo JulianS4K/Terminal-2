@@ -1,0 +1,85 @@
+--- A. it ships DARK: queue_enabled is false, so claim hands out nothing and the live path is untouched
+ queue_enabled | queue_lanes 
+---------------+-------------
+ f             |           1
+
+                               claim_while_off                                
+------------------------------------------------------------------------------
+ {"items": [], "reason": "the queue is off (axs_watch_config.queue_enabled)"}
+
+--- B. fill enqueues the four due events, once each
+             fill             
+------------------------------
+ {"pruned": 0, "enqueued": 4}
+
+ queued | distinct_events 
+--------+-----------------
+      4 |               4
+
+--- C. THE INVARIANT. Fill ten more times — a scheduler screaming "due!" — and the depth does not move.
+ still_queued | distinct_events | max_attempts 
+--------------+-----------------+--------------
+            4 |               4 |            0
+
+--- D. and the index refuses a duplicate outright, not by a check the caller might skip
+psql:s15_read_queue.sql:44: WARNING:  a second open item for Q1 is refused by the index
+--- E. turn it on: one lane, so exactly one item is handed out and it carries a release_at
+ items | event | every_min | attempts | release_at_not_in_the_past | lanes | in_flight | spacing_ms 
+-------+-------+-----------+----------+----------------------------+-------+-----------+------------
+     1 | Q1    | 30        | 0        | t                          | 1     | 1         | 3000
+
+--- F. a second worker gets nothing while the lane is busy — this is the 3-second rule held centrally
+                                   second_worker                                    
+------------------------------------------------------------------------------------
+ {"items": [], "lanes": 1, "hold_s": 2, "reason": "all lanes busy", "in_flight": 1}
+
+--- G. three lanes: three items, and their release_at slots are spaced read_spacing_ms apart
+ claimed_more 
+--------------
+ t
+
+ in_flight | distinct_slots | slots_at_least_3s_apart | never_released_before_claim 
+-----------+----------------+-------------------------+-----------------------------
+         3 |              3 | t                       | t
+
+--- H. ack settles the read: the event is ingested, the band is set, the item resolves
+                                        ack                                         
+------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "listings": 1, "queue_id": 1, "response_s": null}
+
+ axs_event_id | outcome | resolved 
+--------------+---------+----------
+ Q1           | ok      | t
+
+--- I. acking the same item again is harmless and charges nothing twice (a worker retrying a lost answer)
+                         second_ack                         
+------------------------------------------------------------
+ {"outcome": "ok", "queue_id": 1, "already_resolved": true}
+
+--- J. a worker that dies: its lease expires and the item goes back to pending, attempts +1
+ reaped 
+--------
+      2
+
+ back_to_pending | attempts 
+-----------------+----------
+               3 |        1
+
+--- K. the hold still applies: three fresh upstream errors and the queue hands out nothing
+                                held_by_upstream                                
+--------------------------------------------------------------------------------
+ {"items": [], "hold_s": 60, "errors_window": "00:10:00", "upstream_errors": 3}
+
+--- L. depth is the one number that says whether we are keeping up
+                            depth_without_the_moving_age                             | oldest_pending_is_recent 
+-------------------------------------------------------------------------------------+--------------------------
+ {"expired": 0, "pending": 3, "retried": 2, "in_flight": 0, "resolved_last_hour": 1} | t
+
+--- M. the bands are honoured, NOT primary_poll_due's ladder bypass: an event parked an hour out is not enqueued
+ shared_ladder_says | band_says | primary_poll_due_would_say_due 
+--------------------+-----------+--------------------------------
+ 00:30:00           | 01:00:00  |                              1
+
+ queue_enqueued_it | q4_open_items 
+-------------------+---------------
+ 0                 |             0

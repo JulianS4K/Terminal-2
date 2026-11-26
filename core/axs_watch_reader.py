@@ -99,3 +99,78 @@ def run(td: Any, rpc: Rpc, *, spacing_s: float | None = None, batch: int = DEFAU
             done["failed"] += 1
     done["pause_s"] = float(asked.get("hold_s") or 0) or (idle_s if not events else 0.0)
     return done
+
+
+# ── the queue path (mig 20261126030000) ──────────────────────────────────────────────────────
+# The database holds a real work queue instead of recomputing a due list on every call:
+#   axs_queue_claim(worker, limit)   up to `queue_lanes` items, each with a release_at — the
+#                                    pacer's slot. The slots are allocated 3 s apart in ONE
+#                                    serialised place, so several reader processes cannot
+#                                    together break TicketsData's rule the way per-process
+#                                    spacing would.
+#   axs_queue_ack(queue_id, ...)     resolves the item AND settles the read (ingest, band,
+#                                    credit). Acking twice is harmless and charges once, so a
+#                                    worker that loses an answer may simply send it again.
+# At most one unresolved item exists per event, enforced by a unique partial index rather than
+# by a check in the caller — which is the whole reason for the queue: a scheduling bug then
+# costs nothing instead of three quarters of the budget (mig 20261126023000 cost 76%).
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _seconds_until(when: Any, now: Callable[[], datetime] = _utcnow) -> float:
+    """How long to wait for a release_at the database handed us. Anything unparseable means
+    'no wait' — the database already serialised the slot, so a bad string must not stall the
+    worker, and the 3-second floor is re-applied by the next claim anyway."""
+    if not when:
+        return 0.0
+    try:
+        at = when if isinstance(when, datetime) else datetime.fromisoformat(str(when).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return max(0.0, (at - now()).total_seconds())
+
+
+def read_one_queued(td: Any, rpc: Rpc, item: dict) -> dict:
+    """One queued event read through TicketsData and acked. Returns what the database made of it."""
+    params: dict[str, Any] = {"p_queue_id": item["queue_id"], "p_status_code": None, "p_content": None,
+                              "p_timed_out": False, "p_error_msg": None}
+    try:
+        params["p_content"], params["p_status_code"] = td.fetch("axs", item["url"]), 200
+    except Exception as exc:  # noqa: BLE001 - every failure is this event's failed poll, recorded as such
+        status = _HTTP_STATUS.search(str(exc))
+        if status:
+            params["p_status_code"] = int(status.group(1))   # TicketsData answered: the database classifies it
+        else:
+            params["p_timed_out"], params["p_error_msg"] = True, _why(exc)   # no answer: a timeout
+    return rpc("axs_queue_ack", params)
+
+
+def run_queue(td: Any, rpc: Rpc, *, batch: int | None = None, idle_s: float = 15.0,
+              worker: str | None = None, sleep: Callable[[float], None] = time.sleep,
+              now: Callable[[], datetime] = _utcnow) -> dict:
+    """One pass over the queue: claim, wait for each item's release_at, read, ack.
+
+    Returns what was done and `pause_s`, how long the caller should wait before claiming again:
+    the database's hold (the upstream failing, every lane busy, the queue switched off), `idle_s`
+    when the queue was empty, nothing when there was work."""
+    asked = rpc("axs_queue_claim", {"p_worker": worker or WORKER_ID, "p_limit": batch}) or {}
+    items = asked.get("items") or []
+    done = {"claimed": len(items), "ok": 0, "failed": 0, "listings": 0, "reason": asked.get("reason"),
+            "hold_s": asked.get("hold_s"), "lanes": asked.get("lanes"), "in_flight": asked.get("in_flight"),
+            "daily_cap": asked.get("daily_cap"), "fired_today": asked.get("fired_today"),
+            "depth": asked.get("depth")}
+    for item in items:
+        wait = _seconds_until(item.get("release_at"), now)
+        if wait > 0:
+            sleep(wait)            # the pacer's slot: never send before it
+        got = read_one_queued(td, rpc, item) or {}
+        if got.get("outcome") in ("ok", "empty"):
+            done["ok"] += 1
+            done["listings"] += int(got.get("listings") or 0)
+        else:
+            done["failed"] += 1
+    done["pause_s"] = float(asked.get("hold_s") or 0) or (idle_s if not items else 0.0)
+    return done

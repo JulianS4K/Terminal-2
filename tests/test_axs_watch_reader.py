@@ -132,3 +132,96 @@ def test_run_idles_when_nothing_is_due_and_holds_while_the_upstream_fails():
     held = {"events": [], "hold_s": 10, "reason": "another worker holds the lease", "lease_holder": "web-0:3"}
     out = reader.run(_TD({}), _rpc(held, None, log), sleep=lambda s: None, clock=lambda: 0.0)    # the other instance at a deploy
     assert out["asked"] == 0 and out["pause_s"] == 10.0 and out["reason"] == "another worker holds the lease"
+
+
+# ── the queue path (mig 20261126030000) ──────────────────────────────────────────────────────
+
+def _queue_rpc(claim, acked, log):
+    def call(name, params):
+        log.append((name, params))
+        if name == "axs_queue_claim":
+            return claim
+        assert name == "axs_queue_ack"
+        return acked(params)
+    return call
+
+
+def test_run_queue_waits_for_each_release_at_then_reads_and_acks():
+    """The pacer's slot is honoured: the worker sleeps until release_at before sending, and acks
+    by queue_id. The slots are 3 s apart because the database allocated them that way."""
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 11, 26, 3, 0, 0, tzinfo=timezone.utc)
+    claim = {"items": [{"queue_id": 11, "id": "A", "url": "u/A", "every_min": 30,
+                        "release_at": (base + timedelta(seconds=3)).isoformat()},
+                       {"queue_id": 12, "id": "B", "url": "u/B", "every_min": 60,
+                        "release_at": (base + timedelta(seconds=6)).isoformat()}],
+             "lanes": 2, "in_flight": 2, "spacing_ms": 3000}
+    td, slept, log = _TD({"u/A": BODY, "u/B": BODY}), [], []
+    out = reader.run_queue(td, _queue_rpc(claim, lambda p: {"outcome": "ok", "listings": 2}, log),
+                           sleep=slept.append, now=lambda: base, worker="w1")
+    assert out["claimed"] == 2 and out["ok"] == 2 and out["failed"] == 0
+    assert out["listings"] == 4 and out["pause_s"] == 0.0
+    assert slept == [3.0, 6.0]                       # each slot waited for, from the same clock
+    assert [c[1] for c in td.calls] == ["u/A", "u/B"]
+    assert [p["p_queue_id"] for n, p in log if n == "axs_queue_ack"] == [11, 12]
+
+
+def test_run_queue_does_not_sleep_for_a_slot_already_due():
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 11, 26, 3, 0, 0, tzinfo=timezone.utc)
+    claim = {"items": [{"queue_id": 1, "id": "A", "url": "u/A",
+                        "release_at": (base - timedelta(seconds=5)).isoformat()}]}
+    slept = []
+    reader.run_queue(_TD({"u/A": BODY}), _queue_rpc(claim, lambda p: {"outcome": "ok"}, []),
+                     sleep=slept.append, now=lambda: base)
+    assert slept == []
+
+
+def test_run_queue_passes_the_hold_through_and_claims_nothing():
+    """The queue off, every lane busy, or the upstream failing: the database says hold and the
+    worker must not invent work."""
+    for claim in ({"items": [], "reason": "the queue is off (axs_watch_config.queue_enabled)"},
+                  {"items": [], "hold_s": 2, "reason": "all lanes busy"},
+                  {"items": [], "hold_s": 60, "upstream_errors": 3}):
+        td = _TD({})
+        out = reader.run_queue(td, _queue_rpc(claim, lambda p: {}, []), sleep=lambda s: None, idle_s=15.0)
+        assert out["claimed"] == 0 and td.calls == []
+        assert out["pause_s"] == (float(claim["hold_s"]) if claim.get("hold_s") else 15.0)
+
+
+def test_run_queue_records_a_transport_failure_as_a_timeout_and_an_http_status_as_itself():
+    claim = {"items": [{"queue_id": 7, "id": "A", "url": "u/A"},
+                       {"queue_id": 8, "id": "B", "url": "u/B"}]}
+    td = _TD({"u/A": RuntimeError("connection reset by peer"),
+              "u/B": RuntimeError("HTTP 503 on GET /fetch")})
+    log = []
+    out = reader.run_queue(td, _queue_rpc(claim, lambda p: {"outcome": "timeout"}, log), sleep=lambda s: None)
+    acks = [p for n, p in log if n == "axs_queue_ack"]
+    assert acks[0]["p_timed_out"] is True and acks[0]["p_status_code"] is None
+    assert "connection reset" in acks[0]["p_error_msg"]
+    assert acks[1]["p_status_code"] == 503 and acks[1]["p_timed_out"] is False
+    assert out["failed"] == 2
+
+
+def test_seconds_until_is_forgiving_about_what_the_database_hands_back():
+    """A release_at that cannot be parsed must not stall the worker: the database already
+    serialised the slot, and the next claim re-applies the floor."""
+    from datetime import datetime, timezone
+    base = datetime(2026, 11, 26, 3, 0, 0, tzinfo=timezone.utc)
+    assert reader._seconds_until(None, lambda: base) == 0.0
+    assert reader._seconds_until("", lambda: base) == 0.0
+    assert reader._seconds_until("not a timestamp", lambda: base) == 0.0
+    assert reader._seconds_until("2026-11-26T03:00:09Z", lambda: base) == 9.0        # trailing Z
+    assert reader._seconds_until("2026-11-26T03:00:09", lambda: base) == 9.0         # naive, assumed UTC
+    assert reader._seconds_until(base, lambda: base) == 0.0                          # a datetime straight through
+
+
+def test_seconds_until_uses_the_real_clock_when_none_is_injected():
+    """The default clock is the one production runs on: server.py calls run_queue without passing
+    `now`, so the release_at wait is computed against the real wall clock."""
+    from datetime import datetime, timedelta, timezone
+    assert reader._utcnow().tzinfo is timezone.utc
+    assert abs((reader._utcnow() - datetime.now(timezone.utc)).total_seconds()) < 5
+    waited = reader._seconds_until((datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat())
+    assert 25.0 <= waited <= 30.0                      # real clock, slack for the test's own runtime
+    assert reader._seconds_until((datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()) == 0.0

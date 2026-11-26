@@ -1,0 +1,88 @@
+--- A. the bands as seeded, and the scale
+  band   |  max_days  |  every   | sort_order | enabled 
+---------+------------+----------+------------+---------
+ d0_7    |          7 | 00:30:00 |          1 | t
+ d7_120  |        120 | 01:00:00 |          2 | t
+ d120_up | 1000000000 | 01:30:00 |          3 | t
+
+ cadence_scale | not_on_sale_every | hot_every 
+---------------+-------------------+-----------
+           1.0 | 06:00:00          | 00:30:00
+
+--- B. the band an event falls in, by how close it is (no read needed: the function is pure)
+ days_out |  every   
+----------+----------
+      0.5 | 00:30:00
+      1.9 | 00:30:00
+      3.0 | 00:30:00
+      6.9 | 00:30:00
+     10.0 | 01:00:00
+     13.9 | 01:00:00
+     20.0 | 01:00:00
+     29.9 | 01:00:00
+     45.0 | 01:00:00
+     59.9 | 01:00:00
+     90.0 | 01:00:00
+    119.9 | 01:00:00
+    150.0 | 01:30:00
+    179.0 | 01:30:00
+
+--- C. the scale multiplies every band
+ days_out | every_at_scale_2 
+----------+------------------
+      1.0 | 01:00:00
+     10.0 | 02:00:00
+     45.0 | 02:00:00
+    150.0 | 03:00:00
+
+--- D. a read puts the event on its band, not on the shared ladder's interval
+                                                    read_b1                                                     
+----------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "event_id": "B1", "listings": 1, "response_s": 5.0, "quota_remaining": 99990}
+
+                                                      read_b2                                                      
+-------------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "empty", "event_id": "B2", "listings": 0, "response_s": 5.0, "quota_remaining": 99989}
+
+                                                      read_b3                                                      
+-------------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "empty", "event_id": "B3", "listings": 0, "response_s": 5.0, "quota_remaining": 99988}
+
+ id | poll_interval | in_future | clears_due_slack | within_slack_plus_one_interval | on_its_own_phase 
+----+---------------+-----------+------------------+--------------------------------+------------------
+ B1 | 00:30:00      | t         | t                | t                              | t
+ B2 | 01:00:00      | t         | t                | t                              | t
+ B3 | 01:30:00      | t         | t                | t                              | t
+
+--- E. "not on sale" still wins over the band
+                                                                                read_b4                                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": "Tickets are not currently on sale for this event", "outcome": "unparsed", "event_id": "B4", "listings": null, "response_s": 4.0, "quota_remaining": 99987}
+
+ id | poll_interval 
+----+---------------
+ B4 | 06:00:00
+
+--- F. p_charge: the extension's reads settle without spending a credit
+ settled_unmetered 
+-------------------
+ empty
+
+ credits_charged_for_axs_fetch 
+-------------------------------
+                             4
+
+--- G. the demand report: the ladder against measured throughput and the day's cap
+                                                     demand_shape                                                      
+-----------------------------------------------------------------------------------------------------------------------
+ {"events": 4, "ga_slow": 0, "cadence_scale": 1.0, "catalogue_only": 0, "demand_per_day": 112, "demand_per_hour": 4.7}
+
+--- H. the daily limit is the Eastern day and comes from the cycle (mig 20261125205000)
+ cycle_credits | cap_is_cycle_paced | daily_ok 
+---------------+--------------------+----------
+        250000 | t                  | t
+
+ eastern_day_counts | credits_before_eastern_midnight | credits_in_the_ledger 
+--------------------+---------------------------------+-----------------------
+                 11 |                            1000 |                  1011
+

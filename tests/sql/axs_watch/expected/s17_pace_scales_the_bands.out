@@ -1,0 +1,80 @@
+--- A. the clamps, as seeded
+ cadence_scale | cadence_scale_floor | cadence_scale_max 
+---------------+---------------------+-------------------
+           1.0 |                 1.0 |               4.0
+
+ synthetic_reads_measured | avg_response_s 
+--------------------------+----------------
+                       40 |            4.0
+
+--- B. a small list: demand is under throughput, so the floor holds the scale at 1.0
+ scale_small_list | changed 
+------------------+---------
+ 1.0              | false
+
+ cadence_scale 
+---------------
+           1.0
+
+--- C. a list that outruns the reader: the scale rises, and the bands widen with it
+ events_on_the_watch 
+---------------------
+                 905
+
+ fits_before_pacing 
+--------------------
+ false
+
+ scale_moved 
+-------------
+ true
+
+ scale_rose | within_clamp 
+------------+--------------
+ t          | t
+
+--- D. the bands widen by exactly the scale
+ band_follows_scale 
+--------------------
+ t
+
+--- E. at the clamp it says so rather than pretending it fitted
+ scale_at_clamp 
+----------------
+ 1.50
+
+ note_admits_the_clamp | pinned_at_max 
+-----------------------+---------------
+ t                     | t
+
+ fits_at_the_clamp 
+-------------------
+ false
+
+--- F. hysteresis: a second run at the same measurement changes nothing
+ first_run_moves_it 
+--------------------
+ true
+
+ second_run_holds 
+------------------
+ false
+
+--- G. cadence_scale_max cannot be set outside cadence_scale's own domain
+                     cadence_scale_domain                     
+--------------------------------------------------------------
+ CHECK (((cadence_scale >= 0.25) AND (cadence_scale <= 8.0)))
+
+ max_bounded_at_8 
+------------------
+ t
+
+ widest_possible_band_is_bounded 
+---------------------------------
+ t
+
+--- H. far_out_every is still maintained for whatever still reads it
+ legacy_knob_still_set 
+-----------------------
+ t
+

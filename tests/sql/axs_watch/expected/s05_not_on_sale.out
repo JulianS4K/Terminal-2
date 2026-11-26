@@ -114,4 +114,4 @@
  102
  106
 
-psql:s05_not_on_sale.sql:111: WARNING:  a recheck time of 2 hours is refused
+psql:s05_not_on_sale.sql:112: WARNING:  a recheck time of 2 hours is refused

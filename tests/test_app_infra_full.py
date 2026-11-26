@@ -1469,8 +1469,13 @@ def test_axs_watch_reader_tick_builds_one_client_from_vault_and_runs_a_batch(mon
             return self
 
     class _Sb:
+        """The queue is OFF, as it ships (mig 20261126030000): the claim says so, and the tick
+        must fall back to the due-list path rather than idling."""
+
         def rpc(self, name, params):
             seen.setdefault("rpc", []).append(name)
+            if name == "axs_queue_claim":
+                return _Res({"items": [], "reason": "the queue is off (axs_watch_config.queue_enabled)"})
             return _Res({"events": []})
 
     class _TD:
@@ -1491,11 +1496,63 @@ def test_axs_watch_reader_tick_builds_one_client_from_vault_and_runs_a_batch(mon
     monkeypatch.setattr(n2s_autobuy_live, "retrying", lambda rpc: rpc)
     monkeypatch.setitem(app_module._axs_watch_reader_client, "td", None)
     out = anyio.run(app_module._axs_watch_reader_tick)
-    assert out == {"asked": 0, "pause_s": app_module._AXS_WATCH_READER_INTERVAL_S}
+    # run_queue is NOT patched here: the real fallback decision is what is under test
+    assert out == {"asked": 0, "pause_s": app_module._AXS_WATCH_READER_INTERVAL_S, "via": "due_list"}
+    assert seen["rpc"][0] == "axs_queue_claim" and "axs_watch_next" in seen["rpc"]
     assert app_module._axs_watch_reader_last["result"] == out and app_module._axs_watch_reader_last["error"] is None
     assert isinstance(seen["td"], _TD) and seen["timeout"] == 120 and seen["asked"] == {"events": []}
     anyio.run(app_module._axs_watch_reader_tick)
     assert seen["built"] == 1                                   # the client is built once a process
+
+
+def test_axs_watch_reader_tick_uses_the_queue_when_it_is_on_and_never_the_due_list(monkeypatch):
+    """With axs_watch_config.queue_enabled true the claim returns work and the due-list path must
+    not be touched — the two must never both read in one tick (mig 20261126030000)."""
+    import anyio
+    import ticketsdata_client
+    from core import axs_watch_reader, n2s_autobuy_live
+    seen = {"acked": [], "fetched": []}
+
+    class _Res:
+        def __init__(self, data):
+            self.data = data
+
+        def execute(self):
+            return self
+
+    class _Sb:
+        def rpc(self, name, params):
+            seen.setdefault("rpc", []).append(name)
+            if name == "axs_queue_claim":
+                return _Res({"items": [{"queue_id": 5, "id": "Q1", "url": "u/Q1", "every_min": 30,
+                                        "release_at": None}],
+                             "lanes": 1, "in_flight": 1, "spacing_ms": 3000})
+            assert name == "axs_queue_ack"
+            seen["acked"].append(params["p_queue_id"])
+            return _Res({"outcome": "ok", "listings": 3})
+
+    class _TD:
+        @classmethod
+        def from_vault(cls, db, *, timeout):
+            return cls()
+
+        def fetch(self, platform, url):
+            seen["fetched"].append((platform, url))
+            return {"body": {"status": "ok", "exit_code": 0, "event": {"id": "Q1"}, "listings": []}}
+
+    def _never(*a, **k):
+        raise AssertionError("the due-list path must not run while the queue is on")
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb())
+    monkeypatch.setattr(ticketsdata_client, "TicketsDataClient", _TD)
+    monkeypatch.setattr(axs_watch_reader, "run", _never)
+    monkeypatch.setattr(n2s_autobuy_live, "retrying", lambda rpc: rpc)
+    monkeypatch.setitem(app_module._axs_watch_reader_client, "td", None)
+    out = anyio.run(app_module._axs_watch_reader_tick)
+    assert out["via"] == "queue" and out["claimed"] == 1 and out["ok"] == 1 and out["listings"] == 3
+    assert out["pause_s"] == 0.0                                # there was work, so claim again at once
+    assert seen["fetched"] == [("axs", "u/Q1")] and seen["acked"] == [5]
+    assert "axs_watch_next" not in seen["rpc"]
 
 
 def test_axs_watch_reader_loop_off_by_default_then_paces_itself_and_survives_errors(monkeypatch):
