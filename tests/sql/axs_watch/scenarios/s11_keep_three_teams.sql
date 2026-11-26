@@ -88,12 +88,12 @@ SELECT (public.axs_watch_fill(true)) - 'run' AS fill_without_the_rule;
 SELECT count(*) AS watched, count(*) FILTER (WHERE name ~* '(kings|knights|rockets)') AS games FROM public.primary_poll_event WHERE source = 'axs';
 UPDATE public.axs_watch_config SET keep_regex = '(\mla kings\M|los angeles kings|vegas golden knights|houston rockets)';
 
-\echo '--- H. the ladder, re-sized for the smaller list: the near bands tighten, the far ones halve'
+\echo '--- H. the ladder the operator set (mig 20261126011500): three bands — a week, four months, beyond'
 SELECT band, max_days, every, sort_order FROM public.axs_watch_cadence ORDER BY sort_order;
 SELECT d AS days_out, public.axs_watch_cadence_every((now() + make_interval(mins => (d*1440)::int))::timestamptz, NULL) AS every
   FROM (VALUES (1.0),(5.0),(10.0),(20.0),(45.0),(90.0),(150.0)) v(d);
 
-\echo '--- I. every band inside 60 days is still at or under hot_every, so the over-cap branch has events to hand out'
+\echo '--- I. only the week band is at or inside hot_every, so over the cap it is the week''s games that are handed out'
 SELECT (SELECT hot_every FROM public.axs_watch_config) AS hot_every,
        count(*) FILTER (WHERE every <= (SELECT hot_every FROM public.axs_watch_config)) AS bands_hot,
        count(*) AS bands_total

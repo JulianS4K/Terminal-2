@@ -97,8 +97,8 @@
 
  id | poll_status |            poll_error             | listing_count | offer_id | order_min | order_max | total_available | price_min | price_max | median_price | listed_quantity | every_min | next_in_future 
 ----+-------------+-----------------------------------+---------------+----------+-----------+-----------+-----------------+-----------+-----------+--------------+-----------------+-----------+----------------
- 11 | failed      | expired: the event is over on AXS |             0 | -        |         - |         - |               - |         - |         - |            - |               - |        10 | t
- 21 | ok          | -                                 |             7 | 555      |         1 |         8 |              51 |        40 |       366 |       117.50 |              50 |        10 | t
+ 11 | failed      | expired: the event is over on AXS |             0 | -        |         - |         - |               - |         - |         - |            - |               - |        30 | t
+ 21 | ok          | -                                 |             7 | 555      |         1 |         8 |              51 |        40 |       366 |       117.50 |              50 |        30 | t
 
  market  |    section    | row | seat_low | seat_high |      seats      | qty | allowed | price |  fee  | all_in | tax |    area    | ticket_type | ada | ga | obstructed 
 ---------+---------------+-----+----------+-----------+-----------------+-----+---------+-------+-------+--------+-----+------------+-------------+-----+----+------------
@@ -123,10 +123,10 @@
 --- G. the feed serves the read event with its listings and withholds the failed one with the reason
  event_id |              name               | listings_available | listing_count | listings_withheld | poll_every_minutes | tevo_event_id 
 ----------+---------------------------------+--------------------+---------------+-------------------+--------------------+---------------
- 11       | Lakers vs. Denver               | f                  |             - | poll_failed       |                 10 |        900011
+ 11       | Lakers vs. Denver               | f                  |             - | poll_failed       |                 30 |        900011
  14       | Big Concert                     | f                  |             - | not_polled        |                  - |        900014
  18       | Disney On Ice presents Jump In! | f                  |             - | not_polled        |                  - |             -
- 21       | Small Hall Show                 | t                  |             7 | -                 |                 10 |             -
+ 21       | Small Hall Show                 | t                  |             7 | -                 |                 30 |             -
 
  listings_in_feed | cheapest 
 ------------------+----------
