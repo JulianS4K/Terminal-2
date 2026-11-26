@@ -1,0 +1,43 @@
+--- A. the two cadences disagree: stored band 2h, shared ladder 30 min, for all three
+ source_event_id | band_we_set | ga_slow | shared_ladder | ladder_is_faster 
+-----------------+-------------+---------+---------------+------------------
+ G1              | 02:00:00    | t       | 00:30:00      | t
+ G2              | 02:00:00    | f       | 00:30:00      | t
+ G3              | 02:00:00    | t       | 00:30:00      | t
+
+--- B. THE FIX. G1 is held to its band; G2 is still overtaken; G3 is due on its own schedule.
+   due_now    
+--------------
+ ["G2", "G3"]
+
+--- C. said as three answers, so a future change to the list order cannot hide a regression
+ source_event_id | due |                 why                  
+-----------------+-----+--------------------------------------
+ G1              | f   | held by the GA rule
+ G2              | t   | overtaken by the ladder, as designed
+ G3              | t   | its own next_poll_at has arrived
+
+--- D. the rule only ever SLOWS: once G1's next_poll_at arrives it is due like anything else
+ g1_due_when_its_time_comes 
+----------------------------
+                          1
+
+--- E. the queue path was never exposed (axs_queue_fill reads the band directly) and still is not
+ enqueued 
+----------
+ 1
+
+ axs_event_id | every_min 
+--------------+-----------
+ G3           |       120
+
+--- F. inert for every other source: ga_slow is written only by the AXS settle
+ ga_slow_not_set | still_overtaken_as_before 
+-----------------+---------------------------
+ t               | t
+
+--- G. and the guard is actually in the function, not just implied by the answers
+ guard_present 
+---------------
+ t
+

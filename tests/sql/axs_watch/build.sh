@@ -61,4 +61,5 @@ stub_10_retention.sql
 20261126065000_retire_dead_events_and_slow_deep_ga.sql
 20261126070000_no_tickets_once_a_day.sql
 20261126124500_queue_ack_writes_a_poll_row.sql
+20261126141500_ga_band_survives_the_ladder.sql
 STEPS
