@@ -1,0 +1,89 @@
+--- A. the knob and the stored measure
+ thin_min_tickets | no_tickets_every 
+------------------+------------------
+               20 | 1 day
+
+   column_name    | data_type | is_nullable 
+------------------+-----------+-------------
+ sellable_tickets | integer   | YES
+
+--- B. THE RULE: 8 sellable tickets is under 20, so T1 takes the one-day band and is pinned
+ t1_read 
+---------
+ ok
+
+--- C. 200 sellable tickets is not thin: T2 keeps its proximity band
+ t2_read 
+---------
+ ok
+
+--- D. THE LANDMINE: T3 has 5,000 GA tickets and ZERO reserved. It must NOT be thin.
+ t3_read 
+---------
+ ok
+
+ source_event_id | sellable_tickets | ga_tickets | ga_slow | cadence_pinned |   band   | listing_count | listed_quantity 
+-----------------+------------------+------------+---------+----------------+----------+---------------+-----------------
+ 9300001         |                8 |          0 | f       | t              | 1 day    |             1 |               8
+ 9300002         |              200 |          0 | f       | f              | 01:00:00 |             1 |             200
+ 9300003         |             5000 |       5000 | t       | t              | 04:00:00 |             1 |            5000
+
+--- E. the feeds: T1 is withheld and SAYS WHY; T2 and the GA show are published
+ event_id | listings_available | listings_withheld | listing_count 
+----------+--------------------+-------------------+---------------
+ 9300001  | f                  | thin_inventory    |             -
+ 9300002  | t                  | -                 |             1
+ 9300003  | t                  | -                 |             1
+
+ event_id | rows_sent | tickets_sent 
+----------+-----------+--------------
+ 9300002  |         1 |          200
+ 9300003  |         1 |         5000
+
+--- F. a FAILED read never parks an event: the measure then describes the kept capture, not AXS
+   t2_failed    
+----------------
+ upstream_error
+
+ source_event_id | poll_status | cadence_pinned |   band   | sellable_tickets 
+-----------------+-------------+----------------+----------+------------------
+ 9300002         | failed      | f              | 01:00:00 |              200
+
+--- G. it UNPINS: T1 comes back with real inventory and the proximity band is restored
+ t1_back 
+---------
+ ok
+
+ source_event_id | sellable_tickets | cadence_pinned |   band   
+-----------------+------------------+----------------+----------
+ 9300001         |              120 | f              | 01:00:00
+
+ event_id | listings_available | listings_withheld 
+----------+--------------------+-------------------
+ 9300001  | t                  | -
+
+--- H. "REPLACE WITH NEW EVENT": a parked event does not hold a place in the list
+ t1_thin_again 
+---------------
+ ok
+
+                       dry_fill_with_one_parked                        
+-----------------------------------------------------------------------
+ {"added": 0, "apply": false, "parked": 1, "retired": 0, "watched": 3}
+
+                              dry_fill_with_none_parked                               
+--------------------------------------------------------------------------------------
+ {"added": 0, "apply": false, "parked": 0, "retired": 1, "watched": 2, "returned": 1}
+
+--- I. the rule is one knob: thin_min_tickets 0 switches it off, and nothing else does
+ t1_with_rule_off 
+------------------
+ ok
+
+ source_event_id | sellable_tickets | cadence_pinned |   band   
+-----------------+------------------+----------------+----------
+ 9300001         |                8 | f              | 01:00:00
+
+ event_id | listings_available | listings_withheld 
+----------+--------------------+-------------------
+ 9300001  | t                  | -

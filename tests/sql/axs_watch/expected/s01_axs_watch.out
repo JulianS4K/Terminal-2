@@ -14,13 +14,13 @@
  2027 Season Tickets                  | Sports   | f
 
 --- B. a dry run reports; the fill retires the passed and the vanished, then fills Big Arena to 3 and Small Hall to 1 by date, from watch_from (tomorrow's Small Hall show is before it)
-                                dry_run                                
------------------------------------------------------------------------
- {"added": 4, "apply": false, "short": [], "retired": 2, "watched": 4}
+                                      dry_run                                       
+------------------------------------------------------------------------------------
+ {"added": 4, "apply": false, "short": [], "parked": 0, "retired": 2, "watched": 4}
 
-                                 fill                                 
-----------------------------------------------------------------------
- {"added": 4, "apply": true, "short": [], "retired": 2, "watched": 4}
+                                       fill                                        
+-----------------------------------------------------------------------------------
+ {"added": 4, "apply": true, "short": [], "parked": 0, "retired": 2, "watched": 4}
 
  id |              name               | days_out |  at   | venue_name |  tevo  |   method   | announced | poll_status | in_run 
 ----+---------------------------------+----------+-------+------------+--------+------------+-----------+-------------+--------
@@ -47,9 +47,9 @@
               0
 
 --- C. a second fill changes nothing
-                              fill_again                              
-----------------------------------------------------------------------
- {"added": 0, "apply": true, "short": [], "retired": 0, "watched": 4}
+                                    fill_again                                     
+-----------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [], "parked": 0, "retired": 0, "watched": 4}
 
 --- D. the tick: no pool reading and nothing recorded leaves the whole pool; with the pool at 0 nothing fires
                                        budget_empty                                       
@@ -203,9 +203,9 @@
  {"lost": 0, "fired": 0, "paused": true, "settled": 0}
 
 --- L. three reads in a row saying AXS does not sell it retire the event; the venue refills from the next by date
-                          fill_after_not_axs                          
-----------------------------------------------------------------------
- {"added": 1, "apply": true, "short": [], "retired": 1, "watched": 4}
+                                fill_after_not_axs                                 
+-----------------------------------------------------------------------------------
+ {"added": 1, "apply": true, "short": [], "parked": 0, "retired": 1, "watched": 4}
 
  id |              name               | days_out 
 ----+---------------------------------+----------

@@ -4,9 +4,9 @@
               180 | 06:00:00
 
 --- B. only the three inside 180 days are picked
-                                                          fill                                                          
-------------------------------------------------------------------------------------------------------------------------
- {"added": 3, "apply": true, "short": [{"quota": 10, "venue": "Big Arena", "short_by": 7}], "retired": 0, "watched": 3}
+                                                                fill                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 3, "apply": true, "short": [{"quota": 10, "venue": "Big Arena", "short_by": 7}], "parked": 0, "retired": 0, "watched": 3}
 
  source_event_id |          name           | days_out 
 -----------------+-------------------------+----------
@@ -15,9 +15,9 @@
  803             | Just Inside The Ceiling |      179
 
 --- C. an event pushed beyond the ceiling is retired with beyond_horizon
-                                                       fill_again                                                       
-------------------------------------------------------------------------------------------------------------------------
- {"added": 0, "apply": true, "short": [{"quota": 10, "venue": "Big Arena", "short_by": 8}], "retired": 1, "watched": 2}
+                                                             fill_again                                                              
+-------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [{"quota": 10, "venue": "Big Arena", "short_by": 8}], "parked": 0, "retired": 1, "watched": 2}
 
  action | axs_event_id |      note      
 --------+--------------+----------------
@@ -29,9 +29,9 @@
  803             |      179
 
 --- D. watch_until_days = NULL turns the ceiling off and the far events come back
-                                                    fill_no_ceiling                                                     
-------------------------------------------------------------------------------------------------------------------------
- {"added": 3, "apply": true, "short": [{"quota": 10, "venue": "Big Arena", "short_by": 5}], "retired": 0, "watched": 5}
+                                                           fill_no_ceiling                                                           
+-------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 3, "apply": true, "short": [{"quota": 10, "venue": "Big Arena", "short_by": 5}], "parked": 0, "retired": 0, "watched": 5}
 
  source_event_id | days_out 
 -----------------+----------

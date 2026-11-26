@@ -72,10 +72,13 @@ SELECT e.source_event_id, e.event_date - current_date AS days_out,
 -- the candidates and out of the catalogue feed — is s18's and s20's subject, and is driven by
 -- the export stub rather than by hand-inserted rows. This scenario owns the signal only.)
 
+-- 60 tickets, not a token 2: under thin_min_tickets (20, mig 20261126230000) a read finding
+-- fewer than 20 sellable tickets is a preemptive sold out and would pin it straight back,
+-- so the unpin this section is about would never be visible.
 \echo '--- G. it UNPINS: Z1 comes back on sale and the band UPDATE restores its proximity band'
 SELECT (public.axs_watch_settle_one('Z1', 200, $j${"status":"ok","body":{"status":"ok","exit_code":0,
   "event":{"id":"Z1"},"listings":[{"kind":"primary","section":"101","row":"A","seats":["1","2"],
-  "quantity":2,"status":"Available","pricing":{"face":400,"fees_total":0,"tax":0,"all_in":400}}]}}$j$::jsonb,
+  "quantity":60,"status":"Available","pricing":{"face":400,"fees_total":0,"tax":0,"all_in":400}}]}}$j$::jsonb,
   false, NULL, false))->>'outcome' AS z1_back_on_sale;
 SELECT source_event_id, listing_count, poll_interval AS band, cadence_pinned
   FROM public.primary_poll_event WHERE source='axs' AND source_event_id='Z1';
@@ -90,7 +93,10 @@ SELECT count(*) AS listing_rows_after_sell_out FROM public.primary_poll_listing
  WHERE source='axs' AND source_event_id='Z1';
 
 \echo '--- I. both arms are installed in the settle, not one'
-SELECT pg_get_functiondef(p.oid) ~ 'IF v_outcome = ''empty'' OR \(v_outcome = ''unparsed''' AS branch_head,
-       pg_get_functiondef(p.oid) ~ 'CASE WHEN v_outcome = ''empty'' OR v_error ~\*' AS picks_one_day
+-- Matched WITHOUT pinning what else joins the condition: mig 20261126230000 put `v_thin OR`
+-- in front of both arms, and a pattern anchored on the start would have quietly flipped this
+-- assertion to false — i.e. to asserting the guard is ABSENT, which is worse than no test.
+SELECT pg_get_functiondef(p.oid) ~ 'v_outcome = ''empty'' OR \(v_outcome = ''unparsed''' AS branch_head,
+       pg_get_functiondef(p.oid) ~ 'CASE WHEN .*v_outcome = ''empty'' OR v_error ~\*' AS picks_one_day
   FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname='public' AND p.proname='axs_watch_settle_one';
