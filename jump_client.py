@@ -76,6 +76,9 @@ SITES = {
     "bostonlegacy": "https://tickets.bostonlegacyfc.com",
     "sounders": "https://tickets.soundersfc.com",
     "northcarolinafc": "https://tickets.northcarolinafc.com",
+    # operator 2026-11-26: "add any primary box-office automatically": Atlético Dallas's Jump site answered
+    # (no games listed yet). Detroit City FC's and the Athletics' did not answer and are not listed.
+    "atleticodallas": "https://tickets.atleticodallas.com",
 }
 # a season, a membership, a plan or a deposit is not a single event (operator 2026-11-23: "remove
 # membership and season listings"); NC Courage's page lists "2027 NC Courage Season" beside its games

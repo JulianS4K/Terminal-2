@@ -11,15 +11,18 @@ two kinds of page and nothing else:
                        charged once an order. A general admission block has no seats and is flagged
 
 Operator 2026-11-23: "poll all the games for si ... every 10 mins", "for si only red bull stadium",
-"remove membership and season listings". No key, no login, no cookie. Nothing is ever written to
+"remove membership and season listings". Widened 2026-11-26: "ping all those and add any primary box-office
+automatically in for both": every venue SI lists is checked, and a venue's events come in as soon as SI sells
+them as the box office there (the page's own `primary` flag); resale events are never read (all_events). No key, no login, no cookie. Nothing is ever written to
 SI Tickets (RULE 2): no cart, no hold, no order.
 """
 from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 from urllib.parse import quote
 
@@ -52,6 +55,26 @@ VENUE_SLUG = "sports-illustrated-stadium"
 # a moment. The poll needs the moment: an event that has started is no longer read (operator 2026-11-24:
 # "fix the game day wart, end it at tipoff"; mig 20261124041030). A venue not listed gets no start time.
 VENUE_TIMEZONES = {"sports-illustrated-stadium": "America/New_York"}
+# where a venue is not in VENUE_TIMEZONES, its state's zone (the zone most of the state keeps)
+STATE_TIMEZONES = {
+    **dict.fromkeys(("CT", "DC", "DE", "FL", "GA", "IN", "MA", "MD", "ME", "MI", "NC", "NH", "NJ", "NY", "OH", "PA",
+                     "RI", "SC", "VA", "VT", "WV"), "America/New_York"),
+    **dict.fromkeys(("AL", "AR", "IA", "IL", "KS", "KY", "LA", "MN", "MO", "MS", "ND", "NE", "OK", "SD", "TN", "TX",
+                     "WI"), "America/Chicago"),
+    **dict.fromkeys(("CO", "ID", "MT", "NM", "UT", "WY"), "America/Denver"),
+    "AZ": "America/Phoenix", **dict.fromkeys(("CA", "NV", "OR", "WA"), "America/Los_Angeles"),
+    "AK": "America/Anchorage", "HI": "Pacific/Honolulu",
+}
+# the venues SI listed on 2026-11-26 (all resale then, operator 2026-11-26: "add any primary box-office
+# automatically"). Each run also adds the venues of SI's own /discover page. A venue where SI sells nothing as
+# the box office is read again only after QUIET_RECHECK_S, so its page is not asked for every 10 minutes.
+KNOWN_VENUES = (
+    "madison-square-garden", "hackensack-meridian-health-theatre-at-the-count-basie-center-for-the-arts",
+    "sony-hall", "webster-hall", "keswick-theatre", "warsaw", "levity-live-comedy-club-at-palisades-center",
+    "shi-stadium",
+)
+QUIET_RECHECK_S = 6 * 3600
+_quiet_until: dict[str, float] = {}
 USER_AGENT = "S4K-primary-poll/1.0"
 TIMEOUT_S = 30
 SLUG_OK = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -91,7 +114,8 @@ def parse_events(props: dict, venue_slug: str = VENUE_SLUG) -> list[dict]:
         # SI writes the venue's local time with a Z; it is not UTC (the page shows the same hour)
         local = _LOCAL.match(ev.get("occurs_at") or "")
         slug = ev.get("event_slug") or ""
-        zone = VENUE_TIMEZONES.get(venue_slug)
+        zone = VENUE_TIMEZONES.get(venue_slug) or STATE_TIMEZONES.get(
+            str(ev.get("venue_state") or venue.get("state") or "").upper())
         start = (datetime.fromisoformat(f"{local.group(1)}T{local.group(2)}").replace(tzinfo=ZoneInfo(zone))
                  .astimezone(timezone.utc).isoformat() if local and zone else None)
         out.append({
@@ -155,6 +179,44 @@ def events(venue_slug: str = VENUE_SLUG) -> list[dict]:
     if not SLUG_OK.match(venue_slug):
         raise SiTicketsError("not a venue slug")
     return parse_events(page_props(_get(f"/venue/{venue_slug}")), venue_slug)
+
+
+def slug_of(name: str) -> str:
+    """A venue's slug on SI as the site makes it from the name ("Sony Hall" -> "sony-hall")."""
+    return re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+
+
+def discovered_venues() -> list[str]:
+    """The venues of the events SI shows on its own /discover page, as slugs."""
+    found = []
+    for ev in page_props(_get("/discover")).get("events") or []:
+        slug = ev.get("venue_slug") or slug_of(ev.get("venue_name") or "")
+        if slug and SLUG_OK.match(slug) and slug not in found:
+            found.append(slug)
+    return found
+
+
+def all_events(now: Callable[[], float] = time.time) -> list[dict]:
+    """The box-office events of every venue SI sells for: Sports Illustrated Stadium (its page failing fails the
+    read, as before), then every other venue SI lists. A venue whose page fails, or where SI sells nothing as the
+    box office, is skipped and asked again after QUIET_RECHECK_S."""
+    out = {e["id"]: e for e in events(VENUE_SLUG)}
+    try:
+        extra = discovered_venues()
+    except SiTicketsError:
+        extra = []
+    for slug in dict.fromkeys((*KNOWN_VENUES, *extra)):
+        if slug == VENUE_SLUG or _quiet_until.get(slug, 0) > now():
+            continue
+        try:
+            found = events(slug)
+        except SiTicketsError:
+            found = []
+        if not found:
+            _quiet_until[slug] = now() + QUIET_RECHECK_S
+        for e in found:
+            out.setdefault(e["id"], e)
+    return list(out.values())
 
 
 def listings(event: dict) -> list[dict]:

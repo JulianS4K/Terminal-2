@@ -10,7 +10,7 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|ims|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc|axs
+        ?source=sitickets|ims|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc|atleticodallas|axs
                                  (a team's own ticket site has no events until it lists single games; `axs` is the
                                  watched list of AXS-sold events read through TicketsData, mig 20261124190000)
         &date_from=2026-11-23&date_to=2027-05-01

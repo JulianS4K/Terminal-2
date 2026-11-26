@@ -225,6 +225,7 @@ def test_the_run_polls_the_indy_500_when_it_is_given_its_client(monkeypatch):
         def events(*_a):
             return []
 
+        all_events = events
         listings = None
 
     out = sync.run(lambda name, params: sent.append((name, params)), _None(), _None(), ("ims",), ims)
