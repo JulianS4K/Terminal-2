@@ -112,10 +112,14 @@ SELECT count(*) AS listings_in_feed, min(price) AS cheapest FROM public.v_primar
 UPDATE public.primary_poll_event SET next_poll_at = now() + interval '1 day' WHERE source = 'axs' AND poll_attempt_at IS NOT NULL;
 SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' AS tick_next;
 SELECT request_id, axs_event_id AS id FROM public.axs_watch_poll WHERE checked_at IS NULL ORDER BY request_id;
-UPDATE public.axs_watch_poll SET fired_at = now() - interval '20 minutes' WHERE request_id = 3;
+-- request 3 goes stale by shrinking stale_after for this tick, not by moving its fired_at back: backdated 20 minutes it
+-- fell on the previous UTC day between 00:00 and 00:20, and fired_today (which counts today's reads) came out one short
+UPDATE public.axs_watch_poll SET fired_at = now() - least(interval '20 minutes', now() - (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')) WHERE request_id = 3;
 INSERT INTO net._http_response (id, status_code, content) VALUES (4, 503, '{"error":"worker unavailable"}');
 UPDATE public.primary_poll_event SET next_poll_at = now() + interval '1 day' WHERE source = 'axs';
+UPDATE public.axs_watch_config SET stale_after = interval '0 seconds';
 SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' AS tick_lost_and_503;
+UPDATE public.axs_watch_config SET stale_after = interval '12 minutes';
 SELECT request_id, axs_event_id AS id, status_code, outcome, error FROM public.axs_watch_poll WHERE request_id IN (3, 4) ORDER BY request_id;
 SELECT source_event_id AS id, poll_status, poll_error, listing_count FROM public.primary_poll_event WHERE source = 'axs' ORDER BY source_event_id;
 
