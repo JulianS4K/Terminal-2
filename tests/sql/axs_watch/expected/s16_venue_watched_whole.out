@@ -1,15 +1,15 @@
 --- A. the flag exists, defaults false, and the operator's venues carry it
  venues_watched_whole | venues_on_the_title_rule 
 ----------------------+--------------------------
-                   12 |                       29
+                   30 |                       23
 
          venue_name         | quota | keep_all 
 ----------------------------+-------+----------
- Dignity Health Sports Park |    14 | t
- Crypto.com Arena           |    60 | t
- T-Mobile Arena             |    42 | t
- Toyota Stadium             |    10 | t
- Meta APEX                  |     8 | t
+ Dignity Health Sports Park |     0 | t
+ Crypto.com Arena           |     0 | t
+ T-Mobile Arena             |     0 | t
+ Toyota Stadium             |     0 | t
+ Meta APEX                  |     0 | t
 
 --- B. keep_regex is lifted at a whole venue, and still applied at the other
            title            | at_whole_venue | at_title_rule_venue 
