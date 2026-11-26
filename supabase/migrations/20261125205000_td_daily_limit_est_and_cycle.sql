@@ -54,6 +54,15 @@
 -- fencing them would free about 72 credits a day out of 10,310. The operator's
 -- instruction on removing them arrived truncated ("Remove td fr"), so nothing is
 -- fenced here; the sub finder keeps its /match credits.
+--
+-- ── THE WATCH'S OWN COUNTER HAD TO MOVE WITH IT ───────────────────────────
+-- axs_watch_budget() counts fired_today over the UTC day. Moving only the credit
+-- gate to Eastern would leave the two disagreeing for the five hours between
+-- 00:00Z and 05:00Z: fired_today resets to 0, so the watch believes it has a
+-- fresh day's cap, while td_credits_today() still carries the Eastern day's
+-- spend and the gate still refuses — the watch would fire into a closed gate for
+-- five hours every night. So fired_today moves to the Eastern day too, and the
+-- operator's "Limit resets midnight est" means one boundary for both.
 -- ============================================================================
 
 BEGIN;
@@ -84,6 +93,43 @@ AS $function$
   -- dividing by a zero cap if the pool is ever read as exhausted.
   SELECT (public.td_credits_today()::numeric * 1.276)
          < greatest((public.axs_watch_budget()->>'daily_cap')::numeric, 1);
+$function$;
+
+-- The day's cap and the day's fires now share one boundary: midnight Eastern.
+-- Only the `today` CTE changes; everything else is the form from mig 20261124190000.
+CREATE OR REPLACE FUNCTION public.axs_watch_budget()
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH cfg AS (SELECT * FROM public.axs_watch_config),
+  reading AS (SELECT u.quota_remaining, u.called_at
+                FROM public.ticketsdata_credit_usage u
+               WHERE u.quota_remaining IS NOT NULL AND u.called_at > now() - interval '6 hours'
+               ORDER BY u.called_at DESC LIMIT 1),
+  reset AS (SELECT CASE WHEN extract(day FROM current_date) < cfg.cycle_reset_day
+                        THEN make_date(extract(year FROM current_date)::int, extract(month FROM current_date)::int, cfg.cycle_reset_day)
+                        ELSE (make_date(extract(year FROM current_date)::int, extract(month FROM current_date)::int, cfg.cycle_reset_day) + interval '1 month')::date END AS next_reset
+              FROM cfg),
+  pool AS (SELECT coalesce((SELECT r.quota_remaining FROM reading r),
+                           cfg.monthly_credits - (SELECT coalesce(sum(u.credits), 0) FROM public.ticketsdata_credit_usage u
+                                                   WHERE u.called_at >= (reset.next_reset - interval '1 month'))) AS remaining,
+                  (SELECT r.called_at FROM reading r) AS read_at
+             FROM cfg, reset),
+  -- the Eastern day, to match td_credits_today() (mig 20261125205000)
+  today AS (SELECT count(*) AS fired FROM public.axs_watch_poll w
+             WHERE w.fired_at >= date_trunc('day', now() AT TIME ZONE 'America/New_York') AT TIME ZONE 'America/New_York')
+  SELECT jsonb_build_object(
+           'pool_remaining', pool.remaining, 'pool_read_at', pool.read_at,
+           'next_reset', reset.next_reset, 'days_left', greatest(reset.next_reset - current_date, 1),
+           'daily_cap', coalesce(cfg.daily_cap_override,
+                                 greatest(floor((pool.remaining - cfg.reserve_credits)::numeric / greatest(reset.next_reset - current_date, 1))::integer, 0)),
+           'fired_today', today.fired,
+           'in_flight', (SELECT count(*) FROM public.axs_watch_poll w WHERE w.checked_at IS NULL AND w.fired_at > now() - cfg.stale_after),
+           'enabled', cfg.enabled)
+    FROM cfg, reset, pool, today
 $function$;
 
 COMMIT;

@@ -44,7 +44,7 @@
 
  id | poll_status | listing_count | poll_interval 
 ----+-------------+---------------+---------------
- 47 | ok          |             1 | 03:00:00
+ 47 | ok          |             1 | 01:00:00
 
 --- E. the cron and the privileges
         jobname        |  schedule  

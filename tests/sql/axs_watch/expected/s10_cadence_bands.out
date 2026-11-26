@@ -1,13 +1,13 @@
 --- A. the bands as seeded, and the scale
   band   |  max_days  |  every   | sort_order | enabled 
 ---------+------------+----------+------------+---------
- d0_2    |          2 | 00:15:00 |          1 | t
- d2_7    |          7 | 00:20:00 |          2 | t
- d7_14   |         14 | 00:30:00 |          3 | t
- d14_30  |         30 | 00:45:00 |          4 | t
- d30_60  |         60 | 01:30:00 |          5 | t
- d60_120 |        120 | 03:00:00 |          6 | t
- d120_up | 1000000000 | 06:00:00 |          7 | t
+ d0_2    |          2 | 00:10:00 |          1 | t
+ d2_7    |          7 | 00:10:00 |          2 | t
+ d7_14   |         14 | 00:15:00 |          3 | t
+ d14_30  |         30 | 00:20:00 |          4 | t
+ d30_60  |         60 | 00:30:00 |          5 | t
+ d60_120 |        120 | 01:00:00 |          6 | t
+ d120_up | 1000000000 | 02:00:00 |          7 | t
 
  cadence_scale | not_on_sale_every | hot_every 
 ---------------+-------------------+-----------
@@ -16,28 +16,28 @@
 --- B. the band an event falls in, by how close it is (no read needed: the function is pure)
  days_out |  every   
 ----------+----------
-      0.5 | 00:15:00
-      1.9 | 00:15:00
-      3.0 | 00:20:00
-      6.9 | 00:20:00
-     10.0 | 00:30:00
-     13.9 | 00:30:00
-     20.0 | 00:45:00
-     29.9 | 00:45:00
-     45.0 | 01:30:00
-     59.9 | 01:30:00
-     90.0 | 03:00:00
-    119.9 | 03:00:00
-    150.0 | 06:00:00
-    179.0 | 06:00:00
+      0.5 | 00:10:00
+      1.9 | 00:10:00
+      3.0 | 00:10:00
+      6.9 | 00:10:00
+     10.0 | 00:15:00
+     13.9 | 00:15:00
+     20.0 | 00:20:00
+     29.9 | 00:20:00
+     45.0 | 00:30:00
+     59.9 | 00:30:00
+     90.0 | 01:00:00
+    119.9 | 01:00:00
+    150.0 | 02:00:00
+    179.0 | 02:00:00
 
 --- C. the scale multiplies every band
  days_out | every_at_scale_2 
 ----------+------------------
-      1.0 | 00:30:00
-     10.0 | 01:00:00
-     45.0 | 03:00:00
-    150.0 | 12:00:00
+      1.0 | 00:20:00
+     10.0 | 00:30:00
+     45.0 | 01:00:00
+    150.0 | 04:00:00
 
 --- D. a read puts the event on its band, not on the shared ladder's interval
                                                     read_b1                                                     
@@ -54,9 +54,9 @@
 
  id | poll_interval | in_future | within_one_interval | on_its_own_phase 
 ----+---------------+-----------+---------------------+------------------
- B1 | 00:15:00      | t         | t                   | t
- B2 | 00:45:00      | t         | t                   | t
- B3 | 06:00:00      | t         | t                   | t
+ B1 | 00:10:00      | t         | t                   | t
+ B2 | 00:20:00      | t         | t                   | t
+ B3 | 02:00:00      | t         | t                   | t
 
 --- E. "not on sale" still wins over the band
                                                                                 read_b4                                                                                
@@ -77,15 +77,15 @@
                              4
 
 --- G. the demand report: the ladder against measured throughput and the day's cap
-                                    demand_shape                                    
-------------------------------------------------------------------------------------
- {"events": 4, "cadence_scale": 1.0, "demand_per_day": 148, "demand_per_hour": 6.2}
+                                    demand_shape                                     
+-------------------------------------------------------------------------------------
+ {"events": 4, "cadence_scale": 1.0, "demand_per_day": 276, "demand_per_hour": 11.5}
 
 --- H. the daily limit is the Eastern day and comes from the cycle (mig 20261125205000)
  cycle_credits | cap_is_cycle_paced | daily_ok 
 ---------------+--------------------+----------
         250000 | t                  | t
 
- eastern_day | utc_day_would_include_it 
--------------+--------------------------
-           4 |                     1004
+ eastern_day_counts | credits_before_eastern_midnight | credits_in_the_ledger 
+--------------------+---------------------------------+-----------------------
+                 11 |                            1000 |                  1011

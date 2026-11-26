@@ -3,6 +3,7 @@
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
+UPDATE public.axs_watch_config SET keep_regex = NULL;  -- these fixtures are not the operator's three teams (mig 20261125232000)
 
 -- two venues of three places each, a list of six; the build's own first fill, against an empty export, is forgotten
 DELETE FROM public.axs_watch_venue;

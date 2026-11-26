@@ -5,6 +5,7 @@
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
+UPDATE public.axs_watch_config SET keep_regex = NULL;  -- these fixtures are not the operator's three teams (mig 20261125232000)
 
 -- seven watched events on the ladder: one today (10 min), two within two days (30 min), one in a week (an hour), three far out
 INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date, venue_name, ticket_url, poll_status, next_poll_at, poll_interval)

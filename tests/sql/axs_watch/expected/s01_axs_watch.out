@@ -97,8 +97,8 @@
 
  id | poll_status |            poll_error             | listing_count | offer_id | order_min | order_max | total_available | price_min | price_max | median_price | listed_quantity | every_min | next_in_future 
 ----+-------------+-----------------------------------+---------------+----------+-----------+-----------+-----------------+-----------+-----------+--------------+-----------------+-----------+----------------
- 11 | failed      | expired: the event is over on AXS |             0 | -        |         - |         - |               - |         - |         - |            - |               - |        20 | t
- 21 | ok          | -                                 |             7 | 555      |         1 |         8 |              51 |        40 |       366 |       117.50 |              50 |        15 | t
+ 11 | failed      | expired: the event is over on AXS |             0 | -        |         - |         - |               - |         - |         - |            - |               - |        10 | t
+ 21 | ok          | -                                 |             7 | 555      |         1 |         8 |              51 |        40 |       366 |       117.50 |              50 |        10 | t
 
  market  |    section    | row | seat_low | seat_high |      seats      | qty | allowed | price |  fee  | all_in | tax |    area    | ticket_type | ada | ga | obstructed 
 ---------+---------------+-----+----------+-----------+-----------------+-----+---------+-------+-------+--------+-----+------------+-------------+-----+----+------------
@@ -123,10 +123,10 @@
 --- G. the feed serves the read event with its listings and withholds the failed one with the reason
  event_id |              name               | listings_available | listing_count | listings_withheld | poll_every_minutes | tevo_event_id 
 ----------+---------------------------------+--------------------+---------------+-------------------+--------------------+---------------
- 11       | Lakers vs. Denver               | f                  |             - | poll_failed       |                 20 |        900011
+ 11       | Lakers vs. Denver               | f                  |             - | poll_failed       |                 10 |        900011
  14       | Big Concert                     | f                  |             - | not_polled        |                  - |        900014
  18       | Disney On Ice presents Jump In! | f                  |             - | not_polled        |                  - |             -
- 21       | Small Hall Show                 | t                  |             7 | -                 |                 15 |             -
+ 21       | Small Hall Show                 | t                  |             7 | -                 |                 10 |             -
 
  listings_in_feed | cheapest 
 ------------------+----------
@@ -142,9 +142,9 @@
           3 | 14
           4 | 18
 
-                                       tick_lost_and_503                                       
------------------------------------------------------------------------------------------------
- {"lost": 1, "fired": 0, "settled": 1, "in_flight": 0, "fired_today": 4, "upstream_errors": 2}
+                              tick_lost_and_503                              
+-----------------------------------------------------------------------------
+ {"lost": 1, "fired": 0, "settled": 1, "in_flight": 0, "upstream_errors": 2}
 
  request_id | id | status_code |    outcome     |             error              
 ------------+----+-------------+----------------+--------------------------------
@@ -159,30 +159,30 @@
  21 | ok          | -                                  |             7
 
 --- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight
-                                          tick_slowed                                          
------------------------------------------------------------------------------------------------
- {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "fired_today": 6, "upstream_errors": 3}
+                                 tick_slowed                                 
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "upstream_errors": 3}
 
  now_in_flight 
 ---------------
              1
 
---- J. over the day's cap (pinned at 5, 5 fired today) only the hot events (30 minutes or faster) are read, and only up to the overrun
-                                        budget_pinned                                         
-----------------------------------------------------------------------------------------------
- {"enabled": true, "daily_cap": 5, "in_flight": 0, "fired_today": 5, "pool_remaining": 99998}
+--- J. over the day's cap only the hot events (30 minutes or faster) are read, and only up to the overrun
+ at_the_cap | cap_is_not_zero | enabled | in_flight 
+------------+-----------------+---------+-----------
+ t          | t               | true    | 0
 
-                                                  tick_capped                                                  
----------------------------------------------------------------------------------------------------------------
- {"lost": 0, "fired": 1, "settled": 0, "daily_cap": 5, "in_flight": 1, "fired_today": 6, "upstream_errors": 3}
+                                 tick_capped                                 
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "upstream_errors": 3}
 
  id 
 ----
  21
 
-                                            tick_capped_no_overrun                                             
----------------------------------------------------------------------------------------------------------------
- {"lost": 0, "fired": 0, "settled": 0, "daily_cap": 5, "in_flight": 0, "fired_today": 5, "upstream_errors": 3}
+                           tick_capped_no_overrun                            
+-----------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "settled": 0, "in_flight": 0, "upstream_errors": 3}
 
 --- J2. one fire a tick (the default): with two slots free only one request goes out, the next tick sends the second
                                   tick_one                                   

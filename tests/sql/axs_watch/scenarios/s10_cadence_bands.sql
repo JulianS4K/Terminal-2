@@ -70,8 +70,16 @@ SELECT (SELECT monthly_credits FROM public.axs_watch_config) AS cycle_credits,
                   - (SELECT reserve_credits FROM public.axs_watch_config))
                  / (public.axs_watch_budget()->>'days_left')::numeric) AS cap_is_cycle_paced,
        public.td_daily_budget_ok() AS daily_ok;
+-- Two charges either side of EASTERN midnight, stated in Eastern so the assertion does not move with the UTC
+-- clock. An earlier form of this put a charge at "today 02:00Z", which is the previous Eastern day only while
+-- the UTC clock is past 05:00Z — so the test stopped demonstrating anything after midnight UTC.
 INSERT INTO public.ticketsdata_credit_usage (called_at, credits, platform, endpoint, status_code)
-VALUES (date_trunc('day', now()) + interval '2 hours', 1000, 'AXS', '/fetch', 200);
-SELECT public.td_credits_today() AS eastern_day,
+VALUES ((date_trunc('day', now() AT TIME ZONE 'America/New_York') - interval '1 hour') AT TIME ZONE 'America/New_York',
+        1000, 'AXS', '/fetch', 200),
+       ((date_trunc('day', now() AT TIME ZONE 'America/New_York') + interval '1 hour') AT TIME ZONE 'America/New_York',
+            7, 'AXS', '/fetch', 200);
+SELECT public.td_credits_today() AS eastern_day_counts,
        (SELECT coalesce(sum(credits),0) FROM public.ticketsdata_credit_usage
-         WHERE (called_at AT TIME ZONE 'UTC')::date = current_date) AS utc_day_would_include_it;
+         WHERE (called_at AT TIME ZONE 'America/New_York')::date
+             < (now() AT TIME ZONE 'America/New_York')::date) AS credits_before_eastern_midnight,
+       (SELECT coalesce(sum(credits),0) FROM public.ticketsdata_credit_usage) AS credits_in_the_ledger;
