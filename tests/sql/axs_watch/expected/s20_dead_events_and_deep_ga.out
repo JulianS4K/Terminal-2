@@ -1,0 +1,128 @@
+--- A. the knobs as seeded
+ no_tickets_retire_days | ga_slow_every | ga_slow_min_tickets 
+------------------------+---------------+---------------------
+                      7 | 02:00:00      |                 100
+
+                                 fill_in                                  
+--------------------------------------------------------------------------
+ {"added": 5, "apply": true, "retired": 0, "watched": 5, "backfilled": 5}
+
+ on_the_list 
+-------------
+           5
+
+--- B. the four dead-ish reads land by the WORKER path (axs_watch_record)
+   id    | outcome  
+---------+----------
+ 9300001 | unparsed
+ 9300002 | unparsed
+ 9300003 | unparsed
+ 9300004 | unparsed
+
+ poll_rows_written 
+-------------------
+                 4
+
+--- C. axs_watch_event_dead: cancelled always, no-tickets only inside the window
+   id    |      name       | days_out | dead 
+---------+-----------------+----------+------
+ 9300001 | Cancelled Near  |        3 | t
+ 9300002 | Cancelled Far   |      100 | t
+ 9300003 | No Tickets Near |        3 | t
+ 9300004 | No Tickets Far  |      100 | f
+ 9300005 | Healthy         |       30 | f
+
+--- D. a dead read also drops the cadence at once, so the wait costs little
+   id    | poll_interval | on_the_slow_rule 
+---------+---------------+------------------
+ 9300001 | 06:00:00      | t
+ 9300003 | 06:00:00      | t
+
+--- E. the fill retires the dead ones and does NOT hand their places back
+                      fill_retires                       
+---------------------------------------------------------
+ {"added": 0, "apply": true, "retired": 3, "watched": 2}
+
+  still_listed   
+-----------------
+ 9300004,9300005
+
+   id    |       note        
+---------+-------------------
+ 9300001 | over_or_cancelled
+ 9300002 | over_or_cancelled
+ 9300003 | over_or_cancelled
+
+--- F. a second fill does not resurrect them (the candidate guard)
+                       fill_again                        
+---------------------------------------------------------
+ {"added": 0, "apply": true, "retired": 0, "watched": 2}
+
+  still_listed   
+-----------------
+ 9300004,9300005
+
+--- G. nor does the catalogue publish them
+                                     catalogue                                     
+-----------------------------------------------------------------------------------
+ {"watched": 2, "catalogue_only": 0, "catalogue_added": 0, "catalogue_dropped": 0}
+
+ in_the_api_feed 
+-----------------
+ 9300004,9300005
+
+--- G2. the QUEUE path writes NO poll row, so the check must work off poll_error
+                               fill_adds_it                               
+--------------------------------------------------------------------------
+ {"added": 1, "apply": true, "retired": 0, "watched": 3, "backfilled": 1}
+
+ settled_without_a_poll_row 
+----------------------------
+ unparsed
+
+ poll_rows_for_it 
+------------------
+                0
+
+          stored_error          | dead_anyway 
+--------------------------------+-------------
+ This event has been cancelled. | t
+
+--- H. rule 3: GA-only over 100 TICKETS moves to 2 hours; ADA does not disqualify
+                         fill_adds_the_ga_events                          
+--------------------------------------------------------------------------
+ {"added": 4, "apply": true, "retired": 1, "watched": 7, "backfilled": 4}
+
+   id    | outcome 
+---------+---------
+ 9400001 | ok
+ 9400002 | ok
+ 9400003 | ok
+ 9400004 | ok
+
+--- H2. what the reads actually stored
+   id    | listings | ga | ada | reserved_non_ada | ga_tickets 
+---------+----------+----+-----+------------------+------------
+ 9400001 |        1 |  1 |   0 |                0 |        500
+ 9400002 |        2 |  1 |   1 |                0 |        500
+ 9400003 |        1 |  1 |   0 |                0 |         40
+ 9400004 |        2 |  1 |   0 |                1 |        500
+
+--- I. only the two deep-GA events are slowed, and only to 2 hours
+   id    |       name       | ga_slow | poll_interval 
+---------+------------------+---------+---------------
+ 9400001 | GA deep          | t       | 02:00:00
+ 9400002 | GA deep plus ADA | t       | 02:00:00
+ 9400003 | GA shallow       | f       | 01:00:00
+ 9400004 | GA plus reserved | f       | 01:00:00
+
+--- J. the 3-arg cadence only ever SLOWS: a day-of event is 30 min, not faster
+ band_normal | band_ga_slow | never_faster 
+-------------+--------------+--------------
+ 00:30:00    | 02:00:00     | t
+
+--- K. the gauge counts the slowed events at their slowed rate
+                                                        demand                                                         
+-----------------------------------------------------------------------------------------------------------------------
+ {"events": 6, "ga_slow": 2, "cadence_scale": 1.0, "catalogue_only": 1, "demand_per_day": 120, "demand_per_hour": 5.0}
+

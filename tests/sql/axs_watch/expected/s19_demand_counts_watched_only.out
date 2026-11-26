@@ -4,9 +4,9 @@
                50 |      10 |             40
 
 --- B. the gauge counts the 10, and says so
-                                                  demand                                                   
------------------------------------------------------------------------------------------------------------
- {"events": 10, "cadence_scale": 1.0, "catalogue_only": 40, "demand_per_day": 160, "demand_per_hour": 6.7}
+                                                         demand                                                          
+-------------------------------------------------------------------------------------------------------------------------
+ {"events": 10, "ga_slow": 0, "cadence_scale": 1.0, "catalogue_only": 40, "demand_per_day": 160, "demand_per_hour": 6.7}
 
 --- C. the arithmetic: 10 events on the 90-minute band, not 50
  counts_watched_only | reports_the_catalogue | demand_is_exact 
