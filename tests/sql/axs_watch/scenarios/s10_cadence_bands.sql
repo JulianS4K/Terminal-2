@@ -40,7 +40,13 @@ SELECT public.axs_watch_record('B2', 200, $j${"status":"ok","response_s":5.0,"qu
 SELECT public.axs_watch_record('B3', 200, $j${"status":"ok","response_s":5.0,"quota_remaining":99988,"body":{"status":"ok","exit_code":0,"elapsed_seconds":5.0,"event":{"id":"B3"},"listings":[]}}$j$::jsonb) - 'request_id' AS read_b3;
 SELECT source_event_id AS id, poll_interval,
        next_poll_at > now() AS in_future,
-       next_poll_at <= now() + poll_interval AS within_one_interval,
+       -- the bound is due_slack + one interval, not one interval: mig 20261126023000 anchors the
+       -- phase search at now() + due_slack so the chosen instant cannot land inside the window in
+       -- which primary_poll_due would call the event due again. Asserting the narrower bound here
+       -- failed about 3% of runs per event, whenever the phase instant fell in the last minute.
+       next_poll_at > now() + (SELECT due_slack FROM public.primary_poll_config) AS clears_due_slack,
+       next_poll_at <= now() + (SELECT due_slack FROM public.primary_poll_config) + poll_interval
+         AS within_slack_plus_one_interval,
        (extract(epoch FROM next_poll_at)::bigint % extract(epoch FROM poll_interval)::bigint)
          = ((hashtext(source_event_id)::bigint & 2147483647) % extract(epoch FROM poll_interval)::bigint) AS on_its_own_phase
   FROM public.primary_poll_event WHERE source='axs' AND source_event_id IN ('B1','B2','B3') ORDER BY 1;
