@@ -1,0 +1,41 @@
+--- A. 60 reads that each took 6s upstream but sat 9s in a queue lane before finishing
+--- B. settle says 9s, the read says 6s; s_per_read must follow the READ
+                                                                                                               pace                                                                                                               
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"reader": "worker", "spacing_s": 3.0000000000000000, "s_per_read": 7.0, "target_pct": 75, "settle_p50_s": 9.0, "settle_p90_s": 9.0, "reads_measured": 60, "reads_per_hour": 514, "response_p50_s": 6.0, "usable_per_hour": 385}
+
+--- C. said plainly: the measure is the read + 1s, not the settle + 1s
+ settle_p50 | response_p50 | s_per_read | follows_the_read | beats_the_inflated_settle 
+------------+--------------+------------+------------------+---------------------------
+        9.0 |          6.0 |        7.0 | t                | t
+
+--- D. THE SPACING FLOOR SURVIVES: a 1s read cannot claim to beat the 3s rule
+ response_p50 |     spacing_s      | s_per_read | floored_at_the_spacing 
+--------------+--------------------+------------+------------------------
+          1.0 | 3.0000000000000000 |        3.0 | t
+
+--- E. a read that TIMED OUT upstream still reports its real cost, so slow is still slow
+ response_p50 | s_per_read | reads_per_hour | a_20s_read_is_not_hidden 
+--------------+------------+----------------+--------------------------
+         20.1 |       21.1 |            171 | t
+
+--- F. a LOST read has no response_s at all, so the chain falls back to settle
+ response_p50_is_null | settle_p50 | s_per_read | fell_back_to_settle 
+----------------------+------------+------------+---------------------
+ -                    |       12.0 |       13.0 | t
+
+--- G. and the brake: with the honest measure the bands are NOT throttled
+ usable_honest | usable_if_it_still_measured_settle 
+---------------+------------------------------------
+           385 |                                270
+
+--- H. the guard is in the installed function, both halves of it
+ measures_the_read | spacing_floor_intact 
+-------------------+----------------------
+ f                 | t
+
+--- I. THE DB PATH keeps measuring the settle: there the wait is pg_net's own queue,
+---    which is real capacity, and response_s (the browser run) would not show it.
+ reader | settle_p50 | response_p50 | s_per_read | db_still_measures_the_settle 
+--------+------------+--------------+------------+------------------------------
+ db     |       30.0 |          6.0 |       31.0 | t

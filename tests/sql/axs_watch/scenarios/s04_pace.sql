@@ -30,7 +30,11 @@ SELECT (public.axs_watch_pace_apply()) - 'demand_per_hour' - 'daily_cap' - 'read
 SELECT far_out_every, pace_s_per_read, pace_set_at IS NOT NULL AS pace_set, pace_note FROM public.axs_watch_config;
 
 \echo '--- C. a slow reader (40 s a read) at a 10% target: no rung fits, the slowest allowed is taken; at 100% the hour fits again; the day''s cap also binds'
-UPDATE public.axs_watch_poll SET checked_at = fired_at + interval '40 seconds' WHERE reader = 'worker';
+-- response_s too, not just checked_at: since mig 20261126163000 the worker path sizes a read
+-- by what TicketsData actually spent on it, so stretching the settle alone would describe the
+-- queue's own scheduling slack rather than a slow reader, and would (rightly) be ignored.
+UPDATE public.axs_watch_poll SET checked_at = fired_at + interval '40 seconds', response_s = 40.0
+ WHERE reader = 'worker';
 UPDATE public.axs_watch_config SET pace_target_pct = 10;
 SELECT (public.axs_watch_pace_apply()) - 'note' - 'demand_per_hour' - 'daily_cap' - 'reads_measured' - 'settle_p50_s' - 'settle_p90_s' - 'response_p50_s' - 'spacing_s' - 'events' - 'day_of_events' - 'far_out_days' AS slow_reader;
 UPDATE public.axs_watch_config SET pace_target_pct = 100;

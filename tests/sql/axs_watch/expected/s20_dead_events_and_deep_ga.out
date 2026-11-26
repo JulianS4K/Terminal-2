@@ -88,10 +88,12 @@
 --------------------------------+-------------
  This event has been cancelled. | t
 
---- H. rule 3: GA-only over 100 TICKETS moves to 2 hours; ADA does not disqualify
+--- H. rule 3: GA-only over 100 TICKETS is slowed; ADA does not disqualify.
+---    These fixtures carry MORE THAN 400 GA tickets, so since mig 20261126194500 they
+---    land on the ladder's SECOND step (4h), not the first (2h). s27 owns the ladder.
                          fill_adds_the_ga_events                          
 --------------------------------------------------------------------------
- {"added": 4, "apply": true, "retired": 1, "watched": 7, "backfilled": 4}
+ {"added": 4, "apply": true, "retired": 1, "watched": 6, "backfilled": 4}
 
    id    | outcome 
 ---------+---------
@@ -108,11 +110,11 @@
  9400003 |        1 |  1 |   0 |                0 |         40
  9400004 |        2 |  1 |   0 |                1 |        500
 
---- I. only the two deep-GA events are slowed, and only to 2 hours
+--- I. only the two deep-GA events are slowed, and only ever slowed (here to 4h)
    id    |       name       | ga_slow | poll_interval 
 ---------+------------------+---------+---------------
- 9400001 | GA deep          | t       | 02:00:00
- 9400002 | GA deep plus ADA | t       | 02:00:00
+ 9400001 | GA deep          | t       | 04:00:00
+ 9400002 | GA deep plus ADA | t       | 04:00:00
  9400003 | GA shallow       | f       | 01:00:00
  9400004 | GA plus reserved | f       | 01:00:00
 
@@ -140,4 +142,3 @@
 ---------+---------------------+---------------+-------------------+----------------+------
  9500001 | No Tickets Far Off  | 1 day         | t                 | f              | f
  9500002 | Not On Sale Far Off | 06:00:00      | f                 | t              | f
-
