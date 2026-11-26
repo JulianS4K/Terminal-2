@@ -1,4 +1,4 @@
--- Migration 20261126130000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(replaced),axs_watch_pace()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261126124500 (main's newest AXS watch migration; 20261126065000 / 070000 / 124500 patch settle_one, pace_apply, the fills and queue_ack in place, none of the functions re-created here),20261126060000 (next()'s e.watch predicate, carried),20261126053000 (the pacer that now reads pace() for cadence_scale),20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
+-- Migration 20261126200000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(replaced),axs_watch_pace()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261126194500 (main's newest AXS watch migration),20261126163000 (pace() measures the read, carried),20261126060000 (next()'s e.watch predicate, carried),20261126053000 (the pacer that now reads pace() for cadence_scale),20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
 --
 -- THE AXS WATCH CAN BE READ BY OUR OWN BROWSER EXTENSION, WITHOUT TICKETSDATA.
 -- Operator 2026-11-25: "Look at the axs poller, I want to build our own" ... "So we can poll more events and more
@@ -32,7 +32,8 @@
 --                             apart at the least, so a read costs (settle + 1 s) / ext_lanes; 45 s assumed until measured.
 --                             Since 20261126053000 the hourly pacer sets cadence_scale from this function's usable_per_hour,
 --                             so without the lanes it would count the extension at a quarter of its throughput and slow the
---                             watch for nothing.
+--                             watch for nothing. 20261126163000's patch is carried: the worker (and the extension) is costed
+--                             by its response time, not its settle, which carries the queue's wait.
 --
 -- Cadence: the bands of 20261125214500 / 20261126011500 (axs_watch_cadence) times cadence_scale, which the hourly pacer
 -- (20261126053000) sets between cadence_scale_floor (1.0) and cadence_scale_max. To let the extension read more often than
@@ -50,8 +51,8 @@ ALTER TABLE public.axs_watch_poll DROP CONSTRAINT IF EXISTS axs_watch_poll_reade
 ALTER TABLE public.axs_watch_poll ADD CONSTRAINT axs_watch_poll_reader_check CHECK (reader IN ('db', 'worker', 'extension'));
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_lanes smallint NOT NULL DEFAULT 4 CHECK (ext_lanes BETWEEN 1 AND 8);
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_spacing_ms integer NOT NULL DEFAULT 4000 CHECK (ext_spacing_ms BETWEEN 1000 AND 60000);
-COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261126130000)';
-COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261126130000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261126200000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261126200000)';
 
 -- The budget (as 20261125205000): the extension's reads are not TicketsData's and spend nothing.
 CREATE OR REPLACE FUNCTION public.axs_watch_budget()
@@ -78,7 +79,7 @@ AS $function$
   -- the Eastern day, to match td_credits_today() (mig 20261125205000)
   today AS (SELECT count(*) AS fired FROM public.axs_watch_poll w
              WHERE w.fired_at >= date_trunc('day', now() AT TIME ZONE 'America/New_York') AT TIME ZONE 'America/New_York'
-               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261126130000)
+               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261126200000)
   SELECT jsonb_build_object(
            'pool_remaining', pool.remaining, 'pool_read_at', pool.read_at,
            'next_reset', reset.next_reset, 'days_left', greatest(reset.next_reset - current_date, 1),
@@ -112,7 +113,7 @@ BEGIN
   IF v_cfg.reader = 'db' THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the database reads (axs_watch_config.reader)');
   END IF;
-  -- each reader is handed events only while it is the one switched on (mig 20261126130000)
+  -- each reader is handed events only while it is the one switched on (mig 20261126200000)
   IF v_cfg.reader = 'extension' AND NOT v_ext THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
   END IF;
@@ -197,7 +198,7 @@ BEGIN
   IF NOT v_cfg.queue_enabled THEN
     RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the queue is off (axs_watch_config.queue_enabled)');
   END IF;
-  -- the queue feeds the TicketsData worker; while the extension reads it hands out nothing (mig 20261126130000)
+  -- the queue feeds the TicketsData worker; while the extension reads it hands out nothing (mig 20261126200000)
   IF v_cfg.reader = 'extension' THEN
     RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
   END IF;
@@ -290,18 +291,20 @@ AS $function$
                percentile_cont(0.9) WITHIN GROUP (ORDER BY settle_s) AS settle_p90,
                percentile_cont(0.5) WITHIN GROUP (ORDER BY response_s) AS response_p50
           FROM reads),
-  sp AS (SELECT CASE cfg.reader WHEN 'worker' THEN cfg.read_spacing_ms / 1000.0
-                                WHEN 'extension' THEN cfg.ext_spacing_ms / 1000.0
-                                ELSE 15.0 END AS spacing_s,
-                CASE WHEN cfg.reader = 'extension' THEN cfg.ext_lanes ELSE 1 END AS lanes,
-                -- unmeasured: 10 s a read, or 46 s for the extension (a browser read of AXS, TicketsData's own timings)
-                CASE WHEN cfg.reader = 'extension' THEN 45.0 ELSE 9.0 END AS settle_guess
-           FROM cfg),
-  pace AS (SELECT m.n, m.settle_p50, m.settle_p90, m.response_p50, sp.spacing_s, sp.lanes,
-                  -- a read takes its settle plus a second of overhead, shared by the lanes reading at once (the extension's
-                  -- ext_lanes; one otherwise), never less than the spacing
-                  greatest((coalesce(m.settle_p50, sp.settle_guess) + 1.0) / sp.lanes, sp.spacing_s) AS s_per_read
-             FROM m, sp),
+  -- the extension reads ext_lanes events at once (one container each), ext_spacing_ms apart at the least; every other
+  -- reader one at a time. A read costs its own time plus a second of overhead, shared by the lanes, never less than the
+  -- spacing (the floor: the pacer never claims to beat the reader's spacing). Its own time is the response
+  -- (20261126163000: the worker's settle carries the queue's wait; the extension's response is the page's own read
+  -- time), the settle where there is none (the db path, whose wait is real capacity); unmeasured, 10 s, or 46 s for a
+  -- browser read of AXS (TicketsData's own timings)
+  pace AS (SELECT m.n, m.settle_p50, m.settle_p90, m.response_p50,
+                  CASE WHEN cfg.reader = 'extension' THEN cfg.ext_spacing_ms / 1000.0 WHEN cfg.reader = 'worker' THEN cfg.read_spacing_ms / 1000.0 ELSE 15.0 END AS spacing_s,
+                  CASE WHEN cfg.reader = 'extension' THEN cfg.ext_lanes ELSE 1 END AS lanes,
+                  greatest((coalesce(CASE WHEN cfg.reader IN ('worker', 'extension') THEN m.response_p50 END, m.settle_p50,
+                                     CASE WHEN cfg.reader = 'extension' THEN 45.0 ELSE 9.0 END) + 1.0)
+                           / CASE WHEN cfg.reader = 'extension' THEN cfg.ext_lanes ELSE 1 END,
+                           CASE WHEN cfg.reader = 'extension' THEN cfg.ext_spacing_ms / 1000.0 WHEN cfg.reader = 'worker' THEN cfg.read_spacing_ms / 1000.0 ELSE 15.0 END) AS s_per_read
+             FROM m, cfg),
   cap AS (SELECT pace.*, floor(3600.0 / pace.s_per_read) AS reads_per_hour,
                  floor(3600.0 / pace.s_per_read * cfg.pace_target_pct / 100.0) AS usable_per_hour,
                  (public.axs_watch_budget()->>'daily_cap')::integer AS daily_cap

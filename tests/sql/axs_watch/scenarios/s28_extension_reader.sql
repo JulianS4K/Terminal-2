@@ -1,8 +1,8 @@
--- The extension reader (mig 20261126130000): our own Firefox extension reads the AXS pages, the database chooses and
+-- The extension reader (mig 20261126200000): our own Firefox extension reads the AXS pages, the database chooses and
 -- settles as for the TicketsData worker. With reader = 'extension' only a worker id starting 'ext:' is handed events,
 -- with no TicketsData cap and the extension's spacing and lanes; a read is settled with no credit spent and a ledger row
 -- marked extension; a repeat of the same read returns the first. With reader = 'worker' the extension is handed nothing.
--- (Was s10, s13, s16, s18 and s20 on its branch; renumbered after main's scenarios.)
+-- (Renumbered after main's scenarios each time main moved: s10, s13, s16, s18, s20, s22, now s28.)
 -- Events are dated days ahead, so stop_before_start (6 hours) never reaches them whatever the hour.
 \set QUIET on
 \pset footer off

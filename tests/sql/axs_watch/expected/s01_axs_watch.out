@@ -234,6 +234,7 @@
  axs_watch_cadence_demand | f    | t
  axs_watch_cadence_every  | f    | t
  axs_watch_cadence_every  | f    | t
+ axs_watch_cadence_every  | t    | t
  axs_watch_event_dead     | f    | t
  axs_watch_fill           | f    | t
  axs_watch_next           | f    | t

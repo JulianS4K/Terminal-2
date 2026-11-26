@@ -77,7 +77,7 @@ capture file shows which answers the page did get, and that's what to send back 
 
 ## Switching the watch over
 
-1. Apply mig `20261126130000_axs_watch_extension_reader.sql`.
+1. Apply mig `20261126200000_axs_watch_extension_reader.sql`.
 2. Set `AXS_EXT_INGEST_SECRET` on the web service. The routes answer 503 while it's unset.
 3. Install the extension, enter the secret and press **Start**. It idles until step 4.
 4. Hand the reading over to the extension:
