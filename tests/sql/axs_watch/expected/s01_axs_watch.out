@@ -142,9 +142,9 @@
           3 | 14
           4 | 18
 
-                              tick_lost_and_503                              
------------------------------------------------------------------------------
- {"lost": 1, "fired": 0, "settled": 1, "in_flight": 0, "upstream_errors": 2}
+                tick_lost_and_503                
+-------------------------------------------------
+ {"lost": 1, "settled": 1, "upstream_errors": 2}
 
  request_id | id | status_code |    outcome     |             error              
 ------------+----+-------------+----------------+--------------------------------
@@ -159,9 +159,9 @@
  21 | ok          | -                                  |             7
 
 --- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight
-                                 tick_slowed                                 
------------------------------------------------------------------------------
- {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "upstream_errors": 3}
+                   tick_slowed                   
+-------------------------------------------------
+ {"lost": 0, "settled": 0, "upstream_errors": 3}
 
  now_in_flight 
 ---------------

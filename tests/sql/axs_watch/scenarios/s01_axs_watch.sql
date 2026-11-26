@@ -116,14 +116,25 @@ SELECT request_id, axs_event_id AS id FROM public.axs_watch_poll WHERE checked_a
 UPDATE public.axs_watch_poll SET fired_at = now() - interval '20 minutes' WHERE request_id = 3;
 INSERT INTO net._http_response (id, status_code, content) VALUES (4, 503, '{"error":"worker unavailable"}');
 UPDATE public.primary_poll_event SET next_poll_at = now() + interval '1 day' WHERE source = 'axs';
-SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_lost_and_503;
+-- `fired` and `in_flight` are NOT asserted for this tick or section I's, and must not be
+-- re-added. They depend on where the wall clock sits inside a global 30-minute grid, so
+-- asserting them failed about 3% of runs on any branch. Why: a failed read's retry is
+-- primary_poll_next(least(primary_poll_interval(...), retry_after) = 30 min, next_poll_at), and
+-- because the park above leaves next_poll_at in the FUTURE that function anchors on now() and
+-- returns (floor(now/1800)+1)*1800 — the next half-hour boundary, which can be 0 s away. Inside
+-- due_slack (60 s) of that boundary a read this tick has just failed is legitimately due again,
+-- so the tick settles it AND re-fires it, and the fire section I expects happens here instead.
+-- One run in thirty lands in that window; CI caught it at 21:29:58Z, two seconds before the
+-- 21:30 grid point. The subjects of both sections — one read lost, one 503, the error count, and
+-- the drainer holding to a single flight (`now_in_flight` below) — do not move with it.
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' - 'fired' - 'in_flight' AS tick_lost_and_503;
 SELECT request_id, axs_event_id AS id, status_code, outcome, error FROM public.axs_watch_poll WHERE request_id IN (3, 4) ORDER BY request_id;
 SELECT source_event_id AS id, poll_status, poll_error, listing_count FROM public.primary_poll_event WHERE source = 'axs' ORDER BY source_event_id;
 
 \echo '--- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight'
 UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 minute' WHERE source = 'axs';
 INSERT INTO public.axs_watch_poll (request_id, axs_event_id, fired_at, checked_at, outcome) VALUES (900, '11', now() - interval '5 minutes', now() - interval '4 minutes', 'timeout');
-SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_slowed;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' - 'fired' - 'in_flight' AS tick_slowed;
 SELECT count(*) AS now_in_flight FROM public.axs_watch_poll WHERE checked_at IS NULL;
 
 \echo '--- J. over the day''s cap only the hot events (30 minutes or faster) are read, and only up to the overrun'
