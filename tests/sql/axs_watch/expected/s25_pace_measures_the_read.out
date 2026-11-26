@@ -39,4 +39,3 @@
  reader | settle_p50 | response_p50 | s_per_read | db_still_measures_the_settle 
 --------+------------+--------------+------------+------------------------------
  db     |       30.0 |          6.0 |       31.0 | t
-

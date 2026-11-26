@@ -75,4 +75,3 @@ psql:s24_two_workers_share_the_queue.sql:101: WARNING:  acked 6 items
  alpha_picked_it_up 
 --------------------
  W7
-

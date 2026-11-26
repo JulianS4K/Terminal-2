@@ -16,7 +16,7 @@
 --- B. the watch fill takes only the real near event
                                    fill                                   
 --------------------------------------------------------------------------
- {"added": 3, "apply": true, "retired": 0, "watched": 4, "backfilled": 3}
+ {"added": 3, "apply": true, "retired": 0, "watched": 3, "backfilled": 3}
 
  source_event_id |              name              | watch 
 -----------------+--------------------------------+-------
@@ -50,7 +50,7 @@
 
                          refill                          
 ---------------------------------------------------------
- {"added": 0, "apply": true, "retired": 1, "watched": 4}
+ {"added": 0, "apply": true, "retired": 1, "watched": 3}
 
                                     recatalogue                                    
 -----------------------------------------------------------------------------------
@@ -71,4 +71,3 @@
  9400004         | A Real Concert Far Out         | f
  9400010         | Todd Rundgren: DAMNED IF I DO  | t
  9400011         | Christmas at the Ryman         | t
-

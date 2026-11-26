@@ -32,4 +32,3 @@
  clear_of_slack | every_gap_exceeds_slack | and_none_exceeds_slack_plus_band | due_now 
 ----------------+-------------------------+----------------------------------+---------
              12 | t                       | t                                |       0
-

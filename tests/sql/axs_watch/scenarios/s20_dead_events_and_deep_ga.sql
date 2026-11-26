@@ -89,7 +89,9 @@ SELECT left(poll_error, 32) AS stored_error,
        public.axs_watch_event_dead('9300006', event_date) AS dead_anyway
   FROM public.primary_poll_event WHERE source='axs' AND source_event_id='9300006';
 
-\echo '--- H. rule 3: GA-only over 100 TICKETS moves to 2 hours; ADA does not disqualify'
+\echo '--- H. rule 3: GA-only over 100 TICKETS is slowed; ADA does not disqualify.'
+\echo '---    These fixtures carry MORE THAN 400 GA tickets, so since mig 20261126194500 they'
+\echo '---    land on the ladder''s SECOND step (4h), not the first (2h). s27 owns the ladder.'
 -- The GA profile is computed from the listings THIS read wrote, so the fixture has to send
 -- them through the read payload: primary_poll_ingest replaces an event's listings wholesale
 -- on a good read, so rows inserted by hand beforehand are gone by the time it is computed.
@@ -146,7 +148,7 @@ SELECT source_event_id AS id, count(*) AS listings,
   FROM public.primary_poll_listing WHERE source='axs' AND source_event_id LIKE '94000%'
  GROUP BY 1 ORDER BY 1;
 
-\echo '--- I. only the two deep-GA events are slowed, and only to 2 hours'
+\echo '--- I. only the two deep-GA events are slowed, and only ever slowed (here to 4h)'
 SELECT t.source_event_id AS id, left(t.name,18) AS name, t.ga_slow, t.poll_interval
   FROM public.primary_poll_event t
  WHERE t.source='axs' AND t.source_event_id LIKE '94000%' ORDER BY 1;
