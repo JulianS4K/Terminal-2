@@ -22,7 +22,7 @@
 
                                                                                                                                                   next_all                                                                                                                                                   
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"lanes": null, "events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "spacing_ms": 3000, "upstream_errors": 1}
+ {"lanes": null, "events": [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 60}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "spacing_ms": 3000, "upstream_errors": 1}
 
  batch_of_two | first | second 
 --------------+-------+--------
@@ -58,7 +58,7 @@
 --- D. the read event is no longer due; a transport failure and refusals are failed polls; after three the worker is held, and let go once a read works
                                                                 next_after_read                                                                 
 ------------------------------------------------------------------------------------------------------------------------------------------------
- [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 30}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}]
+ [{"id": "31", "url": "https://www.axs.com/events/31", "every_min": 60}, {"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}]
 
                                                                     timed_out                                                                    
 -------------------------------------------------------------------------------------------------------------------------------------------------
@@ -72,9 +72,9 @@
 ------------------------------------------------------------------------------------------------------------------------------------------------------
  {"error": "HTTP 429 from TicketsData", "outcome": "upstream_error", "event_id": "32", "listings": null, "response_s": null, "quota_remaining": null}
 
-                     next_held                      
-----------------------------------------------------
- {"events": [], "hold_s": 60, "upstream_errors": 4}
+                                    next_held                                    
+---------------------------------------------------------------------------------
+ {"events": [], "hold_s": 60, "errors_window": "00:10:00", "upstream_errors": 4}
 
  id | poll_status |         poll_error          | listing_count 
 ----+-------------+-----------------------------+---------------
@@ -87,12 +87,12 @@
 
                               next_released                              
 -------------------------------------------------------------------------
- [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}]
+ [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 60}]
 
---- E. over the day's cap (pinned at 6; 6 reads today) only an event on a hot cadence is handed out, and only up to the overrun
-                                                                                                                    next_capped                                                                                                                     
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"lanes": null, "events": [{"id": "32", "url": "https://www.axs.com/events/32", "every_min": 30}, {"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "daily_cap": 6, "fired_today": 6, "upstream_errors": 4}
+--- E. over the day's cap (pinned at 6; 6 reads today) only events on a hot cadence (at or inside hot_every) are handed out, and only up to the overrun
+                                                                                 next_capped                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"lanes": null, "events": [{"id": "33", "url": "https://www.axs.com/events/33", "every_min": 10}], "lease_s": null, "daily_cap": 6, "fired_today": 6, "upstream_errors": 4}
 
  next_capped_no_overrun 
 ------------------------

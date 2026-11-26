@@ -6,6 +6,7 @@
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
+UPDATE public.axs_watch_config SET keep_regex = NULL;  -- these fixtures are not the operator's three teams (mig 20261125232000)
 
 \echo '--- A0. the discovery feed: with an on-sale date, an upcoming sale until three days after it, whatever the label; with none, while labelled Coming Soon'
 SELECT c.n, c.status, c.onsale,

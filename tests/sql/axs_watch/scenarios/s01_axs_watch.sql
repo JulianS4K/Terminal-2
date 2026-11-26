@@ -5,6 +5,7 @@
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
+UPDATE public.axs_watch_config SET keep_regex = NULL;  -- these fixtures are not the operator's three teams; the team rule is s11 (mig 20261125232000)
 
 -- a smaller list: two venues watched, one disabled (the build's own first fill, against an empty export, is forgotten)
 DELETE FROM public.axs_watch_venue;
@@ -112,33 +113,35 @@ SELECT count(*) AS listings_in_feed, min(price) AS cheapest FROM public.v_primar
 UPDATE public.primary_poll_event SET next_poll_at = now() + interval '1 day' WHERE source = 'axs' AND poll_attempt_at IS NOT NULL;
 SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' AS tick_next;
 SELECT request_id, axs_event_id AS id FROM public.axs_watch_poll WHERE checked_at IS NULL ORDER BY request_id;
--- request 3 goes stale by shrinking stale_after for this tick, not by moving its fired_at back: backdated 20 minutes it
--- fell on the previous UTC day between 00:00 and 00:20, and fired_today (which counts today's reads) came out one short
-UPDATE public.axs_watch_poll SET fired_at = now() - least(interval '20 minutes', now() - (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')) WHERE request_id = 3;
+UPDATE public.axs_watch_poll SET fired_at = now() - interval '20 minutes' WHERE request_id = 3;
 INSERT INTO net._http_response (id, status_code, content) VALUES (4, 503, '{"error":"worker unavailable"}');
 UPDATE public.primary_poll_event SET next_poll_at = now() + interval '1 day' WHERE source = 'axs';
-UPDATE public.axs_watch_config SET stale_after = interval '0 seconds';
-SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' AS tick_lost_and_503;
-UPDATE public.axs_watch_config SET stale_after = interval '12 minutes';
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_lost_and_503;
 SELECT request_id, axs_event_id AS id, status_code, outcome, error FROM public.axs_watch_poll WHERE request_id IN (3, 4) ORDER BY request_id;
 SELECT source_event_id AS id, poll_status, poll_error, listing_count FROM public.primary_poll_event WHERE source = 'axs' ORDER BY source_event_id;
 
 \echo '--- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight'
 UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 minute' WHERE source = 'axs';
 INSERT INTO public.axs_watch_poll (request_id, axs_event_id, fired_at, checked_at, outcome) VALUES (900, '11', now() - interval '5 minutes', now() - interval '4 minutes', 'timeout');
-SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' AS tick_slowed;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_slowed;
 SELECT count(*) AS now_in_flight FROM public.axs_watch_poll WHERE checked_at IS NULL;
 
-\echo '--- J. over the day''s cap (pinned at 5, 5 fired today) only the hot events (30 minutes or faster) are read, and only up to the overrun'
+\echo '--- J. over the day''s cap only the hot events (30 minutes or faster) are read, and only up to the overrun'
 DELETE FROM public.axs_watch_poll WHERE checked_at IS NULL;
 UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 minute', poll_interval = CASE WHEN source_event_id = '21' THEN interval '30 minutes' ELSE interval '1 hour' END WHERE source = 'axs';
-UPDATE public.axs_watch_config SET hot_overrun_pct = 100, upstream_errors_max = 99, daily_cap_override = 5;
-SELECT (public.axs_watch_budget()) - 'next_reset' - 'days_left' - 'pool_read_at' AS budget_pinned;
-SELECT (public.axs_watch_tick()) - 'pool_remaining' AS tick_capped;
+-- the cap is pinned AT whatever has been fired today, so the section is always exactly at the cap. Pinning it at
+-- a literal 5 made the test depend on the hour it ran at: fired_today counts a day, and the fixtures backdate
+-- fired_at by up to 20 minutes, so for the first minutes of a day some of them stopped counting.
+UPDATE public.axs_watch_config SET hot_overrun_pct = 100, upstream_errors_max = 99,
+       daily_cap_override = (public.axs_watch_budget()->>'fired_today')::int;
+SELECT (public.axs_watch_budget()->>'daily_cap')::int = (public.axs_watch_budget()->>'fired_today')::int AS at_the_cap,
+       (public.axs_watch_budget()->>'daily_cap')::int > 0 AS cap_is_not_zero,
+       (public.axs_watch_budget())->'enabled' AS enabled, (public.axs_watch_budget())->'in_flight' AS in_flight;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_capped;
 SELECT axs_event_id AS id FROM public.axs_watch_poll WHERE checked_at IS NULL ORDER BY request_id;
 UPDATE public.axs_watch_config SET hot_overrun_pct = 0;
 DELETE FROM public.axs_watch_poll WHERE checked_at IS NULL;
-SELECT (public.axs_watch_tick()) - 'pool_remaining' AS tick_capped_no_overrun;
+SELECT (public.axs_watch_tick()) - 'pool_remaining' - 'daily_cap' - 'fired_today' AS tick_capped_no_overrun;
 UPDATE public.axs_watch_config SET daily_cap_override = NULL;
 
 \echo '--- J2. one fire a tick (the default): with two slots free only one request goes out, the next tick sends the second'
