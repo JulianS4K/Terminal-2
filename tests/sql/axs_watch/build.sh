@@ -68,4 +68,6 @@ stub_10_retention.sql
 20261126190000_fill_reports_the_watched_count.sql
 20261126194500_deep_ga_second_tier.sql
 20261126200000_target_341_events.sql
+20261126213000_freshness_follows_the_band.sql
+20261126214500_zero_listings_is_sold_out.sql
 STEPS
