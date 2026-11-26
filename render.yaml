@@ -44,6 +44,8 @@ services:
     # rendered the full landing page (90KB JS) + timed out the cold-dyno
     # healthcheck window on free tier — Sprint 1.5 deploy (a8f44d2) failed
     # for exactly that reason. /healthz boots cleanly even on cold start.
+    # It does not query the database (2026-11-26): a slow database made Render restart the service
+    # about hourly. /healthz?deep=1 runs the database smoke (the post-deploy workflow uses it).
 
     envVars:
       # Pin to Python 3.12 — Render's auto-pick of 3.14.3 is brand-new and

@@ -49,9 +49,10 @@ jobs:
       - name: Check /healthz
         id: health
         run: |
-          # /healthz returns {"ok": true, ...}; require both HTTP 200 AND ok:true.
+          # /healthz?deep=1 runs the database smoke (plain /healthz, Render's liveness check, does not);
+          # require both HTTP 200 AND ok:true.
           RESP=$(curl -s --max-time 20 --retry 3 --retry-delay 5 \
-            -w "\n%{http_code}" "$BASE_URL/healthz")
+            -w "\n%{http_code}" "$BASE_URL/healthz?deep=1")
           STATUS=$(echo "$RESP" | tail -n1)
           BODY=$(echo "$RESP" | sed '$d')
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"

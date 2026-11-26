@@ -75,7 +75,7 @@ def test_healthz_smoke_skips_when_sb_none(client, monkeypatch):
     # When the supabase client never initialized, the smoke step is skipped
     # and the endpoint still reports ok=True (boot facts only).
     monkeypatch.setattr(app_module, "sb", None)
-    r = client.get("/healthz")
+    r = client.get("/healthz?deep=1")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
@@ -105,7 +105,7 @@ def test_healthz_smoke_pass_with_stubbed_sb(client, monkeypatch):
             return _FakeChain()
 
     monkeypatch.setattr(app_module, "sb", _FakeSb())
-    body = client.get("/healthz").json()
+    body = client.get("/healthz?deep=1").json()
     assert body["ok"] is True
     assert body["supabase_smoke"] == "pass"
     assert body["supabase_smoke_rows"] == 1
@@ -119,7 +119,7 @@ def test_healthz_smoke_fail_is_truncated_and_flips_ok(client, monkeypatch):
             raise RuntimeError(long_err)
 
     monkeypatch.setattr(app_module, "sb", _BoomSb())
-    body = client.get("/healthz").json()
+    body = client.get("/healthz?deep=1").json()
     assert body["ok"] is False
     assert body["supabase_smoke"] == "fail"
     # Truncated to <=300 chars so a public endpoint can't leak full traces.
