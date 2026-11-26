@@ -1517,8 +1517,8 @@ def test_axs_watch_reader_tick_builds_one_client_from_vault_and_runs_a_batch(mon
             seen["timeout"] = timeout
             return cls()
 
-    def _run(td, rpc, *, idle_s):
-        seen["td"], seen["idle_s"] = td, idle_s
+    def _run(td, rpc, *, idle_s, worker=None):
+        seen["td"], seen["idle_s"], seen["worker"] = td, idle_s, worker
         seen["asked"] = rpc("axs_watch_next", {"p_limit": 20})
         return {"asked": 0, "pause_s": idle_s}
 
@@ -1526,12 +1526,15 @@ def test_axs_watch_reader_tick_builds_one_client_from_vault_and_runs_a_batch(mon
     monkeypatch.setattr(ticketsdata_client, "TicketsDataClient", _TD)
     monkeypatch.setattr(axs_watch_reader, "run", _run)
     monkeypatch.setattr(n2s_autobuy_live, "retrying", lambda rpc: rpc)
-    monkeypatch.setitem(app_module._axs_watch_reader_client, "td", None)
+    monkeypatch.setitem(app_module._axs_watch_reader_client, 0, None)
     out = anyio.run(app_module._axs_watch_reader_tick)
     # run_queue is NOT patched here: the real fallback decision is what is under test
     assert out == {"asked": 0, "pause_s": app_module._AXS_WATCH_READER_INTERVAL_S, "via": "due_list"}
     assert seen["rpc"][0] == "axs_queue_claim" and "axs_watch_next" in seen["rpc"]
-    assert app_module._axs_watch_reader_last["result"] == out and app_module._axs_watch_reader_last["error"] is None
+    # the due-list path is lease-keyed on the worker id, so each loop must carry its own
+    assert seen["worker"].endswith("#0")
+    assert app_module._axs_watch_reader_last[0]["result"] == out
+    assert app_module._axs_watch_reader_last[0]["error"] is None
     assert isinstance(seen["td"], _TD) and seen["timeout"] == 120 and seen["asked"] == {"events": []}
     anyio.run(app_module._axs_watch_reader_tick)
     assert seen["built"] == 1                                   # the client is built once a process
@@ -1579,13 +1582,72 @@ def test_axs_watch_reader_tick_uses_the_queue_when_it_is_on_and_never_the_due_li
     monkeypatch.setattr(ticketsdata_client, "TicketsDataClient", _TD)
     monkeypatch.setattr(axs_watch_reader, "run", _never)
     monkeypatch.setattr(n2s_autobuy_live, "retrying", lambda rpc: rpc)
-    monkeypatch.setitem(app_module._axs_watch_reader_client, "td", None)
+    monkeypatch.setitem(app_module._axs_watch_reader_client, 0, None)
     out = anyio.run(app_module._axs_watch_reader_tick)
     assert out["via"] == "queue" and out["claimed"] == 1 and out["ok"] == 1 and out["listings"] == 3
     assert out["pause_s"] == 0.0                                # there was work, so claim again at once
     assert seen["fetched"] == [("axs", "u/Q1")] and seen["acked"] == [5]
     assert "axs_watch_next" not in seen["rpc"]
 
+
+def test_axs_watch_reader_two_loops_share_the_lanes_and_carry_distinct_worker_ids(monkeypatch):
+    """Two loops on one queue (operator 2026-11-26: "Add second reader sharing the queue").
+
+    Two things must hold and neither is obvious:
+      · each loop carries its OWN worker id. On the due-list fallback that id is the LEASE key
+        (mig 20261125020000), so loops sharing one id would all hold the same lease and all read
+        the same due list — the double read the lease exists to stop.
+      · each loop asks for a SHARE of the lanes. axs_queue_claim computes
+        least(coalesce(p_limit, queue_lanes), queue_lanes) - in_flight, so a claim with no limit
+        takes every free lane: without the share one loop would hold all six and the others would
+        spin on "all lanes busy" for nothing.
+    The share is learned from the lanes a claim reports, so it needs no second setting.
+    """
+    import anyio
+    import ticketsdata_client
+    from core import axs_watch_reader, n2s_autobuy_live
+    seen = {"calls": [], "built": 0}
+
+    class _Res:
+        def __init__(self, data):
+            self.data = data
+
+        def execute(self):
+            return self
+
+    class _Sb:
+        def rpc(self, name, params):
+            return _Res({})
+
+    class _TD:
+        @classmethod
+        def from_vault(cls, db, *, timeout):
+            seen["built"] += 1
+            return cls()
+
+    def _run_queue(td, rpc, *, batch=None, worker=None, idle_s=15.0):
+        seen["calls"].append({"worker": worker, "batch": batch, "td": id(td)})
+        return {"claimed": 0, "pause_s": 0.0, "lanes": 6}
+
+    monkeypatch.setattr(app_module, "require_sb", lambda: _Sb())
+    monkeypatch.setattr(ticketsdata_client, "TicketsDataClient", _TD)
+    monkeypatch.setattr(axs_watch_reader, "run_queue", _run_queue)
+    monkeypatch.setattr(n2s_autobuy_live, "retrying", lambda rpc: rpc)
+    monkeypatch.setattr(app_module, "_AXS_WATCH_READER_WORKERS", 2)
+    monkeypatch.setattr(app_module, "_axs_watch_reader_lanes", {"n": None})
+    monkeypatch.setattr(app_module, "_axs_watch_reader_client", {})
+    monkeypatch.setattr(app_module, "_axs_watch_reader_last", {})
+
+    anyio.run(app_module._axs_watch_reader_tick, 0)      # the lane count is not known yet
+    anyio.run(app_module._axs_watch_reader_tick, 1)      # the claim above reported six
+    anyio.run(app_module._axs_watch_reader_tick, 0)
+
+    ids = [c["worker"] for c in seen["calls"]]
+    assert ids[0].endswith("#0") and ids[1].endswith("#1") and ids[0] != ids[1]
+    assert [c["batch"] for c in seen["calls"]] == [None, 3, 3]      # six lanes over two loops
+    assert seen["built"] == 2                                       # one TicketsData session EACH:
+    assert len({c["td"] for c in seen["calls"]}) == 2               # a session is not ours to share
+    assert set(app_module._axs_watch_reader_last) == {0, 1}         # and each loop reports itself
 
 def test_axs_watch_reader_loop_off_by_default_then_paces_itself_and_survives_errors(monkeypatch):
     import anyio
@@ -1597,8 +1659,9 @@ def test_axs_watch_reader_loop_off_by_default_then_paces_itself_and_survives_err
     monkeypatch.setattr(app_module, "SANDBOX", False)
     ticks, paused = {"n": 0}, []
 
-    async def _tick():
+    async def _tick(worker_n=0):
         ticks["n"] += 1
+        ticks["worker_n"] = worker_n
         if ticks["n"] == 1:
             raise RuntimeError("TicketsData blip")
         return {"asked": 3, "pause_s": 0.0} if ticks["n"] == 2 else {"asked": 0, "pause_s": 60.0}
@@ -1615,14 +1678,17 @@ def test_axs_watch_reader_loop_off_by_default_then_paces_itself_and_survives_err
     monkeypatch.setattr(app_module.asyncio, "sleep", _sleep)
     with pytest.raises(_Stop):
         anyio.run(app_module._axs_watch_reader_loop)
-    assert ticks["n"] == 3 and app_module._axs_watch_reader_last["error"] == "TicketsData blip"
+    assert ticks["n"] == 3 and app_module._axs_watch_reader_last[0]["error"] == "TicketsData blip"
+    assert ticks["worker_n"] == 0
     assert paused == [app_module._AXS_WATCH_READER_INTERVAL_S, 0.0, 60.0]   # the error's pause, work at once, the hold
 
 
 def test_axs_watch_reader_status_route(client, monkeypatch):
     monkeypatch.setenv("AXS_WATCH_READER_LIVE", "1")
     r = client.get("/api/admin/axs-watch-reader/status")
-    assert r.status_code == 200 and r.json()["enabled"] is True and "result" in r.json()
+    assert r.status_code == 200 and r.json()["enabled"] is True
+    # one record per reader loop now, not one for the process (operator 2026-11-26: a second reader)
+    assert r.json()["workers"] == app_module._AXS_WATCH_READER_WORKERS and "readers" in r.json()
 
 
 def test_gt_sub_offer_status_route(client, monkeypatch):
