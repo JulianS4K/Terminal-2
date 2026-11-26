@@ -52,4 +52,5 @@ stub_10_retention.sql
 20261126004500_axs_watch_upstream_hold_clears.sql
 20261126011500_axs_watch_three_bands.sql
 20261126013000_primary_poll_keep_capture_until_two_failures.sql
+20261126023000_axs_watch_phase_clears_due_slack.sql
 STEPS
