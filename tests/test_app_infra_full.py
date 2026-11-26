@@ -723,14 +723,14 @@ class _HealthOkSb:
 
 def test_healthz_skips_when_sb_none(client, monkeypatch):
     monkeypatch.setattr(app_module, "sb", None)
-    body = client.get("/healthz").json()
+    body = client.get("/healthz?deep=1").json()
     assert body["ok"] is True
     assert body["supabase_smoke"].startswith("skipped")
 
 
 def test_healthz_pass_with_stub(client, monkeypatch):
     monkeypatch.setattr(app_module, "sb", _HealthOkSb())
-    body = client.get("/healthz").json()
+    body = client.get("/healthz?deep=1").json()
     assert body["supabase_smoke"] == "pass"
     assert body["supabase_smoke_rows"] == 1
 
@@ -741,7 +741,7 @@ def test_healthz_fail_truncates(client, monkeypatch):
             raise RuntimeError("z" * 1000)
 
     monkeypatch.setattr(app_module, "sb", _Boom())
-    body = client.get("/healthz").json()
+    body = client.get("/healthz?deep=1").json()
     assert body["ok"] is False
     assert body["supabase_smoke"] == "fail"
     assert len(body["supabase_smoke_error"]) <= 300
@@ -749,7 +749,7 @@ def test_healthz_fail_truncates(client, monkeypatch):
 
 def test_healthz_reports_db_circuit_closed_on_pass(client, monkeypatch):
     monkeypatch.setattr(app_module, "sb", _HealthOkSb())
-    body = client.get("/healthz").json()
+    body = client.get("/healthz?deep=1").json()
     # A passing smoke records success -> breaker stays closed.
     assert body["db_circuit"] == "closed"
 
@@ -764,15 +764,47 @@ def test_healthz_smoke_failure_feeds_breaker(client, monkeypatch):
     threshold = app_module._db_breaker.fail_threshold
     last = None
     for _ in range(threshold):
-        last = client.get("/healthz").json()
+        last = client.get("/healthz?deep=1").json()
     assert last["db_circuit"] == "open"
 
 
 def test_healthz_db_circuit_present_when_sb_none(client, monkeypatch):
     monkeypatch.setattr(app_module, "sb", None)
-    body = client.get("/healthz").json()
+    body = client.get("/healthz?deep=1").json()
     # Field is always present (top-level), even when the smoke is skipped.
     assert body["db_circuit"] == "closed"
+
+
+def test_healthz_plain_never_queries_the_database(client, monkeypatch):
+    # Render's health check: answered from memory, so a slow database cannot get the service restarted
+    class _Never:
+        def table(self, *a, **k):
+            raise AssertionError("plain /healthz must not touch the database")
+
+    monkeypatch.setattr(app_module, "sb", _Never())
+    monkeypatch.setattr(app_module, "_HEALTH_SMOKE", {})
+    body = client.get("/healthz").json()
+    assert body["ok"] is True and body["supabase_smoke"] == "not_run"
+
+
+def test_healthz_plain_reports_the_last_deep_smoke(client, monkeypatch):
+    monkeypatch.setattr(app_module, "sb", _HealthOkSb())
+    monkeypatch.setattr(app_module, "_HEALTH_SMOKE", {})
+    client.get("/healthz?deep=1")
+    body = client.get("/healthz").json()
+    assert body["supabase_smoke"] == "pass" and body["supabase_smoke_rows"] == 1
+    assert body["supabase_smoke_age_s"] >= 0 and body["ok"] is True
+
+
+def test_healthz_deep_times_out_after_four_seconds(client, monkeypatch):
+    async def _slow(*a, **k):
+        raise app_module.asyncio.TimeoutError
+
+    monkeypatch.setattr(app_module, "sb", _HealthOkSb())
+    monkeypatch.setattr(app_module.asyncio, "wait_for", _slow)
+    body = client.get("/healthz?deep=1").json()
+    assert body["ok"] is False and body["supabase_smoke"] == "fail"
+    assert "timed out" in body["supabase_smoke_error"]
 
 
 # ---- safe_sb_read (storefront stale-snapshot read) ----
