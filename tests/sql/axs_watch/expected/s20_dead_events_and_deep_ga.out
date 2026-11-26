@@ -1,7 +1,7 @@
 --- A. the knobs as seeded
- no_tickets_retire_days | ga_slow_every | ga_slow_min_tickets 
-------------------------+---------------+---------------------
-                      7 | 02:00:00      |                 100
+ no_tickets_retire_days | ga_slow_every | ga_slow_min_tickets | no_tickets_every 
+------------------------+---------------+---------------------+------------------
+                      7 | 02:00:00      |                 100 | 1 day
 
                                  fill_in                                  
 --------------------------------------------------------------------------
@@ -36,7 +36,7 @@
    id    | poll_interval | on_the_slow_rule 
 ---------+---------------+------------------
  9300001 | 06:00:00      | t
- 9300003 | 06:00:00      | t
+ 9300003 | 1 day         | f
 
 --- E. the fill retires the dead ones and does NOT hand their places back
                       fill_retires                       
@@ -125,4 +125,19 @@
                                                         demand                                                         
 -----------------------------------------------------------------------------------------------------------------------
  {"events": 6, "ga_slow": 2, "cadence_scale": 1.0, "catalogue_only": 1, "demand_per_day": 120, "demand_per_hour": 5.0}
+
+--- L. no-tickets BEYOND the retire window is read once a day, not every 6 hours
+                              fill_adds_them                              
+--------------------------------------------------------------------------
+ {"added": 3, "apply": true, "retired": 0, "watched": 9, "backfilled": 3}
+
+   id    | outcome  
+---------+----------
+ 9500001 | unparsed
+ 9500002 | unparsed
+
+   id    |        name         | poll_interval | on_the_daily_rule | on_the_6h_rule | dead 
+---------+---------------------+---------------+-------------------+----------------+------
+ 9500001 | No Tickets Far Off  | 1 day         | t                 | f              | f
+ 9500002 | Not On Sale Far Off | 06:00:00      | f                 | t              | f
 

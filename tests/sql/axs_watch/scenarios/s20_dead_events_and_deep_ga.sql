@@ -12,7 +12,8 @@ VALUES (920001, 'Dead Letter Arena', 0, true, true, 'scenario', 'test');
 UPDATE public.axs_watch_config SET keep_regex = NULL, target_events = 50, reader = 'worker';
 
 \echo '--- A. the knobs as seeded'
-SELECT no_tickets_retire_days, ga_slow_every, ga_slow_min_tickets FROM public.axs_watch_config;
+SELECT no_tickets_retire_days, ga_slow_every, ga_slow_min_tickets, no_tickets_every
+  FROM public.axs_watch_config;
 
 -- D1 cancelled and near. D2 cancelled and far. D3 no-tickets and near. D4 no-tickets and far.
 INSERT INTO public.axs_export_event
@@ -159,3 +160,28 @@ SELECT public.axs_watch_cadence_every(now() + interval '2 days', NULL, false) AS
 \echo '--- K. the gauge counts the slowed events at their slowed rate'
 SELECT (public.axs_watch_cadence_demand()) - 'usable_per_hour' - 'daily_cap'
          - 'pct_of_throughput' - 'pct_of_daily_cap' - 'fits' AS demand;
+
+\echo '--- L. no-tickets BEYOND the retire window is read once a day, not every 6 hours'
+-- Inside the window it is retired (section E). Beyond it, it stays but drops to
+-- no_tickets_every, while "not on sale" and "coming soon" keep the 6-hour rule because
+-- their on-sale moment can arrive at any hour (mig 20261126070000).
+INSERT INTO public.axs_export_event
+  (axs_event_id, axs_ticketed, status, event_title, major_category, venue_id, venue_name,
+   venue_city, venue_state, event_date_local, event_date_utc, event_timezone, event_url)
+SELECT v.id, true, 'On Sale', v.nm, 'Music', 920001, 'Dead Letter Arena', 'Denver', 'CO',
+       to_char(now() + interval '60 days', 'YYYY-MM-DD"T"HH24:MI:SS'),
+       now() + interval '60 days', 'America/Denver', 'https://www.axs.com/events/' || v.id
+  FROM (VALUES (9500001,'No Tickets Far Off'), (9500002,'Not On Sale Far Off')) AS v(id, nm);
+SELECT (public.axs_watch_fill(true)) - 'run' - 'short' AS fill_adds_them;
+SELECT v.ev AS id,
+       (public.axs_watch_record(v.ev, 200, jsonb_build_object('status','ok','response_s',2.0,
+          'body', jsonb_build_object('status','error','exit_code',1,'error', v.e)))
+        - 'request_id')->>'outcome' AS outcome
+  FROM (VALUES ('9500001','No tickets are currently available for this event.'),
+               ('9500002','Tickets are not currently on sale for this event.')) v(ev, e);
+SELECT t.source_event_id AS id, left(t.name,20) AS name, t.poll_interval,
+       t.poll_interval = (SELECT no_tickets_every FROM public.axs_watch_config) AS on_the_daily_rule,
+       t.poll_interval = (SELECT not_on_sale_every FROM public.axs_watch_config) AS on_the_6h_rule,
+       public.axs_watch_event_dead(t.source_event_id, t.event_date) AS dead
+  FROM public.primary_poll_event t
+ WHERE t.source='axs' AND t.source_event_id LIKE '95000%' ORDER BY 1;
