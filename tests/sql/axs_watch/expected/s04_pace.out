@@ -4,18 +4,18 @@
  {"events": 7, "reader": "worker", "spacing_s": 3.0000000000000000, "s_per_read": 8.6, "target_pct": 75, "day_of_fits": true, "far_out_days": 14, "settle_p50_s": 7.6, "settle_p90_s": 7.6, "day_of_events": 1, "far_out_every": "02:00:00", "reads_measured": 20, "reads_per_hour": 418, "response_p50_s": 6.4, "demand_per_hour": {"60 min": 14.0, "90 min": 13.0, "120 min": 12.5, "180 min": 12.0, "240 min": 11.8, "360 min": 11.5}, "usable_per_hour": 313}
 
 --- B. applied: at 75% of 418 reads an hour the plain ladder (an hour far out) fits; nothing changes but the record
-                                                                                                                                                                                              applied                                                                                                                                                                                              
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"note": "20 reads measured: settle 7.6s, response 6.4s, 8.6s a read, 313 usable an hour (75% of 418); ladder demand 14.0 an hour at 01:00:00", "picked": "01:00:00", "reader": "worker", "applied": true, "changed": true, "s_per_read": 8.6, "target_pct": 75, "day_of_fits": true, "far_out_every": "02:00:00", "reads_per_hour": 418, "usable_per_hour": 313, "picked_demand_per_hour": 14.0}
+                                                                                                                                                                                                                                                               applied                                                                                                                                                                                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"note": "20 reads measured: settle 7.6s, response 6.4s, 8.6s a read, 313 usable an hour (75% of 418); bands demand 10.0 an hour at scale 1.0; wanted 0.03, held at cadence_scale_floor 1.0", "picked": "01:00:00", "reader": "worker", "applied": true, "changed": true, "s_per_read": 8.6, "target_pct": 75, "day_of_fits": true, "cadence_scale": 1.0, "far_out_every": "02:00:00", "reads_per_hour": 418, "usable_per_hour": 313, "band_demand_per_hour": 10.0, "cadence_scale_changed": false, "picked_demand_per_hour": 14.0}
 
- far_out_every | pace_s_per_read | pace_set |                                                              pace_note                                                              
----------------+-----------------+----------+-------------------------------------------------------------------------------------------------------------------------------------
- 01:00:00      |             8.6 | t        | 20 reads measured: settle 7.6s, response 6.4s, 8.6s a read, 313 usable an hour (75% of 418); ladder demand 14.0 an hour at 01:00:00
+ far_out_every | pace_s_per_read | pace_set |                                                                                     pace_note                                                                                     
+---------------+-----------------+----------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ 01:00:00      |             8.6 | t        | 20 reads measured: settle 7.6s, response 6.4s, 8.6s a read, 313 usable an hour (75% of 418); bands demand 10.0 an hour at scale 1.0; wanted 0.03, held at cadence_scale_floor 1.0
 
 --- C. a slow reader (40 s a read) at a 10% target: no rung fits, the slowest allowed is taken; at 100% the hour fits again; the day's cap also binds
-                                                                                                                   slow_reader                                                                                                                    
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"picked": "06:00:00", "reader": "worker", "applied": true, "changed": true, "s_per_read": 41.0, "target_pct": 10, "day_of_fits": true, "far_out_every": "01:00:00", "reads_per_hour": 87, "usable_per_hour": 8, "picked_demand_per_hour": 11.5}
+                                                                                                                                                             slow_reader                                                                                                                                                              
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"picked": "06:00:00", "reader": "worker", "applied": true, "changed": true, "s_per_read": 41.0, "target_pct": 10, "day_of_fits": true, "cadence_scale": 1.25, "far_out_every": "01:00:00", "reads_per_hour": 87, "usable_per_hour": 8, "band_demand_per_hour": 10.0, "cadence_scale_changed": true, "picked_demand_per_hour": 11.5}
 
  fast_again | day_of_fits 
 ------------+-------------
@@ -57,3 +57,4 @@
 ----------------------+----------+-------------
  axs_watch_pace       | f        | t
  axs_watch_pace_apply | f        | t
+

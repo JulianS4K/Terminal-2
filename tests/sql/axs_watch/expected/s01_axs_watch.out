@@ -241,6 +241,7 @@
  axs_watch_parse          | f    | t
  axs_watch_record         | f    | t
  axs_watch_rule_ok        | f    | t
+ axs_watch_rule_ok        | f    | t
  axs_watch_settle_one     | f    | t
  axs_watch_tick           | f    | t
  axs_watch_upcoming_sale  | f    | t
