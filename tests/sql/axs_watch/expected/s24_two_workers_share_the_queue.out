@@ -1,0 +1,78 @@
+ enqueued 
+----------
+ 8
+
+--- A. worker ONE claims its lanes
+ alpha_items | lanes | in_flight 
+-------------+-------+-----------
+           3 | 3     | 3
+
+--- B. THE FINDING. queue_lanes is a GLOBAL in-flight ceiling, not a per-worker one:
+---    v_room = least(p_limit, queue_lanes) - in_flight. alpha passed no limit (which is
+---    what core/axs_watch_reader.run_queue does, batch=None), so it took all 3 lanes and
+---    beta STARVES. A second worker needs queue_lanes raised to have room to work in.
+ beta_items |     reason     | hold_s | in_flight 
+------------+----------------+--------+-----------
+          0 | all lanes busy | 2      | 3
+
+--- B2. raise the lanes and beta gets work at once, on DIFFERENT events (rule 1)
+ beta_items | in_flight 
+------------+-----------
+          3 | 6
+
+ claimed_total | distinct_events | workers | no_event_claimed_twice 
+---------------+-----------------+---------+------------------------
+             6 |               6 |       2 | t
+
+--- C. who holds what: disjoint sets, which is the whole point
+ claimed_by |  events  
+------------+----------
+ alpha      | W1,W2,W3
+ beta       | W4,W5,W6
+
+--- D. RULE 3, the one that matters for compliance: spacing holds ACROSS both workers.
+---    Every gap between consecutive release slots, over the two workers together.
+ gaps_measured | smallest_gap | every_gap_at_least_3s 
+---------------+--------------+-----------------------
+             5 | 00:00:03     | t
+
+--- E. and no two slots are identical, across workers
+ slots | distinct_slots | all_slots_unique 
+-------+----------------+------------------
+     6 |              6 | t
+
+--- F. RULE 2: the index refuses a second OPEN item for an event, whoever asks
+psql:s24_two_workers_share_the_queue.sql:84: WARNING:  a second open item is refused by the index
+--- G. both workers ack their own items and each read lands once in the ledger
+psql:s24_two_workers_share_the_queue.sql:101: WARNING:  acked 6 items
+ ledger_rows | distinct_events | each_event_once | readers 
+-------------+-----------------+-----------------+---------
+           6 |               6 | t               |       1
+
+--- H. RULE 4: the cap binds across BOTH workers, not per worker
+                                         alpha_over_cap                                          
+-------------------------------------------------------------------------------------------------
+ {"items": [], "lanes": 6, "daily_cap": 1, "in_flight": 0, "spacing_ms": 3000, "fired_today": 6}
+
+                                          beta_over_cap                                          
+-------------------------------------------------------------------------------------------------
+ {"items": [], "lanes": 6, "daily_cap": 1, "in_flight": 0, "spacing_ms": 3000, "fired_today": 6}
+
+--- I. RULE 5: beta dies holding items; the lease expires and they return to the pool
+ beta_took 
+-----------
+ W7
+
+ reaped 
+--------
+      2
+
+ back_in_the_pool | attempts 
+------------------+----------
+                2 |        1
+
+--- J. alpha picks up what beta dropped — the load really is shared
+ alpha_picked_it_up 
+--------------------
+ W7
+
