@@ -1,0 +1,80 @@
+--- A. the threshold, as the operator set it
+ purge_after_failures 
+----------------------
+                    2
+
+--- B. a good read: the capture is stored, failed_reads is 0
+                     ingest_ok                      
+----------------------------------------------------
+ {"ok": 1, "events": 1, "failed": 0, "listings": 2}
+
+ id | poll_status | listing_count | failed_reads | rows_stored 
+----+-------------+---------------+--------------+-------------
+ C1 | ok          |             2 |            0 |           2
+
+--- C. ONE failed read: the capture SURVIVES. Before this migration both numbers went to 0.
+                             ingest_fail_1                             
+-----------------------------------------------------------------------
+ {"ok": 0, "events": 1, "failed": 1, "listings": 0, "capture_kept": 1}
+
+ id | poll_status | listing_count | failed_reads | rows_stored 
+----+-------------+---------------+--------------+-------------
+ C1 | failed      |             2 |            1 |           2
+
+--- D. and it is still NOT served, because the feed requires poll_status = ok
+ rows_in_feed 
+--------------
+            0
+
+--- E. a SECOND failure back to back: now the capture goes, and listing_count goes with it
+                              ingest_fail_2                              
+-------------------------------------------------------------------------
+ {"ok": 0, "events": 1, "failed": 1, "listings": 0, "capture_purged": 1}
+
+ id | poll_status | listing_count | failed_reads | rows_stored 
+----+-------------+---------------+--------------+-------------
+ C1 | failed      |             0 |            2 |           0
+
+--- F. THE RATCHET IS GONE: ok, fail, ok, fail, ok, fail never loses the capture
+                        seed                        
+----------------------------------------------------
+ {"ok": 1, "events": 1, "failed": 0, "listings": 1}
+
+ id | poll_status | listing_count | failed_reads | rows_stored 
+----+-------------+---------------+--------------+-------------
+ C2 | ok          |             1 |            0 |           1
+
+--- G. a success resets the count, so two failures that straddle a success do NOT purge
+                             fail_after_ok                             
+-----------------------------------------------------------------------
+ {"ok": 0, "events": 1, "failed": 1, "listings": 0, "capture_kept": 1}
+
+ failed_reads | listing_count | rows_stored 
+--------------+---------------+-------------
+            1 |             1 |           1
+
+--- H. purge_after_failures = 1 restores the old behaviour exactly
+                       seed3                        
+----------------------------------------------------
+ {"ok": 1, "events": 1, "failed": 0, "listings": 1}
+
+                           one_failure_purges                            
+-------------------------------------------------------------------------
+ {"ok": 0, "events": 1, "failed": 1, "listings": 0, "capture_purged": 1}
+
+ failed_reads | listing_count | rows_stored 
+--------------+---------------+-------------
+            1 |             0 |           0
+
+--- I. the threshold cannot be set to zero
+ tried | outcome  
+-------+----------
+    -1 | refused
+     0 | refused
+     1 | accepted
+     2 | accepted
+
+ left_at 
+---------
+       2
+

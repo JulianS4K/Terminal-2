@@ -48,11 +48,11 @@
 -------------------------------------------------------------------------------------------------------------------
  {"error": null, "outcome": "empty", "event_id": "B3", "listings": 0, "response_s": 5.0, "quota_remaining": 99988}
 
- id | poll_interval | in_future | within_one_interval | on_its_own_phase 
-----+---------------+-----------+---------------------+------------------
- B1 | 00:30:00      | t         | t                   | t
- B2 | 01:00:00      | t         | t                   | t
- B3 | 01:30:00      | t         | t                   | t
+ id | poll_interval | in_future | clears_due_slack | within_slack_plus_one_interval | on_its_own_phase 
+----+---------------+-----------+------------------+--------------------------------+------------------
+ B1 | 00:30:00      | t         | t                | t                              | t
+ B2 | 01:00:00      | t         | t                | t                              | t
+ B3 | 01:30:00      | t         | t                | t                              | t
 
 --- E. "not on sale" still wins over the band
                                                                                 read_b4                                                                                

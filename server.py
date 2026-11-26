@@ -2315,6 +2315,9 @@ async def _start_primary_poll():  # pragma: no cover - startup hook; loop covere
 # (axs_watch_record); this loop makes the GETs through TicketsData, one at a time, 3 s apart, so no two reach
 # TicketsData together and none waits in pg_net's queue. core/axs_watch_reader.py, mig 20261125000000. The
 # database hands out nothing while axs_watch_config.reader = 'db', so the loop idles until it is switched.
+# Since mig 20261126030000 the loop asks the QUEUE first (axs_queue_claim / axs_queue_ack), which dedups by
+# a unique partial index and allocates each read a paced release_at in one serialised place. It falls back to
+# the due-list path while axs_watch_config.queue_enabled is false, so moving between them needs no deploy.
 # ---------------------------------------------------------------------------
 _AXS_WATCH_READER_INTERVAL_S = float(os.environ.get("AXS_WATCH_READER_INTERVAL_SECONDS", "15"))
 _axs_watch_reader_last: dict = {"at": None, "result": None, "error": None}
@@ -2330,7 +2333,19 @@ async def _axs_watch_reader_tick():
         if _axs_watch_reader_client["td"] is None:
             _axs_watch_reader_client["td"] = TicketsDataClient.from_vault(db, timeout=120)   # an AXS read is a browser run: p99 84 s
         rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
-        return axs_watch_reader.run(_axs_watch_reader_client["td"], rpc, idle_s=_AXS_WATCH_READER_INTERVAL_S)
+        # The queue first (mig 20261126030000). While axs_watch_config.queue_enabled is false the
+        # claim hands out nothing and says so, and we fall back to the due-list path — so the switch
+        # between them is one column in the database, not a deploy. When the queue is on, the
+        # fallback never runs: an empty queue comes back with no `reason`, just pause_s.
+        out = axs_watch_reader.run_queue(_axs_watch_reader_client["td"], rpc,
+                                         idle_s=_AXS_WATCH_READER_INTERVAL_S)
+        if "queue_enabled" in (out.get("reason") or ""):
+            out = axs_watch_reader.run(_axs_watch_reader_client["td"], rpc,
+                                       idle_s=_AXS_WATCH_READER_INTERVAL_S)
+            out["via"] = "due_list"
+        else:
+            out["via"] = "queue"
+        return out
 
     out = await asyncio.to_thread(_call)
     _axs_watch_reader_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)

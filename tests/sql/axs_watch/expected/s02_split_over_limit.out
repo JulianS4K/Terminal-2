@@ -76,7 +76,7 @@
 ---------------+--------------+----------------
             13 |           63 |             63
 
---- E. the next read replaces the pieces with the listings; a failed read removes both
+--- E. the next read replaces the pieces with the listings; ONE failed read keeps both, a second removes both (mig 20261126013000)
                        stored                       
 ----------------------------------------------------
  {"ok": 1, "events": 1, "failed": 0, "listings": 1}
@@ -90,9 +90,17 @@
 ---------------
              2
 
-                       stored                       
-----------------------------------------------------
- {"ok": 0, "events": 1, "failed": 1, "listings": 0}
+                              failed_once                              
+-----------------------------------------------------------------------
+ {"ok": 0, "events": 1, "failed": 1, "listings": 0, "capture_kept": 1}
+
+ listings_stored | pieces_stored | failed_reads | still_sent 
+-----------------+---------------+--------------+------------
+               1 |             2 |            1 |          0
+
+                              failed_twice                               
+-------------------------------------------------------------------------
+ {"ok": 0, "events": 1, "failed": 1, "listings": 0, "capture_purged": 1}
 
  listings_stored | pieces_stored 
 -----------------+---------------
@@ -113,8 +121,8 @@
  thirteen-2 | 7        | 13        |        7 |             6
 
 --- G. service only
-psql:s02_split_over_limit.sql:90: ERROR:  permission denied for function primary_poll_split_event
-psql:s02_split_over_limit.sql:91: ERROR:  permission denied for table primary_poll_listing_piece
+psql:s02_split_over_limit.sql:97: ERROR:  permission denied for function primary_poll_split_event
+psql:s02_split_over_limit.sql:98: ERROR:  permission denied for table primary_poll_listing_piece
  service_reads_the_feed | anon_reads_the_feed 
 ------------------------+---------------------
  t                      | f
