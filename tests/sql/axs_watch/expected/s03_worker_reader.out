@@ -72,9 +72,9 @@
 ------------------------------------------------------------------------------------------------------------------------------------------------------
  {"error": "HTTP 429 from TicketsData", "outcome": "upstream_error", "event_id": "32", "listings": null, "response_s": null, "quota_remaining": null}
 
-                     next_held                      
-----------------------------------------------------
- {"events": [], "hold_s": 60, "upstream_errors": 4}
+                                    next_held                                    
+---------------------------------------------------------------------------------
+ {"events": [], "hold_s": 60, "errors_window": "00:10:00", "upstream_errors": 4}
 
  id | poll_status |         poll_error          | listing_count 
 ----+-------------+-----------------------------+---------------
