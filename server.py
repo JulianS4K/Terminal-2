@@ -827,9 +827,27 @@ app.include_router(build_pages_router(
 ))
 
 
+# The last database smoke /healthz?deep=1 ran: /healthz itself never waits on the database (below).
+_HEALTH_SMOKE: dict = {}
+
+
+def _healthz_smoke() -> dict:
+    """One tiny query against a table we know exists; feeds the shared DB breaker."""
+    if sb is None:
+        return {"supabase_smoke": "skipped — sb is None"}
+    try:
+        r = sb.table("events").select("id").limit(1).execute()
+        _db_breaker.record_success()
+        return {"supabase_smoke": "pass", "supabase_smoke_rows": len(r.data or [])}
+    except Exception as e:
+        _db_breaker.record_failure()
+        # Truncate so we don't leak full traces over a public endpoint.
+        return {"supabase_smoke": "fail", "supabase_smoke_error": str(e)[:300]}
+
+
 @app.get("/healthz")
-def healthz():
-    """Diagnostic endpoint. Public — no secrets returned, just boot + connectivity
+async def healthz(deep: bool = False):
+    """Diagnostic + liveness endpoint. Public — no secrets returned, just boot + connectivity
     facts. Useful when a deploy goes orange and we need a one-curl picture.
 
     Reports:
@@ -837,7 +855,16 @@ def healthz():
       supabase_url_set, supabase_service_role_key_set,
       supabase_anon_key_set, evo_client_configured, evo_creds_source,
       tevo_env_resolves (set-booleans per env-var name),
-      supabase_smoke: pass | fail (with truncated error message)
+      supabase_smoke: pass | fail | not_run (with truncated error message)
+
+    LIVENESS DOES NOT WAIT ON THE DATABASE (operator 2026-11-26: "Do the healtz thing"). Render's health
+    check (render.yaml healthCheckPath) calls plain /healthz with a 5-second limit and restarts the service
+    when it is missed. While this ran a Supabase query on every call, a slow database made Render restart the
+    whole web service — 19 times on 2026-11-25 and 13 between 03:20 and 12:40 UTC on 2026-11-26, each one
+    stopping every worker on it (the SI Tickets poller, the N2S auto-buyer, the sub finder) for nothing: the
+    process was fine, the database was slow. Plain /healthz now answers from memory on the event loop (no
+    thread, no query) and reports the last deep smoke with its age; /healthz?deep=1 runs the smoke (in a
+    thread, 4-second limit) for the post-deploy check and anyone who wants the database's state.
 
     Privacy note: key *lengths* used to leak here, exposing which key
     format was loaded (200+ legacy JWT vs ~40 new sb_*_*). Recon-grade.
@@ -865,22 +892,23 @@ def healthz():
             "TEVO_API_SECRET_set": bool(os.environ.get("TEVO_API_SECRET")),
         },
     }
-    # Tiny safe query against a table we know exists.
-    if sb is None:
-        out["supabase_smoke"] = "skipped — sb is None"
-    else:
-        try:
-            r = sb.table("events").select("id").limit(1).execute()
-            out["supabase_smoke"] = "pass"
-            out["supabase_smoke_rows"] = len(r.data or [])
-            _db_breaker.record_success()
-        except Exception as e:
-            out["ok"] = False
-            out["supabase_smoke"] = "fail"
-            # Truncate so we don't leak full traces over a public endpoint.
-            out["supabase_smoke_error"] = str(e)[:300]
-            _db_breaker.record_failure()
-        out["db_circuit"] = _db_breaker.status
+    if not deep:
+        if _HEALTH_SMOKE:
+            out.update(_HEALTH_SMOKE["result"])
+            out["supabase_smoke_age_s"] = round(time.time() - _HEALTH_SMOKE["at"])
+        else:
+            out["supabase_smoke"] = "not_run"
+        return out
+    from starlette.concurrency import run_in_threadpool
+    try:
+        result = await asyncio.wait_for(run_in_threadpool(_healthz_smoke), timeout=4.0)
+    except asyncio.TimeoutError:
+        _db_breaker.record_failure()
+        result = {"supabase_smoke": "fail", "supabase_smoke_error": "timed out after 4 seconds"}
+    _HEALTH_SMOKE.update(result=result, at=time.time())
+    out.update(result)
+    out["ok"] = result["supabase_smoke"] != "fail"
+    out["db_circuit"] = _db_breaker.status
     return out
 
 
@@ -1268,7 +1296,7 @@ app.include_router(build_paciolan_router(get_require_sb=lambda: require_sb, requ
 
 # routers/axs_ext.py — the AXS watch read by our own Firefox extension (axs_extension/), not TicketsData: the
 # extension asks what is due (axs_watch_next) and sends what each AXS page received (axs_watch_record_ext,
-# mig 20261126070000). Shared X-Ingest-Secret (AXS_EXT_INGEST_SECRET), closed while unset. Wired 2026-11-25.
+# mig 20261126130000). Shared X-Ingest-Secret (AXS_EXT_INGEST_SECRET), closed while unset. Wired 2026-11-25.
 from routers.axs_ext import build_axs_ext_router  # noqa: E402
 
 app.include_router(build_axs_ext_router(get_require_sb=lambda: require_sb))

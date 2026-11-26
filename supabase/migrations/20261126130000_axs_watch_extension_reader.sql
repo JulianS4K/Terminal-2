@@ -1,4 +1,4 @@
--- Migration 20261126070000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(replaced),axs_watch_pace()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261126062000 (main's newest AXS watch migration),20261126060000 (next()'s e.watch predicate, carried),20261126053000 (the pacer that now reads pace() for cadence_scale),20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
+-- Migration 20261126130000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(replaced),axs_watch_pace()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261126124500 (main's newest AXS watch migration; 20261126065000 / 070000 / 124500 patch settle_one, pace_apply, the fills and queue_ack in place, none of the functions re-created here),20261126060000 (next()'s e.watch predicate, carried),20261126053000 (the pacer that now reads pace() for cadence_scale),20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
 --
 -- THE AXS WATCH CAN BE READ BY OUR OWN BROWSER EXTENSION, WITHOUT TICKETSDATA.
 -- Operator 2026-11-25: "Look at the axs poller, I want to build our own" ... "So we can poll more events and more
@@ -50,8 +50,8 @@ ALTER TABLE public.axs_watch_poll DROP CONSTRAINT IF EXISTS axs_watch_poll_reade
 ALTER TABLE public.axs_watch_poll ADD CONSTRAINT axs_watch_poll_reader_check CHECK (reader IN ('db', 'worker', 'extension'));
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_lanes smallint NOT NULL DEFAULT 4 CHECK (ext_lanes BETWEEN 1 AND 8);
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_spacing_ms integer NOT NULL DEFAULT 4000 CHECK (ext_spacing_ms BETWEEN 1000 AND 60000);
-COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261126070000)';
-COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261126070000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261126130000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261126130000)';
 
 -- The budget (as 20261125205000): the extension's reads are not TicketsData's and spend nothing.
 CREATE OR REPLACE FUNCTION public.axs_watch_budget()
@@ -78,7 +78,7 @@ AS $function$
   -- the Eastern day, to match td_credits_today() (mig 20261125205000)
   today AS (SELECT count(*) AS fired FROM public.axs_watch_poll w
              WHERE w.fired_at >= date_trunc('day', now() AT TIME ZONE 'America/New_York') AT TIME ZONE 'America/New_York'
-               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261126070000)
+               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261126130000)
   SELECT jsonb_build_object(
            'pool_remaining', pool.remaining, 'pool_read_at', pool.read_at,
            'next_reset', reset.next_reset, 'days_left', greatest(reset.next_reset - current_date, 1),
@@ -112,7 +112,7 @@ BEGIN
   IF v_cfg.reader = 'db' THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the database reads (axs_watch_config.reader)');
   END IF;
-  -- each reader is handed events only while it is the one switched on (mig 20261126070000)
+  -- each reader is handed events only while it is the one switched on (mig 20261126130000)
   IF v_cfg.reader = 'extension' AND NOT v_ext THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
   END IF;
@@ -197,7 +197,7 @@ BEGIN
   IF NOT v_cfg.queue_enabled THEN
     RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the queue is off (axs_watch_config.queue_enabled)');
   END IF;
-  -- the queue feeds the TicketsData worker; while the extension reads it hands out nothing (mig 20261126070000)
+  -- the queue feeds the TicketsData worker; while the extension reads it hands out nothing (mig 20261126130000)
   IF v_cfg.reader = 'extension' THEN
     RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
   END IF;
