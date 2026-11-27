@@ -44,19 +44,19 @@
 --- F. RULE 2: the index refuses a second OPEN item for an event, whoever asks
 psql:s24_two_workers_share_the_queue.sql:84: WARNING:  a second open item is refused by the index
 --- G. both workers ack their own items and each read lands once in the ledger
-psql:s24_two_workers_share_the_queue.sql:101: WARNING:  acked 6 items
+psql:s24_two_workers_share_the_queue.sql:104: WARNING:  acked 6 items
  ledger_rows | distinct_events | each_event_once | readers 
 -------------+-----------------+-----------------+---------
            6 |               6 | t               |       1
 
 --- H. RULE 4: the cap binds across BOTH workers, not per worker
-                                         alpha_over_cap                                          
--------------------------------------------------------------------------------------------------
- {"items": [], "lanes": 6, "daily_cap": 1, "in_flight": 0, "spacing_ms": 3000, "fired_today": 6}
+                                                               alpha_over_cap                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------
+ {"items": [], "lanes": 6, "daily_cap": 1, "in_flight": 0, "spacing_ms": 3000, "fired_today": 6, "parked_today": 0, "parked_daily_max": 50}
 
-                                          beta_over_cap                                          
--------------------------------------------------------------------------------------------------
- {"items": [], "lanes": 6, "daily_cap": 1, "in_flight": 0, "spacing_ms": 3000, "fired_today": 6}
+                                                               beta_over_cap                                                                
+--------------------------------------------------------------------------------------------------------------------------------------------
+ {"items": [], "lanes": 6, "daily_cap": 1, "in_flight": 0, "spacing_ms": 3000, "fired_today": 6, "parked_today": 0, "parked_daily_max": 50}
 
 --- I. RULE 5: beta dies holding items; the lease expires and they return to the pool
  beta_took 

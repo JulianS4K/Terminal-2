@@ -13,7 +13,11 @@ SET client_min_messages = warning;
 
 INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, enabled, keep_all, note, set_by)
 VALUES (940001, 'Tour Barn Arena', 0, true, true, 'scenario', 'test');
+-- watch_until_days is set HERE rather than taken from the config: mig 20261127000000 set the
+-- shipped default to NULL (operator "Remove beyond horrizon but by soonest event"), so a
+-- scenario that needs a ceiling must say so itself. The knob is unchanged; only the default is.
 UPDATE public.axs_watch_config SET keep_regex = NULL, target_events = 50, reader = 'worker',
+       watch_until_days = 180,
        exclude_regex = '(parking|vip tours|^ryman .*\mtour)';
 
 INSERT INTO public.axs_export_event

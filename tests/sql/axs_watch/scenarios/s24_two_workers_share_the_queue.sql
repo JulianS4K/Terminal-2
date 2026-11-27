@@ -93,7 +93,10 @@ BEGIN
     PERFORM public.axs_queue_ack(q.id, 200, jsonb_build_object('status','ok','quota_remaining',99000,
       'body', jsonb_build_object('status','ok','exit_code',0,'event',jsonb_build_object('id',q.axs_event_id),
         'listings', jsonb_build_array(jsonb_build_object('kind','primary','section','1','row','A',
-          'seats', jsonb_build_array('1'),'quantity',1,'status','Available',
+          -- 40 tickets, not 1: under thin_min_tickets (20) mig 20261126230000 parks every one of
+          -- these on the 24-hour band, and mig 20261127000000 then lets a parked read past the
+          -- daily cap — which would stop section F testing the cap at all (s31 owns that)
+          'quantity',40,'status','Available',
           'pricing', jsonb_build_object('face',10,'fees_total',0,'tax',0,'all_in',10))))));
     n := n + 1;
   END LOOP;

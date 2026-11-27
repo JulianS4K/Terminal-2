@@ -66,6 +66,10 @@ SELECT source_event_id, sellable_tickets, ga_tickets, ga_slow, cadence_pinned, p
        listing_count, listed_quantity
   FROM public.primary_poll_event WHERE source='axs' AND source_event_id LIKE '93%' ORDER BY 1;
 
+-- T1's listing_count and listed_quantity read 0 above, and that is mig 20261127000000: parking
+-- as thin DELETES the capture (operator "stop sharing with API and delete last push"), so a
+-- consumer that mirrors rows keeps nothing. sellable_tickets holds the measure, which is what
+-- makes the withholding below survive its own delete. s31 owns that behaviour.
 \echo '--- E. the feeds: T1 is withheld and SAYS WHY; T2 and the GA show are published'
 SELECT event_id, listings_available, listings_withheld, listing_count
   FROM public.v_primary_poll_events_feed WHERE source='axs' AND event_id LIKE '93%' ORDER BY 1;

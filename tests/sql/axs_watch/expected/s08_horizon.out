@@ -1,4 +1,4 @@
---- A. the default
+--- A. the ceiling this scenario sets (the shipped default is NULL since mig 20261127000000)
  watch_until_days | stop_before_start 
 ------------------+-------------------
               180 | 06:00:00
