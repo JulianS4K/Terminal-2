@@ -52,9 +52,9 @@
  {"added": 0, "apply": true, "short": [], "parked": 0, "retired": 0, "watched": 4}
 
 --- D. the tick: no pool reading and nothing recorded leaves the whole pool; with the pool at 0 nothing fires
-                                       budget_empty                                       
-------------------------------------------------------------------------------------------
- {"enabled": true, "daily_cap": 0, "in_flight": 0, "fired_today": 0, "pool_remaining": 0}
+                                                 budget_empty                                                 
+--------------------------------------------------------------------------------------------------------------
+ {"enabled": true, "daily_cap": 0, "in_flight": 0, "unmetered": false, "fired_today": 0, "pool_remaining": 0}
 
                                         tick_no_budget                                         
 -----------------------------------------------------------------------------------------------
@@ -243,6 +243,7 @@
  axs_watch_pace_apply     | f    | t
  axs_watch_parse          | f    | t
  axs_watch_record         | f    | t
+ axs_watch_record_ext     | f    | t
  axs_watch_rule_ok        | f    | t
  axs_watch_rule_ok        | f    | t
  axs_watch_settle_one     | f    | t

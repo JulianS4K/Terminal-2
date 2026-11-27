@@ -1,0 +1,57 @@
+--- A. the TicketsData worker reads: the extension is handed nothing
+                    ext_while_worker                    
+--------------------------------------------------------
+ the TicketsData worker reads (axs_watch_config.reader)
+
+--- B. the extension reads: the TicketsData worker is handed nothing; the extension gets the due events, uncapped, with its spacing and lanes
+               worker_while_ext                
+-----------------------------------------------
+ the extension reads (axs_watch_config.reader)
+
+                queue_while_ext                
+-----------------------------------------------
+ the extension reads (axs_watch_config.reader)
+
+    events    | spacing_ms | lanes | daily_cap | unmetered 
+--------------+------------+-------+-----------+-----------
+ ["41", "42"] | 4000       | 4     | 1000000   | true
+
+--- C. a read recorded: the listings stored, no credit charged, the ledger row marked extension, not counted against the TicketsData day
+                                                    recorded                                                    
+----------------------------------------------------------------------------------------------------------------
+ {"error": null, "outcome": "ok", "event_id": "41", "listings": 2, "response_s": 14.2, "quota_remaining": null}
+
+ id |  reader   | status_code | outcome | listings | quota_remaining 
+----+-----------+-------------+---------+----------+-----------------
+ 41 | extension |         200 | ok      |        2 |               -
+
+ id | poll_status | listing_count | order_max | price_min | price_max 
+----+-------------+---------------+-----------+-----------+-----------
+ 41 | ok          |             2 |         6 |        80 |      95.5
+
+ market  | section | row | qty | price 
+---------+---------+-----+-----+-------
+ primary | 101     | A   |   2 |    80
+ resale  | 102     | B   |   1 |  95.5
+
+ fetch_credits_charged 
+-----------------------
+                     0
+
+ ticketsdata_fired_today 
+-------------------------
+ 0
+
+--- D. the same read sent again returns the first record; a blocked page is a failed poll named for the AXS page
+ repeated | ledger_rows 
+----------+-------------
+ true     |           1
+
+                                                                        blocked                                                                        
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"error": "HTTP 403 from the AXS page", "outcome": "upstream_error", "event_id": "42", "listings": null, "response_s": null, "quota_remaining": null}
+
+--- E. the pace counts the lanes (the hourly pacer sets cadence_scale from it): four lanes at a 14.2 s settle read every 3.8 s, held to the 4 s spacing
+   reader    | lanes |     spacing_s      | s_per_read | reads_per_hour 
+-------------+-------+--------------------+------------+----------------
+ "extension" | 4     | 4.0000000000000000 | 4.0        | 900

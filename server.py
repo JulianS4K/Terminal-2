@@ -1294,6 +1294,13 @@ from routers.paciolan import build_paciolan_router  # noqa: E402
 
 app.include_router(build_paciolan_router(get_require_sb=lambda: require_sb, require_auth=require_auth))
 
+# routers/axs_ext.py — the AXS watch read by our own Firefox extension (axs_extension/), not TicketsData: the
+# extension asks what is due (axs_watch_next) and sends what each AXS page received (axs_watch_record_ext,
+# mig 20261127020000). Shared X-Ingest-Secret (AXS_EXT_INGEST_SECRET), closed while unset. Wired 2026-11-25.
+from routers.axs_ext import build_axs_ext_router  # noqa: E402
+
+app.include_router(build_axs_ext_router(get_require_sb=lambda: require_sb))
+
 # routers/eventbrite.py — Eventbrite organizer discovered events (TicketsData
 # /events feed). Service-role read of td_discovered_events (RLS service-only),
 # mirroring the AXS route. Wired 2026-07-08.

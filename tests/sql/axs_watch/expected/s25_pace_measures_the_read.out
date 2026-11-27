@@ -1,8 +1,8 @@
 --- A. 60 reads that each took 6s upstream but sat 9s in a queue lane before finishing
 --- B. settle says 9s, the read says 6s; s_per_read must follow the READ
-                                                                                                               pace                                                                                                               
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- {"reader": "worker", "spacing_s": 3.0000000000000000, "s_per_read": 7.0, "target_pct": 75, "settle_p50_s": 9.0, "settle_p90_s": 9.0, "reads_measured": 60, "reads_per_hour": 514, "response_p50_s": 6.0, "usable_per_hour": 385}
+                                                                                                                     pace                                                                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"lanes": 1, "reader": "worker", "spacing_s": 3.0000000000000000, "s_per_read": 7.0, "target_pct": 75, "settle_p50_s": 9.0, "settle_p90_s": 9.0, "reads_measured": 60, "reads_per_hour": 514, "response_p50_s": 6.0, "usable_per_hour": 385}
 
 --- C. said plainly: the measure is the read + 1s, not the settle + 1s
  settle_p50 | response_p50 | s_per_read | follows_the_read | beats_the_inflated_settle 

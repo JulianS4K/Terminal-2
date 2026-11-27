@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AXS Reader</title>
+<style>
+  :root { --bg: #fff; --fg: #1d1d1f; --muted: #6b6b70; --line: #e3e3e6; --ok: #1a7f37; --bad: #c62828; --accent: #2457d6; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --fg: #f2f2f4; --muted: #a1a1a8; --line: #38383c; --ok: #4cc46a; --bad: #ff6b6b; --accent: #7aa2ff; } }
+  body { background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; margin: 0; padding: 14px; min-width: 380px; max-width: 640px; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; padding: 8px 10px; }
+  legend { color: var(--muted); padding: 0 4px; }
+  label { display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 8px; margin: 4px 0; }
+  input[type=text], input[type=password], input[type=number] { width: 100%; box-sizing: border-box; padding: 4px 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  button { padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .stat { color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  pre { white-space: pre-wrap; font-size: 11px; max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 6px; margin: 0; }
+</style>
+</head>
+<body>
+<h1>AXS Reader <span id="state" class="stat"></span></h1>
+
+<fieldset>
+  <legend>Status</legend>
+  <div id="summary" class="stat">…</div>
+  <div class="row" style="margin-top:8px">
+    <button id="start" class="primary">Start</button>
+    <button id="stop">Stop</button>
+    <button id="reset" title="Drop the lane containers and their cookies; they are made again, empty">Reset lane containers</button>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Settings</legend>
+  <label>Server <input id="server" type="text"></label>
+  <label>Ingest secret <input id="secret" type="password" autocomplete="off"></label>
+  <label>Lanes (containers) <input id="lanes" type="number" min="1" max="8"></label>
+  <label>Spacing (ms) <input id="spacingMs" type="number" min="1000" step="500"></label>
+  <label>Page timeout (s) <input id="timeoutS" type="number" min="30" max="240"></label>
+  <label>Follow "Buy Tickets" <input id="followBuyLink" type="checkbox"></label>
+  <div class="row"><button id="save">Save</button><button id="ping">Test connection</button><span id="pingOut" class="stat"></span></div>
+  <div class="stat" style="margin-top:6px">The database's ext_lanes / ext_spacing_ms override lanes and spacing while it answers.</div>
+</fieldset>
+
+<fieldset>
+  <legend>Test one event (nothing is sent to our service)</legend>
+  <label>AXS event link <input id="testUrl" type="text" placeholder="https://www.axs.com/events/1234567/..."></label>
+  <div class="row"><button id="test">Read it</button><button id="download" disabled>Download capture</button><span id="testState" class="stat"></span></div>
+  <pre id="testOut" style="margin-top:6px"></pre>
+</fieldset>
+
+<fieldset>
+  <legend>Recent reads</legend>
+  <pre id="log"></pre>
+</fieldset>
+<script src="popup.js"></script>
+</body>
+</html>
