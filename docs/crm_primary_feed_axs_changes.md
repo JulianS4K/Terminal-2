@@ -81,6 +81,93 @@ reads on it". Never alert on it, and never treat its absence of listings as sold
 
 ---
 
+## How events join and leave the polled set
+
+One job decides this: `axs_watch_fill_daily`, **03:20 UTC daily**. It also runs on demand. The
+active ceiling is **341** events across **51 enabled venues** (29 of them `keep_all`). Every
+decision it makes is written to an audit trail with a one-word reason, so any individual
+event's fate is answerable.
+
+It runs in five steps, in this order: **retire → refill each venue to its quota → give back
+borrowed places → backfill whatever is left → close the run.**
+
+### Leaving, and what you see when it happens
+
+**This is the part that matters most to you**, because leaving the *polled* set is not the
+same as leaving the *feed*:
+
+- Retired events are deleted from the polled table, and then the catalogue step immediately
+  re-adds the ones still worth listing. Those **reappear in `/primary/events` with
+  `listings_withheld='not_polled'`** — still discoverable, just not polled.
+- An event that is **dead** (see below) is excluded from the catalogue too, so it **disappears
+  from the feed entirely**.
+
+So the normal transition you will observe is `sending → not_polled`, not a disappearance.
+Treat a vanished `event_id` as "cancelled or finished", and `not_polled` as "still real, not
+being polled".
+
+Reasons an event is retired, exactly as they appear in the audit trail:
+
+| Reason | Meaning |
+|---|---|
+| `not_in_export` | No longer in the AXS export at all |
+| `gone` | The export marks it gone or removed |
+| `not_axs_sold` | The export says AXS does not sell it (overridden for venues flagged `trust_axs_sold`) |
+| `not_kept` | Fails the keep rules — category, title or venue |
+| `starts_soon` | Starts within **6 hours**. We stop polling before doors |
+| `beyond_horizon` | Past the date ceiling — **currently disabled**, so this never fires |
+| `over_or_cancelled` | Cancelled, or near-term with nothing to sell (below) |
+| `not_on_sale` | The last read says it is not on sale, or its on-sale has not arrived and no listings exist yet |
+| `not_axs_or_expired` | **Three consecutive** reads said AXS does not sell it, or that it is over |
+| `over_target_events` | A borrowed place handed back because the list was over its ceiling |
+
+**`over_or_cancelled` has two distinct triggers**, and the asymmetry is deliberate:
+
+1. **Cancelled** — the read says cancelled. Retires at **any date**.
+2. **Nothing to sell** — AXS says no tickets are available, or a successful read returns zero
+   listings. Retires **only within 7 days of the event**. A far-future event with nothing on
+   sale has usually not released inventory yet, so retiring it would be wrong.
+
+This check reads two sources: the event's own last read *and* the read ledger, which outlives
+the event being taken off the list. Without the second, the same job's backfill would hand a
+just-retired event its place straight back.
+
+### Joining
+
+An event becomes eligible when **all** of these hold:
+
+- It is in the AXS export, at an **enabled** venue, not marked gone or removed.
+- The export says AXS sells it — or its venue is flagged `trust_axs_sold`.
+- It starts **more than 6 hours** from now, and on or after the configured start date.
+- It has a ticket URL and a parseable local date.
+- It passes the keep rules: a non-empty title, **not** matching the absolute exclude list, and
+  then either its venue is `keep_all`, or it matches the keep rules for its category (sports
+  titles have their own list).
+- Its on-sale moment is not still more than **3 days** out.
+- No read in the last **7 days** said it was not on sale.
+- Fewer than **3** reads in the ledger (which keeps 14 days) said not-AXS or expired.
+- It is not dead — so an event the retire step just removed cannot come straight back.
+
+Eligible events are then taken **soonest-event-first**: each venue is filled to its own quota
+first, and any places still free go to the remaining eligible events regardless of venue.
+There is no preference for bigger venues or higher prices — only date order.
+
+### Two rules worth knowing because they look like bugs
+
+**A parked event does not hold a place.** An event parked for thin inventory or sold-out is on
+a once-a-day read and does *not* count against the 341 ceiling, so a fresh event is pulled in
+to replace it. This is why the total watched count drifts above 341 and will keep drifting.
+Counting the total against 341 and concluding something is broken is the single easiest
+mistake to make here. The 6-hour not-on-sale pin is **not** parked — that event is waiting for
+an on-sale that can land at any hour, so it is still being watched properly and does hold its
+place.
+
+**Quota places outrank borrowed ones.** A venue over its quota holds a "borrowed" place. When
+the list goes over its ceiling, borrowed places are returned furthest-event-first. At a
+`keep_all` venue the event stays on as catalogue; elsewhere it is dropped.
+
+---
+
 ## The complete set of `listings_withheld` values
 
 Taken from the deployed view, not from memory. `null` means the row is sending listings.
