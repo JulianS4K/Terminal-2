@@ -43,9 +43,13 @@ SELECT position('axs_watch_non_transferable' in s) > 0 AS settle_calls_detector,
           'public.axs_watch_settle_one(text,integer,jsonb,boolean,text,boolean,text)'::regprocedure) s,
                pg_get_functiondef('public.axs_watch_fill(boolean)'::regprocedure) f) x;
 
-\echo '--- E. the feed reports it, ahead of not_polled, and keeps security_invoker'
-SELECT strpos(d, 'non_transferable') > 0 AS reason_present,
-       strpos(d, 'non_transferable') < strpos(d, 'not_polled') AS ahead_of_not_polled,
+\echo '--- E. the feeds exclude it entirely, and keep their own reloptions'
+SELECT (d ~ 'NOT COALESCE\(t\.non_transferable') AS events_feed_excludes,
+       (l ~ 'NOT COALESCE\(t\.non_transferable') AS listings_feed_excludes,
+       (d ~ '''non_transferable''::text') AS dead_reason_left_behind,
        (SELECT reloptions @> ARRAY['security_invoker=true'] FROM pg_class
-         WHERE relname = 'v_primary_poll_events_feed') AS security_invoker_kept
-  FROM (SELECT pg_get_viewdef('v_primary_poll_events_feed'::regclass) d) v;
+         WHERE relname = 'v_primary_poll_events_feed') AS events_security_invoker,
+       (SELECT coalesce(reloptions::text, 'NULL') FROM pg_class
+         WHERE relname = 'v_primary_poll_listings_feed') AS listings_reloptions
+  FROM (SELECT pg_get_viewdef('v_primary_poll_events_feed'::regclass) d,
+               pg_get_viewdef('v_primary_poll_listings_feed'::regclass) l) v;

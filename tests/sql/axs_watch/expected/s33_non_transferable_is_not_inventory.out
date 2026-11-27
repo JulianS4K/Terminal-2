@@ -18,7 +18,7 @@
 -----------------------+----------------+---------------
  t                     | t              | t
 
---- E. the feed reports it, ahead of not_polled, and keeps security_invoker
- reason_present | ahead_of_not_polled | security_invoker_kept 
-----------------+---------------------+-----------------------
- t              | t                   | t
+--- E. the feeds exclude it entirely, and keep their own reloptions
+ events_feed_excludes | listings_feed_excludes | dead_reason_left_behind | events_security_invoker | listings_reloptions 
+----------------------+------------------------+-------------------------+-------------------------+---------------------
+ t                    | t                      | f                       | t                       | NULL
