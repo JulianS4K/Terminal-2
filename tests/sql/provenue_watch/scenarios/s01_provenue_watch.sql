@@ -53,11 +53,11 @@ SELECT source, source_event_id, name, event_date, start_local_time, timezone, ve
        poll_status, listing_count, tevo_event_id, tevo_match_method FROM public.primary_poll_event ORDER BY source_event_id;
 SELECT listing_id, section, seat_row, seat_low, seat_high, quantity, max_per_order, jsonb_array_length(allowed_quantities) AS n_qty,
        price, fee, all_in_price, area, obstructed, general_admission, notes
-  FROM public.primary_poll_listing WHERE source = 'provenue' ORDER BY listing_id;
+  FROM public.primary_poll_listing WHERE source = 'provenue' ORDER BY listing_id COLLATE "C";
 SELECT seats FROM public.primary_poll_listing WHERE source = 'provenue' AND section = '304';
 \echo '   in the feed, joined to EVO through the schedule'
 SELECT source, event_id, name, listings_available, listing_count, tevo_event_id, tevo_match_method FROM public.v_primary_poll_events_feed WHERE source = 'provenue';
-SELECT listing_id, area, all_in_price FROM public.v_primary_poll_listings_feed WHERE source = 'provenue' ORDER BY all_in_price, listing_id;
+SELECT listing_id, area, all_in_price FROM public.v_primary_poll_listings_feed WHERE source = 'provenue' ORDER BY all_in_price, listing_id COLLATE "C";
 
 \echo '== 4. at once again: A read within the hour, B inside retry_after: nothing fires'
 SELECT public.provenue_watch_tick() - 'captures_remaining';
