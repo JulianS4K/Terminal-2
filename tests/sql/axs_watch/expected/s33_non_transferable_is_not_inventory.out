@@ -1,0 +1,24 @@
+--- A. the label is the signal; the look-alike flags are not consulted
+ ryman | tso 
+-------+-----
+ t     | f
+
+--- B. the description alone is enough, and spelling variants are caught
+ hyphen | spaced | resale_clause 
+--------+--------+---------------
+ t      | t      | t
+
+--- C. an event that says nothing about it is left alone
+ empty_body | ordinary | malformed 
+------------+----------+-----------
+ f          | f        | f
+
+--- D. the settle retires one, and the fill will not take it back
+ settle_calls_detector | settle_retires | fill_excludes 
+-----------------------+----------------+---------------
+ t                     | t              | t
+
+--- E. the feed reports it, ahead of not_polled, and keeps security_invoker
+ reason_present | ahead_of_not_polled | security_invoker_kept 
+----------------+---------------------+-----------------------
+ t              | t                   | t
