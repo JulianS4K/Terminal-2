@@ -1,0 +1,29 @@
+--- A. the switch ships off
+ withhold_wrong_performance 
+----------------------------
+ f
+
+--- B. the matinee, asked for and served: nothing to say
+ matinee 
+---------
+ ok
+
+--- C. the 19:30 show served the 15:00 inventory: caught
+                                                    evening                                                    
+---------------------------------------------------------------------------------------------------------------
+ wrong_performance: event starts 2026-12-11 19:30 but the onsale block serves 2026-12-11 15:00 (TSO - 3:00 PM)
+
+--- D. a half hour of slack is allowed, an hour is not
+ half_hour | an_hour_caught 
+-----------+----------------
+ ok        | t
+
+--- E. a body it cannot judge is left alone
+ empty_body | no_sub_events | a_package | rubbish 
+------------+---------------+-----------+---------
+ ok         | ok            | ok        | ok
+
+--- F. the settle consults it and respects the switch
+ settle_calls_detector | settle_reads_switch 
+-----------------------+---------------------
+ t                     | t
