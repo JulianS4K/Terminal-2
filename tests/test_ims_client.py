@@ -227,7 +227,11 @@ def test_the_run_polls_the_indy_500_when_it_is_given_its_client(monkeypatch):
 
         listings = None
 
-    out = sync.run(lambda name, params: sent.append((name, params)), _None(), _None(), ("ims",), ims)
+    def rpc(name, params):
+        sent.append((name, params))
+        return params["p_event_ids"] if name == "primary_poll_due" else None   # everything is due
+
+    out = sync.run(rpc, _None(), _None(), ("ims",), ims)
     assert out == {"ims": {"events": 1, "ok": 1, "failed": 0, "listings": 5, "not_stored": 0, "skipped": 0}}
     stored = next(p for n, p in sent if n == "primary_poll_ingest")
     assert stored["p_source"] == "ims" and stored["p_events"][0]["id"] == "indy500-2027"

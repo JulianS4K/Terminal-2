@@ -51,12 +51,21 @@ def poll_source(rpc: Rpc, source: str, list_events: Callable[[], list], read_lis
     done = {"events": len(events), "ok": 0, "failed": 0, "listings": 0, "not_stored": 0, "skipped": 0}
     ids = [str(event["id"]) for event in events]
     # each event has its own cadence, by its date, its median price and the tickets listed (mig 20261123194030): only the ones
-    # that are due are read. Not knowing what is due, everything is read: fresher than needed is safe.
+    # that are due are read. primary_poll_due is also where the band guards live -- its ladder clause refuses to overtake
+    # a band that ga_slow or cadence_pinned chose deliberately -- so its answer is the only thing that knows a parked or
+    # GA-slowed event must be left alone. It used to fall back to `set(ids)`, reading EVERY event, under the comment
+    # "fresher than needed is safe". It is not safe: that is a full sweep of the source with every deliberate band guard
+    # discarded, failing open into unbounded upstream reads exactly when the database is already in trouble. A skipped
+    # cycle costs one interval of staleness and heals on the next tick; a swept one costs reads we cannot take back.
+    # An empty due set rather than an early return, so the loop skips every event just as it does when the database says
+    # nothing is due -- a routine case -- and primary_poll_run_done still closes the run. No new control flow.
     try:
         asked = rpc("primary_poll_due", {"p_source": source, "p_event_ids": ids})
-    except Exception:  # noqa: BLE001
-        asked = None
-    due = set(asked) if isinstance(asked, list) else set(ids)
+    except Exception as exc:  # noqa: BLE001
+        asked, done["due_unknown"] = [], _why(exc)
+    if not isinstance(asked, list):
+        asked, done["due_unknown"] = [], f"primary_poll_due returned {type(asked).__name__}, not a list"
+    due = set(asked)
     for event in events:
         if str(event["id"]) not in due:
             done["skipped"] += 1
