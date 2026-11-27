@@ -8,9 +8,9 @@
  t
 
 --- B. the fill reads target_events (3) and publishes the rest as catalogue-only
-                                   fill                                   
---------------------------------------------------------------------------
- {"added": 3, "apply": true, "retired": 0, "watched": 7, "backfilled": 3}
+                                         fill                                          
+---------------------------------------------------------------------------------------
+ {"added": 3, "apply": true, "parked": 0, "retired": 0, "watched": 3, "backfilled": 3}
 
    id    |      name       | watch | venue_name  
 ---------+-----------------+-------+-------------
@@ -48,18 +48,18 @@
  3
 
 --- E. a catalogue row is PROMOTED when the watch set grows (not skipped by DO NOTHING)
-                           fill_with_more_room                            
---------------------------------------------------------------------------
- {"added": 2, "apply": true, "retired": 0, "watched": 7, "backfilled": 2}
+                                  fill_with_more_room                                  
+---------------------------------------------------------------------------------------
+ {"added": 2, "apply": true, "parked": 0, "retired": 0, "watched": 5, "backfilled": 2}
 
  watched | catalogue_only 
 ---------+----------------
        5 |              2
 
 --- F. shrinking the list DEMOTES the furthest — it stays in the feed, stops costing
-                              fill_shrunk                               
-------------------------------------------------------------------------
- {"added": 0, "apply": true, "retired": 3, "watched": 7, "returned": 3}
+                                     fill_shrunk                                     
+-------------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "parked": 0, "retired": 3, "watched": 2, "returned": 3}
 
  watched | catalogue_only | still_in_the_feed 
 ---------+----------------+-------------------
@@ -78,4 +78,3 @@
  reads_made 
 ------------
           0
-

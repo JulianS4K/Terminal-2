@@ -22,6 +22,11 @@ SELECT d AS days_out, public.axs_watch_cadence_every((now() + make_interval(mins
   FROM (VALUES (1.0),(10.0),(45.0),(150.0)) v(d);
 UPDATE public.axs_watch_config SET cadence_scale = 1.0;
 
+-- Each of the three reads carries a listing of 60 tickets ON PURPOSE. mig 20261126214500 gives a read with
+-- an EMPTY listings array the sold-out band (1 day, pinned, jittered rather than phase-aligned),
+-- so an empty read here would stop this section testing bands and phases at all. The empty read
+-- is s29's subject. And 60 is above thin_min_tickets (20): under it, mig 20261126230000 would
+-- park these three on the one-day band as preemptive sold out, which is s30's subject.
 \echo '--- D. a read puts the event on its band, not on the shared ladder''s interval'
 INSERT INTO public.primary_poll_source (source, current_run, finished_at, events)
 VALUES ('axs', 'run-band', now(), 3)
@@ -35,9 +40,9 @@ VALUES ('axs','B1','Tomorrow Night',  (now() + interval '30 hours')::date, now()
        ('axs','B3','Far Out',         (now() + interval '150 days')::date, now() + interval '150 days', 'Small Hall',
         'https://www.axs.com/events/B3', 'pending', now() - interval '1 hour', interval '10 minutes', 'run-band')
 ON CONFLICT (source, source_event_id) DO NOTHING;
-SELECT public.axs_watch_record('B1', 200, $j${"status":"ok","response_s":5.0,"quota_remaining":99990,"body":{"status":"ok","exit_code":0,"elapsed_seconds":5.0,"event":{"id":"B1"},"listings":[{"kind":"primary","section":"101","row":"A","seats":["1","2"],"quantity":2,"status":"Available","pricing":{"face":40,"fees_total":6,"tax":0,"all_in":46}}]}}$j$::jsonb) - 'request_id' AS read_b1;
-SELECT public.axs_watch_record('B2', 200, $j${"status":"ok","response_s":5.0,"quota_remaining":99989,"body":{"status":"ok","exit_code":0,"elapsed_seconds":5.0,"event":{"id":"B2"},"listings":[]}}$j$::jsonb) - 'request_id' AS read_b2;
-SELECT public.axs_watch_record('B3', 200, $j${"status":"ok","response_s":5.0,"quota_remaining":99988,"body":{"status":"ok","exit_code":0,"elapsed_seconds":5.0,"event":{"id":"B3"},"listings":[]}}$j$::jsonb) - 'request_id' AS read_b3;
+SELECT public.axs_watch_record('B1', 200, $j${"status":"ok","response_s":5.0,"quota_remaining":99990,"body":{"status":"ok","exit_code":0,"elapsed_seconds":5.0,"event":{"id":"B1"},"listings":[{"kind":"primary","section":"101","row":"A","quantity":60,"status":"Available","pricing":{"face":40,"fees_total":6,"tax":0,"all_in":46}}]}}$j$::jsonb) - 'request_id' AS read_b1;
+SELECT public.axs_watch_record('B2', 200, $j${"status":"ok","response_s":5.0,"quota_remaining":99989,"body":{"status":"ok","exit_code":0,"elapsed_seconds":5.0,"event":{"id":"B2"},"listings":[{"kind":"primary","section":"101","row":"A","quantity":60,"status":"Available","pricing":{"face":40,"fees_total":6,"tax":0,"all_in":46}}]}}$j$::jsonb) - 'request_id' AS read_b2;
+SELECT public.axs_watch_record('B3', 200, $j${"status":"ok","response_s":5.0,"quota_remaining":99988,"body":{"status":"ok","exit_code":0,"elapsed_seconds":5.0,"event":{"id":"B3"},"listings":[{"kind":"primary","section":"101","row":"A","quantity":60,"status":"Available","pricing":{"face":40,"fees_total":6,"tax":0,"all_in":46}}]}}$j$::jsonb) - 'request_id' AS read_b3;
 SELECT source_event_id AS id, poll_interval,
        next_poll_at > now() AS in_future,
        -- the bound is due_slack + one interval, not one interval: mig 20261126023000 anchors the

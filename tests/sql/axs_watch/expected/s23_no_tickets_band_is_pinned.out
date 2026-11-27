@@ -1,0 +1,65 @@
+--- A. the knobs
+ no_tickets_every | not_on_sale_every 
+------------------+-------------------
+ 1 day            | 06:00:00
+
+--- B. before any read all three are unpinned, and the ladder overtakes all three
+ source_event_id | cadence_pinned |   band   |  ladder  
+-----------------+----------------+----------+----------
+ P1              | f              | 01:00:00 | 00:30:00
+ P2              | f              | 01:00:00 | 00:30:00
+ P3              | f              | 01:00:00 | 00:30:00
+
+     due_before     
+--------------------
+ ["P1", "P2", "P3"]
+
+--- C. P1 answers "no tickets", P2 "not on sale": the settle sets the band AND pins it
+                                                p1_settled                                                
+----------------------------------------------------------------------------------------------------------
+ {"error": "No tickets are currently available for this event.", "outcome": "unparsed", "listings": null}
+
+                                      p2_settled                                      
+--------------------------------------------------------------------------------------
+ {"error": "This event is not on sale yet.", "outcome": "unparsed", "listings": null}
+
+ source_event_id | cadence_pinned |   band   |                     poll_error                     
+-----------------+----------------+----------+----------------------------------------------------
+ P1              | t              | 1 day    | No tickets are currently available for this event.
+ P2              | t              | 06:00:00 | This event is not on sale yet.
+
+--- D. THE FIX: the ladder no longer overtakes P1 or P2. P3, never read, is still overtaken.
+ due_after 
+-----------
+ ["P3"]
+
+--- E. said per event, so a change in list order cannot hide a regression
+ source_event_id | cadence_pinned | due 
+-----------------+----------------+-----
+ P1              | t              | f
+ P2              | t              | f
+ P3              | f              | t
+
+--- F. the pin SLOWS, it never stops: when P1's own next_poll_at arrives it is due
+ p1_due_when_its_time_comes 
+----------------------------
+                          1
+
+--- G. and it UNPINS: P1 comes back on sale, the band UPDATE sets cadence_pinned false again
+ p1_back_on_sale 
+-----------------
+ ok
+
+ cadence_pinned |   band   
+----------------+----------
+ f              | 01:30:00
+
+--- H. inert for another source: nothing but the AXS settle writes cadence_pinned
+ cadence_pinned | still_overtaken 
+----------------+-----------------
+ f              | t
+
+--- I. both guards are installed, not one
+ ga_guard | pin_guard 
+----------+-----------
+ t        | t

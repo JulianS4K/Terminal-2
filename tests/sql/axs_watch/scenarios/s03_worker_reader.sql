@@ -44,9 +44,9 @@ SELECT public.axs_watch_record('33', 200, $j${"status": "ok", "response_s": 7.9,
     "onsale": {"offer_id": "900", "status": {"onSaleNow": true}},
     "groups": [{"label": "Public", "offer_id": 900, "seat_type": "STANDARD", "ticket_qty": {"min": 1, "max": 8}}],
     "listings": [
-      {"kind": "primary", "section": "101", "row": "A", "seats": ["1", "2"], "quantity": 2, "seat_type": "STANDARD", "status": "Available", "offer_id": "900", "offer_name": "Tomorrow's Show", "price_level": "Lower", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 80, "fees_total": 12, "tax": 0, "all_in": 92}},
+      {"kind": "primary", "section": "101", "row": "A", "quantity": 30, "seat_type": "STANDARD", "status": "Available", "offer_id": "900", "offer_name": "Tomorrow's Show", "price_level": "Lower", "neighborhood": "Lower Bowl", "general_admission": false, "pricing": {"face": 80, "fees_total": 12, "tax": 0, "all_in": 92}},
       {"kind": "primary", "section": "PR04", "row": "3", "seats": ["1", "2"], "quantity": 2, "seat_type": "PREMIUM", "status": "AXS Premium POSTED AXS", "offer_id": "901", "offer_name": "Tomorrow's Show AXS Premium", "pricing": {"face": 134.5, "fees_total": 24.2, "tax": 0, "all_in": 158.7}},
-      {"kind": "resale", "section": "102", "row": "B", "seats": ["7"], "quantity": 1, "seat_type": "FLASHSEATS", "offer_id": "9000000000000001", "pricing": {"face": 95.5, "connection_fee": 24.35, "tax": 0, "all_in": 119.85}}
+      {"kind": "resale", "section": "102", "row": "B", "quantity": 20, "seat_type": "FLASHSEATS", "offer_id": "9000000000000001", "pricing": {"face": 95.5, "connection_fee": 24.35, "tax": 0, "all_in": 119.85}}
     ]}}$j$::jsonb) - 'request_id' AS recorded;
 SELECT request_id, axs_event_id AS id, reader, status_code, outcome, response_s, listings, quota_remaining, error, checked_at IS NOT NULL AS settled
   FROM public.axs_watch_poll ORDER BY request_id;
@@ -90,8 +90,8 @@ SELECT jsonb_array_length((public.axs_watch_next(20))->'events') AS nameless_get
 SELECT worker_id AS holder_unchanged FROM public.axs_watch_config;
 
 \echo '--- F3. the same read sent twice (a retried record) is recorded once: the second call returns the first row and settles nothing again'
-SELECT (public.axs_watch_record('32', 200, $j${"status": "ok", "quota_remaining": 99980, "body": {"status": "ok", "exit_code": 0, "event": {"id": "32"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "seats": ["1"], "quantity": 1, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb, false, NULL, '2026-01-01 12:00:00+00'))->>'request_id' AS first_id;
-SELECT (public.axs_watch_record('32', 200, $j${"status": "ok", "quota_remaining": 99980, "body": {"status": "ok", "exit_code": 0, "event": {"id": "32"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "seats": ["1"], "quantity": 1, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb, false, NULL, '2026-01-01 12:00:00+00')) - 'response_s' AS repeated;
+SELECT (public.axs_watch_record('32', 200, $j${"status": "ok", "quota_remaining": 99980, "body": {"status": "ok", "exit_code": 0, "event": {"id": "32"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "quantity": 30, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb, false, NULL, '2026-01-01 12:00:00+00'))->>'request_id' AS first_id;
+SELECT (public.axs_watch_record('32', 200, $j${"status": "ok", "quota_remaining": 99980, "body": {"status": "ok", "exit_code": 0, "event": {"id": "32"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "quantity": 30, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb, false, NULL, '2026-01-01 12:00:00+00')) - 'response_s' AS repeated;
 SELECT count(*) AS rows_for_that_read FROM public.axs_watch_poll WHERE axs_event_id = '32' AND fired_at = '2026-01-01 12:00:00+00';
 SELECT count(*) AS credits_for_that_read FROM public.ticketsdata_credit_usage WHERE endpoint = '/fetch' AND quota_remaining = 99980;
 

@@ -30,7 +30,11 @@ SELECT (public.axs_watch_pace_apply()) - 'demand_per_hour' - 'daily_cap' - 'read
 SELECT far_out_every, pace_s_per_read, pace_set_at IS NOT NULL AS pace_set, pace_note FROM public.axs_watch_config;
 
 \echo '--- C. a slow reader (40 s a read) at a 10% target: no rung fits, the slowest allowed is taken; at 100% the hour fits again; the day''s cap also binds'
-UPDATE public.axs_watch_poll SET checked_at = fired_at + interval '40 seconds' WHERE reader = 'worker';
+-- response_s too, not just checked_at: since mig 20261126163000 the worker path sizes a read
+-- by what TicketsData actually spent on it, so stretching the settle alone would describe the
+-- queue's own scheduling slack rather than a slow reader, and would (rightly) be ignored.
+UPDATE public.axs_watch_poll SET checked_at = fired_at + interval '40 seconds', response_s = 40.0
+ WHERE reader = 'worker';
 UPDATE public.axs_watch_config SET pace_target_pct = 10;
 SELECT (public.axs_watch_pace_apply()) - 'note' - 'demand_per_hour' - 'daily_cap' - 'reads_measured' - 'settle_p50_s' - 'settle_p90_s' - 'response_p50_s' - 'spacing_s' - 'events' - 'day_of_events' - 'far_out_days' AS slow_reader;
 UPDATE public.axs_watch_config SET pace_target_pct = 100;
@@ -45,7 +49,11 @@ UPDATE public.axs_watch_config SET pace_max_every = interval '6 hours', pace_tar
 SELECT public.axs_watch_record('47', 200, $j${"status": "ok", "quota_remaining": 99999, "body": {"status": "error", "message": "Tickets for this event are not currently on sale."}}$j$::jsonb) - 'request_id' AS not_on_sale;
 SELECT source_event_id AS id, poll_status, poll_error, poll_interval, next_poll_at BETWEEN now() + interval '4.5 hours' AND now() + interval '7.5 hours' AS next_in_about_6h
   FROM public.primary_poll_event WHERE source = 'axs' AND source_event_id = '47';
-SELECT public.axs_watch_record('47', 200, $j${"status": "ok", "quota_remaining": 99998, "body": {"status": "ok", "exit_code": 0, "event": {"id": "47"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "seats": ["1"], "quantity": 1, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb) - 'request_id' AS on_sale_now;
+-- The listing carries 60 tickets ON PURPOSE. Under thin_min_tickets (20, mig 20261126230000)
+-- a read finding fewer than 20 sellable tickets is a PREEMPTIVE SOLD OUT: the event takes the
+-- one-day band, is pinned there and is withheld from the feed. A token quantity here would
+-- therefore stop this section testing its own subject. s30 owns the thin rule.
+SELECT public.axs_watch_record('47', 200, $j${"status": "ok", "quota_remaining": 99998, "body": {"status": "ok", "exit_code": 0, "event": {"id": "47"}, "listings": [{"kind": "primary", "section": "101", "row": "A", "quantity": 60, "seat_type": "STANDARD", "status": "Available", "pricing": {"face": 50, "all_in": 58}}]}}$j$::jsonb) - 'request_id' AS on_sale_now;
 SELECT source_event_id AS id, poll_status, listing_count, poll_interval FROM public.primary_poll_event WHERE source = 'axs' AND source_event_id = '47';
 
 \echo '--- E. the cron and the privileges'

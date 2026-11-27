@@ -41,9 +41,9 @@
  Houston Rockets vs Someone | t       | t
 
 --- F. the fill admits a whole venue's events and not the other venue's
-                          fill                           
----------------------------------------------------------
- {"added": 4, "apply": true, "retired": 0, "watched": 4}
+                                 fill                                 
+----------------------------------------------------------------------
+ {"added": 4, "apply": true, "parked": 0, "retired": 0, "watched": 4}
 
    id    |            name            |     venue_name      
 ---------+----------------------------+---------------------
@@ -53,9 +53,9 @@
  9100007 | FC Someone vs Another      | Trusted Stadium
 
 --- G. clearing the flag takes them back off at the next fill (the not_kept arm)
-                  fill_after_unflagging                  
----------------------------------------------------------
- {"added": 0, "apply": true, "retired": 2, "watched": 2}
+                        fill_after_unflagging                         
+----------------------------------------------------------------------
+ {"added": 0, "apply": true, "parked": 0, "retired": 2, "watched": 2}
 
   still_watched  
 -----------------
@@ -74,4 +74,3 @@
  axs_venue_id |   venue_name   | keep_all | trust_axs_sold 
 --------------+----------------+----------+----------------
        124913 | Toyota Stadium | t        | t
-

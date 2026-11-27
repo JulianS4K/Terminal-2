@@ -1,0 +1,60 @@
+--- A. the ladder as seeded
+ ga_slow_min_tickets | ga_slow_every | ga_slow2_min_tickets | ga_slow2_every 
+---------------------+---------------+----------------------+----------------
+                 100 | 02:00:00      |                  400 | 04:00:00
+
+--- B. the 4-arg cadence picks the step by ticket count, at 120 days out (90-min band)
+ tickets |   band   |   expect   
+---------+----------+------------
+      50 | 02:00:00 | no GA step
+     100 | 02:00:00 | no GA step
+     101 | 02:00:00 | 2h step
+     400 | 02:00:00 | 2h step
+     401 | 04:00:00 | 4h step
+    5617 | 04:00:00 | 4h step
+
+--- C. NOT ga_slow at all: the ticket count is ignored and the days-out band stands
+ band_when_not_ga_only 
+-----------------------
+ 01:00:00
+
+--- D. A STEP ONLY EVER SLOWS. An event 1 day out has a 30-min band; 5,617 GA tickets
+---    must not hold it at 4 hours... it must take the SLOWER of the two, which is 4h.
+---    And inside the last day the days-out band is what matters for a fast-moving event:
+---    greatest() is what guarantees the GA step never speeds anything up.
+ day_out_no_ga | day_out_deep_ga | far_out_deep_ga | far_out_no_ga 
+---------------+-----------------+-----------------+---------------
+ 00:30:00      | 04:00:00        | 04:00:00        | 01:30:00
+
+--- E. the 3-arg overload still exists and still behaves as before (nothing else moved)
+ three_arg_ga | three_arg_plain 
+--------------+-----------------
+ 02:00:00     | 01:00:00
+
+--- F. the ladder CHECK refuses an inverted ladder
+psql:s27_deep_ga_second_tier.sql:47: WARNING:  a second step faster than the first is refused
+psql:s27_deep_ga_second_tier.sql:52: WARNING:  a second threshold below the first is refused
+--- G. END TO END: the settle stores the ticket count and lands the event on the 4h step
+ big_rave 
+----------
+ ok
+
+ small_rave 
+------------
+ ok
+
+ source_event_id | ga_slow | ga_tickets |   band   | cadence_pinned 
+-----------------+---------+------------+----------+----------------
+ G2A             | t       |        900 | 04:00:00 | t
+ G2B             | t       |        250 | 02:00:00 | t
+
+ source_event_id |      section      | quantity | general_admission | ada | ticket_type 
+-----------------+-------------------+----------+-------------------+-----+-------------
+ G2A             | General Admission |      900 | t                 | f   | -
+ G2B             | General Admission |      250 | t                 | f   | -
+
+--- H. and both are still pinned against the shared ladder (migs 141500 / 150000 hold)
+ source_event_id | due_now | not_yet_its_time 
+-----------------+---------+------------------
+ G2A             |       0 | t
+ G2B             |       0 | t

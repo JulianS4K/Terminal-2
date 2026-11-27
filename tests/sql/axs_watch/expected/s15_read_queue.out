@@ -83,4 +83,3 @@ psql:s15_read_queue.sql:44: WARNING:  a second open item for Q1 is refused by th
  queue_enqueued_it | q4_open_items 
 -------------------+---------------
  0                 |             0
-

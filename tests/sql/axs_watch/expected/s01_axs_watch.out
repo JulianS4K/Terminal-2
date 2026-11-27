@@ -14,13 +14,13 @@
  2027 Season Tickets                  | Sports   | f
 
 --- B. a dry run reports; the fill retires the passed and the vanished, then fills Big Arena to 3 and Small Hall to 1 by date, from watch_from (tomorrow's Small Hall show is before it)
-                                dry_run                                
------------------------------------------------------------------------
- {"added": 4, "apply": false, "short": [], "retired": 2, "watched": 4}
+                                      dry_run                                       
+------------------------------------------------------------------------------------
+ {"added": 4, "apply": false, "short": [], "parked": 0, "retired": 2, "watched": 4}
 
-                                 fill                                 
-----------------------------------------------------------------------
- {"added": 4, "apply": true, "short": [], "retired": 2, "watched": 4}
+                                       fill                                        
+-----------------------------------------------------------------------------------
+ {"added": 4, "apply": true, "short": [], "parked": 0, "retired": 2, "watched": 4}
 
  id |              name               | days_out |  at   | venue_name |  tevo  |   method   | announced | poll_status | in_run 
 ----+---------------------------------+----------+-------+------------+--------+------------+-----------+-------------+--------
@@ -47,9 +47,9 @@
               0
 
 --- C. a second fill changes nothing
-                              fill_again                              
-----------------------------------------------------------------------
- {"added": 0, "apply": true, "short": [], "retired": 0, "watched": 4}
+                                    fill_again                                     
+-----------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [], "parked": 0, "retired": 0, "watched": 4}
 
 --- D. the tick: no pool reading and nothing recorded leaves the whole pool; with the pool at 0 nothing fires
                                        budget_empty                                       
@@ -142,9 +142,9 @@
           3 | 14
           4 | 18
 
-                              tick_lost_and_503                              
------------------------------------------------------------------------------
- {"lost": 1, "fired": 0, "settled": 1, "in_flight": 0, "upstream_errors": 2}
+                tick_lost_and_503                
+-------------------------------------------------
+ {"lost": 1, "settled": 1, "upstream_errors": 2}
 
  request_id | id | status_code |    outcome     |             error              
 ------------+----+-------------+----------------+--------------------------------
@@ -159,9 +159,9 @@
  21 | ok          | -                                  |             7
 
 --- I. upstream trouble: with three of the last ten reads failing upstream the drainer holds to one in flight
-                                 tick_slowed                                 
------------------------------------------------------------------------------
- {"lost": 0, "fired": 1, "settled": 0, "in_flight": 1, "upstream_errors": 3}
+                   tick_slowed                   
+-------------------------------------------------
+ {"lost": 0, "settled": 0, "upstream_errors": 3}
 
  now_in_flight 
 ---------------
@@ -203,9 +203,9 @@
  {"lost": 0, "fired": 0, "paused": true, "settled": 0}
 
 --- L. three reads in a row saying AXS does not sell it retire the event; the venue refills from the next by date
-                          fill_after_not_axs                          
-----------------------------------------------------------------------
- {"added": 1, "apply": true, "short": [], "retired": 1, "watched": 4}
+                                fill_after_not_axs                                 
+-----------------------------------------------------------------------------------
+ {"added": 1, "apply": true, "short": [], "parked": 0, "retired": 1, "watched": 4}
 
  id |              name               | days_out 
 ----+---------------------------------+----------
@@ -234,6 +234,7 @@
  axs_watch_cadence_demand | f    | t
  axs_watch_cadence_every  | f    | t
  axs_watch_cadence_every  | f    | t
+ axs_watch_cadence_every  | t    | t
  axs_watch_event_dead     | f    | t
  axs_watch_fill           | f    | t
  axs_watch_next           | f    | t

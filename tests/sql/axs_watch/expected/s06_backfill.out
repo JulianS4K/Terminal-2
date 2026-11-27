@@ -1,16 +1,16 @@
 --- A. with the backfill off, the Stadium's three places stay empty: nothing of its is on sale
-                                                     dry_run_off                                                      
-----------------------------------------------------------------------------------------------------------------------
- {"added": 3, "apply": false, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "retired": 0, "watched": 3}
+                                                            dry_run_off                                                            
+-----------------------------------------------------------------------------------------------------------------------------------
+ {"added": 3, "apply": false, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "parked": 0, "retired": 0, "watched": 3}
 
 --- B. with it on, the Arena's next events take them, soonest first; a venue that is switched off gives none; the dry run says the same as the fill
-                                                                dry_run                                                                
----------------------------------------------------------------------------------------------------------------------------------------
- {"added": 5, "apply": false, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "retired": 0, "watched": 5, "backfilled": 2}
+                                                                      dry_run                                                                       
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 5, "apply": false, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "parked": 0, "retired": 0, "watched": 5, "backfilled": 2}
 
-                                                                 fill                                                                 
---------------------------------------------------------------------------------------------------------------------------------------
- {"added": 5, "apply": true, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "retired": 0, "watched": 5, "backfilled": 2}
+                                                                       fill                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ {"added": 5, "apply": true, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "parked": 0, "retired": 0, "watched": 5, "backfilled": 2}
 
  id |     name      
 ----+---------------
@@ -30,18 +30,18 @@
  short  | -  | Stadium | quota 3, 3 eligible upcoming events short
 
 --- C. the night after, nothing moves
-                                                     fill_again                                                      
----------------------------------------------------------------------------------------------------------------------
- {"added": 0, "apply": true, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "retired": 0, "watched": 5}
+                                                            fill_again                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [{"quota": 3, "venue": "Stadium", "short_by": 3}], "parked": 0, "retired": 0, "watched": 5}
 
 --- D. the Stadium goes on sale: its own three come in, and the two borrowed places are given back, the furthest event first
-                                       dry_run                                        
---------------------------------------------------------------------------------------
- {"added": 3, "apply": false, "short": [], "retired": 2, "watched": 6, "returned": 2}
+                                              dry_run                                              
+---------------------------------------------------------------------------------------------------
+ {"added": 3, "apply": false, "short": [], "parked": 0, "retired": 2, "watched": 6, "returned": 2}
 
-                                        fill                                         
--------------------------------------------------------------------------------------
- {"added": 3, "apply": true, "short": [], "retired": 2, "watched": 6, "returned": 2}
+                                               fill                                               
+--------------------------------------------------------------------------------------------------
+ {"added": 3, "apply": true, "short": [], "parked": 0, "retired": 2, "watched": 6, "returned": 2}
 
  id |      name      
 ----+----------------
@@ -61,13 +61,13 @@
  retire | 15 | Arena   | over_target_events
 
 --- E. a bigger list borrows again; when the Stadium gains one place of its own, one borrowed place is given back
-                                      bigger_list                                      
----------------------------------------------------------------------------------------
- {"added": 2, "apply": true, "short": [], "retired": 0, "watched": 8, "backfilled": 2}
+                                            bigger_list                                             
+----------------------------------------------------------------------------------------------------
+ {"added": 2, "apply": true, "short": [], "parked": 0, "retired": 0, "watched": 8, "backfilled": 2}
 
-                                   one_given_back                                    
--------------------------------------------------------------------------------------
- {"added": 1, "apply": true, "short": [], "retired": 1, "watched": 8, "returned": 1}
+                                          one_given_back                                          
+--------------------------------------------------------------------------------------------------
+ {"added": 1, "apply": true, "short": [], "parked": 0, "retired": 1, "watched": 8, "returned": 1}
 
  id |      name      
 ----+----------------
@@ -81,11 +81,10 @@
  24 | Stadium Show 4
 
 --- F. a quota lowered turns a venue's furthest events into borrowed places, kept until another venue needs them
-                            quota_lowered                             
-----------------------------------------------------------------------
- {"added": 0, "apply": true, "short": [], "retired": 0, "watched": 8}
+                                   quota_lowered                                   
+-----------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [], "parked": 0, "retired": 0, "watched": 8}
 
  watched | at_the_stadium 
 ---------+----------------
        8 |              4
-

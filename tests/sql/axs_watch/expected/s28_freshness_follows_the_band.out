@@ -1,0 +1,50 @@
+--- A. the knobs
+ listing_max_age | listing_grace 
+-----------------+---------------
+ 00:35:00        | 00:20:00
+
+--- B. what each event looks like
+ source_event_id |   band   | read_min_ago | next_in_min 
+-----------------+----------+--------------+-------------
+ E-grid          | 01:00:00 |           50 |         -40
+ E-late          | 01:00:00 |           95 |         -85
+ E-null          | -        |           30 |         -20
+ E-ontime        | 01:00:00 |            5 |          55
+ E-short         | 00:10:00 |           40 |         -30
+
+--- C. the old window (poll_ok_at + 35 min) against the new (band + grace, floored)
+ source_event_id | old_rule | new_rule 
+-----------------+----------+----------
+ E-grid          | f        | t
+ E-late          | f        | f
+ E-null          | t        | t
+ E-ontime        | t        | t
+ E-short         | f        | f
+
+--- D. THE FIX, in the listings feed: E-grid is published, E-late is still withheld
+ event_id | rows_sent 
+----------+-----------
+ E-grid   |         1
+ E-null   |         1
+ E-ontime |         1
+
+--- E. the events feed agrees with it, so the two cannot disagree about one event
+ event_id | listings_available | listings_withheld | listing_count 
+----------+--------------------+-------------------+---------------
+ E-grid   | t                  | -                 |             1
+ E-late   | f                  | poll_stale        |             -
+ E-null   | t                  | -                 |             1
+ E-ontime | t                  | -                 |             1
+ E-short  | f                  | poll_stale        |             -
+
+--- F. the arm is in BOTH views, and the floor is still read from config
+           relname            | band_relative | keeps_the_floor 
+------------------------------+---------------+-----------------
+ v_primary_poll_events_feed   | t             | t
+ v_primary_poll_listings_feed | t             | t
+
+--- G. each view keeps its own reloptions: the events feed is security_invoker, the listings feed is not
+           relname            |      reloptions       
+------------------------------+-----------------------
+ v_primary_poll_events_feed   | security_invoker=true
+ v_primary_poll_listings_feed | -

@@ -1,0 +1,79 @@
+--- A. the knobs
+ no_tickets_every | not_on_sale_every | no_tickets_retire_days 
+------------------+-------------------+------------------------
+ 1 day            | 06:00:00          |                      7
+
+--- B. before any read: the proximity band, unpinned, and the ladder overtakes them
+ source_event_id |   band   | cadence_pinned | due 
+-----------------+----------+----------------+-----
+ Z1              | 01:00:00 | f              | t
+ Z2              | 01:00:00 | f              | t
+ Z3              | 01:00:00 | f              | t
+ Z4              | 01:00:00 | f              | t
+
+--- C. Z1 reads OK with an empty listings array: outcome empty
+                     z1_settled                     
+----------------------------------------------------
+ {"error": null, "outcome": "empty", "listings": 0}
+
+--- D. THE FIX: Z1 takes no_tickets_every (1 day) and is pinned, exactly like Z3 will
+                                                z3_settled                                                
+----------------------------------------------------------------------------------------------------------
+ {"error": "No tickets are currently available for this event.", "outcome": "unparsed", "listings": null}
+
+                                      z4_settled                                      
+--------------------------------------------------------------------------------------
+ {"error": "This event is not on sale yet.", "outcome": "unparsed", "listings": null}
+
+ source_event_id | poll_status | listing_count |   band   | cadence_pinned |                     poll_error                     
+-----------------+-------------+---------------+----------+----------------+----------------------------------------------------
+ Z1              | ok          |             0 | 1 day    | t              | -
+ Z3              | failed      |             0 | 1 day    | t              | No tickets are currently available for this event.
+ Z4              | failed      |             0 | 06:00:00 | t              | This event is not on sale yet.
+
+--- E. and the ladder no longer overtakes any of the three
+ source_event_id | due 
+-----------------+-----
+ Z1              | f
+ Z2              | t
+ Z3              | f
+ Z4              | f
+
+--- F. the retire rule: an empty read counts like the error, and only within the window
+                     z2_settled                     
+----------------------------------------------------
+ {"error": null, "outcome": "empty", "listings": 0}
+
+ source_event_id | days_out | dead 
+-----------------+----------+------
+ Z1              |       90 | f
+ Z2              |        3 | t
+ Z3              |       90 | f
+ Z4              |       90 | f
+
+--- G. it UNPINS: Z1 comes back on sale and the band UPDATE restores its proximity band
+ z1_back_on_sale 
+-----------------
+ ok
+
+ source_event_id | listing_count |   band   | cadence_pinned 
+-----------------+---------------+----------+----------------
+ Z1              |             1 | 01:00:00 | f
+
+--- H. an empty read is still a GOOD read: it clears the capture rather than keeping it
+ listing_rows_for_z1 
+---------------------
+                   1
+
+ sold_out_again 
+----------------
+ t
+
+ listing_rows_after_sell_out 
+-----------------------------
+                           0
+
+--- I. both arms are installed in the settle, not one
+ branch_head | picks_one_day 
+-------------+---------------
+ t           | t
