@@ -103,7 +103,7 @@ def run(rpc: Rpc, sitickets: Any, jump: Any, sources: tuple[str, ...] | None = N
     or the two would overwrite each other every cycle. `ims` is the Indy 500's section prices (operator
     2026-11-24: "build the indy 500 section price poller"): one event, read from two public pages."""
     readers = {
-        "sitickets": (sitickets.events, sitickets.listings),
+        "sitickets": (sitickets.all_events, sitickets.listings),
         "timberwolves": (lambda: jump.events("timberwolves"), lambda event: jump.listings("timberwolves", event)),
     }
     if ims is not None:

@@ -69,8 +69,10 @@ def test_sitickets_events_are_the_box_office_ones_without_packages_and_membershi
     # started is no longer read (operator 2026-11-24: "fix the game day wart, end it at tipoff")
     assert game["start_utc"] == "2027-05-01T23:00:00+00:00" and game["timezone"] == "America/New_York"
     assert series["start_utc"] is None and series["timezone"] is None            # no readable time: no moment
-    elsewhere = si.parse_events(SI_VENUE, "some-other-venue")[0]                   # a venue whose zone we do not know
-    assert elsewhere["local_time"] == "19:00" and elsewhere["start_utc"] is None and elsewhere["timezone"] is None
+    elsewhere = si.parse_events(SI_VENUE, "some-other-venue")[0]                   # a venue not listed: its state's zone
+    assert elsewhere["timezone"] == "America/New_York" and elsewhere["start_utc"] == "2027-05-01T23:00:00+00:00"
+    nowhere = si.parse_events({"venueEventsData": [{**SI_VENUE["venueEventsData"][0], "venue_state": "ZZ"}]}, "x")[0]
+    assert nowhere["local_time"] == "19:00" and nowhere["start_utc"] is None and nowhere["timezone"] is None
     assert game["venue"] == "Sports Illustrated Stadium" and game["state"] == "NJ"
     assert game["url"] == "https://www.sitickets.com/event/sprint-rbny-vs-new-england"
     assert game["_slug"] == "sprint-rbny-vs-new-england"
@@ -234,6 +236,54 @@ def test_jump_reads_the_home_page_with_get_only_and_never_the_seat_inventory(mon
         jc.page_data(r'self.__next_f.push([1,"\q"])')
 
 
+def test_sitickets_reads_every_venue_it_lists_and_keeps_only_the_box_office_ones(monkeypatch):
+    # operator 2026-11-26: "ping all those and add any primary box-office automatically in for both"
+    home = {"venueEventsData": [{"event_id": 10, "event_name": "Home Game", "primary": True, "venue_state": "NJ"}]}
+    sony = {"venueEventsData": [{"event_id": 20, "event_name": "Sony Show", "primary": True, "venue_state": "NY"},
+                                {"event_id": 10, "event_name": "Home Game", "primary": True}]}      # the same event twice
+    resale = {"venueEventsData": [{"event_id": 30, "event_name": "Resale Only", "primary": False}]}
+    discover = {"events": [{"venue_name": "Sony Hall", "venue_slug": ""}, {"venue_name": "New Hall!", "venue_slug": ""},
+                           {"venue_name": "", "venue_slug": ""}, {"venue_name": "Sony Hall"}]}
+    seen = []
+
+    def _get(url, headers, timeout):
+        path = url.split("sitickets.com", 1)[1]
+        seen.append(path)
+        if path == "/discover":
+            return _Resp(200, _next_page(discover))
+        if path == "/venue/sports-illustrated-stadium":
+            return _Resp(200, _next_page(home))
+        if path == "/venue/sony-hall":
+            return _Resp(200, _next_page(sony))
+        if path == "/venue/webster-hall":
+            return _Resp(503)
+        return _Resp(200, _next_page(resale))
+
+    monkeypatch.setattr(si.requests, "get", _get)
+    monkeypatch.setattr(si, "_quiet_until", {})
+    clock = [1000.0]
+    got = si.all_events(lambda: clock[0])
+    assert sorted(e["id"] for e in got) == ["10", "20"]                     # box office only, each event once
+    assert "/venue/new-hall" in seen and seen.count("/venue/sony-hall") == 1  # discovered venue read, once
+    assert si.slug_of("Count Basie Center, Red Bank") == "count-basie-center-red-bank"
+    # a venue selling nothing as the box office (or failing) is left alone for QUIET_RECHECK_S, then read again
+    seen.clear()
+    si.all_events(lambda: clock[0])
+    assert "/venue/sony-hall" in seen and "/venue/new-hall" not in seen and "/venue/webster-hall" not in seen
+    seen.clear()
+    clock[0] += si.QUIET_RECHECK_S + 1
+    si.all_events(lambda: clock[0])
+    assert "/venue/new-hall" in seen and "/venue/webster-hall" in seen
+    # the discover page failing leaves the known venues (Sony Hall is one); the home venue failing fails the read
+    def _discover_down(url, headers, timeout):
+        return _Resp(503) if url.endswith("/discover") else _get(url, headers, timeout)
+    monkeypatch.setattr(si.requests, "get", _discover_down)
+    assert sorted(e["id"] for e in si.all_events(lambda: clock[0])) == ["10", "20"]
+    monkeypatch.setattr(si.requests, "get", lambda *a, **k: _Resp(503))
+    with pytest.raises(si.SiTicketsError):
+        si.all_events(lambda: clock[0])
+
+
 # ---------- core/primary_poll_sync ----------
 
 class _Source:
@@ -244,6 +294,8 @@ class _Source:
         if self._list_exc:
             raise self._list_exc
         return self._events
+
+    all_events = events
 
     def listings(self, *args):
         got = self._listings[args[-1]["id"]]
@@ -534,8 +586,9 @@ def test_csv_bad_parameters_and_a_database_error():
 def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
     # operator 2026-11-24: "Add all those jump teams to the catalogue scanner and push through into api"
     # ... and the AXS watch (mig 20261124190000, operator 2026-11-24 "make an axs one that allows for 200 events") is the last source
-    assert pp.SOURCES == ("sitickets", "ims", *jc.SITES, "axs") and len(jc.SITES) == 8
-    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx", "axs"):
+    assert pp.SOURCES == ("sitickets", "ims", *jc.SITES, "axs") and len(jc.SITES) == 9
+    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx",
+                   "atleticodallas", "axs"):
         for url in (EVENTS, LISTINGS):
             db = FakeDB(rows=[])
             r = _client(db).get(url, headers=H, params={"source": source})
