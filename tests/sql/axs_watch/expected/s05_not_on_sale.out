@@ -30,9 +30,9 @@
  8 | -              | -                                                  | -           | f
 
 --- B. the first fill: six places, soonest first; the feed's upcoming sales (Coming Soon with no date, a date ahead, a date yesterday) are passed over and the watched one is retired; the one with tickets stays
-                              first_fill                              
-----------------------------------------------------------------------
- {"added": 5, "apply": true, "short": [], "retired": 1, "watched": 6}
+                                    first_fill                                     
+-----------------------------------------------------------------------------------
+ {"added": 5, "apply": true, "short": [], "parked": 0, "retired": 1, "watched": 6}
 
  id  |             name             
 -----+------------------------------
@@ -44,13 +44,13 @@
  113 | Dated Later But Has Tickets
 
 --- C. the reads come in; the next fill retires the two that are not on sale and gives their places to the next events, not to the one read as not on sale two days ago
-                                dry_run                                
------------------------------------------------------------------------
- {"added": 2, "apply": false, "short": [], "retired": 2, "watched": 6}
+                                      dry_run                                       
+------------------------------------------------------------------------------------
+ {"added": 2, "apply": false, "short": [], "parked": 0, "retired": 2, "watched": 6}
 
-                             second_fill                              
-----------------------------------------------------------------------
- {"added": 2, "apply": true, "short": [], "retired": 2, "watched": 6}
+                                    second_fill                                    
+-----------------------------------------------------------------------------------
+ {"added": 2, "apply": true, "short": [], "parked": 0, "retired": 2, "watched": 6}
 
  id  |            name             
 -----+-----------------------------
@@ -69,9 +69,9 @@
  retire | 105 | not_on_sale
 
 --- D. the night after: nothing moves; the retired events are not picked again while their last read is within the recheck time
-                              third_fill                              
-----------------------------------------------------------------------
- {"added": 0, "apply": true, "short": [], "retired": 0, "watched": 6}
+                                    third_fill                                     
+-----------------------------------------------------------------------------------
+ {"added": 0, "apply": true, "short": [], "parked": 0, "retired": 0, "watched": 6}
 
 --- D2. three days after its on-sale date the event joins the list; a "not on sale" read made before that date does not hold it back
  added_two_days_in 
@@ -88,9 +88,9 @@
  107 | On Sale Yesterday
 
 --- E. past the recheck time an event is tried once more: the one read as not on sale more than seven days ago comes back when a place opens
-                             fourth_fill                              
-----------------------------------------------------------------------
- {"added": 1, "apply": true, "short": [], "retired": 0, "watched": 9}
+                                    fourth_fill                                    
+-----------------------------------------------------------------------------------
+ {"added": 1, "apply": true, "short": [], "parked": 0, "retired": 0, "watched": 9}
 
  id  |            name             
 -----+-----------------------------

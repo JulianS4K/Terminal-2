@@ -166,7 +166,30 @@ def run_queue(td: Any, rpc: Rpc, *, batch: int | None = None, idle_s: float = 15
         wait = _seconds_until(item.get("release_at"), now)
         if wait > 0:
             sleep(wait)            # the pacer's slot: never send before it
-        got = read_one_queued(td, rpc, item) or {}
+        try:
+            got = read_one_queued(td, rpc, item) or {}
+        except Exception as exc:  # noqa: BLE001 - see below; one item must not cost the batch
+            # ONE ITEM'S FAILURE MUST NOT ABANDON THE REST OF THE BATCH.
+            #
+            # read_one_queued already turns every fetch failure into an ack, so the only call
+            # that can still raise here is the ack itself — the database blipped, or the retry
+            # gave up. Letting that out of run_queue used to abandon this item AND every item
+            # after it: they keep their lanes until lease_until passes, and until then every
+            # axs_queue_claim answers 'all lanes busy' and the reader does nothing at all.
+            #
+            # Measured on prod 2026-11-27 before this change: the reader's steady cycle was
+            # 8.2s a read (p50), which is 439 an hour against the ~344 the bands ask — but it
+            # delivered 256, because NINE stalls of about 730s each, one per abandoned batch,
+            # took 35% of a three-hour window. 77 of one instance's 1,510 claims were handed
+            # back by the reaper rather than acked.
+            #
+            # So the item is given up (the reaper returns it, and the event is simply read again
+            # at its own cadence) and the loop carries on with the next one. mig 20261127010000
+            # shortens the lease that covers the residual case.
+            done["lost"] = done.get("lost", 0) + 1
+            done["failed"] += 1
+            done.setdefault("lost_why", _why(exc))
+            continue
         if got.get("outcome") in ("ok", "empty"):
             done["ok"] += 1
             done["listings"] += int(got.get("listings") or 0)

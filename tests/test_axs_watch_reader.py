@@ -177,6 +177,43 @@ def test_run_queue_does_not_sleep_for_a_slot_already_due():
     assert slept == []
 
 
+def test_run_queue_one_failed_ack_does_not_abandon_the_rest_of_the_batch():
+    """The fault this guards against cost 35% of a three-hour window on prod (mig 20261127010000).
+
+    read_one_queued turns every fetch failure into an ack, so the only call that can still raise
+    is the ack. When it did, the exception left run_queue and abandoned every item AFTER it in
+    the batch as well. Those items keep their lanes until lease_until passes, and until then
+    every claim answers 'all lanes busy' — so one transient error stopped reading for a full
+    lease, not for one read. Measured: 77 of one instance's 1,510 claims were handed back by the
+    reaper instead of being acked, in nine stalls of about 730s.
+
+    So: item B's ack blows up, and A and C must still be read and acked.
+    """
+    claim = {"items": [{"queue_id": 1, "id": "A", "url": "u/A"},
+                       {"queue_id": 2, "id": "B", "url": "u/B"},
+                       {"queue_id": 3, "id": "C", "url": "u/C"}]}
+    log = []
+
+    def _rpc(name, params):
+        if name == "axs_queue_claim":
+            return claim
+        assert name == "axs_queue_ack"
+        if params["p_queue_id"] == 2:
+            raise RuntimeError("could not translate host name to address")
+        log.append(params["p_queue_id"])
+        return {"outcome": "ok", "listings": 4}
+
+    td = _TD({"u/A": BODY, "u/B": BODY, "u/C": BODY})
+    out = reader.run_queue(td, _rpc, sleep=lambda s: None)
+
+    assert log == [1, 3]                       # A and C acked; B was given up, not the batch
+    assert out["claimed"] == 3 and out["ok"] == 2 and out["failed"] == 1
+    assert out["lost"] == 1 and "could not translate host name" in out["lost_why"]
+    assert out["listings"] == 8                # only the two that landed
+    assert out["pause_s"] == 0.0               # there was work, so claim again at once
+    assert [c[1] for c in td.calls] == ["u/A", "u/B", "u/C"]   # all three were still READ
+
+
 def test_run_queue_passes_the_hold_through_and_claims_nothing():
     """The queue off, every lane busy, or the upstream failing: the database says hold and the
     worker must not invent work."""

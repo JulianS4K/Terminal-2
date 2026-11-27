@@ -40,12 +40,12 @@
 
  id | poll_status | listing_count | offer_id | order_min | order_max | total_available | price_min | price_max | next_in_future 
 ----+-------------+---------------+----------+-----------+-----------+-----------------+-----------+-----------+----------------
- 33 | ok          |             2 | 900      |         1 |         8 |               3 |        80 |      95.5 | t
+ 33 | ok          |             2 | 900      |         1 |         8 |              50 |        80 |      95.5 | t
 
  market  | section | row | qty | price |  fee  | all_in | ticket_type 
 ---------+---------+-----+-----+-------+-------+--------+-------------
- primary | 101     | A   |   2 |    80 |    12 |     92 | STANDARD
- resale  | 102     | B   |   1 |  95.5 | 24.35 | 119.85 | FLASHSEATS
+ primary | 101     | A   |  30 |    80 |    12 |     92 | STANDARD
+ resale  | 102     | B   |  20 |  95.5 | 24.35 | 119.85 | FLASHSEATS
 
  platform | endpoint | status_code | quota_remaining | credits 
 ----------+----------+-------------+-----------------+---------

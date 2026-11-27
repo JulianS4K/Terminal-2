@@ -2348,63 +2348,97 @@ async def _start_primary_poll():  # pragma: no cover - startup hook; loop covere
 # the due-list path while axs_watch_config.queue_enabled is false, so moving between them needs no deploy.
 # ---------------------------------------------------------------------------
 _AXS_WATCH_READER_INTERVAL_S = float(os.environ.get("AXS_WATCH_READER_INTERVAL_SECONDS", "15"))
-_axs_watch_reader_last: dict = {"at": None, "result": None, "error": None}
-_axs_watch_reader_client: dict = {"td": None}        # one TicketsData client a process (the login read from Vault once)
+# HOW MANY READER LOOPS SHARE THE QUEUE (operator 2026-11-26: "Add second reader sharing the queue").
+# One loop reads and acks SERIALLY — about 13 s a cycle, 6.3 s of it at TicketsData and the rest the ack's
+# own ingest — so it clears ~275 reads an hour against bands that were asking 344. Two loops read while the
+# other acks.
+#
+# The queue was built for this and needs no change to carry it (mig 20261126030000, scenario s24):
+#   · axs_queue_claim takes axs_watch_config FOR UPDATE, so every release slot in the system is allocated
+#     in ONE serialised place and TicketsData's 3-second rule holds across every loop, not per loop.
+#   · axs_read_queue has a unique partial index on the unresolved item per event, so no event can be read
+#     twice however many loops claim.
+#   · the day's cap is read inside the claim, so it binds across all of them together.
+#   · axs_queue_reap returns a dead loop's items by LEASE EXPIRY, not by worker id.
+# queue_lanes (6) is a GLOBAL in-flight ceiling, so it is not raised: two loops of 3 give 2 concurrent
+# reads, ~550/h, already above demand. What each loop must NOT do is claim with no limit — that takes every
+# free lane and leaves the others spinning on "all lanes busy" — so each asks for its share of the lanes the
+# last claim reported.
+_AXS_WATCH_READER_WORKERS = max(1, min(4, int(os.environ.get("AXS_WATCH_READER_WORKERS", "2"))))
+_axs_watch_reader_last: dict = {}                    # loop index -> its last batch
+_axs_watch_reader_client: dict = {}                  # loop index -> its own TicketsData client
+_axs_watch_reader_lanes: dict = {"n": None}          # queue_lanes as the last claim reported it, shared
 
 
-async def _axs_watch_reader_tick():
+async def _axs_watch_reader_tick(worker_n: int = 0):
     from core import axs_watch_reader, n2s_autobuy_live
     from ticketsdata_client import TicketsDataClient
 
     def _call():
         db = require_sb()
-        if _axs_watch_reader_client["td"] is None:
-            _axs_watch_reader_client["td"] = TicketsDataClient.from_vault(db, timeout=120)   # an AXS read is a browser run: p99 84 s
+        # a client per loop, not per process: TicketsDataClient holds an HTTP session, and a session is not
+        # ours to share between threads
+        if _axs_watch_reader_client.get(worker_n) is None:
+            _axs_watch_reader_client[worker_n] = TicketsDataClient.from_vault(db, timeout=120)   # an AXS read is a browser run: p99 84 s
         rpc = n2s_autobuy_live.retrying(lambda name, params: db.rpc(name, params).execute().data)
+        # a distinct id per loop. It is what the claim records as claimed_by, and on the due-list fallback it
+        # is the LEASE key (mig 20261125020000) — loops sharing one id would all hold the same lease and all
+        # read the same due list, which is the double-read that lease exists to stop.
+        worker = f"{axs_watch_reader.WORKER_ID}#{worker_n}"
+        lanes = _axs_watch_reader_lanes["n"]
+        batch = max(1, lanes // _AXS_WATCH_READER_WORKERS) if lanes else None
         # The queue first (mig 20261126030000). While axs_watch_config.queue_enabled is false the
         # claim hands out nothing and says so, and we fall back to the due-list path — so the switch
         # between them is one column in the database, not a deploy. When the queue is on, the
         # fallback never runs: an empty queue comes back with no `reason`, just pause_s.
-        out = axs_watch_reader.run_queue(_axs_watch_reader_client["td"], rpc,
-                                         idle_s=_AXS_WATCH_READER_INTERVAL_S)
+        out = axs_watch_reader.run_queue(_axs_watch_reader_client[worker_n], rpc, batch=batch,
+                                         worker=worker, idle_s=_AXS_WATCH_READER_INTERVAL_S)
         if "queue_enabled" in (out.get("reason") or ""):
-            out = axs_watch_reader.run(_axs_watch_reader_client["td"], rpc,
+            out = axs_watch_reader.run(_axs_watch_reader_client[worker_n], rpc, worker=worker,
                                        idle_s=_AXS_WATCH_READER_INTERVAL_S)
             out["via"] = "due_list"
         else:
             out["via"] = "queue"
+        if out.get("lanes"):
+            _axs_watch_reader_lanes["n"] = int(out["lanes"])   # learned, so the share needs no second setting
         return out
 
     out = await asyncio.to_thread(_call)
-    _axs_watch_reader_last.update(at=datetime.now(timezone.utc).isoformat(), result=out, error=None)
+    _axs_watch_reader_last[worker_n] = {"at": datetime.now(timezone.utc).isoformat(), "result": out, "error": None}
     return out
 
 
-async def _axs_watch_reader_loop():
+async def _axs_watch_reader_loop(worker_n: int = 0):
     if os.environ.get("AXS_WATCH_READER_LIVE") != "1" or sb is None or SANDBOX:
-        _log.info("axs_watch_reader: disabled (AXS_WATCH_READER_LIVE != 1, no DB, or sandbox)")
+        if worker_n == 0:
+            _log.info("axs_watch_reader: disabled (AXS_WATCH_READER_LIVE != 1, no DB, or sandbox)")
         return
-    _log.warning("axs_watch_reader: started (idle every %ss)", _AXS_WATCH_READER_INTERVAL_S)
+    _log.warning("axs_watch_reader[%s/%s]: started (idle every %ss)",
+                 worker_n, _AXS_WATCH_READER_WORKERS, _AXS_WATCH_READER_INTERVAL_S)
     while True:
         pause = _AXS_WATCH_READER_INTERVAL_S
         try:
-            out = await _axs_watch_reader_tick()
+            out = await _axs_watch_reader_tick(worker_n)
             pause = float(out.get("pause_s") or 0.0)       # 0 when there was work: the next batch follows at once
         except Exception as e:  # never let the loop die; a missed batch leaves the events due for the next
-            _axs_watch_reader_last.update(at=datetime.now(timezone.utc).isoformat(), error=str(e))
-            _log.warning("axs_watch_reader: batch failed: %s", e)
+            _axs_watch_reader_last[worker_n] = {"at": datetime.now(timezone.utc).isoformat(), "error": str(e)}
+            _log.warning("axs_watch_reader[%s]: batch failed: %s", worker_n, e)
         await asyncio.sleep(pause)
 
 
 @app.on_event("startup")
 async def _start_axs_watch_reader():  # pragma: no cover - startup hook; loop covered via _axs_watch_reader_loop
-    asyncio.create_task(_axs_watch_reader_loop())
+    for _n in range(_AXS_WATCH_READER_WORKERS):
+        asyncio.create_task(_axs_watch_reader_loop(_n))
 
 
 @app.get("/api/admin/axs-watch-reader/status")
 def axs_watch_reader_status(_=Depends(require_auth)):
-    """Last batch of the AXS watch's worker-side reader (auth-gated)."""
-    return {"enabled": os.environ.get("AXS_WATCH_READER_LIVE") == "1", **_axs_watch_reader_last}
+    """Last batch of each of the AXS watch's worker-side reader loops (auth-gated)."""
+    return {"enabled": os.environ.get("AXS_WATCH_READER_LIVE") == "1",
+            "workers": _AXS_WATCH_READER_WORKERS,
+            "lanes": _axs_watch_reader_lanes["n"],
+            "readers": {str(n): r for n, r in sorted(_axs_watch_reader_last.items())}}
 
 
 @app.get("/api/admin/manual-sub-buy/status")
