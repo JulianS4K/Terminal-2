@@ -72,4 +72,5 @@ stub_10_retention.sql
 20261126214500_zero_listings_is_sold_out.sql
 20261126230000_thin_inventory_is_preemptive_sold_out.sql
 20261127000000_parked_reads_outside_the_cap.sql
+20261127010000_orphaned_claims_clear_in_five_minutes.sql
 STEPS
