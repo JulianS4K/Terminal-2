@@ -66,8 +66,9 @@ from routers.tm_feed import _words
 
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
-# SI Tickets, the Indy 500 section prices, every team site on the Jump platform, the AXS watch
-SOURCES = ("sitickets", "ims", *jump_client.SITES, "axs")
+# SI Tickets, the Indy 500 section prices, every team site on the Jump platform, the AXS watch, the ProVenue watch
+# (MLB box offices on tickets.com read through tickets.dev, mig 20261127230000)
+SOURCES = ("sitickets", "ims", *jump_client.SITES, "axs", "provenue")
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",

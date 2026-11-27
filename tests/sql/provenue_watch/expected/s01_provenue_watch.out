@@ -1,0 +1,165 @@
+== 1. disabled: the tick only settles
+                  provenue_watch_tick                  
+-------------------------------------------------------
+ {"lost": 0, "fired": 0, "paused": true, "settled": 0}
+
+ sent 
+------
+    0
+
+== 2. enabled, two-day horizon: A and B fire (never read, soonest first), one GET each, key in the header, no venue map
+   pid   
+---------
+ 9813431
+ 9643120
+ 9813440
+
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 98, "fired": 2, "settled": 0, "upstream_errors": 0}
+
+ id |                     url                     |                                                params                                                |          headers          
+----+---------------------------------------------+------------------------------------------------------------------------------------------------------+---------------------------
+  1 | https://api.tickets.dev/v1/capture/provenue | {"url": "https://mlb.tickets.com/?orgid=17&agency=MLB_MPV&pid=9813431", "includeVenueMaps": "false"} | {"x-api-key": "test-key"}
+  2 | https://api.tickets.dev/v1/capture/provenue | {"url": "https://mlb.tickets.com/?orgid=21&agency=MLB_MPV&pid=9643120", "includeVenueMaps": "false"} | {"x-api-key": "test-key"}
+
+ request_id |   pid   | mlb_game_id | in_flight 
+------------+---------+-------------+-----------
+          1 | 9813431 | A           | t
+          2 | 9643120 | B           | t
+
+== 3. A answers with a capture (shape of the Mets at Nationals sample), B with rate_limited
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 0, "settled": 2, "upstream_errors": 1}
+
+   pid   | status_code |   outcome    |            error            | listings | tickets | captures_remaining 
+---------+-------------+--------------+-----------------------------+----------+---------+--------------------
+ 9813431 |         200 | ok           |                             |        5 |      41 |                998
+ 9643120 |         429 | rate_limited | Too many captures in flight |          |         |                   
+
+  source  | source_event_id |       name        | event_date | start_local_time |     timezone     | venue_state | total_available | price_min | price_max | poll_status | listing_count | tevo_event_id | tevo_match_method 
+----------+-----------------+-------------------+------------+------------------+------------------+-------------+-----------------+-----------+-----------+-------------+---------------+---------------+-------------------
+ provenue | 9813431         | Mets at Nationals | 2027-03-30 | 18:45:00         | America/New_York | DC          |              41 |        11 |       225 | ok          |             4 |       3483004 | mlb_schedule
+
+                                    listing_id                                    | section | seat_row | seat_low | seat_high | quantity | max_per_order | n_qty | price | fee | all_in_price |                 area                 | obstructed | general_admission |            notes            
+----------------------------------------------------------------------------------+---------+----------+----------+-----------+----------+---------------+-------+-------+-----+--------------+--------------------------------------+------------+-------------------+-----------------------------
+ 106|S|5-5|Regular Ticket                                                         | 106     | S        | 5        | 5         |        1 |             1 |     1 |    19 |   3 |           22 | Outfield Reserved                    | t          |                   | Obstructed View - Foul Pole
+ 229|N|1-7|Regular Ticket                                                         | 229     | N        | 1        | 7         |        7 |             7 |     7 |     9 |   2 |           11 | Scoreboard Pavilion                  | f          |                   | 
+ 229|N|15-21|Regular Ticket                                                       | 229     | N        | 15       | 21        |        7 |             7 |     7 |     9 |   2 |           11 | Scoreboard Pavilion                  | f          |                   | 
+ 304|J|1-24|Regular Ticket                                                        | 304     | J        | 1        | 24        |       24 |            24 |    24 |    15 |   2 |           17 | Gallery Reserved                     | f          |                   | 
+ DC119|D|5-6|PNC Diamond Club (All-Inclusive Food & Beverage, Indoor Club Access) | DC119   | D        | 5        | 6         |        2 |             2 |     2 |   207 |  18 |          225 | PNC Diamond Club (All-Inclusive F&B) | f          |                   | 
+
+                                                                  seats                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------
+ ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"]
+
+   in the feed, joined to EVO through the schedule
+  source  | event_id |       name        | listings_available | listing_count | tevo_event_id | tevo_match_method 
+----------+----------+-------------------+--------------------+---------------+---------------+-------------------
+ provenue | 9813431  | Mets at Nationals | t                  |             4 |       3483004 | mlb_schedule
+
+                                    listing_id                                    |                 area                 | all_in_price 
+----------------------------------------------------------------------------------+--------------------------------------+--------------
+ 229|N|1-7|Regular Ticket                                                         | Scoreboard Pavilion                  |           11
+ 229|N|15-21|Regular Ticket                                                       | Scoreboard Pavilion                  |           11
+ 304|J|1-24|Regular Ticket                                                        | Gallery Reserved                     |           17
+ DC119|D|5-6|PNC Diamond Club (All-Inclusive Food & Beverage, Indoor Club Access) | PNC Diamond Club (All-Inclusive F&B) |          225
+
+   the watch's own band is stored and pinned: an hour, next read an hour after this one
+ source_event_id | poll_interval | next_in  | cadence_pinned 
+-----------------+---------------+----------+----------------
+ 9813431         | 01:00:00      | 01:00:00 | t
+
+== 4. at once again: A inside its band, B inside retry_after: nothing fires
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 0, "settled": 0, "upstream_errors": 1}
+
+== 5. fifty minutes on, A is still published (one band plus grace, not the 30-minute ladder)
+ event_id | listings_available | listings_withheld 
+----------+--------------------+-------------------
+ 9813431  | t                  | 
+
+== 6. an hour on, both are due; with an hourly cap of 1 the SOONEST goes (A), not the one never read well (B)
+                                ?column?                                
+------------------------------------------------------------------------
+ {"lost": 0, "room": 0, "fired": 1, "settled": 0, "upstream_errors": 1}
+
+   pid   
+---------
+ 9813431
+
+== 7. A comes back empty: the sold-out band, a day; B then fires and finds no event: a failed read of B
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 98, "fired": 1, "settled": 1, "upstream_errors": 1}
+
+ source_event_id | poll_status | listing_count | poll_interval | cadence_pinned 
+-----------------+-------------+---------------+---------------+----------------
+ 9813431         | ok          |             0 | 1 day         | t
+
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 0, "settled": 1, "upstream_errors": 1}
+
+ source_event_id | poll_status |              poll_error               | failed_reads 
+-----------------+-------------+---------------------------------------+--------------
+ 9643120         | failed      | event_not_found: No event at that URL |            1
+ 9813431         | ok          |                                       |            0
+
+ pid | outcome 
+-----+---------
+
+== 8. past retry_after B is read again; a quota_exceeded holds the watch for an hour and leaves B as it was
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 98, "fired": 1, "settled": 0, "upstream_errors": 1}
+
+                                     ?column?                                     
+----------------------------------------------------------------------------------
+ {"held": "quota_exceeded in the last hour", "lost": 0, "fired": 0, "settled": 1}
+
+ source_event_id | poll_status | failed_reads 
+-----------------+-------------+--------------
+ 9643120         | failed      |            1
+
+   pid   | status_code |     outcome     |            error            
+---------+-------------+-----------------+-----------------------------
+ 9813431 |         200 | ok              | 
+ 9643120 |         429 | rate_limited    | Too many captures in flight
+ 9813431 |         200 | empty           | 
+ 9643120 |         404 | event_not_found | No event at that URL
+ 9643120 |         429 | quota_exceeded  | No captures left
+
+== 9. a request with no response by stale_after is lost; the balance at reserve holds the watch
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 1, "settled": 0, "upstream_errors": 1}
+
+                                 ?column?                                 
+--------------------------------------------------------------------------
+ {"lost": 1, "room": 100, "fired": 0, "settled": 0, "upstream_errors": 2}
+
+   pid   | outcome 
+---------+---------
+ 9643120 | lost
+
+                                           provenue_watch_tick                                            
+----------------------------------------------------------------------------------------------------------
+ {"held": "captures_remaining at reserve", "lost": 0, "fired": 0, "settled": 0, "captures_remaining": 20}
+
+== 10. no horizon: a game five days out is in reach, read soonest first after the others
+ games_in_horizon 
+------------------
+ 3
+
+== 11. the budget, readable: the measured read and what max_in_flight carries an hour
+                                                                                       ?column?                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"daily_cap": 1000, "in_flight": 0, "hourly_cap": 100, "response_p50_s": 30.0, "response_p90_s": 30.0, "games_in_horizon": 3, "captures_remaining": 20, "per_hour_at_in_flight": 480}
+
+== 12. the cron
+         jobname         |  schedule  |               command               
+-------------------------+------------+-------------------------------------
+ provenue_watch_tick_30s | 30 seconds | SELECT public.provenue_watch_tick()
