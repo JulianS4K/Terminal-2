@@ -59,37 +59,53 @@ SELECT seats FROM public.primary_poll_listing WHERE source = 'provenue' AND sect
 SELECT source, event_id, name, listings_available, listing_count, tevo_event_id, tevo_match_method FROM public.v_primary_poll_events_feed WHERE source = 'provenue';
 SELECT listing_id, area, all_in_price FROM public.v_primary_poll_listings_feed WHERE source = 'provenue' ORDER BY all_in_price, listing_id COLLATE "C";
 
-\echo '== 4. at once again: A read within the hour, B inside retry_after: nothing fires'
+\echo '   the watch''s own band is stored and pinned: an hour, next read an hour after this one'
+SELECT source_event_id, poll_interval, next_poll_at - poll_ok_at AS next_in, cadence_pinned FROM public.primary_poll_event WHERE source = 'provenue';
+
+\echo '== 4. at once again: A inside its band, B inside retry_after: nothing fires'
 SELECT public.provenue_watch_tick() - 'captures_remaining';
 
-\echo '== 5. an hour later both are due again; the hourly cap of 1 lets only the one never read successfully go'
-UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '61 minutes', checked_at = checked_at - interval '61 minutes';
+\echo '== 5. fifty minutes on, A is still published (one band plus grace, not the 30-minute ladder)'
+UPDATE public.primary_poll_event SET poll_ok_at = poll_ok_at - interval '50 minutes', next_poll_at = next_poll_at - interval '50 minutes',
+       poll_attempt_at = poll_attempt_at - interval '50 minutes' WHERE source = 'provenue';
+UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '50 minutes', checked_at = checked_at - interval '50 minutes';
+SELECT event_id, listings_available, listings_withheld FROM public.v_primary_poll_events_feed WHERE source = 'provenue';
+
+\echo '== 6. an hour on, both are due; with an hourly cap of 1 the SOONEST goes (A), not the one never read well (B)'
+UPDATE public.primary_poll_event SET poll_ok_at = poll_ok_at - interval '15 minutes', next_poll_at = next_poll_at - interval '15 minutes',
+       poll_attempt_at = poll_attempt_at - interval '15 minutes' WHERE source = 'provenue';
+UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '15 minutes', checked_at = checked_at - interval '15 minutes';
 UPDATE public.provenue_watch_config SET hourly_cap = 1;
 SELECT public.provenue_watch_tick() - 'captures_remaining';
-SELECT request_id, pid FROM public.provenue_watch_poll WHERE checked_at IS NULL;
+SELECT pid FROM public.provenue_watch_poll WHERE checked_at IS NULL;
 
-\echo '== 6. B: event_not_found is a failed read of B (a capture would survive one); A: a quota_exceeded holds the watch'
-INSERT INTO net._http_response (id, status_code, content) VALUES
- (3, 404, '{"error":{"code":"event_not_found","message":"No event at that URL","outcome":"failed","retryable":false}}');
+\echo '== 7. A comes back empty: the sold-out band, a day; B then fires and finds no event: a failed read of B'
+INSERT INTO net._http_response (id, status_code, content)
+SELECT p.request_id, 200, '{"eventId":"9813431","eventName":"Mets at Nationals","listings":[],"note":""}'
+  FROM public.provenue_watch_poll p WHERE p.checked_at IS NULL AND p.pid = '9813431';
+UPDATE public.provenue_watch_config SET hourly_cap = 100;
+SELECT public.provenue_watch_tick() - 'captures_remaining';
+SELECT source_event_id, poll_status, listing_count, poll_interval, cadence_pinned FROM public.primary_poll_event WHERE source = 'provenue' ORDER BY 1;
+INSERT INTO net._http_response (id, status_code, content)
+SELECT p.request_id, 404, '{"error":{"code":"event_not_found","message":"No event at that URL","outcome":"failed","retryable":false}}'
+  FROM public.provenue_watch_poll p WHERE p.checked_at IS NULL AND p.pid = '9643120';
 SELECT public.provenue_watch_tick() - 'captures_remaining';
 SELECT source_event_id, poll_status, poll_error, failed_reads FROM public.primary_poll_event WHERE source = 'provenue' ORDER BY 1;
-UPDATE public.provenue_watch_config SET hourly_cap = 100;
-UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '61 minutes', checked_at = checked_at - interval '61 minutes' WHERE checked_at IS NOT NULL;
+SELECT pid, outcome FROM public.provenue_watch_poll WHERE checked_at IS NULL;
+
+\echo '== 8. past retry_after B is read again; a quota_exceeded holds the watch for an hour and leaves B as it was'
+UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '15 minutes', checked_at = checked_at - interval '15 minutes';
 SELECT public.provenue_watch_tick() - 'captures_remaining';
 INSERT INTO net._http_response (id, status_code, content)
 SELECT p.request_id, 429, '{"error":{"code":"quota_exceeded","message":"No captures left","outcome":"rejected","retryable":false}}'
-  FROM public.provenue_watch_poll p WHERE p.checked_at IS NULL AND p.pid = '9813431';
-INSERT INTO net._http_response (id, status_code, content)
-SELECT p.request_id, 200, '{"eventId":"9643120","eventName":"Rays at Phillies","listings":[],"note":"Not yet on sale"}'
-  FROM public.provenue_watch_poll p WHERE p.checked_at IS NULL AND p.pid = '9643120';
+  FROM public.provenue_watch_poll p WHERE p.checked_at IS NULL;
 SELECT public.provenue_watch_tick() - 'captures_remaining';
+SELECT source_event_id, poll_status, failed_reads FROM public.primary_poll_event WHERE source = 'provenue' AND source_event_id = '9643120';
 SELECT pid, status_code, outcome, error FROM public.provenue_watch_poll ORDER BY request_id;
-\echo '   A keeps its capture: a quota error is ours, not the game''s'
-SELECT source_event_id, poll_status, listing_count FROM public.primary_poll_event WHERE source = 'provenue' ORDER BY 1;
 
-\echo '== 7. a request with no response by stale_after is lost and the game is retried; the balance at reserve holds the watch'
+\echo '== 9. a request with no response by stale_after is lost; the balance at reserve holds the watch'
 DELETE FROM public.provenue_watch_poll WHERE outcome = 'quota_exceeded';
-UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '2 hours', checked_at = checked_at - interval '2 hours' WHERE checked_at IS NOT NULL;
+UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '2 hours', checked_at = checked_at - interval '2 hours';
 SELECT public.provenue_watch_tick() - 'captures_remaining';
 UPDATE public.provenue_watch_poll SET fired_at = now() - interval '6 minutes' WHERE checked_at IS NULL;
 SELECT public.provenue_watch_tick() - 'captures_remaining';
@@ -97,7 +113,13 @@ SELECT pid, outcome FROM public.provenue_watch_poll WHERE outcome = 'lost' ORDER
 UPDATE public.provenue_watch_poll SET captures_remaining = 20 WHERE outcome = 'ok';
 UPDATE public.provenue_watch_poll SET fired_at = fired_at - interval '1 hour', checked_at = checked_at - interval '1 hour';
 SELECT public.provenue_watch_tick();
-\echo '== 8. the budget, readable'
+
+\echo '== 10. no horizon: a game five days out is in reach, read soonest first after the others'
+UPDATE public.provenue_watch_config SET horizon_days = NULL;
+SELECT (public.provenue_watch_budget())->'games_in_horizon' AS games_in_horizon;
+
+\echo '== 11. the budget, readable: the measured read and what max_in_flight carries an hour'
+UPDATE public.provenue_watch_poll SET response_s = 30 WHERE response_s IS NOT NULL;
 SELECT public.provenue_watch_budget() - 'billed_today' - 'billed_last_hour' - 'quota_exceeded_at';
-\echo '== 9. the cron'
+\echo '== 12. the cron'
 SELECT jobname, schedule, command FROM cron.job WHERE jobname LIKE 'provenue%';

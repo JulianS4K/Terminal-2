@@ -66,76 +66,100 @@
  304|J|1-24|Regular Ticket                                                        | Gallery Reserved                     |           17
  DC119|D|5-6|PNC Diamond Club (All-Inclusive Food & Beverage, Indoor Club Access) | PNC Diamond Club (All-Inclusive F&B) |          225
 
-== 4. at once again: A read within the hour, B inside retry_after: nothing fires
+   the watch's own band is stored and pinned: an hour, next read an hour after this one
+ source_event_id | poll_interval | next_in  | cadence_pinned 
+-----------------+---------------+----------+----------------
+ 9813431         | 01:00:00      | 01:00:00 | t
+
+== 4. at once again: A inside its band, B inside retry_after: nothing fires
                                 ?column?                                 
 -------------------------------------------------------------------------
  {"lost": 0, "room": 99, "fired": 0, "settled": 0, "upstream_errors": 1}
 
-== 5. an hour later both are due again; the hourly cap of 1 lets only the one never read successfully go
+== 5. fifty minutes on, A is still published (one band plus grace, not the 30-minute ladder)
+ event_id | listings_available | listings_withheld 
+----------+--------------------+-------------------
+ 9813431  | t                  | 
+
+== 6. an hour on, both are due; with an hourly cap of 1 the SOONEST goes (A), not the one never read well (B)
                                 ?column?                                
 ------------------------------------------------------------------------
  {"lost": 0, "room": 0, "fired": 1, "settled": 0, "upstream_errors": 1}
 
- request_id |   pid   
-------------+---------
-          3 | 9643120
+   pid   
+---------
+ 9813431
 
-== 6. B: event_not_found is a failed read of B (a capture would survive one); A: a quota_exceeded holds the watch
-                                ?column?                                
-------------------------------------------------------------------------
- {"lost": 0, "room": 0, "fired": 1, "settled": 1, "upstream_errors": 1}
+== 7. A comes back empty: the sold-out band, a day; B then fires and finds no event: a failed read of B
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 98, "fired": 1, "settled": 1, "upstream_errors": 1}
+
+ source_event_id | poll_status | listing_count | poll_interval | cadence_pinned 
+-----------------+-------------+---------------+---------------+----------------
+ 9813431         | ok          |             0 | 1 day         | t
+
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 0, "settled": 1, "upstream_errors": 1}
 
  source_event_id | poll_status |              poll_error               | failed_reads 
 -----------------+-------------+---------------------------------------+--------------
  9643120         | failed      | event_not_found: No event at that URL |            1
  9813431         | ok          |                                       |            0
 
+ pid | outcome 
+-----+---------
+
+== 8. past retry_after B is read again; a quota_exceeded holds the watch for an hour and leaves B as it was
                                 ?column?                                 
 -------------------------------------------------------------------------
  {"lost": 0, "room": 98, "fired": 1, "settled": 0, "upstream_errors": 1}
 
                                      ?column?                                     
 ----------------------------------------------------------------------------------
- {"held": "quota_exceeded in the last hour", "lost": 0, "fired": 0, "settled": 2}
+ {"held": "quota_exceeded in the last hour", "lost": 0, "fired": 0, "settled": 1}
+
+ source_event_id | poll_status | failed_reads 
+-----------------+-------------+--------------
+ 9643120         | failed      |            1
 
    pid   | status_code |     outcome     |            error            
 ---------+-------------+-----------------+-----------------------------
  9813431 |         200 | ok              | 
  9643120 |         429 | rate_limited    | Too many captures in flight
+ 9813431 |         200 | empty           | 
  9643120 |         404 | event_not_found | No event at that URL
- 9813431 |         429 | quota_exceeded  | No captures left
- 9643120 |         200 | not_on_sale     | Not yet on sale
+ 9643120 |         429 | quota_exceeded  | No captures left
 
-   A keeps its capture: a quota error is ours, not the game's
- source_event_id | poll_status | listing_count 
------------------+-------------+---------------
- 9643120         | ok          |             0
- 9813431         | ok          |             4
-
-== 7. a request with no response by stale_after is lost and the game is retried; the balance at reserve holds the watch
+== 9. a request with no response by stale_after is lost; the balance at reserve holds the watch
                                 ?column?                                 
 -------------------------------------------------------------------------
- {"lost": 0, "room": 98, "fired": 2, "settled": 0, "upstream_errors": 1}
+ {"lost": 0, "room": 99, "fired": 1, "settled": 0, "upstream_errors": 1}
 
                                  ?column?                                 
 --------------------------------------------------------------------------
- {"lost": 2, "room": 100, "fired": 0, "settled": 0, "upstream_errors": 3}
+ {"lost": 1, "room": 100, "fired": 0, "settled": 0, "upstream_errors": 2}
 
    pid   | outcome 
 ---------+---------
- 9813431 | lost
  9643120 | lost
 
                                            provenue_watch_tick                                            
 ----------------------------------------------------------------------------------------------------------
  {"held": "captures_remaining at reserve", "lost": 0, "fired": 0, "settled": 0, "captures_remaining": 20}
 
-== 8. the budget, readable
-                                                ?column?                                                 
----------------------------------------------------------------------------------------------------------
- {"daily_cap": 1000, "in_flight": 0, "hourly_cap": 100, "games_in_horizon": 2, "captures_remaining": 20}
+== 10. no horizon: a game five days out is in reach, read soonest first after the others
+ games_in_horizon 
+------------------
+ 3
 
-== 9. the cron
+== 11. the budget, readable: the measured read and what max_in_flight carries an hour
+                                                                                       ?column?                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"daily_cap": 1000, "in_flight": 0, "hourly_cap": 100, "response_p50_s": 30.0, "response_p90_s": 30.0, "games_in_horizon": 3, "captures_remaining": 20, "per_hour_at_in_flight": 480}
+
+== 12. the cron
          jobname         |  schedule  |               command               
 -------------------------+------------+-------------------------------------
  provenue_watch_tick_30s | 30 seconds | SELECT public.provenue_watch_tick()

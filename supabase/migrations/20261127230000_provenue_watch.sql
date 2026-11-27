@@ -10,7 +10,7 @@
 --
 -- WHAT IT READS. The MLB schedule we already hold: mlb_ticket_game rows whose primary seller is ProVenue
 -- (primary_seller = 'provenue', primary_event_id = the page's pid), regular season, MLB only (sport_id 1), on sale,
--- not started, inside horizon_days. No catalogue lookup: tickets.dev's /v1/events does not index ProVenue yet, and
+-- not started, inside horizon_days when one is set. No catalogue lookup: tickets.dev's /v1/events does not index ProVenue yet, and
 -- our schedule already carries the page URL and the EVO id, so a capture joins to EVO with no matching.
 --
 -- WHAT IT WRITES. primary_poll_event / primary_poll_listing as source 'provenue' through the shared
@@ -18,13 +18,35 @@
 -- The EVO id comes from the schedule (method 'mlb_schedule'); primary_poll_map never touches this source, it is
 -- not in venue_primary_box_office. Each read is one row in provenue_watch_poll.
 --
--- HOW IT PACES. Every game once every `every` (1 h), soonest game first, until the plan runs out: daily_cap and
+-- HOW IT PACES. Every game once every `every` (1 h), SOONEST GAME FIRST, until the plan runs out: daily_cap and
 -- hourly_cap are set to the tickets.dev plan the operator buys (Starter 1,000/month = ~33/day and 50/hour;
 -- Developer 10,000 = ~330/day, 300/hour; Production 50,000 = ~1,650/day, 1,000/hour; Scale 250,000 = ~8,300/day,
--- 2,500/hour), and horizon_days to how far ahead that reaches (≈ 0.1 / 1 / 5 / 25 days at 13 games a day). Only a
+-- 2,500/hour). There is no horizon by default (horizon_days NULL): the caps decide how far ahead the watch reaches,
+-- ≈ 0.1 / 1 / 5 / 25 days at 13 games a day, because a near game due again always outranks a far one. Only a
 -- success is billed (tickets.dev: "Failed requests are never charged"), so the caps count successes and reads in
 -- flight. The balance tickets.dev returns on every capture (Tickets-Captures-Remaining) stops the watch at
 -- quota_reserve; a 429 quota_exceeded stops it for an hour; 429 rate_limited / 5xx hold it to one read in flight.
+--
+-- WHAT THE AXS WATCH ALREADY LEARNED, built in rather than rediscovered:
+--   * the band is stored and pinned (mig 20261126150000, 20261126213000). primary_poll_ingest writes the shared
+--     days-out ladder into poll_interval / next_poll_at, and the feeds publish a capture only for one band plus
+--     listing_grace after the read. A near game's ladder is 30 minutes, so an hourly read would go dark for half
+--     of every hour — the AXS "stale issue". After each good read the settle writes the watch's own band
+--     (`every`, or `empty_every`) and next_poll_at = the read + that band, and sets cadence_pinned.
+--   * a read with no listings is a sold-out read (mig 20261126214500): it takes empty_every (1 day), not the
+--     hourly band, and unpins itself on the first read that finds seats again.
+--   * soonest first, no horizon (mig 20261127000000 D): ordering is by game time only; a never-read game a
+--     month out no longer outranks a re-read of tonight's game.
+--   * the read is measured (mig 20261126163000): response_s on the ledger is pg_net's response time less the
+--     fire time, and provenue_watch_budget() reports its median and what max_in_flight can carry an hour, so
+--     max_in_flight is sized from measurement. ⚠ This reader fires through pg_net, the path the AXS watch left
+--     for a worker (mig 20261125000000) when pg_net settled reads late; at Starter/Developer volume (50-300 an
+--     hour) that is not binding, at Production/Scale it may be — read the budget's per_hour_at_in_flight first.
+--   * stale_after is 5 minutes (mig 20261127010000): long enough for a 120 s capture, short enough that a lost
+--     request does not hold a slot.
+--   NOT carried over, deliberately: the thin-inventory withhold (mig 20261126230000). A box office with under 20
+--   seats left is a sell-out signal we want to publish; provenue never writes sellable_tickets, which the feeds
+--   read as not thin.
 --
 -- THE LISTING KEY. tickets.dev sends listingId empty for ProVenue. A listing is one block of unsold seats, so its
 -- key is section | row | first-last seat | ticket type: two blocks in one row at one price (229 N seats 1-7 and
@@ -52,7 +74,8 @@ CREATE TABLE IF NOT EXISTS public.provenue_watch_config (
   every           interval NOT NULL DEFAULT interval '1 hour',      -- each game read once per this
   due_slack       interval NOT NULL DEFAULT interval '2 minutes',   -- a read this early still counts as on time
   retry_after     interval NOT NULL DEFAULT interval '10 minutes',  -- after a read that did not succeed
-  horizon_days    integer  NOT NULL DEFAULT 1 CHECK (horizon_days BETWEEN 0 AND 400),
+  empty_every     interval NOT NULL DEFAULT interval '1 day',       -- a read that found no listings
+  horizon_days    integer  CHECK (horizon_days BETWEEN 0 AND 400),  -- NULL = no horizon: soonest first until the caps
   daily_cap       integer  NOT NULL DEFAULT 33 CHECK (daily_cap >= 0),   -- billed reads (successes + in flight) per UTC day
   hourly_cap      integer  NOT NULL DEFAULT 50 CHECK (hourly_cap >= 0),  -- the plan's throughput
   quota_reserve   integer  NOT NULL DEFAULT 25 CHECK (quota_reserve >= 0),
@@ -74,7 +97,8 @@ CREATE TABLE IF NOT EXISTS public.provenue_watch_poll (
   fired_at           timestamptz NOT NULL DEFAULT now(),
   checked_at         timestamptz,
   status_code        integer,
-  outcome            text,                          -- ok | not_on_sale | event_not_found | capture_failed | rate_limited | quota_exceeded | auth | lost | bad_body | error
+  response_s         numeric,                       -- pg_net's response landed − fired_at
+  outcome            text,                          -- ok | empty | not_on_sale | event_not_found | capture_failed | rate_limited | quota_exceeded | auth | lost | bad_body | error
   error              text,
   listings           integer,
   tickets            integer,
@@ -201,6 +225,7 @@ DECLARE
   v_code text := p_body#>>'{error,code}';
   v_remaining bigint;
   v_event jsonb; v_outcome text; v_err text; v_listings integer; v_tickets integer;
+  v_band interval;
 BEGIN
   -- the balance: a header on every capture response (pg_net keeps header names as sent; look both ways)
   SELECT CASE WHEN v ~ '^[0-9]+$' THEN v::bigint END INTO v_remaining
@@ -212,7 +237,7 @@ BEGIN
     v_event := public.provenue_capture_event(p_body, p_pid, v_game);
     v_listings := jsonb_array_length(v_event->'listings');
     v_tickets := (v_event->>'total_available')::integer;
-    v_outcome := CASE WHEN v_listings = 0 AND coalesce(p_body->>'note', '') <> '' THEN 'not_on_sale' ELSE 'ok' END;
+    v_outcome := CASE WHEN v_listings > 0 THEN 'ok' WHEN coalesce(p_body->>'note', '') <> '' THEN 'not_on_sale' ELSE 'empty' END;
     v_err := nullif(p_body->>'note', '');
   ELSIF p_status = 200 THEN
     v_outcome := 'bad_body'; v_err := 'a 200 without a listings array';
@@ -233,6 +258,12 @@ BEGIN
     UPDATE public.primary_poll_listing pl SET notes = x->>'notes'
       FROM jsonb_array_elements(v_event->'listings') x
      WHERE pl.source = 'provenue' AND pl.source_event_id = p_pid AND pl.listing_id = x->>'id' AND x ? 'notes';
+    -- the watch's own band, stored and pinned: the feeds' freshness window is one band past the read, and the
+    -- shared ladder ingest just wrote would close it early (mig 20261126213000). No listings = the sold-out band.
+    SELECT CASE WHEN v_listings > 0 THEN c.every ELSE c.empty_every END INTO v_band FROM public.provenue_watch_config c;
+    UPDATE public.primary_poll_event e
+       SET poll_interval = v_band, next_poll_at = coalesce(e.poll_ok_at, now()) + v_band, cadence_pinned = true
+     WHERE e.source = 'provenue' AND e.source_event_id = p_pid;
   ELSIF v_outcome IN ('event_not_found', 'capture_failed', 'bad_body', 'error') AND v_game ? 'name' THEN
     -- the page answered and could not be read: a failed read of THIS game (the capture survives one, as for AXS).
     -- Capacity, quota and key errors are ours, not the game's, and leave its capture alone.
@@ -265,17 +296,26 @@ AS $function$
     'daily_cap', c.daily_cap, 'hourly_cap', c.hourly_cap,
     -- only a success is billed, so the caps count successes and what is still in flight
     'billed_today', (SELECT count(*) FROM public.provenue_watch_poll p
-                      WHERE p.fired_at >= date_trunc('day', now()) AND (p.checked_at IS NULL OR p.outcome IN ('ok', 'not_on_sale'))),
+                      WHERE p.fired_at >= date_trunc('day', now()) AND (p.checked_at IS NULL OR p.outcome IN ('ok', 'empty', 'not_on_sale'))),
     'billed_last_hour', (SELECT count(*) FROM public.provenue_watch_poll p
-                          WHERE p.fired_at >= now() - interval '1 hour' AND (p.checked_at IS NULL OR p.outcome IN ('ok', 'not_on_sale'))),
+                          WHERE p.fired_at >= now() - interval '1 hour' AND (p.checked_at IS NULL OR p.outcome IN ('ok', 'empty', 'not_on_sale'))),
     'in_flight', (SELECT count(*) FROM public.provenue_watch_poll p WHERE p.checked_at IS NULL),
     'captures_remaining', (SELECT p.captures_remaining FROM public.provenue_watch_poll p
                             WHERE p.captures_remaining IS NOT NULL ORDER BY p.checked_at DESC LIMIT 1),
     'quota_exceeded_at', (SELECT max(p.checked_at) FROM public.provenue_watch_poll p WHERE p.outcome = 'quota_exceeded'),
     'games_in_horizon', (SELECT count(*) FROM public.v_provenue_watch_games g
-                          WHERE g.game_time_utc < now() + make_interval(days => c.horizon_days)
-                            AND (c.clubs IS NULL OR g.home_abbrev = ANY (c.clubs))))
+                          WHERE (c.horizon_days IS NULL OR g.game_time_utc < now() + make_interval(days => c.horizon_days))
+                            AND (c.clubs IS NULL OR g.home_abbrev = ANY (c.clubs))),
+    -- what a read costs in wall time, and what max_in_flight can therefore carry an hour (mig 20261126163000's
+    -- lesson: size from the measured read)
+    'response_p50_s', m.p50, 'response_p90_s', m.p90,
+    'per_hour_at_in_flight', CASE WHEN m.p50 > 0 THEN floor(3600 / m.p50 * c.max_in_flight) END)
     FROM public.provenue_watch_config c
+    CROSS JOIN LATERAL (
+      SELECT round((percentile_cont(0.5) WITHIN GROUP (ORDER BY x.response_s))::numeric, 1) AS p50,
+             round((percentile_cont(0.9) WITHIN GROUP (ORDER BY x.response_s))::numeric, 1) AS p90
+        FROM (SELECT p.response_s FROM public.provenue_watch_poll p
+               WHERE p.response_s IS NOT NULL ORDER BY p.checked_at DESC LIMIT 200) x) m
 $function$;
 
 -- ---------------------------------------------------------------- the tick: settle, then fire what is due
@@ -297,7 +337,8 @@ BEGIN
   SELECT * INTO v_cfg FROM public.provenue_watch_config;
 
   -- 1. settle every request whose response has landed
-  FOR w IN SELECT p.request_id, p.pid, hr.status_code, hr.content, hr.timed_out, hr.error_msg, to_jsonb(hr)->'headers' AS headers
+  FOR w IN SELECT p.request_id, p.pid, hr.status_code, hr.content, hr.timed_out, hr.error_msg, to_jsonb(hr)->'headers' AS headers,
+                  round(extract(epoch FROM hr.created - p.fired_at)::numeric, 1) AS response_s
              FROM public.provenue_watch_poll p JOIN net._http_response hr ON hr.id = p.request_id
             WHERE p.checked_at IS NULL
             ORDER BY p.fired_at
@@ -305,7 +346,7 @@ BEGIN
     r := public.provenue_watch_settle_one(w.pid, w.status_code, public.safe_jsonb(w.content),
                                           coalesce(w.timed_out, false), w.error_msg, w.headers);
     UPDATE public.provenue_watch_poll p
-       SET checked_at = now(), status_code = w.status_code, outcome = r->>'outcome', error = r->>'error',
+       SET checked_at = now(), status_code = w.status_code, outcome = r->>'outcome', error = r->>'error', response_s = w.response_s,
            listings = (r->>'listings')::integer, tickets = (r->>'tickets')::integer,
            captures_remaining = (r->>'captures_remaining')::bigint
      WHERE p.request_id = w.request_id;
@@ -359,23 +400,26 @@ BEGIN
     RETURN jsonb_build_object('settled', v_settled, 'lost', v_lost, 'fired', 0, 'held', 'vault secret tickets.dev missing');
   END IF;
 
-  -- 3. fire: due = no read in flight, no success within `every`, no attempt within retry_after; never read first,
-  --    then the soonest game
+  -- 3. fire: due = no read in flight; the stored band has run out (next_poll_at, written by the settle from
+  --    `every` or `empty_every`); no attempt within retry_after unless that attempt succeeded. Soonest game first
+  --    and nothing else: a near game due again outranks a far one never read (mig 20261127000000 D).
   FOR t IN
-    SELECT g.pid, g.mlb_game_id, g.ticket_url, last.ok_at
+    SELECT g.pid, g.mlb_game_id, g.ticket_url
       FROM public.v_provenue_watch_games g
+      LEFT JOIN public.primary_poll_event e ON e.source = 'provenue' AND e.source_event_id = g.pid
       LEFT JOIN LATERAL (
-        SELECT max(p.fired_at) FILTER (WHERE p.outcome IN ('ok', 'not_on_sale')) AS ok_at,
+        SELECT max(p.fired_at) FILTER (WHERE p.outcome IN ('ok', 'empty', 'not_on_sale')) AS ok_at,
                max(p.fired_at) AS any_at,
                bool_or(p.checked_at IS NULL) AS in_flight
           FROM public.provenue_watch_poll p WHERE p.pid = g.pid) last ON true
-     WHERE g.game_time_utc < now() + make_interval(days => v_cfg.horizon_days)
+     WHERE (v_cfg.horizon_days IS NULL OR g.game_time_utc < now() + make_interval(days => v_cfg.horizon_days))
        AND (v_cfg.clubs IS NULL OR g.home_abbrev = ANY (v_cfg.clubs))
        AND NOT coalesce(last.in_flight, false)
-       AND (last.ok_at IS NULL OR last.ok_at <= now() - v_cfg.every + v_cfg.due_slack)
+       AND (e.source_event_id IS NULL OR e.poll_status IS DISTINCT FROM 'ok' OR e.next_poll_at IS NULL
+            OR e.next_poll_at <= now() + v_cfg.due_slack)
        AND (last.any_at IS NULL OR last.any_at <= now() - v_cfg.retry_after
             OR (last.ok_at IS NOT NULL AND last.any_at = last.ok_at))
-     ORDER BY last.ok_at NULLS FIRST, g.game_time_utc, g.pid
+     ORDER BY g.game_time_utc, g.pid
      LIMIT v_slots
   LOOP
     SELECT net.http_get(
