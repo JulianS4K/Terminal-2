@@ -55,10 +55,13 @@ UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 second'
  WHERE source='axs' AND source_event_id='P1';
 SELECT jsonb_array_length(public.primary_poll_due('axs','["P1"]'::jsonb)) AS p1_due_when_its_time_comes;
 
+-- 60 tickets, not a token 2: under thin_min_tickets (20, mig 20261126230000) a read finding
+-- fewer than 20 sellable tickets is a preemptive sold out and would pin it straight back,
+-- so the unpin this section is about would never be visible.
 \echo '--- G. and it UNPINS: P1 comes back on sale, the band UPDATE sets cadence_pinned false again'
 SELECT (public.axs_watch_settle_one('P1', 200, $j${"status":"ok","body":{"status":"ok","exit_code":0,
   "event":{"id":"P1"},"listings":[{"kind":"primary","section":"101","row":"A","seats":["1","2"],
-  "quantity":2,"status":"Available","pricing":{"face":400,"fees_total":0,"tax":0,"all_in":400}}]}}$j$::jsonb,
+  "quantity":60,"status":"Available","pricing":{"face":400,"fees_total":0,"tax":0,"all_in":400}}]}}$j$::jsonb,
   false, NULL, false))->>'outcome' AS p1_back_on_sale;
 SELECT cadence_pinned, poll_interval AS band FROM public.primary_poll_event
  WHERE source='axs' AND source_event_id='P1';

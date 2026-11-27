@@ -3,9 +3,9 @@
 ------------------------+---------------+---------------------+------------------
                       7 | 02:00:00      |                 100 | 1 day
 
-                                 fill_in                                  
---------------------------------------------------------------------------
- {"added": 5, "apply": true, "retired": 0, "watched": 5, "backfilled": 5}
+                                        fill_in                                        
+---------------------------------------------------------------------------------------
+ {"added": 5, "apply": true, "parked": 0, "retired": 0, "watched": 5, "backfilled": 5}
 
  on_the_list 
 -------------
@@ -39,9 +39,9 @@
  9300003 | 1 day         | f
 
 --- E. the fill retires the dead ones and does NOT hand their places back
-                      fill_retires                       
----------------------------------------------------------
- {"added": 0, "apply": true, "retired": 3, "watched": 2}
+                             fill_retires                             
+----------------------------------------------------------------------
+ {"added": 0, "apply": true, "parked": 1, "retired": 3, "watched": 2}
 
   still_listed   
 -----------------
@@ -54,9 +54,9 @@
  9300003 | over_or_cancelled
 
 --- F. a second fill does not resurrect them (the candidate guard)
-                       fill_again                        
----------------------------------------------------------
- {"added": 0, "apply": true, "retired": 0, "watched": 2}
+                              fill_again                              
+----------------------------------------------------------------------
+ {"added": 0, "apply": true, "parked": 1, "retired": 0, "watched": 2}
 
   still_listed   
 -----------------
@@ -72,9 +72,9 @@
  9300004,9300005
 
 --- G2. the QUEUE path writes NO poll row, so the check must work off poll_error
-                               fill_adds_it                               
---------------------------------------------------------------------------
- {"added": 1, "apply": true, "retired": 0, "watched": 3, "backfilled": 1}
+                                     fill_adds_it                                      
+---------------------------------------------------------------------------------------
+ {"added": 1, "apply": true, "parked": 1, "retired": 0, "watched": 3, "backfilled": 1}
 
  settled_without_a_poll_row 
 ----------------------------
@@ -91,9 +91,9 @@
 --- H. rule 3: GA-only over 100 TICKETS is slowed; ADA does not disqualify.
 ---    These fixtures carry MORE THAN 400 GA tickets, so since mig 20261126194500 they
 ---    land on the ladder's SECOND step (4h), not the first (2h). s27 owns the ladder.
-                         fill_adds_the_ga_events                          
---------------------------------------------------------------------------
- {"added": 4, "apply": true, "retired": 1, "watched": 6, "backfilled": 4}
+                                fill_adds_the_ga_events                                
+---------------------------------------------------------------------------------------
+ {"added": 4, "apply": true, "parked": 1, "retired": 1, "watched": 6, "backfilled": 4}
 
    id    | outcome 
 ---------+---------
@@ -129,9 +129,9 @@
  {"events": 6, "ga_slow": 2, "cadence_scale": 1.0, "catalogue_only": 1, "demand_per_day": 120, "demand_per_hour": 5.0}
 
 --- L. no-tickets BEYOND the retire window is read once a day, not every 6 hours
-                              fill_adds_them                              
---------------------------------------------------------------------------
- {"added": 3, "apply": true, "retired": 0, "watched": 9, "backfilled": 3}
+                                    fill_adds_them                                     
+---------------------------------------------------------------------------------------
+ {"added": 3, "apply": true, "parked": 1, "retired": 0, "watched": 9, "backfilled": 3}
 
    id    | outcome  
 ---------+----------

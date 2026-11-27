@@ -1,13 +1,16 @@
--- The extension reader (mig 20261126200000): our own Firefox extension reads the AXS pages, the database chooses and
+-- The extension reader (mig 20261127020000): our own Firefox extension reads the AXS pages, the database chooses and
 -- settles as for the TicketsData worker. With reader = 'extension' only a worker id starting 'ext:' is handed events,
 -- with no TicketsData cap and the extension's spacing and lanes; a read is settled with no credit spent and a ledger row
 -- marked extension; a repeat of the same read returns the first. With reader = 'worker' the extension is handed nothing.
--- (Renumbered after main's scenarios each time main moved: s10, s13, s16, s18, s20, s22, now s28.)
+-- (Renumbered after main's scenarios each time main moved: s10, s13, s16, s18, s20, s22, s28, now s32.)
 -- Events are dated days ahead, so stop_before_start (6 hours) never reaches them whatever the hour.
 \set QUIET on
 \pset footer off
 \pset null '-'
 SET client_min_messages = warning;
+-- the read below carries three seats; the thin-inventory rule (mig 20261126230000, under thin_min_tickets = 20) would
+-- withhold them, which is its own scenario's business (s30). Off here, so this one tests the reader.
+UPDATE public.axs_watch_config SET thin_min_tickets = 0 WHERE id;
 
 INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date, start_local_time, venue_name, venue_city, venue_state, ticket_url, poll_status, next_poll_at, poll_interval)
 VALUES ('axs', '41', 'Arena Night',  current_date + 20, '19:30', 'Big Arena', 'Austin', 'TX', 'https://www.axs.com/events/41', 'pending', now() - interval '3 hours', interval '1 hour'),

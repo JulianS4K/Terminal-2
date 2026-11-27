@@ -5,8 +5,12 @@
 \pset null '-'
 SET client_min_messages = warning;
 UPDATE public.axs_watch_config SET keep_regex = NULL;  -- these fixtures are not the operator's three teams (mig 20261125232000)
+-- watch_until_days is set HERE rather than taken from the config: mig 20261127000000 set the
+-- shipped default to NULL (operator "Remove beyond horrizon but by soonest event"), so a
+-- scenario that needs a ceiling must say so itself. The knob is unchanged; only the default is.
+UPDATE public.axs_watch_config SET watch_until_days = 180;
 
-\echo '--- A. the default'
+\echo '--- A. the ceiling this scenario sets (the shipped default is NULL since mig 20261127000000)'
 SELECT watch_until_days, stop_before_start FROM public.axs_watch_config;
 
 DELETE FROM public.axs_watch_venue;

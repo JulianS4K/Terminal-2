@@ -1,4 +1,4 @@
--- Migration 20261126200000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(replaced),axs_watch_pace()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261126194500 (main's newest AXS watch migration),20261126163000 (pace() measures the read, carried),20261126060000 (next()'s e.watch predicate, carried),20261126053000 (the pacer that now reads pace() for cadence_scale),20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
+-- Migration 20261127020000 · level:data-collection · lane:A1 (data plane: the AXS watch, routed to this session by the operator) · writes:axs_watch_config(reader +'extension',+ext_lanes,+ext_spacing_ms),axs_watch_poll(reader +'extension'),axs_watch_budget()(replaced),axs_watch_next()(replaced),axs_queue_claim()(patched in place),axs_watch_pace()(replaced),axs_watch_record_ext()(new) · reads:primary_poll_event,ticketsdata_credit_usage · pre:20261127010000 (main's newest AXS watch migration),20261127000000 (the parked exemption in the claim, kept by patching in place),20261126163000 (pace() measures the read, carried),20261126060000 (next()'s e.watch predicate, carried),20261126053000 (the pacer that now reads pace() for cadence_scale),20261126030000 (the queue claim this re-creates),20261126004500 (the next() this re-creates),20261125205000 (the budget() this re-creates),20261125214500 (settle_one() with p_charge / p_via, used as is)
 --
 -- THE AXS WATCH CAN BE READ BY OUR OWN BROWSER EXTENSION, WITHOUT TICKETSDATA.
 -- Operator 2026-11-25: "Look at the axs poller, I want to build our own" ... "So we can poll more events and more
@@ -15,9 +15,10 @@
 --                             worker idles, and the extension idles when it is switched back. Everything else in
 --                             next() is 20261126004500's, the upstream hold bounded by upstream_errors_window included,
 --                             with 20261126060000's patch carried: only events with watch = true are handed out.
---   axs_queue_claim()         20261126030000's (the paced queue, which feeds the TicketsData worker), with one gate
---                             added: while the extension reads it hands out nothing, so switching the reader stops
---                             TicketsData whichever path its worker takes (axs_watch_next or the queue).
+--   axs_queue_claim()         PATCHED IN PLACE, not re-created, so every earlier patch to it stays (20261127000000's
+--                             parked exemption among them): one gate is inserted after its queue_enabled check. While
+--                             the extension reads it hands out nothing, so switching the reader stops TicketsData
+--                             whichever path its readers take (axs_watch_next, or the queue its two loops share).
 --   axs_watch_budget()        20261125205000's (the Eastern day, as td_credits_today()), with the extension's reads left
 --                             out of fired_today; while the extension reads the cap is not the limit (daily_cap
 --                             1,000,000 and 'unmetered' true). The pool figures are unchanged.
@@ -42,7 +43,8 @@
 -- Switch: UPDATE public.axs_watch_config SET reader = 'extension', cadence_scale_floor = 0.5 WHERE id;
 -- Back:   UPDATE public.axs_watch_config SET reader = 'worker', cadence_scale_floor = 1.0 WHERE id;
 -- rollback: the switch back, then re-apply axs_watch_budget() from 20261125205000 and axs_watch_next() from
---           20261126004500, axs_queue_claim() from 20261126030000 and axs_watch_pace() from 20261125010000; DROP FUNCTION axs_watch_record_ext(text, integer, jsonb, boolean, text, timestamptz);
+--           20261126004500 and axs_watch_pace() from 20261125010000 (with 20261126163000's patch); take the gate out of
+--           axs_queue_claim() (the block marked "mig 20261127020000"); DROP FUNCTION axs_watch_record_ext(text, integer, jsonb, boolean, text, timestamptz);
 --           the columns and checks can stay.
 
 ALTER TABLE public.axs_watch_config DROP CONSTRAINT IF EXISTS axs_watch_config_reader_check;
@@ -51,8 +53,8 @@ ALTER TABLE public.axs_watch_poll DROP CONSTRAINT IF EXISTS axs_watch_poll_reade
 ALTER TABLE public.axs_watch_poll ADD CONSTRAINT axs_watch_poll_reader_check CHECK (reader IN ('db', 'worker', 'extension'));
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_lanes smallint NOT NULL DEFAULT 4 CHECK (ext_lanes BETWEEN 1 AND 8);
 ALTER TABLE public.axs_watch_config ADD COLUMN IF NOT EXISTS ext_spacing_ms integer NOT NULL DEFAULT 4000 CHECK (ext_spacing_ms BETWEEN 1000 AND 60000);
-COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261126200000)';
-COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261126200000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_lanes IS 'AXS extension: events read at once, one Firefox container each (mig 20261127020000)';
+COMMENT ON COLUMN public.axs_watch_config.ext_spacing_ms IS 'AXS extension: least time between two page opens, across all lanes (mig 20261127020000)';
 
 -- The budget (as 20261125205000): the extension's reads are not TicketsData's and spend nothing.
 CREATE OR REPLACE FUNCTION public.axs_watch_budget()
@@ -79,7 +81,7 @@ AS $function$
   -- the Eastern day, to match td_credits_today() (mig 20261125205000)
   today AS (SELECT count(*) AS fired FROM public.axs_watch_poll w
              WHERE w.fired_at >= date_trunc('day', now() AT TIME ZONE 'America/New_York') AT TIME ZONE 'America/New_York'
-               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261126200000)
+               AND w.reader <> 'extension')                -- the extension's reads spend no TicketsData credit (mig 20261127020000)
   SELECT jsonb_build_object(
            'pool_remaining', pool.remaining, 'pool_read_at', pool.read_at,
            'next_reset', reset.next_reset, 'days_left', greatest(reset.next_reset - current_date, 1),
@@ -113,7 +115,7 @@ BEGIN
   IF v_cfg.reader = 'db' THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the database reads (axs_watch_config.reader)');
   END IF;
-  -- each reader is handed events only while it is the one switched on (mig 20261126200000)
+  -- each reader is handed events only while it is the one switched on (mig 20261127020000)
   IF v_cfg.reader = 'extension' AND NOT v_ext THEN
     RETURN jsonb_build_object('events', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
   END IF;
@@ -174,104 +176,30 @@ BEGIN
                             'lease_s', CASE WHEN p_worker IS NOT NULL THEN v_cfg.worker_lease_s END);
 END $function$;
 
--- The queue's claim (as 20261126030000), gated on the reader.
-CREATE OR REPLACE FUNCTION public.axs_queue_claim(p_worker text, p_limit integer DEFAULT NULL)
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-DECLARE
-  v_cfg public.axs_watch_config%ROWTYPE;
-  v_budget jsonb; v_cap integer; v_fired integer; v_errors integer; v_newest text;
-  v_spacing interval; v_base timestamptz; v_room integer; v_in_flight integer;
-  v_items jsonb := '[]'::jsonb; q record; v_n integer := 0;
+-- The queue's claim: the reader gate, inserted in place after the queue_enabled check, so every patch already made to
+-- the claim stays. Refuses to run if the anchor is not there exactly once, and checks the gate took.
+DO $surgery$
+DECLARE v_src text; v_new text; v_hits integer;
+  v_anchor text := E'  IF NOT v_cfg.queue_enabled THEN\n    RETURN jsonb_build_object(''items'', ''[]''::jsonb, ''reason'', ''the queue is off (axs_watch_config.queue_enabled)'');\n  END IF;\n';
+  v_gate text := E'  -- the queue feeds the TicketsData readers; while the extension reads it hands out nothing (mig 20261127020000)\n  IF v_cfg.reader = ''extension'' THEN\n    RETURN jsonb_build_object(''items'', ''[]''::jsonb, ''reason'', ''the extension reads (axs_watch_config.reader)'');\n  END IF;\n';
 BEGIN
-  IF coalesce(p_worker, '') = '' THEN
-    RAISE EXCEPTION 'axs_queue_claim: a worker id is required';
+  SELECT pg_get_functiondef(p.oid) INTO v_src FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND p.proname = 'axs_queue_claim';
+  IF v_src IS NULL THEN RAISE EXCEPTION 'axs_queue_claim not found'; END IF;
+  IF position('the extension reads (axs_watch_config.reader)' in v_src) > 0 THEN
+    RAISE NOTICE 'axs_queue_claim already gated on the reader';
+    RETURN;
   END IF;
-  -- the config row is the pacer's lock: every release in the system is allocated here, in turn
-  SELECT * INTO v_cfg FROM public.axs_watch_config FOR UPDATE;
-  IF NOT v_cfg.enabled THEN
-    RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'paused');
+  v_hits := (length(v_src) - length(replace(v_src, v_anchor, ''))) / length(v_anchor);
+  IF v_hits <> 1 THEN RAISE EXCEPTION 'axs_queue_claim queue_enabled check: expected 1 site, found %', v_hits; END IF;
+  v_new := replace(v_src, v_anchor, v_anchor || v_gate);
+  EXECUTE v_new;
+  SELECT pg_get_functiondef(p.oid) INTO v_src FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND p.proname = 'axs_queue_claim';
+  IF position('the extension reads (axs_watch_config.reader)' in v_src) = 0 THEN
+    RAISE EXCEPTION 'axs_queue_claim did not take the reader gate';
   END IF;
-  IF NOT v_cfg.queue_enabled THEN
-    RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the queue is off (axs_watch_config.queue_enabled)');
-  END IF;
-  -- the queue feeds the TicketsData worker; while the extension reads it hands out nothing (mig 20261126200000)
-  IF v_cfg.reader = 'extension' THEN
-    RETURN jsonb_build_object('items', '[]'::jsonb, 'reason', 'the extension reads (axs_watch_config.reader)');
-  END IF;
-
-  PERFORM public.axs_queue_reap();
-
-  -- Self-feeding: when nothing is pending, top the queue up here rather than needing a cron.
-  -- Gated on emptiness so the fill runs at most once per drained queue, not on every claim —
-  -- which also means the ON CONFLICT DO NOTHING in the fill is doing almost no work in the
-  -- steady state.
-  IF NOT EXISTS (SELECT 1 FROM public.axs_read_queue WHERE resolved_at IS NULL AND claimed_at IS NULL) THEN
-    PERFORM public.axs_queue_fill();
-  END IF;
-
-  -- upstream trouble, same rule and same window as axs_watch_next (mig 20261126004500)
-  SELECT count(*) FILTER (WHERE x.outcome IN ('upstream_error', 'timeout', 'lost')),
-         max(x.outcome) FILTER (WHERE x.rn = 1)
-    INTO v_errors, v_newest
-    FROM (SELECT p.outcome, row_number() OVER (ORDER BY p.checked_at DESC) AS rn
-            FROM public.axs_watch_poll p
-           WHERE p.checked_at IS NOT NULL AND p.checked_at > now() - v_cfg.upstream_errors_window
-           ORDER BY p.checked_at DESC LIMIT 10) x;
-  IF v_errors >= v_cfg.upstream_errors_max AND v_newest IN ('upstream_error', 'timeout', 'lost') THEN
-    RETURN jsonb_build_object('items', '[]'::jsonb, 'hold_s', 60, 'upstream_errors', v_errors,
-                              'errors_window', v_cfg.upstream_errors_window);
-  END IF;
-
-  v_budget := public.axs_watch_budget();
-  v_cap    := (v_budget->>'daily_cap')::integer;
-  v_fired  := (v_budget->>'fired_today')::integer;
-
-  SELECT count(*) INTO v_in_flight FROM public.axs_read_queue
-   WHERE resolved_at IS NULL AND claimed_at IS NOT NULL AND lease_until >= now();
-  v_room := least(coalesce(p_limit, v_cfg.queue_lanes), v_cfg.queue_lanes) - v_in_flight;
-  IF v_room <= 0 THEN
-    RETURN jsonb_build_object('items', '[]'::jsonb, 'hold_s', 2, 'reason', 'all lanes busy',
-                              'lanes', v_cfg.queue_lanes, 'in_flight', v_in_flight);
-  END IF;
-
-  v_spacing := make_interval(secs => coalesce(v_cfg.read_spacing_ms, 3000) / 1000.0);
-  v_base    := greatest(coalesce(v_cfg.last_release_at, now()), now());
-
-  FOR q IN SELECT * FROM public.axs_read_queue
-            WHERE resolved_at IS NULL AND claimed_at IS NULL
-            ORDER BY due_at, id
-            LIMIT v_room
-            FOR UPDATE SKIP LOCKED
-  LOOP
-    -- over the day's share: only an event on a hot cadence, and only up to the overrun
-    IF v_fired + v_n >= v_cap THEN
-      CONTINUE WHEN q.every_min IS NULL OR make_interval(mins => q.every_min) > v_cfg.hot_every;
-      CONTINUE WHEN v_fired + v_n >= v_cap + (v_cap * v_cfg.hot_overrun_pct) / 100;
-    END IF;
-    v_base := v_base + v_spacing;
-    UPDATE public.axs_read_queue
-       SET claimed_at = now(), claimed_by = p_worker, release_at = v_base,
-           lease_until = v_base + v_cfg.stale_after
-     WHERE id = q.id;
-    v_items := v_items || jsonb_build_object('queue_id', q.id, 'id', q.axs_event_id,
-                 'url', q.event_url, 'every_min', q.every_min, 'release_at', v_base,
-                 'attempts', q.attempts);
-    v_n := v_n + 1;
-  END LOOP;
-
-  IF v_n > 0 THEN
-    UPDATE public.axs_watch_config SET last_release_at = v_base WHERE id;
-  END IF;
-
-  RETURN jsonb_build_object('items', v_items, 'spacing_ms', v_cfg.read_spacing_ms,
-                            'lanes', v_cfg.queue_lanes, 'in_flight', v_in_flight + v_n,
-                            'daily_cap', v_cap, 'fired_today', v_fired,
-                            'depth', public.axs_queue_depth());
-END $function$;
+END $surgery$;
 
 -- The pace (as 20261125010000), with the extension's capacity.
 CREATE OR REPLACE FUNCTION public.axs_watch_pace()

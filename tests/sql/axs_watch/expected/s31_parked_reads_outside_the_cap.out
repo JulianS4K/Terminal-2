@@ -1,0 +1,82 @@
+--- A. the knobs
+ parked_daily_max | no_tickets_every | hot_every | watch_until_days  
+------------------+------------------+-----------+-------------------
+               50 | 1 day            | 00:30:00  | NULL (no ceiling)
+
+--- B. the day's cap is spent: one read today against a cap of 1, charged to the ACTIVE event
+ cap | fired_today 
+-----+-------------
+ 1   | 1
+
+--- C. THE EXEMPTION: the parked event is handed out, the active one is not
+      handed_out      | daily_cap | fired_today | parked_today | parked_daily_max 
+----------------------+-----------+-------------+--------------+------------------
+ ["9400002 @1440min"] | 1         | 1           | 1            | 50
+
+ axs_event_id | every_min | claimed 
+--------------+-----------+---------
+ 9400001      |        90 | f
+ 9400002      |      1440 | t
+ 9400003      |        60 | f
+
+--- D. the ceiling binds: with parked_daily_max 0 the parked read is refused too
+ items_with_ceiling_zero 
+-------------------------
+                       0
+
+--- E. and under the cap nothing is refused: both come back
+ items_under_cap 
+-----------------
+               3
+
+--- F. "DELETE LAST PUSH": a thin read clears the capture, and the measure survives it
+ listings_before 
+-----------------
+               1
+
+ thin_read 
+-----------
+ ok
+
+ listings_after 
+----------------
+              0
+
+ source_event_id | listing_count | listed_quantity | median_price | sellable_tickets | cadence_pinned | band  
+-----------------+---------------+-----------------+--------------+------------------+----------------+-------
+ 9400002         |             0 |               0 |            - |                8 | t              | 1 day
+
+ still_in_the_feed 
+-------------------
+                 0
+
+--- G. nothing is lost: a read with real inventory republishes in full
+ healthy_read 
+--------------
+ ok
+
+ listing_count | listed_quantity | sellable_tickets | cadence_pinned |   band   
+---------------+-----------------+------------------+----------------+----------
+             1 |             300 |              300 | f              | 01:00:00
+
+ back_in_the_feed 
+------------------
+                1
+
+--- H. "REMOVE BEYOND HORIZON": 300 days out is neither retired nor barred from the list
+ source_event_id | days_out | watch 
+-----------------+----------+-------
+ 9400003         |      300 | t
+
+                               dry_fill                                
+-----------------------------------------------------------------------
+ {"added": 0, "apply": false, "parked": 0, "retired": 0, "watched": 3}
+
+ source_event_id | days_out | watch 
+-----------------+----------+-------
+ 9400003         |      300 | t
+
+--- I. put the horizon back and the same event IS retired — so the NULL is what did it
+                         dry_fill_with_horizon                         
+-----------------------------------------------------------------------
+ {"added": 0, "apply": false, "parked": 0, "retired": 1, "watched": 2}

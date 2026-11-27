@@ -41,7 +41,15 @@ BEGIN
   FOR g IN 1..12 LOOP
     PERFORM public.axs_watch_settle_one('P'||g, 200,
       jsonb_build_object('body', jsonb_build_object('status','ok','exit_code',0,
-        'event', jsonb_build_object('id','P'||g), 'listings', '[]'::jsonb)));
+        'event', jsonb_build_object('id','P'||g),
+        -- a listing ON PURPOSE: an EMPTY listings array is the sold-out read, which mig
+        -- 20261126214500 puts on a jittered 1-day band instead of the event's phase-aligned
+        -- one, so an empty read here would stop this section testing the phase (s29 owns it).
+        -- 60 tickets, not a token 2: under thin_min_tickets (20) mig 20261126230000 would park
+        -- these on the one-day band too, and jittered rather than phase-aligned (s30 owns that)
+        'listings', jsonb_build_array(jsonb_build_object(
+          'kind','primary','section','101','row','A','quantity',60,'status','Available',
+          'pricing', jsonb_build_object('face',40,'fees_total',6,'tax',0,'all_in',46))))));
   END LOOP;
 END $$;
 SELECT count(*) AS settled,
@@ -85,7 +93,15 @@ BEGIN
   FOR g IN 1..12 LOOP
     PERFORM public.axs_watch_settle_one('P'||g, 200,
       jsonb_build_object('body', jsonb_build_object('status','ok','exit_code',0,
-        'event', jsonb_build_object('id','P'||g), 'listings', '[]'::jsonb)));
+        'event', jsonb_build_object('id','P'||g),
+        -- a listing ON PURPOSE: an EMPTY listings array is the sold-out read, which mig
+        -- 20261126214500 puts on a jittered 1-day band instead of the event's phase-aligned
+        -- one, so an empty read here would stop this section testing the phase (s29 owns it).
+        -- 60 tickets, not a token 2: under thin_min_tickets (20) mig 20261126230000 would park
+        -- these on the one-day band too, and jittered rather than phase-aligned (s30 owns that)
+        'listings', jsonb_build_array(jsonb_build_object(
+          'kind','primary','section','101','row','A','quantity',60,'status','Available',
+          'pricing', jsonb_build_object('face',40,'fees_total',6,'tax',0,'all_in',46))))));
   END LOOP;
 END $$;
 SELECT count(*) FILTER (WHERE next_poll_at > now() + interval '1 minute') AS clear_of_slack,
