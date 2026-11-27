@@ -32,7 +32,7 @@
 
 DO $surgery$
 DECLARE
-  v_ev text; v_li text; v_new text;
+  v_ev text; v_li text; v_new text; v_ev_opts text[]; v_li_opts text[];
   v_guard CONSTANT text :=
     '(COALESCE(t.cadence_pinned, false) AND t.poll_interval >= ( SELECT pc.no_tickets_every FROM axs_watch_config pc))';
   v_case  CONSTANT text := E'            WHEN (COALESCE(t.cadence_pinned, false) AND t.poll_interval >= ( SELECT pc.no_tickets_every\n               FROM axs_watch_config pc)) THEN \'paused\'::text\n';
@@ -42,6 +42,11 @@ DECLARE
 BEGIN
   SELECT pg_get_viewdef('v_primary_poll_events_feed'::regclass)   INTO v_ev;
   SELECT pg_get_viewdef('v_primary_poll_listings_feed'::regclass) INTO v_li;
+  -- CREATE OR REPLACE VIEW does NOT carry reloptions over, so they are captured and put back
+  -- explicitly. Found by the scenario harness: the first cut of this migration relied on them
+  -- being preserved and its own read-back caught the events feed losing security_invoker=true.
+  SELECT reloptions INTO v_ev_opts FROM pg_class WHERE relname = 'v_primary_poll_events_feed';
+  SELECT reloptions INTO v_li_opts FROM pg_class WHERE relname = 'v_primary_poll_listings_feed';
 
   IF v_ev ~ 'cadence_pinned' OR v_li ~ 'cadence_pinned' THEN
     RAISE NOTICE 'a parked guard is already present; nothing to do';
@@ -59,10 +64,16 @@ BEGIN
   v_new := replace(v_ev, v_fresh, ' AND NOT ' || v_guard || v_fresh);
   v_new := replace(v_new, v_else, v_case || v_else);
   EXECUTE 'CREATE OR REPLACE VIEW public.v_primary_poll_events_feed AS ' || v_new;
+  IF v_ev_opts @> ARRAY['security_invoker=true'] THEN
+    EXECUTE 'ALTER VIEW public.v_primary_poll_events_feed SET (security_invoker = true)';
+  END IF;
 
   -- listings feed: a parked event contributes no rows at all
   v_new := replace(v_li, v_where, 'AND NOT ' || v_guard || ' ' || v_where);
   EXECUTE 'CREATE OR REPLACE VIEW public.v_primary_poll_listings_feed AS ' || v_new;
+  IF v_li_opts @> ARRAY['security_invoker=true'] THEN
+    EXECUTE 'ALTER VIEW public.v_primary_poll_listings_feed SET (security_invoker = true)';
+  END IF;
 
   -- read back: both guards in, each view keeping its own reloptions
   SELECT pg_get_viewdef('v_primary_poll_events_feed'::regclass)   INTO v_ev;
@@ -77,8 +88,8 @@ BEGIN
                    AND reloptions @> ARRAY['security_invoker=true']) THEN
     RAISE EXCEPTION 'read-back: the events feed lost security_invoker=true';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'v_primary_poll_listings_feed'
-               AND reloptions IS NOT NULL) THEN
-    RAISE EXCEPTION 'read-back: the listings feed gained reloptions it did not have';
+  IF (SELECT reloptions FROM pg_class WHERE relname = 'v_primary_poll_listings_feed')
+       IS DISTINCT FROM v_li_opts THEN
+    RAISE EXCEPTION 'read-back: the listings feed reloptions changed';
   END IF;
 END $surgery$;
