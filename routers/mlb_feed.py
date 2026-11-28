@@ -106,9 +106,15 @@ def _since(v: str | None) -> str | None:
     return datetime.fromisoformat(v.strip().replace("Z", "+00:00")).isoformat()
 
 
-def schedule_response(db: Any, params: Any) -> Any:
+# the seller's own link says who sells a game: ProVenue (tickets.com) links are mlb.tickets.com or mpv.tickets.com
+SELLER_URL = {"provenue": "https://m__.tickets.com%"}
+
+
+def schedule_response(db: Any, params: Any, seller: str | None = None, default_level: str = DEFAULT_LEVEL) -> Any:
     """The feed for one request: a dict (JSON), a CSV Response, or a JSONResponse error.
-    `params` is the request's query parameters (a mapping)."""
+    `params` is the request's query parameters (a mapping). `seller` pins the games to one seller by their
+    ticket link (GET /provenue/events: ProVenue's games, mig 20261128100000); `default_level` is the level
+    when the request names none."""
     q = params
     try:
         team = (q.get("team") or "").strip()
@@ -122,7 +128,7 @@ def schedule_response(db: Any, params: Any) -> Any:
         gtype = (q.get("type") or "").strip().lower()
         if gtype and gtype not in TYPES:
             raise ValueError("type")
-        level = (q.get("level") or DEFAULT_LEVEL).strip().lower()
+        level = (q.get("level") or default_level).strip().lower()
         if level not in LEVELS:
             raise ValueError("level")
         fmt = (q.get("format") or "json").strip().lower()
@@ -156,6 +162,8 @@ def schedule_response(db: Any, params: Any) -> Any:
         sel = sel.in_("game_type", TYPES[gtype])
     if LEVELS[level] is not None:
         sel = sel.in_("level", LEVELS[level])
+    if seller:
+        sel = sel.ilike("ticket_url", SELLER_URL[seller])
     try:
         rows = (sel.order("game_date").order("start_utc").order("mlb_schedule_id")
                 .range(offset, offset + limit - 1).execute().data) or []

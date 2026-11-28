@@ -1,0 +1,56 @@
+== 1. the catalogue: every game published with no read; the playoff placeholder is not a game
+                     provenue_catalogue_fill                      |                            sgp_catalogue_fill                            
+------------------------------------------------------------------+--------------------------------------------------------------------------
+ {"added": 2, "source": "provenue", "dropped": 0, "published": 2} | {"added": 1, "source": "seatgeek_primary", "dropped": 0, "published": 1}
+
+      source      | source_event_id |                    name                    | event_date | start_local_time | watch | poll_status | tevo_event_id | tevo_match_method | announced 
+------------------+-----------------+--------------------------------------------+------------+------------------+-------+-------------+---------------+-------------------+-----------
+ provenue         | 9000001         | New York Mets at Philadelphia Phillies     | 2026-12-01 | 18:45:00         | f     | pending     |       3500001 | mlb_schedule      | t
+ provenue         | 9000002         | Pittsburgh Pirates at Cincinnati Reds      | 2026-12-02 | 13:05:00         | f     | pending     |               |                   | t
+ seatgeek_primary | 18412995        | Los Angeles Lakers at New Orleans Pelicans | 2099-12-02 | 19:00:00         | f     | pending     |               |                   | t
+
+      source      | event_id | listings_available | listings_withheld 
+------------------+----------+--------------------+-------------------
+ provenue         | 9000001  | f                  | not_polled
+ provenue         | 9000002  | f                  | not_polled
+ seatgeek_primary | 18412995 | f                  | not_polled
+
+== 2. a game that leaves the schedule leaves the catalogue; one that was read stays
+                     provenue_catalogue_fill                      
+------------------------------------------------------------------
+ {"added": 0, "source": "provenue", "dropped": 1, "published": 1}
+
+ source_event_id 
+-----------------
+ 9000001
+
+== 3. health by cadence: off while reading is off; down with no read for 2 days; ok once reads come back
+                                                                                               ?column?                                                                                                
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"detail": "reading is switched off at S4K: the games are listed without listings", "status": "off", "reads_today": 0, "reads_per_day": 10, "ok_within_seconds": 93600, "down_after_seconds": 172800}
+
+                                                                             ?column?                                                                              
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"detail": "no game has been read for 2 days", "status": "down", "reads_today": 0, "reads_per_day": 33, "ok_within_seconds": 93600, "down_after_seconds": 172800}
+
+                                                               ?column?                                                                
+---------------------------------------------------------------------------------------------------------------------------------------
+ {"detail": null, "status": "ok", "age_seconds": 10800, "reads_per_day": 33, "ok_within_seconds": 93600, "down_after_seconds": 172800}
+
+   three of the last ten failed: degraded; eight: down
+  status  |                              detail                               
+----------+-------------------------------------------------------------------
+ degraded | some reads failed: their games carry no listings until read again
+
+ status |                         detail                         
+--------+--------------------------------------------------------
+ down   | the reads are failing: no listings are being refreshed
+
+ other_sources_untouched 
+-------------------------
+ t
+
+== 4. the nightly catalogue
+          jobname          |  schedule  
+---------------------------+------------
+ tdev_catalogue_fill_daily | 25 3 * * *

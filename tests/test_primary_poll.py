@@ -551,6 +551,18 @@ def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
         assert not jc.NOT_AN_EVENT.search(name), name
 
 
+def test_the_tickets_dev_watches_are_the_primary_feed_pinned_to_their_source():
+    # operator 2026-11-28: "add the pinned calls too, then mimic axs calls for tickets.dev sg/provenue sources" (mig 20261128100000)
+    for url, source in (("/api/v1/subs/provenue/watch", "provenue"), ("/api/v1/subs/provenue/watch/listings", "provenue"),
+                        ("/api/v1/subs/seatgeek/watch", "seatgeek_primary"), ("/api/v1/subs/seatgeek/watch/listings", "seatgeek_primary")):
+        assert _client(FakeDB(rows=[])).get(url).status_code == 401
+        db = FakeDB(rows=[])
+        r = _client(db).get(url, headers=H, params={"source": "axs", "limit": "5"})          # another source is not honoured
+        assert r.status_code == 200 and r.json()["count"] == 0, url
+        calls = db.queries[0].calls
+        assert ("eq", "source", source) in calls and ("eq", "source", "axs") not in calls, (url, calls)
+
+
 def test_the_axs_watch_is_the_primary_feed_pinned_to_source_axs():
     # operator 2026-11-24: "add to API out to crm as new call" — /axs/watch and /axs/watch/listings, mig 20261124190000
     for url in ("/api/v1/subs/axs/watch", "/api/v1/subs/axs/watch/listings"):

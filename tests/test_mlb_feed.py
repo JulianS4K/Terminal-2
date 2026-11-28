@@ -290,3 +290,22 @@ def test_changes_csv_and_db_error():
     assert r.headers["content-type"].startswith("text/csv") and "link_live" in r.text
     r = _client(FakeDB(table_exc=RuntimeError("secret"))).get(CH_URL, headers=H)
     assert r.status_code == 502 and "secret" not in r.text
+
+
+def test_provenue_events_is_the_schedule_pinned_to_provenue_links():
+    # /provenue/events lists what ProVenue sells, as /axs/events lists what AXS sells (operator 2026-11-28: "mimic axs
+    # calls for tickets.dev sg/provenue sources"; mig 20261128100000): the schedule by its own ticket link, every level
+    assert _client(FakeDB(rows=[])).get("/api/v1/subs/provenue/events").status_code == 401
+    db = FakeDB(rows=[])
+    r = _client(db).get("/api/v1/subs/provenue/events", headers=H)
+    assert r.status_code == 200 and r.json()["count"] == 0
+    calls = db.queries[0].calls
+    assert ("ilike", "ticket_url", "https://m__.tickets.com%") in calls, calls
+    assert not any(c[0] == "in_" and c[1] == "level" for c in calls), calls
+    db = FakeDB(rows=[])
+    _client(db).get("/api/v1/subs/provenue/events", headers=H, params={"level": "mlb"})
+    assert ("in_", "level", ["mlb"]) in db.queries[0].calls
+    # the plain schedule is not pinned, and stays MLB by default
+    db = FakeDB(rows=[])
+    _client(db).get(URL, headers=H)
+    assert not any(c[0] == "ilike" for c in db.queries[0].calls) and ("in_", "level", ["mlb"]) in db.queries[0].calls
