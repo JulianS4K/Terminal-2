@@ -1,7 +1,7 @@
--- Migration 20261128090000 · level:data-collection · lane:a1 (AXS watch parse) · writes:axs_watch_parse()(replaced) · reads:axs_watch_raw_capture
+-- Migration 20261128090030 · level:data-collection · lane:a1 (AXS watch parse) · writes:axs_watch_parse()(replaced) · reads:axs_watch_raw_capture
 --
 -- ============================================================================
--- Migration 20261128090000 — a resale face already holds the ticket tax
+-- Migration 20261128090030 — a resale face already holds the ticket tax
 --
 -- Lane:     a1 (AXS watch)
 -- pre:      20261124200000 (the parse that maps pricing -> price/fee/tax)
@@ -73,7 +73,7 @@ DECLARE
   src text := pg_get_functiondef('public.axs_watch_parse(jsonb)'::regprocedure);
   old CONSTANT text := '           nullif(l->''pricing''->>''face'', '''')::numeric AS price,';
   new CONSTANT text :=
-    '           -- mig 20261128090000: a resale face is GROSS of the ticket tax, a primary face' || E'\n' ||
+    '           -- mig 20261128090030: a resale face is GROSS of the ticket tax, a primary face' || E'\n' ||
     '           -- is net. Subtracting it keeps price + fee + tax = all_in for both; primary' || E'\n' ||
     '           -- bodies carry no sales_tax_on_ticket, so primary is unchanged.' || E'\n' ||
     '           nullif(l->''pricing''->>''face'', '''')::numeric' || E'\n' ||

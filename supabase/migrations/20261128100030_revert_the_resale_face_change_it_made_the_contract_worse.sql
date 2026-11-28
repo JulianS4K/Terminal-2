@@ -1,15 +1,15 @@
--- Migration 20261128100000 · level:data-collection · lane:a1 (AXS watch parse) · writes:axs_watch_parse()(restored) · reads:-
+-- Migration 20261128100030 · level:data-collection · lane:a1 (AXS watch parse) · writes:axs_watch_parse()(restored) · reads:-
 --
 -- ============================================================================
--- Migration 20261128100000 — revert 20261128090000; it made the contract worse
+-- Migration 20261128100030 — revert 20261128090030; it made the contract worse
 --
 -- Lane:     a1 (AXS watch)
--- pre:      20261128090000 (the change this undoes)
+-- pre:      20261128090030 (the change this undoes)
 --
 -- READ-ONLY UPSTREAM (RULE 2): nothing here calls a market.
 --
 -- ── WHAT I GOT WRONG ──────────────────────────────────────────────────────
--- 20261128090000 netted sales_tax_on_ticket off `face` for every listing, on the strength of
+-- 20261128090030 netted sales_tax_on_ticket off `face` for every listing, on the strength of
 -- ONE venue's raw body (Ryman Auditorium, event 1670958). That body is real and the arithmetic
 -- on it is right. Generalising from it was not: resale pricing does not have one shape.
 --
@@ -44,7 +44,7 @@
 -- measured; only summing price + fee + tax is unreliable, on ~1.9% of resale rows and 0% of
 -- primary. Characterised by tests/sql/axs_watch s39.
 --
--- rollback: re-apply 20261128090000 (not advised — see above).
+-- rollback: re-apply 20261128090030 (not advised — see above).
 -- ============================================================================
 
 DO $surgery$
@@ -52,7 +52,7 @@ DECLARE
   src text := pg_get_functiondef('public.axs_watch_parse(jsonb)'::regprocedure);
   new CONSTANT text := '           nullif(l->''pricing''->>''face'', '''')::numeric AS price,';
   old CONSTANT text :=
-    '           -- mig 20261128090000: a resale face is GROSS of the ticket tax, a primary face' || E'\n' ||
+    '           -- mig 20261128090030: a resale face is GROSS of the ticket tax, a primary face' || E'\n' ||
     '           -- is net. Subtracting it keeps price + fee + tax = all_in for both; primary' || E'\n' ||
     '           -- bodies carry no sales_tax_on_ticket, so primary is unchanged.' || E'\n' ||
     '           nullif(l->''pricing''->>''face'', '''')::numeric' || E'\n' ||

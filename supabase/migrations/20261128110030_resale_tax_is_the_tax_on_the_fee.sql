@@ -1,10 +1,10 @@
--- Migration 20261128110000 · level:data-collection · lane:a1 (AXS watch parse) · writes:axs_watch_parse()(replaced) · reads:axs_watch_raw_capture
+-- Migration 20261128110030 · level:data-collection · lane:a1 (AXS watch parse) · writes:axs_watch_parse()(replaced) · reads:axs_watch_raw_capture
 --
 -- ============================================================================
--- Migration 20261128110000 — a resale tax is the tax on the FEE, nothing more
+-- Migration 20261128110030 — a resale tax is the tax on the FEE, nothing more
 --
 -- Lane:     a1 (AXS watch)
--- pre:      20261128100000 (which reverted 20261128090000)
+-- pre:      20261128100030 (which reverted 20261128090030)
 --
 -- READ-ONLY UPSTREAM (RULE 2): nothing here calls a market.
 --
@@ -42,10 +42,10 @@
 -- the CRM keeps seeing the price AXS displays.
 --
 -- ── TWO WRONG TURNS, RECORDED SO THEY ARE NOT REPEATED ────────────────────
--- 1. 20261128090000 instead netted sales_tax_on_ticket off `face`. That arithmetic is RIGHT —
+-- 1. 20261128090030 instead netted sales_tax_on_ticket off `face`. That arithmetic is RIGHT —
 --    it balances every body above — but it moves `price` away from the displayed face, which
 --    the cart shows is what AXS puts in front of the buyer. Superseded, not merely reverted.
--- 2. I then reverted it (20261128100000) on the strength of "resale breakage went 1.9% -> 9.8%
+-- 2. I then reverted it (20261128100030) on the strength of "resale breakage went 1.9% -> 9.8%
 --    after the change". That measurement was CONFOUNDED: it compared two time windows holding
 --    different venues rather than the same listings before and after. Per-minute, breakage
 --    spikes at 05:23 (83) and 05:28 (48) BEFORE the change and at 05:49 (90) and 05:50 (118)
@@ -67,7 +67,7 @@ DECLARE
   src text := pg_get_functiondef('public.axs_watch_parse(jsonb)'::regprocedure);
   old CONSTANT text := '           nullif(l->''pricing''->>''tax'', '''')::numeric AS tax,';
   new CONSTANT text :=
-    '           -- mig 20261128110000: pricing.tax = sales_tax_on_ticket + sales_tax_on_fee, but' || E'\n' ||
+    '           -- mig 20261128110030: pricing.tax = sales_tax_on_ticket + sales_tax_on_fee, but' || E'\n' ||
     '           -- sales_tax_on_ticket is already inside `face` and is never charged on top, so' || E'\n' ||
     '           -- only the tax on the fee is payable. Primary has no such field and is unchanged.' || E'\n' ||
     '           coalesce(nullif(l->''pricing''->>''sales_tax_on_fee'', '''')::numeric,' || E'\n' ||

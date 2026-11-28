@@ -1,7 +1,7 @@
--- Migration 20261128080000 · level:data-collection · lane:a1 (AXS watch) · writes:axs_collision_evidence(new),axs_collision_evidence_snapshot()(new),v_axs_collision_dossier(new) · reads:axs_watch_raw_capture,primary_poll_event,v_axs_event_collisions
+-- Migration 20261128080030 · level:data-collection · lane:a1 (AXS watch) · writes:axs_collision_evidence(new),axs_collision_evidence_snapshot()(new),v_axs_collision_dossier(new) · reads:axs_watch_raw_capture,primary_poll_event,v_axs_event_collisions
 --
 -- ============================================================================
--- Migration 20261128080000 — a dossier the collisions cannot outlive
+-- Migration 20261128080030 — a dossier the collisions cannot outlive
 --
 -- Lane:     a1 (AXS watch)
 -- pre:      20261127220000 (raw capture), 20261128060030 (venue-scoped collisions)

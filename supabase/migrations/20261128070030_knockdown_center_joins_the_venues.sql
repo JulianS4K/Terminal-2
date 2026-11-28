@@ -1,7 +1,7 @@
--- Migration 20261128070000 · level:data-collection · lane:a1 (AXS watch venue set) · writes:axs_watch_venue(+Knockdown Center) · reads:axs_export_event,axs_watch_config
+-- Migration 20261128070030 · level:data-collection · lane:a1 (AXS watch venue set) · writes:axs_watch_venue(+Knockdown Center) · reads:axs_export_event,axs_watch_config
 --
 -- ============================================================================
--- Migration 20261128070000 — Knockdown Center joins the watched venue set
+-- Migration 20261128070030 — Knockdown Center joins the watched venue set
 --
 -- Lane:     a1 (AXS watch)
 -- pre:      20261127020000 (Opry House, the same shape)
@@ -92,7 +92,7 @@ END $guard$;
 
 INSERT INTO public.axs_watch_venue (axs_venue_id, venue_name, quota, enabled, keep_all, trust_axs_sold, note, set_by)
 VALUES (126624, 'Knockdown Center', 0, true, true, false,
-        'operator 2026-11-28 "add Knockdown Center to axs event queue list where axs is primary provider"; trust_axs_sold deliberately false, so only the export''s AXS-ticketed events join (the four LCD Soundsystem nights 12/10-12/13, not the rescheduled Anna von Hausswolff whose ticketer is null). keep_all is required: the titles match no keep_regex. Same-act multi-night run — watch v_axs_event_collisions (mig 20261128070000)',
+        'operator 2026-11-28 "add Knockdown Center to axs event queue list where axs is primary provider"; trust_axs_sold deliberately false, so only the export''s AXS-ticketed events join (the four LCD Soundsystem nights 12/10-12/13, not the rescheduled Anna von Hausswolff whose ticketer is null). keep_all is required: the titles match no keep_regex. Same-act multi-night run — watch v_axs_event_collisions (mig 20261128070030)',
         'claude-opus-5')
 ON CONFLICT (axs_venue_id) DO UPDATE
    SET enabled = true, keep_all = true, venue_name = EXCLUDED.venue_name,

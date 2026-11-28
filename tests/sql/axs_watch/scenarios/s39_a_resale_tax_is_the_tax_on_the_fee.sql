@@ -6,13 +6,13 @@
 --
 -- Settled by the operator's own AXS cart (Pechanga, Sec LL24 Row 2): 2 x $52.80 + $26.92 resale
 -- fee = $132.52, with NO tax line. So sales_tax_on_ticket is never charged on top -- it is
--- already inside `face` -- and our `tax` must be sales_tax_on_fee alone (mig 20261128110000).
+-- already inside `face` -- and our `tax` must be sales_tax_on_fee alone (mig 20261128110030).
 --
 -- Two wrong turns on the way, kept here so they are not repeated:
---   20261128090000 netted sales_tax_on_ticket off `face`. The arithmetic balances every body
+--   20261128090030 netted sales_tax_on_ticket off `face`. The arithmetic balances every body
 --   below, but it moves `price` away from the face AXS displays to the buyer, so it was
 --   superseded rather than kept.
---   20261128100000 reverted it on "breakage went 1.9% -> 9.8%", which was a CONFOUNDED
+--   20261128100030 reverted it on "breakage went 1.9% -> 9.8%", which was a CONFOUNDED
 --   measurement comparing two time windows holding different venues. Compare the same
 --   listing_ids across a change, or evaluate candidates against stored raw bodies.
 --
