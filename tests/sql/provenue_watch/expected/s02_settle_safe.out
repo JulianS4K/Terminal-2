@@ -1,0 +1,49 @@
+== 1. seats: numbers numerically; the Rays companion seats 1C,2C as text; numbered seats keep their old id
+                                                  id                                                   | lo | hi |       seats       | ada  
+-------------------------------------------------------------------------------------------------------+----+----+-------------------+------
+ 304|J|9-11|Regular Ticket                                                                             | 9  | 11 | ["9", "10", "11"] | 
+ 305|K|1-2C|Regular Ticket                                                                             | 1  | 2C | ["1", "10", "2C"] | 
+ CHALK126|C|1C-2C|Single Game Ticket accessible this is a companion seat in an ada compliant location. | 1C | 2C | ["1C", "2C"]      | true
+
+== 2. two games fire; the settle of one throws
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 98, "fired": 2, "settled": 0, "upstream_errors": 0}
+
+   the tick carries on: A settles ok, B is a settle_error, and the run is published
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 98, "fired": 0, "settled": 2, "upstream_errors": 0}
+
+   pid   | status_code |   outcome    |         error         | listings 
+---------+-------------+--------------+-----------------------+----------
+ 9000001 |         200 | ok           |                       |        1
+ 9000002 |         200 | settle_error | settle: a parse fault |         
+
+ event_id | listing_count 
+----------+---------------
+ 9000001  |             1
+
+   B was billed: the budget counts it
+ billed_today 
+--------------
+ 2
+
+== 3. past retry_after and A's band, A is read again; B waits the sold-out band, not retry_after
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 1, "settled": 0, "upstream_errors": 0}
+
+   pid   
+---------
+ 9000001
+
+   a day on, B is read again
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 98, "fired": 1, "settled": 0, "upstream_errors": 0}
+
+   pid   
+---------
+ 9000001
+ 9000002
