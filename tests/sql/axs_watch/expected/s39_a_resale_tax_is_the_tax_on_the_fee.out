@@ -1,0 +1,31 @@
+--- A. primary (TSO, Toyota Center): face is NET of tax, and the contract holds
+ price | fee | tax  | all_in | contract_holds 
+-------+-----+------+--------+----------------
+    66 |  21 | 7.18 |  94.18 | t
+
+--- B. resale with no tax anywhere (event 1644160): face + connection_fee = all_in, holds
+ price | fee | tax | all_in | contract_holds 
+-------+-----+-----+--------+----------------
+ 349.0 |  89 |   0 |    438 | t
+
+--- C. resale WITH tax (Randy Rogers, Ryman): tax must be the FEE tax 14.92, not 73.42
+    face 658.50 already contains sales_tax_on_ticket 58.50, which is never charged on top.
+ price | fee |  tax  | all_in | parts_sum | contract_holds 
+-------+-----+-------+--------+-----------+----------------
+ 658.5 | 153 | 14.92 | 826.42 |    826.42 | t
+
+--- D. the fee is read as fees_total when present, connection_fee otherwise
+        body        | fee_taken 
+--------------------+-----------
+ fees_total present |     23.23
+ fees_total absent  |      25.5
+
+--- E. Opry House 1115342: the second venue that proved the rule (12 of 12 of its rows)
+ price  | fee  | tax  | all_in | contract_holds 
+--------+------+------+--------+----------------
+ 109.75 | 25.5 | 2.49 | 137.74 | t
+
+--- F. the operator cart: Pechanga LL24 row 2, face 52.80 must survive as the price
+ price |  fee  | tax | all_in | price_is_the_displayed_face | contract_holds 
+-------+-------+-----+--------+-----------------------------+----------------
+  52.8 | 13.46 |   0 |  66.26 | t                           | t
