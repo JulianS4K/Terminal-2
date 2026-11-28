@@ -1,0 +1,34 @@
+== 1. two blocks share section|row|first-last|type: each gets its own tag; the others keep their id; an exact repeat keeps its id, once
+               id                |    area    | all_in 
+---------------------------------+------------+--------
+ 101|A|1-2|Regular Ticket        | Field      | 23
+ 102|B|3-4|Regular Ticket        | Field      | 23
+ PAV|1|1-4|Regular Ticket~a84ad0 | Pavilion A | 55
+ PAV|1|1-4|Regular Ticket~e7d80b | Pavilion B | 66
+
+== 2. a read in flight when the database restarted is lost, never settled from the response that now has its id
+                  provenue_watch_tick                  
+-------------------------------------------------------
+ {"lost": 1, "fired": 0, "paused": true, "settled": 0}
+
+ request_id |   pid   | outcome |           error            
+------------+---------+---------+----------------------------
+          7 | 9000001 | lost    | lost in a database restart
+
+== 3. pg_net hands out id 7 again: the new read is stored beside the old row, and settles alone
+ setval 
+--------
+      6
+
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 1, "settled": 0, "upstream_errors": 1}
+
+                                ?column?                                 
+-------------------------------------------------------------------------
+ {"lost": 0, "room": 99, "fired": 0, "settled": 1, "upstream_errors": 1}
+
+ request_id |   pid   | outcome |           error            | listings 
+------------+---------+---------+----------------------------+----------
+          7 | 9000001 | lost    | lost in a database restart |         
+          7 | 9000001 | ok      |                            |        1
