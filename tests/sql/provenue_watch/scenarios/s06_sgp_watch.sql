@@ -1,6 +1,8 @@
 -- Mig 20261128080000: the SeatGeek primary watch. The catalogue search finds the partner team's home games (and not
 -- its away games or parking); a capture keeps the primary listings only; the event's totals are the primary seats'.
 \pset footer off
+-- the watch as shipped (mig 20261128080000), before the operator's one-game setting (mig 20261128130000)
+UPDATE public.sgp_watch_config SET enabled = false, only_event_ids = NULL, daily_cap = 10, hourly_cap = 50, max_in_flight = 4, fires_per_tick = 4;
 INSERT INTO public.sg_events_canonical VALUES (18412995, 'Los Angeles Lakers at New Orleans Pelicans', 3600001);
 UPDATE public.sgp_watch_team SET enabled = (team = 'New Orleans Pelicans');
 SELECT enabled, discover_enabled, daily_cap FROM public.sgp_watch_config;
@@ -70,3 +72,11 @@ SELECT jobname, schedule, command FROM cron.job WHERE jobname LIKE 'sgp%';
 
 \echo '== 8. mig 20261128090000: the USL clubs are off'
 SELECT league, count(*) AS teams, count(*) FILTER (WHERE enabled) AS enabled FROM public.sgp_watch_team GROUP BY 1 ORDER BY 1;
+
+\echo '== 9. mig 20261128130000: only_event_ids narrows the captures to the games listed'
+UPDATE public.sgp_watch_config SET only_event_ids = ARRAY['99999999'], daily_cap = 1000, hourly_cap = 100, max_in_flight = 4, fires_per_tick = 4;
+UPDATE public.sgp_watch_poll SET fired_at = fired_at - interval '3 days', checked_at = coalesce(checked_at, now()) - interval '3 days';
+UPDATE public.primary_poll_event SET next_poll_at = now() - interval '1 minute' WHERE source = 'seatgeek_primary';
+SELECT (public.sgp_watch_tick())->'fired' AS fired_for_another_game;
+UPDATE public.sgp_watch_config SET only_event_ids = ARRAY['18412995'];
+SELECT (public.sgp_watch_tick())->'fired' AS fired_for_the_listed_game;
