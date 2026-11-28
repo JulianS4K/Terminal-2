@@ -1,0 +1,45 @@
+--- A. the internal id is read from the onsale, else from the listings
+ from_onsale | from_listings | empty_body 
+-------------+---------------+------------
+ 5263        | 17673         | (none)
+
+--- B. the show-name check, against all seven real title pairs
+ disney_vs_fkc | pbr_1220_vs_1219 | tso_same_show | ncaa_same | indian_wells_same | empty_body 
+---------------+------------------+---------------+-----------+-------------------+------------
+ t             | f                | f             | f         | f                 | f
+
+--- C. a collision parks the impostor: daily band, no listings, still watched
+ outcome 
+---------
+ empty
+
+ source_event_id | axs_event_internal | collision_paused | cadence_pinned | daily_band | still_monitored | listing_count 
+-----------------+--------------------+------------------+----------------+------------+-----------------+---------------
+ IMPOSTOR        | 9999               | t                | t              | t          | t               |             0
+
+--- D. the CRM sees the reason, and no listings
+ listings_available | listings_withheld 
+--------------------+-------------------
+ f                  | wrong_performance
+
+ listing_rows 
+--------------
+            0
+
+--- E. the collision is visible, and a later read cannot un-park it
+ axs_event_internal | events | source_event_ids | already_paused 
+--------------------+--------+------------------+----------------
+ 9999               |      2 | {GOOD,IMPOSTOR}  |              1
+
+ second_read_ran 
+-----------------
+ t
+
+ collision_paused | cadence_pinned | still_daily_band 
+------------------+----------------+------------------
+ t                | t              | t
+
+--- F. the innocent twin is untouched
+ collision_paused | watch | keeps_its_band 
+------------------+-------+----------------
+ f                | t     | t

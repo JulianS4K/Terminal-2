@@ -237,6 +237,7 @@
  axs_watch_cadence_every          | t    | t
  axs_watch_event_dead             | f    | t
  axs_watch_fill                   | f    | t
+ axs_watch_internal_event_id      | f    | t
  axs_watch_next                   | f    | t
  axs_watch_non_transferable       | f    | t
  axs_watch_nontransferable_offers | f    | t
@@ -251,3 +252,4 @@
  axs_watch_tick                   | f    | t
  axs_watch_upcoming_sale          | f    | t
  axs_watch_wrong_performance      | f    | t
+ axs_watch_wrong_show             | f    | t
