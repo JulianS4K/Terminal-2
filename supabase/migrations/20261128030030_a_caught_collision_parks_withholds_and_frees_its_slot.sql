@@ -40,12 +40,12 @@ DECLARE
   cad_old  CONSTANT text := '     WHERE e.source = ''axs'' AND e.source_event_id = p_event_id;' || E'\n' || E'\n' ||
                             '    -- An event that says it is not on sale keeps its own, slower rule';
   cad_new  CONSTANT text := '     WHERE e.source = ''axs'' AND e.source_event_id = p_event_id' || E'\n' ||
-                            '       -- mig 20261128030000: never recompute the band of a collision-parked event' || E'\n' ||
+                            '       -- mig 20261128030030: never recompute the band of a collision-parked event' || E'\n' ||
                             '       AND NOT coalesce(e.collision_paused, false);' || E'\n' || E'\n' ||
                             '    -- An event that says it is not on sale keeps its own, slower rule';
   act_old  CONSTANT text := '  IF p_status_code = 200 AND coalesce(p_charge, true) THEN';
   act_new  CONSTANT text :=
-    '  -- mig 20261128030000: remember AXS''''s own event id, and act when two of ours share one.' || E'\n' ||
+    '  -- mig 20261128030030: remember AXS''''s own event id, and act when two of ours share one.' || E'\n' ||
     '  IF v_internal IS NOT NULL THEN' || E'\n' ||
     '    UPDATE public.primary_poll_event e SET axs_event_internal = v_internal' || E'\n' ||
     '     WHERE e.source = ''axs'' AND e.source_event_id = p_event_id' || E'\n' ||

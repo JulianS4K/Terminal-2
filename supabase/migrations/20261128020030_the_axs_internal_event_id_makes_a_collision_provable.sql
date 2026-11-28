@@ -40,7 +40,7 @@ ALTER TABLE public.primary_poll_event
 
 COMMENT ON COLUMN public.primary_poll_event.axs_event_internal IS
   'AXS''s own internal event id from the read (onsale.flags.events[0], else listings[].event_id). '
-  'Two of our source_event_ids sharing one value is a served-inventory collision (mig 20261128020000).';
+  'Two of our source_event_ids sharing one value is a served-inventory collision (mig 20261128020030).';
 COMMENT ON COLUMN public.primary_poll_event.collision_paused IS
   'Caught serving another event''s inventory: parked on the daily band, listings withheld from '
   'the CRM, slot returned to the fill. Durable - the settle''s cadence update skips these rows, '
@@ -125,7 +125,12 @@ CREATE OR REPLACE VIEW public.v_axs_event_collisions AS
    GROUP BY t.axs_event_internal
   HAVING count(*) > 1;
 
-REVOKE ALL ON public.v_axs_event_collisions FROM PUBLIC, anon;
-GRANT SELECT ON public.v_axs_event_collisions TO service_role, authenticated;
+-- service_role only. An earlier cut granted SELECT to `authenticated` as well, which would
+-- have let any signed-in user read primary_poll_event through a view that is not
+-- security_invoker -- i.e. around RLS. This is an internal diagnostic; nothing outside the
+-- service needs it, and if an operator UI ever does, it wants security_invoker plus its own
+-- policy rather than a blanket grant.
+REVOKE ALL ON public.v_axs_event_collisions FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.v_axs_event_collisions TO service_role;
 
 COMMIT;
