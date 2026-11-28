@@ -7,7 +7,7 @@ VALUES ('P', 1, 'R', (now() + interval '1 day')::date, now() + interval '1 day',
        ('W', 1, 'R', (now() + interval '1 day')::date, now() + interval '1 day', '2027-03-30T18:45:00', 'WSH', 'NYM', 'Washington Nationals', 'New York Mets',
         'Nationals Park', 'Washington', 'https://mlb.tickets.com/?orgid=17&agency=MLB_MPV&pid=9000002', 'provenue', '9000002');
 SELECT club_order_max FROM public.provenue_watch_config;
-\echo '== 1. a Phillies game whose blocks all sell whole: order_max 8; a Nationals game: none'
+\echo '== 1. a Phillies game whose blocks all sell whole: order_max 8; a Nationals game: 19 (mig 20261128060000)'
 SELECT pid, public.provenue_capture_event($j${"listings":[
     {"section":"115","row":"12","quantity":4,"ticketPrice":50,"fee":5,"totalPrice":55,"seats":"1,2,3,4","sellableQuantities":"1,2,3,4","ticketType":"Regular Ticket"}
   ]}$j$, pid, public.provenue_watch_game(pid))->'order_max' AS order_max

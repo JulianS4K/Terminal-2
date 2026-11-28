@@ -1,12 +1,12 @@
- club_order_max 
-----------------
- {"PHI": 8}
+    club_order_max     
+-----------------------
+ {"PHI": 8, "WSH": 19}
 
-== 1. a Phillies game whose blocks all sell whole: order_max 8; a Nationals game: none
+== 1. a Phillies game whose blocks all sell whole: order_max 8; a Nationals game: 19 (mig 20261128060000)
    pid   | order_max 
 ---------+-----------
  9000001 | 8
- 9000002 | 
+ 9000002 | 19
 
 == 2. the capture shows a cap of its own: the reader wins
  order_max 
