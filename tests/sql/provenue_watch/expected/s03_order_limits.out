@@ -1,0 +1,33 @@
+== 1. a block of 12 that sells at most 9: the cap is 9, the smallest order 1
+ order_min | order_max 
+-----------+-----------
+ 1         | 9
+
+== 2. every block sells whole: no cap is known
+ order_min | order_max 
+-----------+-----------
+ 2         | 
+
+== 3. no listings: no limit
+ has_min | has_max 
+---------+---------
+ f       | f
+
+== 4. stored: the event carries the cap; the block of 12 is sent as 9 + 3, the block of 4 whole
+ ingested 
+----------
+ t
+
+ source_event_id | order_min | order_max 
+-----------------+-----------+-----------
+ 9000001         |         1 |         9
+
+        listing_id        | quantity | max_per_order | order_limit 
+--------------------------+----------+---------------+-------------
+ 10|A|1-12|Regular Ticket |       12 |             9 |           9
+ 11|B|1-4|Regular Ticket  |        4 |             4 |           4
+
+        listing_id        | part | parts | seat_low | seat_high | quantity 
+--------------------------+------+-------+----------+-----------+----------
+ 10|A|1-12|Regular Ticket |    1 |     2 | 1        | 9         |        9
+ 10|A|1-12|Regular Ticket |    2 |     2 | 10       | 12        |        3
