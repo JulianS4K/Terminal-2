@@ -1,0 +1,24 @@
+--- A. the whole event: every delivery method, or the description
+ every_method | description_wins 
+--------------+------------------
+ t            | t
+
+--- B. some seats only: the event is NOT retired
+ mixed_event_retired | offers_to_drop 
+---------------------+----------------
+ f                   | {2}
+
+--- C. and the parse drops exactly those seats, keeping the rest
+ kept | section_kept | price_min | price_max 
+------+--------------+-----------+-----------
+    1 | A            | 50        | 50
+
+--- D. a fully transferable event loses nothing
+ kept 
+------
+    2
+
+--- E. a listing with no offer_id is never dropped by attribution we do not have
+ kept 
+------
+    1
