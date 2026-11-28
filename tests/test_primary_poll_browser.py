@@ -34,6 +34,21 @@ EVENT = {"id": "1729", "name": "Timberwolves vs. Nets", "url": "https://tickets.
          "order_min": None, "order_max": None}
 
 
+def _rpc_all_due(calls):
+    """A fake rpc that records every call and answers primary_poll_due with every event.
+
+    These tests predate primary_poll_sync refusing to sweep when the due list is unavailable:
+    they returned None from primary_poll_due and relied on the old fail-open. Saying "all of
+    them are due" states the intent instead of leaning on a fallback that no longer exists.
+    """
+
+    def rpc(name, params):
+        calls.append((name, params))
+        return params["p_event_ids"] if name == "primary_poll_due" else None
+
+    return rpc
+
+
 def test_listings_carry_seats_the_quantities_allowed_and_the_orders_limit():
     first, second, third = b.parse_listings(INVENTORY, order_max=6, rates=RATES, price_type="7336")
     # the operator's cart of 2026-11-23: 42.00 + 8.40 fees + 5.05 tax = 55.45 a ticket; the page shows 55
@@ -217,7 +232,7 @@ def test_a_run_stores_each_game_with_its_listings_and_a_page_that_fails_with_non
             raise TimeoutError("Timeout 45000ms exceeded")
         return {"inventory": INVENTORY, "offer": OFFER}
 
-    out = b.run(lambda name, params: calls.append((name, params)), _Jump(games), read_page)
+    out = b.run(_rpc_all_due(calls), _Jump(games), read_page)
     assert out == {"events": 2, "ok": 1, "failed": 1, "listings": 3, "not_stored": 0, "skipped": 0}
     assert calls.pop(0)[0] == "primary_poll_due"                 # asked first; this rpc cannot say, so all are read
     assert [c[0] for c in calls] == ["primary_poll_ingest", "primary_poll_ingest", "primary_poll_run_done"]
@@ -252,7 +267,7 @@ def test_a_cycle_opens_one_browser_filters_what_it_loads_and_closes_it_even_on_a
     browser = _Browser(context)
     calls = []
     jump = _Jump([dict(EVENT)])
-    out = b.cycle(lambda name, params: calls.append((name, params)), jump, _Playwright(browser))
+    out = b.cycle(_rpc_all_due(calls), jump, _Playwright(browser))
     assert out["timberwolves"]["ok"] == 1 and out["timberwolves"]["listings"] == 3 and browser.closed
     # the other teams list no games yet: each one's run ends at the event list, stores no event and closes no pull
     others = [org for org in b.ORGS if org != "timberwolves"]
@@ -337,7 +352,7 @@ def test_the_lynx_are_read_like_the_timberwolves_once_they_list_games():
     assert not any(org in b.PRICING for org in b.ORGS[1:])      # only the Timberwolves' fee and tax are known
     calls = []
     game = {**EVENT, "id": "9001", "name": "Lynx vs. Fever", "url": "https://tickets.lynxbasketball.com/offers/1"}
-    out = b.run(lambda name, params: calls.append((name, params)), _Jump([game], lynx_out_of_season=False),
+    out = b.run(_rpc_all_due(calls), _Jump([game], lynx_out_of_season=False),
                 lambda event: {"inventory": INVENTORY, "offer": OFFER}, "lynx")
     assert out == {"events": 1, "ok": 1, "failed": 0, "listings": 3, "not_stored": 0, "skipped": 0}
     assert [p["p_source"] for _, p in calls] == ["lynx"] * 3 and calls[2][1]["p_event_ids"] == ["9001"]

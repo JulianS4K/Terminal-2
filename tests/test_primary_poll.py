@@ -257,6 +257,8 @@ def test_a_run_sends_each_event_with_its_listings_or_with_why_its_poll_failed():
 
     def rpc(name, params):
         calls.append((name, params))
+        if name == "primary_poll_due":
+            return params["p_event_ids"]          # everything is due; this test is about the ingest
         if params.get("p_events") and params["p_events"][0]["id"] == "3":
             raise RuntimeError("db blip")
         return 4
@@ -270,7 +272,7 @@ def test_a_run_sends_each_event_with_its_listings_or_with_why_its_poll_failed():
     # the event list could not be read: every event of that source is marked failed in one call
     assert out["timberwolves"] == {"events": 0, "ok": 0, "failed": 0, "listings": 0,
                                    "list_error": "JumpError: HTTP 403 for /", "marked_failed": 4}
-    calls = [c for c in calls if c[0] != "primary_poll_due"]       # asked first; this rpc cannot say, so all are read
+    calls = [c for c in calls if c[0] != "primary_poll_due"]       # asked first, and answered with all of them
     assert [c[0] for c in calls] == ["primary_poll_ingest"] * 3 + ["primary_poll_run_done",
                                                                      "primary_poll_source_failed"]
     # the run is closed with every event the source listed, so the feeds serve this pull and no older one
@@ -310,17 +312,30 @@ def test_only_the_events_that_are_due_are_read_and_the_pull_still_lists_them_all
     out = sync.poll_source(lambda name, params: [] if name == "primary_poll_due" else calls.append(name),
                            "timberwolves", lambda: events, listings)
     assert out["skipped"] == 3 and read == [] and calls == ["primary_poll_run_done"]
-    # the database cannot say what is due: everything is read
+    # the database cannot say what is due: NOTHING is read, and the run is still closed. primary_poll_due is
+    # where the ga_slow / cadence_pinned band guards live, so sweeping every event on its failure would read a
+    # parked or GA-slowed event off its band -- reads that cannot be taken back. A skipped cycle heals itself.
     def down(name, params):
+        calls.append(name)
         if name == "primary_poll_due":
             raise RuntimeError("db blip")
 
-    read.clear()
-    assert sync.poll_source(down, "timberwolves", lambda: events, listings)["ok"] == 3 and read == [1, 2, 3]
+    calls.clear(), read.clear()
+    out = sync.poll_source(down, "timberwolves", lambda: events, listings)
+    assert out["ok"] == 0 and out["skipped"] == 3 and read == []
+    assert out["due_unknown"] == "RuntimeError: db blip"           # and it says why, rather than failing silently
+    assert calls == ["primary_poll_due", "primary_poll_run_done"]
+
+    # an answer that is not a list is the same refusal, named differently
+    calls.clear(), read.clear()
+    out = sync.poll_source(lambda name, params: calls.append(name) or 4, "timberwolves", lambda: events, listings)
+    assert out["skipped"] == 3 and read == [] and out["due_unknown"] == "primary_poll_due returned int, not a list"
 
 
 def test_a_run_that_cannot_be_closed_says_so_and_goes_on_to_the_next_source():
     def rpc(name, params):
+        if name == "primary_poll_due":
+            return params["p_event_ids"]          # everything is due; this test is about closing the run
         if name == "primary_poll_run_done" and params["p_source"] == "sitickets":
             raise RuntimeError("db blip")
 
@@ -334,7 +349,12 @@ def test_a_run_over_the_real_clients_never_has_timberwolves_listings(monkeypatch
     monkeypatch.setattr(si, "events", lambda: [])
     monkeypatch.setattr(jc, "events", lambda org: [{"id": "1729", "name": "Timberwolves vs. Nets"}])
     sent = []
-    out = sync.run(lambda name, params: sent.append(params), si, jc)
+
+    def rpc(name, params):
+        sent.append(params)
+        return params["p_event_ids"] if name == "primary_poll_due" else None   # everything is due
+
+    out = sync.run(rpc, si, jc)
     assert out["timberwolves"] == {"events": 1, "ok": 0, "failed": 1, "listings": 0, "not_stored": 0, "skipped": 0}
     game = next(p for p in sent if p.get("p_source") == "timberwolves" and "p_events" in p)["p_events"][0]
     assert game["ok"] is False and game["listings"] == [] and game["error"].startswith("JumpInventoryNotEnabled")

@@ -1,0 +1,40 @@
+--- A. a non-transferable body settles without raising, and files its audit row
+ outcome 
+---------
+ empty
+
+      action      | axs_event_id | has_run_id 
+------------------+--------------+------------
+ non_transferable | NT1          | t
+
+--- B. and the event is retired: marked, unwatched, not published
+ non_transferable | watch | listing_count 
+------------------+-------+---------------
+ t                | f     |             0
+
+ in_events_feed 
+----------------
+              0
+
+--- C. a wrong-performance body settles without raising, and files its audit row
+ outcome 
+---------
+ empty
+
+      action       | axs_event_id | has_run_id 
+-------------------+--------------+------------
+ wrong_performance | WP1          | t
+
+--- D. observe mode: the wrong-performance read still published its listings
+ withhold_wrong_performance 
+----------------------------
+ f
+
+ poll_status 
+-------------
+ ok
+
+--- E. every audit action the settle can write is permitted by the CHECK
+ check_admits_both 
+-------------------
+ t

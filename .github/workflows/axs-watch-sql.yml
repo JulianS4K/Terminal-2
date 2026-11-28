@@ -9,15 +9,22 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "supabase/migrations/**axs_watch**"
-      - "supabase/migrations/**primary_poll**"
+      # Any migration, not a filename pattern. The two globs that used to stand here
+      # ("**axs_watch**", "**primary_poll**") matched a migration's NAME, and a name is
+      # prose: every AXS watch migration of 2026-11-26/27 (freshness_follows_the_band,
+      # zero_listings_is_sold_out, thin_inventory_is_preemptive_sold_out,
+      # parked_reads_outside_the_cap, orphaned_claims_clear_in_five_minutes,
+      # parked_reads_counted_where_they_were_released) changed this suite's subject and
+      # matched neither glob, so the gate this comment block calls BLOCKING never ran on
+      # any of them. A directory is a fact; a filename is a promise. Breadth is the price.
+      - "supabase/migrations/**"
       - "tests/sql/axs_watch/**"
       - ".github/workflows/axs-watch-sql.yml"
   push:
     branches: [main]
     paths:
-      - "supabase/migrations/**axs_watch**"
-      - "supabase/migrations/**primary_poll**"
+      # same reason as the pull_request filter above: a filename is not a fact
+      - "supabase/migrations/**"
       - "tests/sql/axs_watch/**"
   workflow_dispatch:
 

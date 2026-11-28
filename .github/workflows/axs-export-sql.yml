@@ -12,14 +12,19 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "supabase/migrations/**axs_export**"
+      # Any migration, not a filename pattern -- see axs-watch-sql.yml for the full
+      # account. Proven here too: 20261127020000_opry_house_joins_the_venues.sql adds a
+      # venue to axs_export_event, which is exactly this suite's subject, and its name
+      # contains no "axs_export", so this BLOCKING gate skipped it.
+      - "supabase/migrations/**"
       - "tests/sql/axs_export/**"
       - "tests/sql/axs_watch/stub_00_base.sql"
       - ".github/workflows/axs-export-sql.yml"
   push:
     branches: [main]
     paths:
-      - "supabase/migrations/**axs_export**"
+      # same reason as the pull_request filter above
+      - "supabase/migrations/**"
       - "tests/sql/axs_export/**"
       - "tests/sql/axs_watch/stub_00_base.sql"
   workflow_dispatch:

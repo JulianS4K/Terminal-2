@@ -1,0 +1,47 @@
+--- A. it reads and publishes normally to begin with
+ outcome 
+---------
+ ok
+
+ listings_available | feed_state 
+--------------------+------------
+ t                  | (sending)
+
+ listing_rows 
+--------------
+            1
+
+--- B. the operator pauses it
+ listings_available | listings_withheld 
+--------------------+-------------------
+ f                  | paused
+
+ listing_rows 
+--------------
+            0
+
+--- C. THE TEST: a successful read must not undo it
+ second_read 
+-------------
+ ok
+
+ paused | capture_kept 
+--------+--------------
+ t      | t
+
+ listings_available | listings_withheld 
+--------------------+-------------------
+ f                  | paused
+
+ listing_rows 
+--------------
+            0
+
+--- D. and unpausing restores it, without needing a fresh read
+ listings_available | feed_state 
+--------------------+------------
+ t                  | (sending)
+
+ listing_rows 
+--------------
+            1

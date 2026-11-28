@@ -1,0 +1,27 @@
+--- A0. the fixture landed (this scenario passed vacuously once when it did not)
+ listings_inserted 
+-------------------
+                 2
+
+--- A. the pieces function was always right about gaps
+ part | parts | quantity |    seats     | seat_low | seat_high 
+------+-------+----------+--------------+----------+-----------
+    1 |     2 |        1 | ["10"]       | 10       | 10
+    2 |     2 |        2 | ["13", "14"] | 13       | 14
+
+--- B. the splitter now takes it, even though quantity does not exceed the limit
+ pieces_written 
+----------------
+              2
+
+ listing_id | part | parts | quantity |    seats     | seat_low | seat_high 
+------------+------+-------+----------+--------------+----------+-----------
+ L-GAPPED   |    1 |     2 |        1 | ["10"]       | 10       | 10
+ L-GAPPED   |    2 |     2 |        2 | ["13", "14"] | 13       | 14
+
+--- C. the CRM gets two rows for the gapped one and one for the adjacent one
+ listing_id | section | seat_row | seat_low | seat_high |      seats      | quantity | max_per_order 
+------------+---------+----------+----------+-----------+-----------------+----------+---------------
+ L-GAPPED-1 | 113     | P        | 10       | 10        | ["10"]          |        1 |             1
+ L-GAPPED-2 | 113     | P        | 13       | 14        | ["13", "14"]    |        2 |             2
+ L-WHOLE    | 113     | Q        | 3        | 5         | ["3", "4", "5"] |        3 |             3
