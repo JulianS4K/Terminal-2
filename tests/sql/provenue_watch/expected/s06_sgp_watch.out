@@ -73,3 +73,13 @@
       jobname       |  schedule  |            command             
 --------------------+------------+--------------------------------
  sgp_watch_tick_30s | 30 seconds | SELECT public.sgp_watch_tick()
+
+== 8. mig 20261128090000: the USL clubs are off
+ league | teams | enabled 
+--------+-------+---------
+ MLS    |     9 |       0
+ NBA    |     3 |       1
+ NFL    |     5 |       0
+ NHL    |     2 |       0
+ NWSL   |     4 |       0
+ USL    |    20 |       0
