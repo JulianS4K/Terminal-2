@@ -11,4 +11,4 @@ MIG="$HERE/../../../supabase/migrations"
 run() { psql -q -X -v ON_ERROR_STOP=1 -d "$DB" -f "$1" >/dev/null; }
 "$HERE/../axs_watch/build.sh" "$DB"
 run "$HERE/stub_20_provenue.sql"
-for m in 20261127230000_provenue_watch.sql; do run "$MIG/$m"; done
+for m in 20261127230000_provenue_watch.sql 20261128020000_provenue_watch_settle_safe.sql; do run "$MIG/$m"; done
