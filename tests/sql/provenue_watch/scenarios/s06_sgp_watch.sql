@@ -67,3 +67,6 @@ SELECT public.sgp_watch_budget() - 'response_p50_s' - 'response_p90_s' - 'per_ho
 
 \echo '== 7. the cron'
 SELECT jobname, schedule, command FROM cron.job WHERE jobname LIKE 'sgp%';
+
+\echo '== 8. mig 20261128090000: the USL clubs are off'
+SELECT league, count(*) AS teams, count(*) FILTER (WHERE enabled) AS enabled FROM public.sgp_watch_team GROUP BY 1 ORDER BY 1;

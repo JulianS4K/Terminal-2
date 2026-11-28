@@ -15,3 +15,4 @@ for m in 20261127230000_provenue_watch.sql 20261128020000_provenue_watch_settle_
 # the SeatGeek primary watch (mig 20261128080000) shares the ProVenue watch's parser and plan
 run "$HERE/stub_30_sgp.sql"
 run "$MIG/20261128080000_sgp_watch.sql"
+run "$MIG/20261128090000_sgp_watch_no_usl.sql"
