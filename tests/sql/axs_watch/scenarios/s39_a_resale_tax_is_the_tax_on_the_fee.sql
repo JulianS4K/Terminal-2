@@ -4,17 +4,30 @@
 -- Primary keeps it. Resale does NOT, on about 1.9% of rows, and this scenario pins down exactly
 -- which shapes hold and which do not, so the gap is visible instead of remembered.
 --
--- Settled by the operator's own AXS cart (Pechanga, Sec LL24 Row 2): 2 x $52.80 + $26.92 resale
--- fee = $132.52, with NO tax line. So sales_tax_on_ticket is never charged on top -- it is
--- already inside `face` -- and our `tax` must be sales_tax_on_fee alone (mig 20261128110030).
+-- This is a CHARACTERISATION test of where the contract ACTUALLY stands, not of where it
+-- should. Section C prints f on purpose. Three attempts to fix it were made and all three are
+-- reverted; the mapping today is the long-standing one, at ~1.9% of resale rows broken and 0%
+-- of primary.
 --
--- Two wrong turns on the way, kept here so they are not repeated:
+-- What the operator's own AXS cart established (Pechanga, Sec LL24 Row 2, resale):
+--   2 x $52.80 + $26.92 resale fee = $132.52, NO tax line, fee exactly 25.5% of face.
+--   Our rows for that listing already match to the cent. `face` is the price AXS DISPLAYS,
+--   sales_tax_on_ticket is never charged on top, and all_in_price is correct throughout.
+--   A CRM consumer reading all_in_price is never wrong; only summing the parts is unreliable.
+--
+-- Three wrong turns, kept so they are not repeated:
 --   20261128090030 netted sales_tax_on_ticket off `face`. The arithmetic balances every body
---   below, but it moves `price` away from the face AXS displays to the buyer, so it was
---   superseded rather than kept.
---   20261128100030 reverted it on "breakage went 1.9% -> 9.8%", which was a CONFOUNDED
---   measurement comparing two time windows holding different venues. Compare the same
---   listing_ids across a change, or evaluate candidates against stored raw bodies.
+--   below, but it moves `price` off the face AXS displays. Superseded.
+--   20261128100030 reverted that on "breakage went 1.9% -> 9.8%" -- a CONFOUNDED measurement
+--   comparing two time windows holding DIFFERENT VENUES, not the same listings.
+--   20261128110030 set tax = coalesce(sales_tax_on_fee, tax). Measured once every row had
+--   re-polled under it: 13.32% of resale broken, far worse than the 1.9% baseline. Reverted by
+--   20261128130030. It failed because `fee` is coalesce(fees_total, connection_fee): where a
+--   body carries BOTH, we take the net fee while all_in uses the gross one, so no mapping of
+--   `tax` alone can balance it.
+--
+-- The untested hypothesis, needing bodies from a venue carrying both fee fields:
+--   fee = coalesce(connection_fee, fees_total)  AND  tax = coalesce(sales_tax_on_fee, tax).
 --
 -- Every pricing object below is a real one from axs_watch_raw_capture, not invented.
 \set QUIET on
@@ -54,8 +67,9 @@ SELECT (r->>'price')::numeric price, (r->>'fee')::numeric fee, (r->>'tax')::nume
           'sales_tax_on_fee',0,'sales_tax_on_ticket',0,
           'connection_fee_rate',0.255), 'resale','FLASHSEATS') r) b;
 
-\echo '--- C. resale WITH tax (Randy Rogers, Ryman): tax must be the FEE tax 14.92, not 73.42'
-\echo '    face 658.50 already contains sales_tax_on_ticket 58.50, which is never charged on top.'
+\echo '--- C. resale WITH tax (Randy Rogers, Ryman): KNOWN GAP, contract_holds is f on purpose'
+\echo '    face 658.50 already contains sales_tax_on_ticket 58.50, counted again in tax 73.42.'
+\echo '    all_in 826.42 is AXS own total and IS correct; only the sum of the parts is not.'
 SELECT (r->>'price')::numeric price, (r->>'fee')::numeric fee, (r->>'tax')::numeric tax,
        (r->>'all_in')::numeric all_in,
        (r->>'price')::numeric+(r->>'fee')::numeric+(r->>'tax')::numeric AS parts_sum,
@@ -77,7 +91,7 @@ SELECT 'fees_total absent', (r->>'fee')::numeric
           'face',100,'all_in',125.5,'tax',0,
           'connection_fee',25.5,'connection_fee_rate',0.255), 'resale','FLASHSEATS') r) d2;
 
-\echo '--- E. Opry House 1115342: the second venue that proved the rule (12 of 12 of its rows)'
+\echo '--- E. Opry House 1115342: same shape as Ryman, same gap (sales_tax_on_ticket 9.75)'
 SELECT (r->>'price')::numeric price, (r->>'fee')::numeric fee, (r->>'tax')::numeric tax,
        (r->>'all_in')::numeric all_in,
        abs((r->>'price')::numeric+(r->>'fee')::numeric+(r->>'tax')::numeric

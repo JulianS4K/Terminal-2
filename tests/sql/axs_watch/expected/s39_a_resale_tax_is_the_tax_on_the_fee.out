@@ -8,11 +8,12 @@
 -------+-----+-----+--------+----------------
  349.0 |  89 |   0 |    438 | t
 
---- C. resale WITH tax (Randy Rogers, Ryman): tax must be the FEE tax 14.92, not 73.42
-    face 658.50 already contains sales_tax_on_ticket 58.50, which is never charged on top.
+--- C. resale WITH tax (Randy Rogers, Ryman): KNOWN GAP, contract_holds is f on purpose
+    face 658.50 already contains sales_tax_on_ticket 58.50, counted again in tax 73.42.
+    all_in 826.42 is AXS own total and IS correct; only the sum of the parts is not.
  price | fee |  tax  | all_in | parts_sum | contract_holds 
 -------+-----+-------+--------+-----------+----------------
- 658.5 | 153 | 14.92 | 826.42 |    826.42 | t
+ 658.5 | 153 | 73.42 | 826.42 |    884.92 | f
 
 --- D. the fee is read as fees_total when present, connection_fee otherwise
         body        | fee_taken 
@@ -20,10 +21,10 @@
  fees_total present |     23.23
  fees_total absent  |      25.5
 
---- E. Opry House 1115342: the second venue that proved the rule (12 of 12 of its rows)
- price  | fee  | tax  | all_in | contract_holds 
---------+------+------+--------+----------------
- 109.75 | 25.5 | 2.49 | 137.74 | t
+--- E. Opry House 1115342: same shape as Ryman, same gap (sales_tax_on_ticket 9.75)
+ price  | fee  |  tax  | all_in | contract_holds 
+--------+------+-------+--------+----------------
+ 109.75 | 25.5 | 12.24 | 137.74 | f
 
 --- F. the operator cart: Pechanga LL24 row 2, face 52.80 must survive as the price
  price |  fee  | tax | all_in | price_is_the_displayed_face | contract_holds 
