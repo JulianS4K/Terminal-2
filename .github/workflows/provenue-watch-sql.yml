@@ -1,6 +1,6 @@
 name: ProVenue watch SQL scenarios
 
-# Runs the ProVenue watch's SQL scenario tests (tests/sql/provenue_watch) against a throwaway Postgres: the AXS watch's
+# Runs the ProVenue watch's (and the SeatGeek primary watch's) SQL scenario tests (tests/sql/provenue_watch) against a throwaway Postgres: the AXS watch's
 # test database (tests/sql/axs_watch/build.sh) + the ProVenue watch migration, then each scenario's output is compared with its
 # expected file. Blocking — a migration that changes the behaviour updates the expected output in the same PR
 # (tests/sql/provenue_watch/run.sh --update).
@@ -12,6 +12,7 @@ on:
       - "supabase/migrations/**axs_watch**"
       - "supabase/migrations/**primary_poll**"
       - "supabase/migrations/**provenue_watch**"
+      - "supabase/migrations/**sgp_watch**"
       - "tests/sql/provenue_watch/**"
       - "tests/sql/axs_watch/build.sh"
       - "tests/sql/axs_watch/stub_*.sql"
@@ -22,6 +23,7 @@ on:
       - "supabase/migrations/**axs_watch**"
       - "supabase/migrations/**primary_poll**"
       - "supabase/migrations/**provenue_watch**"
+      - "supabase/migrations/**sgp_watch**"
       - "tests/sql/provenue_watch/**"
       - "tests/sql/axs_watch/build.sh"
       - "tests/sql/axs_watch/stub_*.sql"
