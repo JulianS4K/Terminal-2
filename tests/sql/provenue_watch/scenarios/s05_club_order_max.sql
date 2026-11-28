@@ -23,3 +23,11 @@ SELECT public.primary_poll_ingest('provenue', jsonb_build_array(public.provenue_
 SELECT source_event_id, order_max FROM public.primary_poll_event WHERE source = 'provenue';
 SELECT listing_id, quantity, order_limit FROM public.primary_poll_listing WHERE source = 'provenue';
 SELECT part, parts, seat_low, seat_high, quantity FROM public.primary_poll_listing_piece WHERE source = 'provenue' ORDER BY part;
+\echo '== 4. mig 20261128070000: a Reds link has no slash before the query (mlb.tickets.com?orgid=6): it is read'
+INSERT INTO public.mlb_ticket_game (mlb_game_id, sport_id, game_type, game_date, game_time_utc, game_time_local, home_abbrev, away_abbrev,
+       home_name, away_name, venue_name, venue_city, ticket_url, primary_seller, primary_event_id)
+VALUES ('C', 1, 'R', (now() + interval '2 days')::date, now() + interval '2 days', '2027-03-31T16:10:00', 'CIN', 'PIT', 'Cincinnati Reds', 'Pittsburgh Pirates',
+        'Great American Ball Park', 'Cincinnati', 'https://mlb.tickets.com?orgid=6&agency=MLB_MPV&pid=9750471', 'provenue', '9750471'),
+       ('X', 1, 'R', (now() + interval '2 days')::date, now() + interval '2 days', '2027-03-31T16:10:00', 'CIN', 'PIT', 'Cincinnati Reds', 'Pittsburgh Pirates',
+        'Great American Ball Park', 'Cincinnati', 'https://mlb.tickets.community/?pid=9750472', 'provenue', '9750472');
+SELECT pid, home_abbrev FROM public.v_provenue_watch_games WHERE home_abbrev = 'CIN';

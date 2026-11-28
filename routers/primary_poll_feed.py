@@ -10,7 +10,7 @@ poller fails to run for an event, do not send listing information", "also dont s
                                         the age limit (view v_primary_poll_listings_feed)
 
 Both take:
-        ?source=sitickets|ims|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc|axs
+        ?source=sitickets|ims|timberwolves|lynx|nccourage|denversummit|reign|bostonlegacy|sounders|northcarolinafc|axs|provenue|seatgeek_primary
                                  (a team's own ticket site has no events until it lists single games; `axs` is the
                                  watched list of AXS-sold events read through TicketsData, mig 20261124190000)
         &date_from=2026-11-23&date_to=2027-05-01
@@ -67,8 +67,9 @@ from routers.tm_feed import _words
 EVENTS_VIEW = "v_primary_poll_events_feed"
 LISTINGS_VIEW = "v_primary_poll_listings_feed"
 # SI Tickets, the Indy 500 section prices, every team site on the Jump platform, the AXS watch, the ProVenue watch
-# (MLB box offices on tickets.com read through tickets.dev, mig 20261127230000)
-SOURCES = ("sitickets", "ims", *jump_client.SITES, "axs", "provenue")
+# (MLB box offices on tickets.com read through tickets.dev, mig 20261127230000), the SeatGeek primary watch (the
+# SeatGeek partner teams' own seats, primary listings only, read through tickets.dev, mig 20261128080000)
+SOURCES = ("sitickets", "ims", *jump_client.SITES, "axs", "provenue", "seatgeek_primary")
 MARKETS = ("primary", "resale")
 SEARCH_COLUMN = "search_text"          # lower case; filtered on, never returned
 EVENT_COLUMNS = ("source", "event_id", "name", "event_date", "start_local_time", "start_utc", "timezone",

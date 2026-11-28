@@ -1,0 +1,75 @@
+ enabled | discover_enabled | daily_cap 
+---------+------------------+-----------
+ f       | t                |        10
+
+== 1. disabled for captures, the search is on: one search fires for the Pelicans (free), no capture
+                                                   sgp_watch_tick                                                    
+---------------------------------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "paused": true, "settled": 0, "games_found": 0, "searches_fired": 1, "searches_settled": 0}
+
+ id |                url                |        query         | page | page_size | keyed 
+----+-----------------------------------+----------------------+------+-----------+-------
+  1 | https://api.tickets.dev/v1/events | New Orleans Pelicans | 1    | 100       | t
+
+== 2. the search answers: the home game is kept; the away game, the parking event and another team are not
+                                                   sgp_watch_tick                                                    
+---------------------------------------------------------------------------------------------------------------------
+ {"lost": 0, "fired": 0, "paused": true, "settled": 0, "games_found": 1, "searches_fired": 0, "searches_settled": 1}
+
+         team         | page | outcome | events | home_games | has_more |                               masters                               
+----------------------+------+---------+--------+------------+----------+---------------------------------------------------------------------
+ New Orleans Pelicans |    1 | ok      |      4 |          1 | f        | {"HIFK": 1, "New Orleans Pelicans": 2, "Portland Trail Blazers": 1}
+
+ sg_event_id |         team         |                    name                    |        event_local        |      venue_name      |                                                         url                                                         
+-------------+----------------------+--------------------------------------------+---------------------------+----------------------+---------------------------------------------------------------------------------------------------------------------
+ 18412995    | New Orleans Pelicans | Los Angeles Lakers at New Orleans Pelicans | 2099-12-02T19:00:00-06:00 | Smoothie King Center | https://seatgeek.com/new-orleans-pelicans-tickets/12-2-2099-new-orleans-louisiana-smoothie-king-center/nba/18412995
+
+ sg_event_id |         team         | tevo_event_id 
+-------------+----------------------+---------------
+ 18412995    | New Orleans Pelicans |       3600001
+
+== 3. enabled: the game is captured through the SeatGeek reader
+                                                               ?column?                                                               
+--------------------------------------------------------------------------------------------------------------------------------------
+ {"lost": 0, "room": 9, "fired": 1, "settled": 0, "games_found": 0, "searches_fired": 0, "upstream_errors": 0, "searches_settled": 0}
+
+                     url                     |                                                        page                                                         
+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------
+ https://api.tickets.dev/v1/capture/seatgeek | https://seatgeek.com/new-orleans-pelicans-tickets/12-2-2099-new-orleans-louisiana-smoothie-king-center/nba/18412995
+
+== 4. the capture holds primary and resale: only the primary listings are stored; totals are theirs
+                                                               ?column?                                                               
+--------------------------------------------------------------------------------------------------------------------------------------
+ {"lost": 0, "room": 9, "fired": 0, "settled": 1, "games_found": 0, "searches_fired": 0, "upstream_errors": 0, "searches_settled": 0}
+
+ sg_event_id | outcome | listings | tickets | resale_listings | captures_remaining 
+-------------+---------+----------+---------+-----------------+--------------------
+ 18412995    | ok      |        2 |      12 |               1 |                950
+
+      source      | source_event_id |                    name                    | total_available | price_min | price_max | tevo_event_id | tevo_match_method | poll_interval | cadence_pinned 
+------------------+-----------------+--------------------------------------------+-----------------+-----------+-----------+---------------+-------------------+---------------+----------------
+ seatgeek_primary | 18412995        | Los Angeles Lakers at New Orleans Pelicans |              12 |        35 |        50 |       3600001 | sg_canonical      | 01:00:00      | t
+
+        listing_id         | section | seat_row | quantity | max_per_order | all_in_price 
+---------------------------+---------+----------+----------+---------------+--------------
+ 101|5|1-10|Regular Ticket | 101     | 5        |       10 |            10 |           50
+ 301|12|7-8|Regular Ticket | 301     | 12       |        2 |             2 |           35
+
+ event_id |                    name                    | listings_available 
+----------+--------------------------------------------+--------------------
+ 18412995 | Los Angeles Lakers at New Orleans Pelicans | t
+
+== 5. a team cap, set by hand, reaches the event when no block shows one
+ order_max 
+-----------
+ 8
+
+== 6. the budget
+                                                                                                      ?column?                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"enabled": true, "daily_cap": 10, "in_flight": 0, "hourly_cap": 50, "billed_today": 1, "billed_last_hour": 1, "games_in_horizon": 1, "teams_with_games": 1, "quota_exceeded_at": null, "captures_remaining": 950}
+
+== 7. the cron
+      jobname       |  schedule  |            command             
+--------------------+------------+--------------------------------
+ sgp_watch_tick_30s | 30 seconds | SELECT public.sgp_watch_tick()

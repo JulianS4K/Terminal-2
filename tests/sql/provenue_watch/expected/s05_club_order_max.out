@@ -30,3 +30,8 @@
 ------+-------+----------+-----------+----------
     1 |     2 | 1        | 8         |        8
     2 |     2 | 9        | 12        |        4
+
+== 4. mig 20261128070000: a Reds link has no slash before the query (mlb.tickets.com?orgid=6): it is read
+   pid   | home_abbrev 
+---------+-------------
+ 9750471 | CIN

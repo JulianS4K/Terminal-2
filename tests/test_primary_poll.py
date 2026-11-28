@@ -535,8 +535,10 @@ def test_every_team_site_on_the_same_platform_is_a_source_of_the_feed():
     # operator 2026-11-24: "Add all those jump teams to the catalogue scanner and push through into api"
     # ... and the AXS watch (mig 20261124190000, operator 2026-11-24 "make an axs one that allows for 200 events") is the last source
     # ... and the ProVenue watch (mig 20261127230000, operator 2026-11-27 "build the provenue reader") after it
-    assert pp.SOURCES == ("sitickets", "ims", *jc.SITES, "axs", "provenue") and len(jc.SITES) == 8
-    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx", "axs", "provenue"):
+    # ... and the SeatGeek primary watch (mig 20261128080000, operator 2026-11-28 "build the seatgeek primary watch")
+    assert pp.SOURCES == ("sitickets", "ims", *jc.SITES, "axs", "provenue", "seatgeek_primary") and len(jc.SITES) == 8
+    for source in ("nccourage", "denversummit", "reign", "bostonlegacy", "sounders", "northcarolinafc", "lynx", "axs", "provenue",
+                   "seatgeek_primary"):
         for url in (EVENTS, LISTINGS):
             db = FakeDB(rows=[])
             r = _client(db).get(url, headers=H, params={"source": source})
