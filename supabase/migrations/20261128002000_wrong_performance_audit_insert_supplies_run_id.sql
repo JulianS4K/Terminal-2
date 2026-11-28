@@ -1,6 +1,6 @@
--- HOTFIX 2 of 2. The wrong_performance audit insert added by mig 20261127230000 omits run_id,
+-- HOTFIX 2 of 2. The wrong_performance audit insert added by mig 20261127230030 omits run_id,
 -- which is NOT NULL on axs_watch_audit. This is the FIRST of the two defects chronologically:
--- the first failing ack appears at ~23:38Z, when 20261127230000 was applied; the action CHECK
+-- the first failing ack appears at ~23:38Z, when 20261127230030 was applied; the action CHECK
 -- violation from 20261127240000 followed at ~23:40Z and made it total.
 --
 -- Combined effect: AXS reads degraded from 23:38Z and stopped completely from 00:00Z to

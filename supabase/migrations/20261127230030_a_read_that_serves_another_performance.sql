@@ -95,7 +95,7 @@ DECLARE
     '    v_ok := true; v_outcome := CASE WHEN jsonb_array_length(parsed->''listings'') = 0 THEN ''empty'' ELSE ''ok'' END;';
   body_new CONSTANT text :=
     '    parsed := public.axs_watch_parse(body);' || E'\n' ||
-    '    -- mig 20261127230000: the body may carry another performance''s inventory.' || E'\n' ||
+    '    -- mig 20261127230030: the body may carry another performance''s inventory.' || E'\n' ||
     '    v_perf := public.axs_watch_wrong_performance(body);' || E'\n' ||
     '    IF v_perf IS NOT NULL AND NOT EXISTS (' || E'\n' ||
     '         SELECT 1 FROM public.axs_watch_audit a' || E'\n' ||

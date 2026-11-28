@@ -1,6 +1,6 @@
 -- The regression test for the outage of 2026-11-28 00:00-00:28Z.
 --
--- Migrations 20261127230000 and 20261127240000 each added an audit INSERT inside
+-- Migrations 20261127230030 and 20261127240000 each added an audit INSERT inside
 -- axs_watch_settle_one. Both were wrong against the real table: the first omitted run_id,
 -- which is NOT NULL, and the second used action 'non_transferable', which the
 -- axs_watch_audit_action_check CHECK rejected. Every read whose body tripped a detector

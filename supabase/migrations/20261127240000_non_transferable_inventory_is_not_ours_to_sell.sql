@@ -36,7 +36,7 @@
 -- would re-add it at 03:20Z, the next read would retire it, and we would pay one read per
 -- event per day forever.
 --
--- There is NO config flag here, unlike mig 20261127230000. A wrong price is a judgement call
+-- There is NO config flag here, unlike mig 20261127230030. A wrong price is a judgement call
 -- worth observing before acting on; unsellable inventory is not. The detector is two literal
 -- string tests, proven on five captures with no false positive and no false negative.
 

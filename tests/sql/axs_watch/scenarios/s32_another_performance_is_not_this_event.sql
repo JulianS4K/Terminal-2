@@ -5,7 +5,7 @@
 -- at $77 and $82 on two real receipts.
 --
 -- The tell is inside one body: event.starts_local vs onsale.sub_events[0].date (mig
--- 20261127230000). This checks the detector, and checks that the switch ships off so the
+-- 20261127230030). This checks the detector, and checks that the switch ships off so the
 -- feed does not change until an operator turns it on.
 \set QUIET on
 \pset footer off
