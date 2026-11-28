@@ -1,6 +1,9 @@
 -- Mig 20261128100000: every game of the two tickets.dev watches is published (not_polled until read), as the AXS
 -- catalogue is; and their health is graded by their own cadence, not by how many games carry listings.
 \pset footer off
+-- the watches as shipped, before the operator's settings (mig 20261128130000)
+UPDATE public.sgp_watch_config SET enabled = false, only_event_ids = NULL, daily_cap = 10;
+UPDATE public.provenue_watch_config SET daily_cap = 33;
 INSERT INTO public.mlb_ticket_game (mlb_game_id, sport_id, game_type, game_date, game_time_utc, game_time_local, time_zone_local, home_abbrev, away_abbrev,
        home_name, away_name, venue_name, venue_city, ticket_url, primary_seller, primary_event_id, tevo_event_id)
 VALUES ('A', 1, 'R', (now() + interval '3 days')::date, now() + interval '3 days', '2027-03-30T18:45:00', 'America/New_York', 'PHI', 'NYM',

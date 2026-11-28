@@ -83,3 +83,12 @@
  NHL    |     2 |       0
  NWSL   |     4 |       0
  USL    |    20 |       0
+
+== 9. mig 20261128130000: only_event_ids narrows the captures to the games listed
+ fired_for_another_game 
+------------------------
+ 0
+
+ fired_for_the_listed_game 
+---------------------------
+ 1
