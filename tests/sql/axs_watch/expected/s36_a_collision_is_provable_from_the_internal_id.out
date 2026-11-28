@@ -43,3 +43,8 @@
  collision_paused | watch | keeps_its_band 
 ------------------+-------+----------------
  f                | t     | t
+
+--- G. the same id at a DIFFERENT venue is not a collision (mig 20261128060030)
+ axs_event_internal | venue_name | events | source_event_ids 
+--------------------+------------+--------+------------------
+ 9999               | Big Arena  |      2 | {GOOD,IMPOSTOR}

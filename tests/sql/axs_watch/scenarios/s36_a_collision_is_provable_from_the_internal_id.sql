@@ -98,3 +98,17 @@ SELECT collision_paused, cadence_pinned,
 \echo '--- F. the innocent twin is untouched'
 SELECT collision_paused, watch, poll_interval = interval '60 minutes' AS keeps_its_band
   FROM public.primary_poll_event WHERE source='axs' AND source_event_id='GOOD';
+
+\echo '--- G. the same id at a DIFFERENT venue is not a collision (mig 20261128060030)'
+-- AXS reuses its internal ids per box office. Found when the mechanism's first new report was
+-- 2393 shared by Sabrina Cast Reunion at Royal Oak Music Theatre and Jhene Aiko at T-Mobile
+-- Arena -- different venues, 40 listings against 620, nothing shared.
+INSERT INTO public.primary_poll_event (source, source_event_id, name, event_date, start_utc,
+        venue_name, ticket_url, poll_status, next_poll_at, poll_interval, last_run, watch,
+        axs_event_internal)
+VALUES ('axs','FARAWAY','Other Venue Show',(now()+interval '60 days')::date, now()+interval '60 days',
+        'A Different Arena','https://www.axs.com/events/FARAWAY','ok', now()+interval '1 hour',
+        interval '60 minutes','run-col', true, '9999')
+ON CONFLICT (source, source_event_id) DO NOTHING;
+SELECT axs_event_internal, venue_name, events, source_event_ids
+  FROM public.v_axs_event_collisions ORDER BY venue_name;
