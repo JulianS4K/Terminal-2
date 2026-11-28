@@ -1,0 +1,32 @@
+ club_order_max 
+----------------
+ {"PHI": 8}
+
+== 1. a Phillies game whose blocks all sell whole: order_max 8; a Nationals game: none
+   pid   | order_max 
+---------+-----------
+ 9000001 | 8
+ 9000002 | 
+
+== 2. the capture shows a cap of its own: the reader wins
+ order_max 
+-----------
+ 6
+
+== 3. stored: a Phillies block of 12 that sells whole goes out as 8 + 4
+ ingested 
+----------
+ t
+
+ source_event_id | order_max 
+-----------------+-----------
+ 9000001         |         8
+
+         listing_id         | quantity | order_limit 
+----------------------------+----------+-------------
+ 115|12|1-12|Regular Ticket |       12 |           8
+
+ part | parts | seat_low | seat_high | quantity 
+------+-------+----------+-----------+----------
+    1 |     2 | 1        | 8         |        8
+    2 |     2 | 9        | 12        |        4
