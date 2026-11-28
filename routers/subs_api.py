@@ -39,6 +39,11 @@ answers in a `count / total / limit / offset / items / generated_at` envelope, a
   GET  /api/v1/subs/primary/listings?source=&event_id=      their listings, only for events polled successfully within the age limit, 35 minutes (routers/primary_poll_feed.py)
   GET  /api/v1/subs/axs/watch?available=&q=                 the AXS watch: the 200 upcoming AXS-sold events read through TicketsData (/primary/events pinned to source axs)
   GET  /api/v1/subs/axs/watch/listings?event_id=            their listings (/primary/listings pinned to source axs)
+  GET  /api/v1/subs/provenue/events?team=&type=&level=      the games ProVenue (tickets.com) sells, every level, with the club's link + EVO event (routers/mlb_feed.py)
+  GET  /api/v1/subs/provenue/watch?available=&q=           the ProVenue watch: MLB box-office games read through tickets.dev (/primary/events pinned to source provenue)
+  GET  /api/v1/subs/provenue/watch/listings?event_id=       their listings (/primary/listings pinned to source provenue)
+  GET  /api/v1/subs/seatgeek/watch?available=&q=           the SeatGeek primary watch: the partner teams' own seats read through tickets.dev (pinned to seatgeek_primary)
+  GET  /api/v1/subs/seatgeek/watch/listings?event_id=       their listings, primary seats only (/primary/listings pinned to source seatgeek_primary)
   GET  /api/v1/subs/gates                                   our six matching gates and the words a label can carry, from the guide's section 8
 
 `/ping` names the guide's version (`docs.version`), so a CRM that pings can tell when the guide
@@ -715,6 +720,48 @@ def make_router(get_db: Callable[[], Any], limiter: Any | None = None) -> APIRou
         pinned to source `axs`. Same keys as /mlb/schedule."""
         denied = _mlb_reader(request, "axs_watch_listings")
         return denied or primary_listings_response(get_db(), _pinned(request.query_params, source="axs"))
+
+    @router.get("/provenue/events")
+    def provenue_events(request: Request):
+        """The games ProVenue (tickets.com) sells: the MLB schedule pinned to the games whose own ticket link is
+        mlb.tickets.com or mpv.tickets.com, every level by default (MLB and the minor-league clubs on ProVenue), with
+        the club's link, the on-sale date and the EVO event, as /axs/events lists what AXS sells (operator 2026-11-28:
+        "mimic axs calls for tickets.dev sg/provenue sources"; mig 20261128100000). Same filters as /mlb/schedule.
+        Reads our own tables only."""
+        denied = _mlb_reader(request, "provenue_events")
+        return denied or mlb_schedule_response(get_db(), request.query_params, seller="provenue", default_level="all")
+
+    @router.get("/provenue/watch")
+    def provenue_watch_events(request: Request):
+        """The ProVenue watch (mig 20261127230000): every MLB regular-season game ProVenue sells, on sale and not
+        started, with whether its listings can be sent right now; a game is read through tickets.dev when its turn
+        comes, soonest first, within the plan. /primary/events pinned to source `provenue`, as /axs/watch is to `axs`.
+        Same keys as /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "provenue_watch_events")
+        return denied or primary_events_response(get_db(), _pinned(request.query_params, source="provenue"))
+
+    @router.get("/provenue/watch/listings")
+    def provenue_watch_listings(request: Request):
+        """The ProVenue watch's listings: the club's own seat blocks, with the quantities one order may take and the
+        club's order limit. Only for a game read within the age limit. /primary/listings pinned to `provenue`."""
+        denied = _mlb_reader(request, "provenue_watch_listings")
+        return denied or primary_listings_response(get_db(), _pinned(request.query_params, source="provenue"))
+
+    @router.get("/seatgeek/watch")
+    def seatgeek_watch_events(request: Request):
+        """The SeatGeek primary watch (mig 20261128080000): the home games of the teams that sell through SeatGeek,
+        found in tickets.dev's catalogue, with whether their listings can be sent right now; a game is read through
+        tickets.dev when its turn comes. /primary/events pinned to source `seatgeek_primary`. Same keys as
+        /mlb/schedule. Reads our own tables only."""
+        denied = _mlb_reader(request, "seatgeek_watch_events")
+        return denied or primary_events_response(get_db(), _pinned(request.query_params, source="seatgeek_primary"))
+
+    @router.get("/seatgeek/watch/listings")
+    def seatgeek_watch_listings(request: Request):
+        """The SeatGeek primary watch's listings: the team's own seats only, never SeatGeek resale. Only for a game
+        read within the age limit. /primary/listings pinned to `seatgeek_primary`."""
+        denied = _mlb_reader(request, "seatgeek_watch_listings")
+        return denied or primary_listings_response(get_db(), _pinned(request.query_params, source="seatgeek_primary"))
 
     @router.get("/gates")
     def gates(request: Request):
